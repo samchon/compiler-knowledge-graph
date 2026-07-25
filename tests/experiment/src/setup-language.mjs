@@ -338,7 +338,12 @@ switch (experiment.language) {
     break;
   }
   case "rust":
-    shell("curl --retry 3 --retry-all-errors --retry-delay 2 https://sh.rustup.rs -sSf | sh -s -- -y --profile minimal");
+    // The installer script comes through the same hardened seam as every
+    // other fetch. Piping curl into `sh` would be the one shape curl's own
+    // manual tells us not to retry: a retried mid-body transfer is not
+    // rewound in a pipe, so `sh` could read the partial prefix twice.
+    await downloadFile("https://sh.rustup.rs", path.join(toolsRoot, "rustup-init.sh"));
+    shell(`sh "${path.join(toolsRoot, "rustup-init.sh")}" -y --profile minimal`);
     appendGithubPath(path.join(os.homedir(), ".cargo", "bin"));
     shell(`${path.join(os.homedir(), ".cargo", "bin", "rustup")} component add rust-analyzer`);
     record({
@@ -397,8 +402,9 @@ switch (experiment.language) {
     // the pinned Serilog fixture asks Roslyn to load.
     const dotnetHome = path.join(os.homedir(), ".dotnet");
     const dotnet = path.join(dotnetHome, "dotnet");
-    shell("curl --retry 3 --retry-all-errors --retry-delay 2 -fsSL https://dot.net/v1/dotnet-install.sh -o /tmp/dotnet-install.sh");
-    shell("bash /tmp/dotnet-install.sh --channel 10.0");
+    const dotnetInstaller = path.join(toolsRoot, "dotnet-install.sh");
+    await downloadFile("https://dot.net/v1/dotnet-install.sh", dotnetInstaller);
+    shell(`bash "${dotnetInstaller}" --channel 10.0`);
     appendGithubPath(dotnetHome);
     appendGithubPath(path.join(dotnetHome, "tools"));
     shell(`"${dotnet}" tool install --global csharp-ls --version 0.26.0 || "${dotnet}" tool update --global csharp-ls --version 0.26.0`);

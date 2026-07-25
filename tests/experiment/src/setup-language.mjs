@@ -338,7 +338,7 @@ switch (experiment.language) {
     break;
   }
   case "rust":
-    shell("curl https://sh.rustup.rs -sSf | sh -s -- -y --profile minimal");
+    shell("curl --retry 3 --retry-all-errors --retry-delay 2 https://sh.rustup.rs -sSf | sh -s -- -y --profile minimal");
     appendGithubPath(path.join(os.homedir(), ".cargo", "bin"));
     shell(`${path.join(os.homedir(), ".cargo", "bin", "rustup")} component add rust-analyzer`);
     record({
@@ -397,7 +397,7 @@ switch (experiment.language) {
     // the pinned Serilog fixture asks Roslyn to load.
     const dotnetHome = path.join(os.homedir(), ".dotnet");
     const dotnet = path.join(dotnetHome, "dotnet");
-    shell("curl -fsSL https://dot.net/v1/dotnet-install.sh -o /tmp/dotnet-install.sh");
+    shell("curl --retry 3 --retry-all-errors --retry-delay 2 -fsSL https://dot.net/v1/dotnet-install.sh -o /tmp/dotnet-install.sh");
     shell("bash /tmp/dotnet-install.sh --channel 10.0");
     appendGithubPath(dotnetHome);
     appendGithubPath(path.join(dotnetHome, "tools"));

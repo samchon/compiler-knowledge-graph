@@ -39,7 +39,7 @@ const apt = (packages) => {
 // to a CDN host, so follow redirects instead of treating them as failures.
 const openStream = (url, redirects = 0, headers = {}) =>
   new Promise((resolve, reject) => {
-    https
+    const request = https
       .get(url, { headers: { "User-Agent": "samchon-graph-experiment", ...headers } }, (response) => {
         const status = response.statusCode ?? 0;
         if (status >= 300 && status < 400 && response.headers.location) {
@@ -59,6 +59,15 @@ const openStream = (url, redirects = 0, headers = {}) =>
         resolve(response);
       })
       .on("error", reject);
+    // A socket that opens and then goes silent settles nothing — no status, no
+    // error, no end — and would hang the lane until the job timeout. This is an
+    // idle bound, not a duration cap: an archive that keeps making progress
+    // never trips it, while a stall gets the same bounded retry as a refusal.
+    request.setTimeout(STALL_TIMEOUT_MS, () => {
+      request.destroy(
+        new Error(`${url} stalled for ${STALL_TIMEOUT_MS / 1000}s`),
+      );
+    });
   });
 
 // One transient 5xx or dropped socket from a release CDN or mirror currently
@@ -66,6 +75,7 @@ const openStream = (url, redirects = 0, headers = {}) =>
 // complete download a bounded number of times with backoff. A 4xx answer is
 // authoritative — the asset is missing or the request is wrong — and fails fast.
 const RETRY_DELAYS_MS = [2000, 5000, 15000];
+const STALL_TIMEOUT_MS = 60000;
 
 const withRetries = async (operation) => {
   for (let attempt = 0; ; attempt += 1) {
@@ -87,7 +97,16 @@ const downloadJson = async (url, headers = {}) =>
     const chunks = [];
     return await new Promise((resolve, reject) => {
       response.on("data", (chunk) => chunks.push(chunk));
-      response.on("end", () => resolve(JSON.parse(Buffer.concat(chunks).toString("utf8"))));
+      response.on("end", () => {
+        // A `JSON.parse` throw inside this listener would escape the promise
+        // as an uncaught exception — one malformed 200 body would crash the
+        // lane instead of getting the retry every other bad answer gets.
+        try {
+          resolve(JSON.parse(Buffer.concat(chunks).toString("utf8")));
+        } catch (error) {
+          reject(error);
+        }
+      });
       response.on("error", reject);
     });
   });
@@ -97,10 +116,19 @@ const downloadFile = async (url, file) =>
     const response = await openStream(url);
     await new Promise((resolve, reject) => {
       const write = fs.createWriteStream(file);
-      response.on("error", reject);
+      // A failed attempt still releases its half: the write stream on a dead
+      // response, and the response on a dead write — otherwise a retried
+      // download keeps the failed file open and a dead file keeps downloading.
+      response.on("error", (error) => {
+        write.destroy();
+        reject(error);
+      });
       response.pipe(write);
       write.on("finish", () => write.close(resolve));
-      write.on("error", reject);
+      write.on("error", (error) => {
+        response.destroy();
+        reject(error);
+      });
     });
   });
 

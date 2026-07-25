@@ -52,7 +52,7 @@ const openStream = (url, redirects = 0, headers = {}) =>
           return;
         }
         if (status !== 200) {
-          reject(new Error(`${url} returned ${status}`));
+          reject(Object.assign(new Error(`${url} returned ${status}`), { status }));
           response.resume();
           return;
         }
@@ -61,25 +61,48 @@ const openStream = (url, redirects = 0, headers = {}) =>
       .on("error", reject);
   });
 
-const downloadJson = async (url, headers = {}) => {
-  const response = await openStream(url, 0, headers);
-  const chunks = [];
-  return await new Promise((resolve, reject) => {
-    response.on("data", (chunk) => chunks.push(chunk));
-    response.on("end", () => resolve(JSON.parse(Buffer.concat(chunks).toString("utf8"))));
-    response.on("error", reject);
-  });
+// One transient 5xx or dropped socket from a release CDN or mirror currently
+// fails the whole language lane and with it the experiment matrix, so retry the
+// complete download a bounded number of times with backoff. A 4xx answer is
+// authoritative — the asset is missing or the request is wrong — and fails fast.
+const RETRY_DELAYS_MS = [2000, 5000, 15000];
+
+const withRetries = async (operation) => {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await operation();
+    } catch (error) {
+      const transient = error.status === undefined || error.status >= 500;
+      if (transient === false || attempt >= RETRY_DELAYS_MS.length) throw error;
+      const delay = RETRY_DELAYS_MS[attempt];
+      console.warn(`${error.message} — retrying in ${delay / 1000}s.`);
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
+  }
 };
 
-const downloadFile = async (url, file) => {
-  const response = await openStream(url);
-  await new Promise((resolve, reject) => {
-    const write = fs.createWriteStream(file);
-    response.pipe(write);
-    write.on("finish", () => write.close(resolve));
-    write.on("error", reject);
+const downloadJson = async (url, headers = {}) =>
+  await withRetries(async () => {
+    const response = await openStream(url, 0, headers);
+    const chunks = [];
+    return await new Promise((resolve, reject) => {
+      response.on("data", (chunk) => chunks.push(chunk));
+      response.on("end", () => resolve(JSON.parse(Buffer.concat(chunks).toString("utf8"))));
+      response.on("error", reject);
+    });
   });
-};
+
+const downloadFile = async (url, file) =>
+  await withRetries(async () => {
+    const response = await openStream(url);
+    await new Promise((resolve, reject) => {
+      const write = fs.createWriteStream(file);
+      response.on("error", reject);
+      response.pipe(write);
+      write.on("finish", () => write.close(resolve));
+      write.on("error", reject);
+    });
+  });
 
 const verifySha256 = (file, expected) => {
   const actual = createHash("sha256").update(fs.readFileSync(file)).digest("hex");

@@ -139,6 +139,95 @@ export namespace adaptLuaExport {
     files: string[];
     warnings: string[];
   }
+
+  /**
+   * Read the exporter's artifact, refusing anything that is not one.
+   *
+   * The producer is a Lua script running inside somebody else's server, and a
+   * crashed or half-written run is a JSON file too. Checking the shape here
+   * turns that into a declined candidate with a reason instead of a snapshot
+   * whose arrays happen to be empty — which would publish "this project has no
+   * symbols" as a fact.
+   */
+  export function parse(value: unknown, provider: string): IReport {
+    const report = value as Partial<IReport> | null;
+    if (report === null || typeof report !== "object") {
+      throw new Error(`${provider}: the export artifact is not an object`);
+    }
+    if (report.schemaVersion !== 1) {
+      throw new Error(
+        `${provider}: unsupported export schemaVersion ${String(report.schemaVersion)}`,
+      );
+    }
+    for (const [field, entries] of [
+      ["files", report.files],
+      ["nodes", report.nodes],
+      ["edges", report.edges],
+      ["warnings", report.warnings],
+    ] as const) {
+      if (!Array.isArray(entries)) {
+        throw new Error(`${provider}: the export artifact has no ${field}`);
+      }
+    }
+    for (const file of report.files as string[])
+      if (typeof file !== "string" || file === "")
+        throw new Error(`${provider}: a file entry is not a path`);
+    for (const entry of report.nodes as INode[]) assertNode(entry, provider);
+    for (const entry of report.edges as IEdge[]) assertEdge(entry, provider);
+    return {
+      schemaVersion: 1,
+      files: report.files as string[],
+      nodes: report.nodes as INode[],
+      edges: report.edges as IEdge[],
+      skipped: {
+        unnamed: countOf(report.skipped?.unnamed),
+        outsideRoot: countOf(report.skipped?.outsideRoot),
+        refsFailed: countOf(report.skipped?.refsFailed),
+      },
+      warnings: report.warnings as string[],
+    };
+  }
+}
+
+function assertNode(entry: adaptLuaExport.INode, provider: string): void {
+  if (typeof entry?.name !== "string" || entry.name === "")
+    throw new Error(`${provider}: a declaration has no name`);
+  if (typeof entry.kind !== "string" || entry.kind === "")
+    throw new Error(`${provider}: ${entry.name} has no kind`);
+  assertLocation(entry.location, `${provider}: ${entry.name}`);
+}
+
+function assertEdge(entry: adaptLuaExport.IEdge, provider: string): void {
+  if (!Number.isSafeInteger(entry?.from) || entry.from < 1)
+    throw new Error(`${provider}: an edge has no origin declaration`);
+  assertLocation(entry.location, `${provider}: edge ${String(entry.from)}`);
+}
+
+function assertLocation(
+  location: adaptLuaExport.ILocation,
+  subject: string,
+): void {
+  if (typeof location?.file !== "string" || location.file === "")
+    throw new Error(`${subject} has no file`);
+  for (const axis of [
+    "startLine",
+    "startColumn",
+    "endLine",
+    "endColumn",
+  ] as const) {
+    const value = location[axis];
+    // Zero-based and therefore allowed to be zero, but never negative and never
+    // fractional: a coordinate that is neither is a parse that went wrong
+    // rather than a position in a file.
+    if (!Number.isSafeInteger(value) || value < 0)
+      throw new Error(`${subject} has no ${axis}`);
+  }
+}
+
+function countOf(value: unknown): number {
+  return Number.isSafeInteger(value) && (value as number) >= 0
+    ? (value as number)
+    : 0;
 }
 
 /**

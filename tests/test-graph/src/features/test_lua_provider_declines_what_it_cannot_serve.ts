@@ -21,6 +21,7 @@ export const test_lua_provider_declines_what_it_cannot_serve =
   assertASessionNeedsNoConfiguration();
   assertTheProviderWatchesLuaBuildInputs();
   assertTheProviderResolvesTheServerItDrives();
+  assertAnInstallationWithoutItsExporterDeclines();
     await assertAnUnreadableSourceIsNotPublishedAround();
   };
 
@@ -233,4 +234,41 @@ function assertTheProviderResolvesTheServerItDrives(): void {
     }),
     undefined,
   );
+}
+
+/**
+ * Without its own exporter the provider declines rather than driving the server.
+ *
+ * Driving lua-language-server with the stock documentation export would produce
+ * a graph with no edges at all — that export omits references entirely — and a
+ * provider publishing an edgeless graph is worse than one that steps aside.
+ *
+ * `SAMCHON_GRAPH_LUA_EXPORTER` is what makes this checkable. The shipped script
+ * cannot be removed mid-run, so before the override existed this behaviour was
+ * asserted only by the comment above it.
+ */
+function assertAnInstallationWithoutItsExporterDeclines(): void {
+  const root = GraphPaths.createTempDirectory("samchon-graph-lua-noexporter-");
+  const previous = process.env.SAMCHON_GRAPH_LUA_EXPORTER;
+  process.env.SAMCHON_GRAPH_LUA_EXPORTER = path.join(root, "absent.lua");
+  try {
+    TestValidator.equals(
+      "a provider without its exporter resolves nothing",
+      luaGraphProvider.resolve(root, process.env),
+      undefined,
+    );
+    let message = "";
+    try {
+      luaGraphProvider.prepare?.(root, { cwd: root });
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+    TestValidator.predicate(
+      "and says so rather than writing a config pointing nowhere",
+      message.includes("exporter script is missing"),
+    );
+  } finally {
+    if (previous === undefined) delete process.env.SAMCHON_GRAPH_LUA_EXPORTER;
+    else process.env.SAMCHON_GRAPH_LUA_EXPORTER = previous;
+  }
 }

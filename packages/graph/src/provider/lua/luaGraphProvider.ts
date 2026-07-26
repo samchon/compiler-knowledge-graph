@@ -60,12 +60,7 @@ export const luaGraphProvider: IGraphProvider = {
   },
 
   resolve: (root, env) => {
-    const script = exporterScript();
-    // One line ignored rather than the whole body. A function whose every
-    // statement is excluded gets reported as never called, and that wide ignore
-    // was also hiding the fact that nothing in the suite called this at all.
-    /* c8 ignore next -- broken installation; see `exporterScript`. */
-    if (script === undefined) return undefined;
+    if (exporterScript(env) === undefined) return undefined;
     return resolveProviderCommand(root, env, {
       command: "lua-language-server",
       override: "SAMCHON_GRAPH_LUA",
@@ -85,15 +80,12 @@ export const luaGraphProvider: IGraphProvider = {
    * fallback condition.
    */
   prepare: (root) => {
-    const script = exporterScript();
-    /* c8 ignore start -- same broken-installation arm as `resolve`; reaching it
-     * means the package shipped without its own producer. */
+    const script = exporterScript(process.env);
     if (script === undefined) {
       throw new Error(
         "samchon-graph-lua: the exporter script is missing from this installation",
       );
     }
-    /* c8 ignore stop */
     const relative = path
       .relative(path.resolve(root), script)
       .split(path.sep)
@@ -138,34 +130,36 @@ export const luaGraphProvider: IGraphProvider = {
 };
 
 /**
- * The exporter shipped beside this module, or nothing when it is absent.
+ * The exporter to inject, or nothing when the named one is not there.
  *
- * Absent means an installation that did not carry `sidecars/lua`, and a
- * provider that cannot find its own producer must decline rather than resolve a
- * server it would then drive with the stock documentation exporter — which
- * emits no references at all and would publish a graph with no edges as though
- * the project had none.
+ * A provider that cannot find its own producer must decline rather than resolve
+ * a server it would then drive with the stock documentation exporter — which
+ * emits no references at all and would publish an edgeless graph as though the
+ * project had none.
+ *
+ * `SAMCHON_GRAPH_LUA_EXPORTER` overrides the shipped script, matching the
+ * override every other provider here offers for its producer. It also makes the
+ * declined path reachable: without it, "the package shipped without its own
+ * exporter" is a state no test can produce without deleting a file mid-run, and
+ * five attempts at excusing that line from coverage all excused a different one.
+ * A seam that makes the behaviour testable is better than a hint that makes the
+ * tool look away.
  */
-function exporterScript(): string | undefined {
-  const script = path.resolve(
-    __dirname,
-    "..",
-    "..",
-    "..",
-    "sidecars",
-    "lua",
-    "export.lua",
-  );
-  // Absent means a package shipped without its own producer, which a suite can
-  // only cause by deleting a file out from under the run.
-  //
-  // start/stop rather than `next`, matching `prepare` below. The counted form
-  // is the one demonstrably working in this file; `next` was tried four times
-  // here and excused the wrong line each time.
-  if (fs.existsSync(script)) return script;
-  /* c8 ignore start -- broken installation; see above. */
-  return undefined;
-  /* c8 ignore stop */
+function exporterScript(env: NodeJS.ProcessEnv): string | undefined {
+  const named = env.SAMCHON_GRAPH_LUA_EXPORTER;
+  const script =
+    named !== undefined && named !== ""
+      ? path.resolve(named)
+      : path.resolve(
+          __dirname,
+          "..",
+          "..",
+          "..",
+          "sidecars",
+          "lua",
+          "export.lua",
+        );
+  return fs.existsSync(script) ? script : undefined;
 }
 
 /**

@@ -499,6 +499,14 @@ function assertTheFixtureRejectsAWrongInvocation(): void {
     ["scip-ruby", [".", "--output", "index.scip"]],
     // scip-clang takes its destination attached, not as a following argument.
     ["scip-clang", ["--index-output-path", "index.scip"]],
+    // And an invocation that kept the destination but lost the compilation
+    // database would index a different program into the right file.
+    [
+      "scip-clang",
+      ["--index-output-path=index.scip", "--temporary-output-dir=tmp"],
+    ],
+    // The same for a rust-analyzer run that stopped excluding vendored crates.
+    ["rust-analyzer", ["scip", ".", "--output", "index.scip"]],
   ] as const) {
     const result = spawnSync(
       process.execPath,

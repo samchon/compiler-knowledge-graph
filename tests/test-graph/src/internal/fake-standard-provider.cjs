@@ -62,31 +62,37 @@ const contracts = {
   // `scip-clang --compdb-path=… --index-output-path=… --temporary-output-dir=…`
   "scip-clang": (args) => ({
     leading: [],
+    requires: ["--compdb-path=", "--temporary-output-dir="],
     output: valueOf(args, "--index-output-path="),
   }),
   // `scip-java index --output <path>`
   "scip-java": (args) => ({
     leading: ["index"],
+    requires: [],
     output: valueAfter(args, "--output"),
   }),
   // `scip-dotnet index --output <path>`
   "scip-dotnet": (args) => ({
     leading: ["index"],
+    requires: [],
     output: valueAfter(args, "--output"),
   }),
   // `scip-python index . --project-name <name> --output <path>`
   "scip-python": (args) => ({
     leading: ["index", "."],
+    requires: ["--project-name"],
     output: valueAfter(args, "--output"),
   }),
   // `scip-ruby . --index-file <path>`
   "scip-ruby": (args) => ({
     leading: ["."],
+    requires: [],
     output: valueAfter(args, "--index-file"),
   }),
   // `rust-analyzer scip . --exclude-vendored-libraries --output <path>`
   "rust-analyzer": (args) => ({
     leading: ["scip", "."],
+    requires: ["--exclude-vendored-libraries"],
     output: valueAfter(args, "--output"),
   }),
 };
@@ -98,6 +104,23 @@ if (scip !== undefined) {
     if (forwarded[index] !== expected) {
       throw new Error(
         `fake standard provider: ${producer} expects argument ${String(index)} to be ${expected}, got ${String(forwarded[index])}`,
+      );
+    }
+  }
+  // The destination is not the only argument that has to survive. A scip-clang
+  // invocation that lost its compilation database, or a rust-analyzer one that
+  // stopped excluding vendored libraries, would index a different program and
+  // still write an artifact where the session looks for it.
+  for (const required of contract.requires) {
+    if (
+      !forwarded.some((argument) =>
+        required.endsWith("=")
+          ? argument.startsWith(required)
+          : argument === required,
+      )
+    ) {
+      throw new Error(
+        `fake standard provider: ${producer} was invoked without ${required}`,
       );
     }
   }

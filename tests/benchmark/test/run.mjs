@@ -18,6 +18,7 @@ import {
   sanitizeWebsiteSamples,
 } from "../graph/website-cell.mjs";
 import ordinal from "../graph/ordinal.cjs";
+import { assertDeclarationsPrecedeExecution } from "./declaration-order.mjs";
 
 const { compareNaturalOrdinal } = ordinal;
 
@@ -35,6 +36,7 @@ testWebsiteCellValidityGate();
 testPublicationRequiresMatchingCodexTraceAudit();
 testFixtureAndPreflightIntegrity();
 testReferenceRenderer();
+assertDeclarationsPrecedeExecution(graphDir, ["index-time.mjs"]);
 console.log("benchmark system tests: ok");
 
 function testCorpusAndPromptProvenance() {

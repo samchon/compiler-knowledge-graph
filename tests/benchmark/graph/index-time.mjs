@@ -52,6 +52,29 @@ const websiteJson = path.join(
   "graph.json",
 );
 
+// Above every top-level statement that can reach it, deliberately. The project
+// loop below calls `measureScale`, which reads this table, and a `const`
+// declared after that loop is still in its temporal dead zone when the loop
+// runs. That is exactly how this file died on its first execution — it had been
+// complete and unrun for as long as it had existed, so the order had never been
+// tested by anything except reading it. `tests/benchmark/test/run.mjs` now
+// checks the ordering so the next one is caught before a runner is.
+const SOURCE_EXTENSIONS = {
+  typescript: [".ts", ".tsx", ".mts", ".cts"],
+  go: [".go"],
+  python: [".py"],
+  rust: [".rs"],
+  java: [".java"],
+  c: [".c", ".h"],
+  cpp: [".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx"],
+  ruby: [".rb"],
+  php: [".php"],
+  csharp: [".cs"],
+  kotlin: [".kt", ".kts"],
+  lua: [".lua"],
+  dart: [".dart"],
+};
+
 const TOOL_SAMCHON = "samchon-graph";
 const TOOL_CODEGRAPH = "codegraph";
 const TOOL_CODEBASE_MEMORY = "codebase-memory";
@@ -358,22 +381,6 @@ function measureScale(project, spec, repoDir) {
   }
   return { files: files.length, lines };
 }
-
-const SOURCE_EXTENSIONS = {
-  typescript: [".ts", ".tsx", ".mts", ".cts"],
-  go: [".go"],
-  python: [".py"],
-  rust: [".rs"],
-  java: [".java"],
-  c: [".c", ".h"],
-  cpp: [".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx"],
-  ruby: [".rb"],
-  php: [".php"],
-  csharp: [".cs"],
-  kotlin: [".kt", ".kts"],
-  lua: [".lua"],
-  dart: [".dart"],
-};
 
 /**
  * Wait until the one-minute load average falls under the gate's own threshold.

@@ -362,6 +362,17 @@ func (c *collector) addType(current *unit, spec *ast.TypeSpec) {
 
 func (c *collector) addValues(current *unit, tokenKind token.Token, spec *ast.ValueSpec) {
 	for _, name := range spec.Names {
+		// The blank identifier declares nothing. `var _ Iface = T{}` exists
+		// precisely so the assertion binds no name, and go/types still records
+		// it in Defs — so it arrives here with an object like any other.
+		//
+		// Emitting it as a node is wrong twice over: nothing can ever reference
+		// a symbol with no name, and every blank at package scope derives the
+		// same qualified identity, so the second one is a conflict that fails
+		// the build rather than a graph missing an edge.
+		if name.Name == "_" {
+			continue
+		}
 		object := current.pkg.TypesInfo.Defs[name]
 		if object == nil {
 			continue

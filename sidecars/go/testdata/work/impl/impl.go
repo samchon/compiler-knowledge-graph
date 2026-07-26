@@ -8,6 +8,14 @@ import (
 
 type Base struct{}
 
+// Two compile-time interface assertions, the ordinary Go idiom for them. Both
+// declare the blank identifier at package scope, so both once derived
+// `example.com/impl._` and the second one failed the whole build as a
+// conflicting node — which is how gin, with the same two lines, brought the
+// benchmark's go lane down to the static reader.
+var _ api.Greeter = Base{}
+var _ api.Transformer = Base{}
+
 func (Base) Greet(name string) string {
 	return "hello " + name
 }

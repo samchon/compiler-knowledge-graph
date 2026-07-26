@@ -54,6 +54,12 @@ func TestBuildSnapshotProvesWorkspaceSemantics(t *testing.T) {
 	if findNode(first, "GhostFromExcludedBuildTag") != nil {
 		t.Error("build-tag-excluded declaration entered the graph")
 	}
+	// The fixture declares two package-scope blank assertions. Nothing can
+	// reference a symbol with no name, and both would derive one identity, so
+	// the graph must contain neither rather than one of them.
+	if findNode(first, "_") != nil {
+		t.Error("the blank identifier entered the graph as a declaration")
+	}
 	for _, kind := range []string{
 		"contains", "exports", "imports", "calls", "accesses", "instantiates",
 		"type_ref", "implements", "dispatches", "tests", "references",

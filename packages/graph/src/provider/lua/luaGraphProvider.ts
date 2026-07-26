@@ -34,6 +34,31 @@ export const luaGraphProvider: IGraphProvider = {
   buildInputs: (root) =>
     providerInputFiles(root, [], BUILD_FILES, BUILD_EXTENSIONS),
 
+  /**
+   * The options this producer cannot honour, said out loud.
+   *
+   * The exporter runs once over the whole workspace and has no bounded mode: it
+   * cannot index a subset, cannot stop after N symbols, and cannot be pointed at
+   * a caller-supplied server, because the analysis it walks belongs to the
+   * server it is injected into. Returning the reason makes the language fall
+   * through with that sentence recorded, rather than a capped run passing for
+   * the whole-project index it silently replaced.
+   */
+  refuse: (options) => {
+    const refused: string[] = [];
+    if (options.server !== undefined) refused.push("server");
+    if (options.maxFiles !== undefined) refused.push("maxFiles");
+    if (options.lspReferenceLimit !== undefined)
+      refused.push("lspReferenceLimit");
+    if (refused.length === 0) return undefined;
+    return (
+      `lua: the samchon-graph-lua analyzer provider is disabled by ${refused.join(", ")}; ` +
+      "it exports the whole workspace in one pass and has no bounded mode, so " +
+      "lua falls through to the generic language-server lane. " +
+      `Drop ${refused.length === 1 ? "that option" : "those options"} for a strict index.`
+    );
+  },
+
   resolve: (root, env) =>
     exporterScript() === undefined
       ? undefined

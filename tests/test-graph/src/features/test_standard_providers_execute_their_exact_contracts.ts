@@ -6,6 +6,7 @@ import {
   type IBulkGraphSession,
   type IGraphProvider,
   goGraphProvider,
+  luaGraphProvider,
   rustScipProvider,
   standardScipProviders,
   standardSidecarProviders,
@@ -61,6 +62,7 @@ export const test_standard_providers_execute_their_exact_contracts =
         "dart",
         "scip-php",
         "php",
+        "lua-language-server",
       ];
       for (const name of names) {
         writeShim(platformExecutable(bin, name), name);
@@ -83,6 +85,7 @@ export const test_standard_providers_execute_their_exact_contracts =
         SAMCHON_GRAPH_DART_TOOLCHAIN: platformExecutable(bin, "dart"),
         SAMCHON_GRAPH_SCIP_PHP: platformExecutable(bin, "scip-php"),
         SAMCHON_GRAPH_PHP_TOOLCHAIN: platformExecutable(bin, "php"),
+        SAMCHON_GRAPH_LUA: platformExecutable(bin, "lua-language-server"),
       };
       for (const [key, value] of Object.entries(overrides)) {
         previous.set(key, process.env[key]);
@@ -306,6 +309,7 @@ function assertFixtureRegistryCoverage(): void {
   const exercised = [
     ttscGraphProvider,
     goGraphProvider,
+    luaGraphProvider,
     rustScipProvider,
     ...standardScipProviders,
     ...standardSidecarProviders,
@@ -551,6 +555,19 @@ async function assertRemainingRegisteredFixtures(root: string): Promise<void> {
   };
   await assertRegisteredFixture(goGraphProvider, goCommand, root);
   await assertHeuristicTwinFails(goGraphProvider, goCommand, root);
+
+  // Lua's producer is the language server itself, driven through its `--doc`
+  // export with our exporter injected, so the fixture stands in for the server
+  // rather than for a binary of ours. `prepare` writes the config that carries
+  // the exporter's path, and the fixture refuses an invocation that lost it —
+  // without that config the real server would silently run its stock
+  // documentation export, which emits no references at all.
+  luaGraphProvider.prepare?.(root, { cwd: root });
+  const luaCommand: IGraphProvider.ICommand = {
+    command: process.execPath,
+    args: [GraphPaths.fakeStandardProvider, "--producer=lua-language-server"],
+  };
+  await assertRegisteredFixture(luaGraphProvider, luaCommand, root);
 
   // The arguments `resolveRustScipCommand` puts in front of the session's own,
   // not an invocation that skips them. A synthetic command without them opens

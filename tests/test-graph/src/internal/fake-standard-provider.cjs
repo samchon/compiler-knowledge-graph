@@ -193,6 +193,82 @@ if (scip !== undefined) {
 // dart is absent: it is a SCIP producer now, driven through the `contracts`
 // table above like every other one, rather than a sidecar named after a program
 // that was never written.
+// Lua's producer is lua-language-server driven through its own `--doc` export,
+// so the fixture stands in for the server rather than for a sidecar binary. It
+// holds the invocation to the exact shape the provider builds and writes the
+// exporter's artifact where `--doc_out_path` says, which is what makes the
+// session's contract a tested path instead of an assumed one.
+if (producer === "lua-language-server") {
+  const outDir = valueOf(forwarded, "--doc_out_path=");
+  const doc = valueOf(forwarded, "--doc=");
+  const config = valueOf(forwarded, "--configpath=");
+  for (const [flag, value] of [
+    ["--doc=", doc],
+    ["--doc_out_path=", outDir],
+    ["--configpath=", config],
+  ]) {
+    if (value === undefined || value === "") {
+      throw new Error(
+        `fake standard provider: lua-language-server was invoked without ${flag}`,
+      );
+    }
+  }
+  // The config is what points the server at our exporter. A run that never
+  // wrote it would silently use the stock documentation export, which emits no
+  // references at all.
+  if (!fs.existsSync(config)) {
+    throw new Error(
+      `fake standard provider: lua-language-server config ${config} does not exist`,
+    );
+  }
+  const script = JSON.parse(fs.readFileSync(config, "utf8"))[
+    "Lua.docScriptPath"
+  ];
+  if (typeof script !== "string" || !script.startsWith("/")) {
+    throw new Error(
+      "fake standard provider: the lua config carries no rooted docScriptPath",
+    );
+  }
+  const file = "src/main.lua";
+  const text = fs.readFileSync(path.join(process.cwd(), file), "utf8");
+  const name = /function\s+([A-Za-z_][\w]*)/.exec(text)?.[1] ?? "main";
+  write(path.join(outDir, "samchon-graph-lua.json"), {
+    schemaVersion: 1,
+    files: [file],
+    nodes: [
+      {
+        name,
+        kind: "function",
+        sourceType: "function",
+        location: {
+          file,
+          startLine: 0,
+          startColumn: 0,
+          endLine: 0,
+          endColumn: name.length,
+        },
+      },
+    ],
+    edges: [
+      {
+        from: 1,
+        kind: "references",
+        sourceType: "getglobal",
+        location: {
+          file,
+          startLine: 2,
+          startColumn: 2,
+          endLine: 2,
+          endColumn: 2 + name.length,
+        },
+      },
+    ],
+    skipped: { unnamed: 0, outsideRoot: 0, refsFailed: 0 },
+    warnings: [],
+  });
+  process.exit(0);
+}
+
 const sidecarLanguages = new Set(["go", "swift", "zig"]);
 const sidecarLanguage = producer.startsWith("samchon-graph-")
   ? producer.slice("samchon-graph-".length)

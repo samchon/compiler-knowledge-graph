@@ -52,7 +52,13 @@ export function adaptLuaExport(
       id,
       kind,
       name: entry.name,
+      language: "lua",
       file: entry.location.file,
+      // The exporter only ever emits declarations from inside the project: its
+      // file list is filtered to the workspace root precisely so the server's
+      // own bundled meta definitions stay out. Anything it hands back is
+      // therefore the project's own code.
+      external: false,
       evidence: evidenceOf(entry.location),
     });
   }

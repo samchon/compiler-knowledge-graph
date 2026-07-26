@@ -20,6 +20,7 @@ export const test_lua_provider_declines_what_it_cannot_serve =
     assertPrepareWritesAConfigOutsideTheProject();
   assertASessionNeedsNoConfiguration();
   assertTheProviderWatchesLuaBuildInputs();
+  assertTheProviderResolvesTheServerItDrives();
     await assertAnUnreadableSourceIsNotPublishedAround();
   };
 
@@ -183,5 +184,53 @@ function assertTheProviderWatchesLuaBuildInputs(): void {
   TestValidator.predicate(
     "the workspace configuration is a build input",
     [...inputs].includes(".luarc.json"),
+  );
+}
+
+/**
+ * The provider resolves the server it drives, and declines when it is absent.
+ *
+ * `assertRegisteredFixture` hands a session a synthetic command, so nothing in
+ * the contract suite had ever called `resolve` — a gap the coverage ignore
+ * around its body was hiding until that ignore was narrowed to the one line it
+ * was meant for.
+ *
+ * Resolution goes through the project's own `.samchon-graph/bin` before `PATH`,
+ * which is what lets a fixture prove this without a server installed on the
+ * machine running it.
+ */
+function assertTheProviderResolvesTheServerItDrives(): void {
+  const root = GraphPaths.createTempDirectory("samchon-graph-lua-resolve-");
+  const bin = path.join(root, ".samchon-graph", "bin");
+  fs.mkdirSync(bin, { recursive: true });
+  const server = path.join(
+    bin,
+    process.platform === "win32"
+      ? "lua-language-server.cmd"
+      : "lua-language-server",
+  );
+  fs.writeFileSync(server, process.platform === "win32" ? "@echo off\n" : "#!/bin/sh\n");
+  fs.chmodSync(server, 0o755);
+
+  TestValidator.predicate(
+    "the project's own server is resolved",
+    luaGraphProvider.resolve(root, {
+      PATH: "",
+      Path: "",
+      PATHEXT: ".EXE;.CMD;.BAT",
+      SystemRoot: process.env.SystemRoot,
+    }) !== undefined,
+  );
+
+  const bare = GraphPaths.createTempDirectory("samchon-graph-lua-noserver-");
+  TestValidator.equals(
+    "a machine without the server resolves nothing",
+    luaGraphProvider.resolve(bare, {
+      PATH: "",
+      Path: "",
+      PATHEXT: ".EXE;.CMD;.BAT",
+      SystemRoot: process.env.SystemRoot,
+    }),
+    undefined,
   );
 }

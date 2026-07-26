@@ -110,19 +110,22 @@ function resolveOnPath(
 function localCandidates(root: string, command: string): string[] {
   const privateBin = path.join(root, ".samchon-graph", "bin");
   const packageBin = path.join(root, "node_modules", ".bin");
+  // One exit, deliberately. A platform arm that returns early leaves the rest
+  // of the function — including its closing brace — unreachable on the other
+  // platforms, and an ignore that stops before the brace does not cover it.
   /* c8 ignore start -- each CI operating system exercises its native arm. */
-  if (process.platform !== "win32") {
-    return [path.join(privateBin, command), path.join(packageBin, command)];
-  }
-  const spellings = /\.(?:exe|cmd|bat)$/i.test(command)
-    ? [command]
-    : [`${command}.exe`, `${command}.cmd`, `${command}.bat`];
+  const spellings =
+    process.platform !== "win32"
+      ? [command]
+      : /\.(?:exe|cmd|bat)$/i.test(command)
+        ? [command]
+        : [`${command}.exe`, `${command}.cmd`, `${command}.bat`];
+  /* c8 ignore stop */
   const candidates: string[] = [];
   for (const bin of [privateBin, packageBin]) {
     for (const spelling of spellings) candidates.push(path.join(bin, spelling));
   }
   return candidates;
-  /* c8 ignore stop */
 }
 
 function spawnable(

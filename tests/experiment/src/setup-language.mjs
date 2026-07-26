@@ -629,9 +629,23 @@ switch (experiment.language) {
     // repository deserves.
     apt(["php-cli", "php-xml", "php-mbstring", "composer"]);
     shell("composer global require davidrjenni/scip-php");
-    appendGithubPath(
-      path.join(os.homedir(), ".config", "composer", "vendor", "bin"),
-    );
+    // Ask composer where it put the binary rather than assuming. The global
+    // home moves with COMPOSER_HOME and differs between images — `~/.composer`
+    // on some, `~/.config/composer` on others — and the benchmark's php lane
+    // reported `scip-php ... was not found for this project` while the install
+    // step above had reported success, which is exactly what a guessed path
+    // looks like from the outside.
+    const composerBin = shell("composer global config bin-dir --absolute", {
+      stdio: ["ignore", "pipe", "inherit"],
+    })
+      .stdout.toString()
+      .trim();
+    if (composerBin === "" || !fs.existsSync(composerBin)) {
+      throw new Error(
+        `composer reported no usable global bin directory: ${composerBin || "(empty)"}`,
+      );
+    }
+    appendGithubPath(composerBin);
     record({
       tool: "scip-php",
       version: "unpinned",

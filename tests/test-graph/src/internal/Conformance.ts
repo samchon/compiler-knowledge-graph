@@ -5,6 +5,7 @@ import {
   type IBulkGraphSession,
   type IGraphProvider,
   type ISamchonGraphEdge,
+  type ISamchonGraphEvidence,
   type ISamchonGraphNode,
 } from "@samchon/graph";
 
@@ -42,6 +43,7 @@ export namespace Conformance {
     kind: ISamchonGraphNode["kind"];
     language: ISamchonGraphNode["language"];
     file?: string;
+    evidence?: ISpanExpectation;
 
     /** `false` asserts the declaration must NOT exist. */
     present?: boolean;
@@ -49,8 +51,9 @@ export namespace Conformance {
 
   export interface IEdgeExpectation {
     kind: GraphEdgeKind;
-    from: string;
-    to: string;
+    from: IEndpointExpectation;
+    to: IEndpointExpectation;
+    evidence?: ISpanExpectation;
 
     /**
      * `false` asserts the relationship must NOT exist — the negative twin.
@@ -62,6 +65,31 @@ export namespace Conformance {
     present?: boolean;
   }
 
+  /**
+   * One endpoint of a golden relationship.
+   *
+   * A display name alone remains concise for one-language fixtures. Atomic
+   * providers can own several languages, though, so their common corpus adds
+   * the language and declaration kind rather than pretending equally named
+   * declarations in separate documents are interchangeable.
+   */
+  export type IEndpointExpectation = string | {
+    name: string;
+    kind: ISamchonGraphNode["kind"];
+    language: ISamchonGraphNode["language"];
+    file?: string;
+  };
+
+  /** Exact source location taken from the fixture text, never current output. */
+  export type ISpanExpectation = Required<
+    Pick<
+      ISamchonGraphEvidence,
+      "startLine" | "startCol" | "endLine" | "endCol"
+    >
+  > & {
+    file?: string;
+  };
+
   export interface IReport {
     /** One sentence per violated expectation, in declaration order. */
     failures: string[];
@@ -70,10 +98,10 @@ export namespace Conformance {
   /**
    * Check one published slice against a golden expectation set.
    *
-   * Declarations are matched by display name and kind, relationships by
-   * display name alone, because a provider's ids are its own — that is the
-   * point of a semantic identity — and a harness that compared them would only
-   * ever pass for the provider it was written against.
+   * Declarations are matched by display name and kind. Relationships identify
+   * endpoints by display name, optionally qualified by kind and language,
+   * because a provider's ids are its own and a harness comparing them would
+   * only ever pass for the provider it was written against.
    */
   export function check(
     snapshot: IBulkGraphSession.ISnapshot,
@@ -85,33 +113,29 @@ export namespace Conformance {
       const key = `${node.name}\0${node.kind}`;
       byName.set(key, [...(byName.get(key) ?? []), node]);
     }
-    // Edge expectations name their endpoints by display name alone, because a
-    // provider's ids are its own — that is what a semantic identity is for, and
-    // a harness comparing them would only ever pass for the provider it was
-    // written against. The cost is that a golden fixture must not reuse a
-    // display name: two declarations sharing one would make every edge
-    // expectation ambiguous, and an ambiguous assertion passes for the wrong
-    // reason. So the fixture is held to that instead.
-    const ambiguous = new Map<string, number>();
-    for (const node of snapshot.nodes) {
-      ambiguous.set(node.name, (ambiguous.get(node.name) ?? 0) + 1);
-    }
-    for (const [name, count] of ambiguous) {
-      if (count > 1) {
-        failures.push(
-          `golden fixture reuses the display name "${name}" ${String(count)} times, so no edge expectation naming it can be unambiguous`,
-        );
+    // A bare endpoint must remain unique. A qualified endpoint allows one
+    // atomic multi-language fixture to use the same source-level names in
+    // each language without collapsing their independently proven edges.
+    const nodesOf = (
+      endpoint: IEndpointExpectation,
+    ): readonly ISamchonGraphNode[] => {
+      if (typeof endpoint === "string") {
+        return [...byName.entries()]
+          .filter(([key]) => key.slice(0, key.indexOf("\0")) === endpoint)
+          .flatMap(([, nodes]) => nodes);
       }
-    }
-
-    const idsOf = (name: string): Set<string> => {
-      const ids = new Set<string>();
-      for (const [key, nodes] of byName) {
-        if (key.slice(0, key.indexOf("\0")) !== name) continue;
-        for (const node of nodes) ids.add(node.id);
-      }
-      return ids;
+      return (
+        byName.get(`${endpoint.name}\0${endpoint.kind}`) ?? []
+      ).filter(
+        (node) =>
+          node.language === endpoint.language &&
+          (endpoint.file === undefined || node.file === endpoint.file),
+      );
     };
+    const labelOf = (endpoint: IEndpointExpectation): string =>
+      typeof endpoint === "string"
+        ? endpoint
+        : `${endpoint.name} (${endpoint.kind}, ${endpoint.language})`;
 
     for (const expectation of expectations) {
       if (expectation.node !== undefined) {
@@ -122,9 +146,14 @@ export namespace Conformance {
             (wanted.file === undefined || node.file === wanted.file),
         );
         const shouldExist = wanted.present !== false;
-        if (shouldExist && found.length === 0) {
+        const exact = found.filter(
+          (node) =>
+            wanted.evidence === undefined ||
+            spanMatches(node.evidence, wanted.evidence),
+        );
+        if (shouldExist && exact.length === 0) {
           failures.push(
-            `missing ${wanted.kind} "${wanted.name}" (${expectation.reason})`,
+            `missing ${wanted.kind} "${wanted.name}" with its exact source span (${expectation.reason})`,
           );
         } else if (!shouldExist && found.length > 0) {
           failures.push(
@@ -134,22 +163,38 @@ export namespace Conformance {
       }
       if (expectation.edge !== undefined) {
         const wanted = expectation.edge;
-        const from = idsOf(wanted.from);
-        const to = idsOf(wanted.to);
+        const fromNodes = nodesOf(wanted.from);
+        const toNodes = nodesOf(wanted.to);
+        const from = new Set(fromNodes.map((node) => node.id));
+        const to = new Set(toNodes.map((node) => node.id));
+        for (const [role, endpoint, nodes] of [
+          ["from", wanted.from, fromNodes],
+          ["to", wanted.to, toNodes],
+        ] as const) {
+          if (nodes.length > 1) {
+            const name =
+              typeof endpoint === "string" ? endpoint : endpoint.name;
+            failures.push(
+              `golden fixture reuses the display name "${name}" ${String(nodes.length)} times, so its ${role} edge endpoint is ambiguous`,
+            );
+          }
+        }
         const found = snapshot.edges.some(
           (edge) =>
             edge.kind === wanted.kind &&
             from.has(edge.from) &&
-            to.has(edge.to),
+            to.has(edge.to) &&
+            (wanted.evidence === undefined ||
+              spanMatches(edge.evidence, wanted.evidence)),
         );
         const shouldExist = wanted.present !== false;
         if (shouldExist && !found) {
           failures.push(
-            `missing ${wanted.kind} edge ${wanted.from} -> ${wanted.to} (${expectation.reason})`,
+            `missing ${wanted.kind} edge ${labelOf(wanted.from)} -> ${labelOf(wanted.to)} (${expectation.reason})`,
           );
         } else if (!shouldExist && found) {
           failures.push(
-            `published ${wanted.kind} edge ${wanted.from} -> ${wanted.to}, which must not exist (${expectation.reason})`,
+            `published ${wanted.kind} edge ${labelOf(wanted.from)} -> ${labelOf(wanted.to)}, which must not exist (${expectation.reason})`,
           );
         }
       }
@@ -170,18 +215,22 @@ export namespace Conformance {
     snapshot: IBulkGraphSession.ISnapshot,
     provider: IGraphProvider,
     languages: readonly ISamchonGraphNode["language"][],
+    root: string = process.cwd(),
   ): IReport {
     const failures: string[] = [];
     try {
-      assertGraphSnapshotContract(snapshot, provider, languages);
+      assertGraphSnapshotContract(snapshot, provider, languages, root);
     } catch (error) {
       failures.push((error as Error).message);
     }
 
     const ids = new Set<string>();
+    const endpoints = new Set<string>();
     for (const node of snapshot.nodes) {
       if (ids.has(node.id)) failures.push(`duplicate node id: ${node.id}`);
       ids.add(node.id);
+      endpoints.add(node.id);
+      if (node.file !== "") endpoints.add(node.file);
       const span = node.evidence;
       if (span === undefined) continue;
       // One-based, always. A zero encoded here reads as line 0, which no
@@ -207,10 +256,10 @@ export namespace Conformance {
     }
 
     for (const edge of snapshot.edges) {
-      if (!ids.has(edge.to)) {
+      if (!endpoints.has(edge.to)) {
         failures.push(`dangling edge endpoint: ${edge.kind} -> ${edge.to}`);
       }
-      if (!ids.has(edge.from)) {
+      if (!endpoints.has(edge.from)) {
         failures.push(`dangling edge origin: ${edge.kind} ${edge.from} ->`);
       }
     }
@@ -229,6 +278,50 @@ export namespace Conformance {
       if (provesSourceDigests && digest.checkerDigest === "") {
         failures.push(`${file} is in the manifest without a checker digest`);
       }
+    }
+    return { failures };
+  }
+
+  /**
+   * What a session owes its consumers the moment it publishes.
+   *
+   * Separate from {@link structure} because this is not a property of a
+   * snapshot's shape: a hand-built fixture is structurally valid and was never
+   * published, while a published generation is evidence, and evidence a later
+   * caller can edit is not evidence. Asking it here rather than trusting the
+   * two publication owners is what makes it a registry contract — a provider
+   * that publishes its own way owes its consumers the same guarantee.
+   */
+  export function published(snapshot: IBulkGraphSession.ISnapshot): IReport {
+    const failures: string[] = [];
+    const sealed = (value: unknown): boolean =>
+      typeof value !== "object" || value === null || Object.isFrozen(value);
+    for (const [label, value] of [
+      ["snapshot", snapshot],
+      ["language list", snapshot.languages],
+      ["node list", snapshot.nodes],
+      ["edge list", snapshot.edges],
+      ["diagnostic list", snapshot.diagnostics],
+      ["warning list", snapshot.warnings],
+      ["provenance", snapshot.provenance],
+      ["fact list", snapshot.provenance.facts],
+      ["capability list", snapshot.provenance.capabilities],
+      ["first node", snapshot.nodes[0]],
+      ["first edge", snapshot.edges[0]],
+    ] as const) {
+      if (!sealed(value)) {
+        failures.push(`published a ${label} a later caller can still edit`);
+      }
+    }
+    // Read rather than attempted: proving the writer is gone by calling it
+    // would corrupt the very snapshot under test when the check fails.
+    if (typeof (snapshot.sources as { set?: unknown }).set === "function") {
+      failures.push("published a source manifest that still has a writer");
+    }
+    for (const [file, digest] of snapshot.sources) {
+      if (Object.isFrozen(digest)) continue;
+      failures.push(`published a source digest for ${file} that can be edited`);
+      break;
     }
     return { failures };
   }
@@ -258,4 +351,18 @@ export namespace Conformance {
 
 function edgeKey(edge: ISamchonGraphEdge): string {
   return `${edge.kind}\0${edge.from}\0${edge.to}\0${edge.evidence?.startLine ?? ""}\0${edge.evidence?.startCol ?? ""}`;
+}
+
+function spanMatches(
+  actual: ISamchonGraphEvidence | undefined,
+  expected: Conformance.ISpanExpectation,
+): boolean {
+  return (
+    actual !== undefined &&
+    (expected.file === undefined || actual.file === expected.file) &&
+    actual.startLine === expected.startLine &&
+    actual.startCol === expected.startCol &&
+    actual.endLine === expected.endLine &&
+    actual.endCol === expected.endCol
+  );
 }

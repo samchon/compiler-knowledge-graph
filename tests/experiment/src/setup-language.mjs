@@ -9,9 +9,11 @@ import {
   appendGithubPath,
   ensureDir,
   parseArgs,
+  recordTool,
   repositoryRoot,
   run,
   shell,
+  resetToolManifest,
   workRoot,
 } from "./process.mjs";
 
@@ -21,6 +23,12 @@ const toolsRoot = path.join(workRoot, "tools");
 const binRoot = path.join(toolsRoot, "bin");
 ensureDir(binRoot);
 appendGithubPath(binRoot);
+resetToolManifest(experiment.language);
+
+// Every tool this lane resolves is recorded so the published result names the
+// build that produced it. `digest: "unpinned"` is a truthful entry, not a
+// placeholder: a mutable channel is what the reader has to know about.
+const record = (tool) => recordTool(experiment.language, tool);
 
 const apt = (packages) => {
   shell("sudo apt-get update");
@@ -31,7 +39,7 @@ const apt = (packages) => {
 // to a CDN host, so follow redirects instead of treating them as failures.
 const openStream = (url, redirects = 0, headers = {}) =>
   new Promise((resolve, reject) => {
-    https
+    const request = https
       .get(url, { headers: { "User-Agent": "samchon-graph-experiment", ...headers } }, (response) => {
         const status = response.statusCode ?? 0;
         if (status >= 300 && status < 400 && response.headers.location) {
@@ -44,39 +52,99 @@ const openStream = (url, redirects = 0, headers = {}) =>
           return;
         }
         if (status !== 200) {
-          reject(new Error(`${url} returned ${status}`));
+          reject(Object.assign(new Error(`${url} returned ${status}`), { status }));
           response.resume();
           return;
         }
         resolve(response);
       })
       .on("error", reject);
+    // A socket that opens and then goes silent settles nothing — no status, no
+    // error, no end — and would hang the lane until the job timeout. This is an
+    // idle bound, not a duration cap: an archive that keeps making progress
+    // never trips it, while a stall gets the same bounded retry as a refusal.
+    request.setTimeout(STALL_TIMEOUT_MS, () => {
+      request.destroy(
+        new Error(`${url} stalled for ${STALL_TIMEOUT_MS / 1000}s`),
+      );
+    });
   });
 
-const downloadJson = async (url, headers = {}) => {
-  const response = await openStream(url, 0, headers);
-  const chunks = [];
-  return await new Promise((resolve, reject) => {
-    response.on("data", (chunk) => chunks.push(chunk));
-    response.on("end", () => resolve(JSON.parse(Buffer.concat(chunks).toString("utf8"))));
-    response.on("error", reject);
-  });
+// One transient 5xx or dropped socket from a release CDN or mirror currently
+// fails the whole language lane and with it the experiment matrix, so retry the
+// complete download a bounded number of times with backoff. A 4xx answer is
+// authoritative — the asset is missing or the request is wrong — and fails fast.
+const RETRY_DELAYS_MS = [2000, 5000, 15000];
+const STALL_TIMEOUT_MS = 60000;
+
+const withRetries = async (operation) => {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await operation();
+    } catch (error) {
+      const transient = error.status === undefined || error.status >= 500;
+      if (transient === false || attempt >= RETRY_DELAYS_MS.length) throw error;
+      const delay = RETRY_DELAYS_MS[attempt];
+      console.warn(`${error.message} — retrying in ${delay / 1000}s.`);
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
+  }
 };
 
-const downloadFile = async (url, file) => {
-  const response = await openStream(url);
-  await new Promise((resolve, reject) => {
-    const write = fs.createWriteStream(file);
-    response.pipe(write);
-    write.on("finish", () => write.close(resolve));
-    write.on("error", reject);
+const downloadJson = async (url, headers = {}) =>
+  await withRetries(async () => {
+    const response = await openStream(url, 0, headers);
+    const chunks = [];
+    return await new Promise((resolve, reject) => {
+      response.on("data", (chunk) => chunks.push(chunk));
+      response.on("end", () => {
+        // A `JSON.parse` throw inside this listener would escape the promise
+        // as an uncaught exception — one malformed 200 body would crash the
+        // lane instead of getting the retry every other bad answer gets.
+        try {
+          resolve(JSON.parse(Buffer.concat(chunks).toString("utf8")));
+        } catch (error) {
+          reject(error);
+        }
+      });
+      response.on("error", reject);
+    });
   });
-};
+
+const downloadFile = async (url, file) =>
+  await withRetries(async () => {
+    const response = await openStream(url);
+    await new Promise((resolve, reject) => {
+      const write = fs.createWriteStream(file);
+      // A failed attempt still releases its half: the write stream on a dead
+      // response, and the response on a dead write — otherwise a retried
+      // download keeps the failed file open and a dead file keeps downloading.
+      response.on("error", (error) => {
+        write.destroy();
+        reject(error);
+      });
+      response.pipe(write);
+      write.on("finish", () => write.close(resolve));
+      write.on("error", (error) => {
+        response.destroy();
+        reject(error);
+      });
+    });
+  });
 
 const verifySha256 = (file, expected) => {
   const actual = createHash("sha256").update(fs.readFileSync(file)).digest("hex");
   if (actual !== expected) {
     throw new Error(`${file} has SHA-256 ${actual}, expected ${expected}`);
+  }
+};
+
+const verifySha512 = (file, expected) => {
+  const actual = createHash("sha512")
+    .update(fs.readFileSync(file))
+    .digest("base64");
+  if (actual !== expected) {
+    throw new Error(`${file} has an unexpected SHA-512 digest`);
   }
 };
 
@@ -102,6 +170,12 @@ const installKotlinLanguageServer = async () => {
   fs.rmSync(target, { force: true, recursive: true });
   ensureDir(target);
   run("unzip", ["-q", archive, "-d", target]);
+  record({
+    tool: "kotlin-language-server",
+    version: "unpinned",
+    source: url,
+    digest: "unpinned",
+  });
   const launcher = path.join(target, "server", "bin", "kotlin-language-server");
   const link = path.join(binRoot, "kotlin-language-server");
   fs.rmSync(link, { force: true });
@@ -118,6 +192,7 @@ const installZls = async () => {
   // Recent zls tarballs extract the `zls` binary at the archive root, so no
   // `--strip-components`; locate the binary wherever it lands.
   run("tar", ["-xf", archive, "-C", target]);
+  record({ tool: "zls", version: "unpinned", source: url, digest: "unpinned" });
   const binary = findFile(target, "zls");
   if (binary === undefined) throw new Error("zls binary not found after extraction");
   fs.chmodSync(binary, 0o755);
@@ -137,6 +212,14 @@ const installScip = async () => {
     archive,
     "7bb1a566787478641a13bd9c93c2f571337556c76d659206f2225dc7d71a648b",
   );
+  record({
+    tool: "scip",
+    version: "v0.7.1",
+    source:
+      "https://github.com/scip-code/scip/releases/download/v0.7.1/scip-linux-amd64.tar.gz",
+    digest:
+      "sha256:7bb1a566787478641a13bd9c93c2f571337556c76d659206f2225dc7d71a648b",
+  });
   fs.rmSync(target, { force: true, recursive: true });
   ensureDir(target);
   run("tar", ["-xzf", archive, "-C", target]);
@@ -148,6 +231,48 @@ const installScip = async () => {
   const link = path.join(binRoot, "scip");
   fs.rmSync(link, { force: true });
   fs.symlinkSync(binary, link);
+};
+
+// The published tarball is a webpack bundle whose only runtime `require`s are
+// Node built-ins, so extracting the integrity-verified archive installs exactly
+// the bytes the digest covers. `npm install` would instead resolve the package's
+// eight caret-ranged dependencies against the live registry on every setup —
+// a closure no digest pins and that this tool never loads.
+const installScipPython = async () => {
+  const archive = path.join(toolsRoot, "scip-python-0.6.6.tgz");
+  const target = path.join(toolsRoot, "scip-python-0.6.6");
+  await downloadFile(
+    "https://registry.npmjs.org/@sourcegraph/scip-python/-/scip-python-0.6.6.tgz",
+    archive,
+  );
+  verifySha512(
+    archive,
+    "qoKL1Rggg0o5newAFbCFAKlS0AjWxG5MA+mC28BtgxOv0DhO4zdL8u7151FxEppDpXMVvm7+yXSjXotoVH9cMQ==",
+  );
+  record({
+    tool: "scip-python",
+    version: "0.6.6",
+    source:
+      "https://registry.npmjs.org/@sourcegraph/scip-python/-/scip-python-0.6.6.tgz",
+    digest:
+      "sha512:qoKL1Rggg0o5newAFbCFAKlS0AjWxG5MA+mC28BtgxOv0DhO4zdL8u7151FxEppDpXMVvm7+yXSjXotoVH9cMQ==",
+  });
+  fs.rmSync(target, { force: true, recursive: true });
+  ensureDir(target);
+  run("tar", ["-xzf", archive, "-C", target, "--strip-components", "1"]);
+  const launcher = path.join(target, "index.js");
+  if (!fs.existsSync(launcher)) {
+    throw new Error("scip-python launcher not found after extraction");
+  }
+  fs.chmodSync(launcher, 0o755);
+  const link = path.join(binRoot, "scip-python");
+  fs.rmSync(link, { force: true });
+  fs.symlinkSync(launcher, link);
+  // Extracting rather than installing rests on the bundle needing nothing but
+  // Node built-ins. Run it once here, where a missing module is one clear
+  // failure, instead of leaving it to surface as an unavailable provider that
+  // silently degrades the configuration fingerprint.
+  run(link, ["--version"]);
 };
 
 const findFile = (dir, name) => {
@@ -188,6 +313,14 @@ switch (experiment.language) {
       throw new Error("scip-go binary not found after extraction");
     }
     fs.chmodSync(scipGo, 0o755);
+    record({
+      tool: "scip-go",
+      version: "v0.2.7",
+      source:
+        "https://github.com/scip-code/scip-go/releases/download/v0.2.7/scip-go-linux-amd64.tar.gz",
+      digest:
+        "sha256:5bfe39016ca04f5b3b1cce41d1b63ea120a7d7e93b55407bfb17a6b02d18135a",
+    });
     const scipLink = path.join(binRoot, "scip-go");
     fs.rmSync(scipLink, { force: true });
     fs.symlinkSync(scipGo, scipLink);
@@ -196,17 +329,40 @@ switch (experiment.language) {
       ["build", "-trimpath", "-o", path.join(binRoot, "samchon-graph-go"), "."],
       { cwd: path.join(repositoryRoot, "sidecars", "go") },
     );
+    record({
+      tool: "samchon-graph-go",
+      version: "workspace",
+      source: "sidecars/go",
+      digest: "built-from-source",
+    });
     break;
   }
   case "rust":
-    shell("curl https://sh.rustup.rs -sSf | sh -s -- -y --profile minimal");
+    // The installer script comes through the same hardened seam as every
+    // other fetch. Piping curl into `sh` would be the one shape curl's own
+    // manual tells us not to retry: a retried mid-body transfer is not
+    // rewound in a pipe, so `sh` could read the partial prefix twice.
+    await downloadFile("https://sh.rustup.rs", path.join(toolsRoot, "rustup-init.sh"));
+    shell(`sh "${path.join(toolsRoot, "rustup-init.sh")}" -y --profile minimal`);
     appendGithubPath(path.join(os.homedir(), ".cargo", "bin"));
     shell(`${path.join(os.homedir(), ".cargo", "bin", "rustup")} component add rust-analyzer`);
+    record({
+      tool: "rust-analyzer",
+      version: "unpinned",
+      source: "rustup component add rust-analyzer",
+      digest: "unpinned",
+    });
     await installScip();
     break;
   case "cpp":
   case "c":
     apt(["clangd"]);
+    record({
+      tool: "clangd",
+      version: "unpinned",
+      source: "apt clangd",
+      digest: "unpinned",
+    });
     break;
   case "java": {
     // jdtls is not an apt package and requires Java 21+; install the JDK and the
@@ -231,6 +387,13 @@ switch (experiment.language) {
     ensureDir(target);
     run("tar", ["-xzf", archive, "-C", target]);
     appendGithubPath(path.join(target, "bin"));
+    record({
+      tool: "jdtls",
+      version: "unpinned",
+      source:
+        "https://download.eclipse.org/jdtls/snapshots/jdt-language-server-latest.tar.gz",
+      digest: "unpinned",
+    });
     break;
   }
   case "csharp": {
@@ -239,11 +402,24 @@ switch (experiment.language) {
     // the pinned Serilog fixture asks Roslyn to load.
     const dotnetHome = path.join(os.homedir(), ".dotnet");
     const dotnet = path.join(dotnetHome, "dotnet");
-    shell("curl -fsSL https://dot.net/v1/dotnet-install.sh -o /tmp/dotnet-install.sh");
-    shell("bash /tmp/dotnet-install.sh --channel 10.0");
+    const dotnetInstaller = path.join(toolsRoot, "dotnet-install.sh");
+    await downloadFile("https://dot.net/v1/dotnet-install.sh", dotnetInstaller);
+    shell(`bash "${dotnetInstaller}" --channel 10.0`);
     appendGithubPath(dotnetHome);
     appendGithubPath(path.join(dotnetHome, "tools"));
     shell(`"${dotnet}" tool install --global csharp-ls --version 0.26.0 || "${dotnet}" tool update --global csharp-ls --version 0.26.0`);
+    record({
+      tool: "dotnet-sdk",
+      version: "channel 10.0",
+      source: "https://dot.net/v1/dotnet-install.sh",
+      digest: "unpinned",
+    });
+    record({
+      tool: "csharp-ls",
+      version: "0.26.0",
+      source: "dotnet tool install --global csharp-ls",
+      digest: "unpinned",
+    });
     break;
   }
   case "kotlin":
@@ -254,6 +430,12 @@ switch (experiment.language) {
     // Swift step. It has no `--version` flag (that exits 64), so just confirm it
     // resolves on PATH.
     shell("command -v sourcekit-lsp");
+    record({
+      tool: "sourcekit-lsp",
+      version: "unpinned",
+      source: "swift toolchain installed by the workflow",
+      digest: "unpinned",
+    });
     break;
   case "scala":
     apt(["openjdk-17-jdk", "gzip"]);
@@ -262,20 +444,48 @@ switch (experiment.language) {
     shell(`chmod +x "${path.join(binRoot, "cs")}"`);
     run(path.join(binRoot, "cs"), ["install", "metals"]);
     appendGithubPath(path.join(os.homedir(), ".local", "share", "coursier", "bin"));
+    record({
+      tool: "metals",
+      version: "unpinned",
+      source: "coursier install metals",
+      digest: "unpinned",
+    });
     break;
   case "zig":
     await installZls();
     break;
   case "python":
-    shell("npm install -g pyright");
+    await installScipPython();
+    await installScip();
+    // The interpreter decides what the index means and now decides the
+    // provider's published `compilerVersion`, so the result has to name the one
+    // this run used rather than leave it to the runner image.
+    record({
+      tool: "python3",
+      version: "unpinned",
+      source: "ubuntu-latest runner image",
+      digest: "unpinned",
+    });
     break;
   case "ruby":
     // The runner ships ruby but not bundler, which both the fixture's
     // `bundle install` prepare step and ruby-lsp's composed bundle need.
     shell("sudo gem install bundler ruby-lsp");
+    record({
+      tool: "ruby-lsp",
+      version: "unpinned",
+      source: "gem install ruby-lsp",
+      digest: "unpinned",
+    });
     break;
   case "php":
     shell("npm install -g intelephense");
+    record({
+      tool: "intelephense",
+      version: "unpinned",
+      source: "npm install -g intelephense",
+      digest: "unpinned",
+    });
     break;
   case "lua": {
     const url = await latestAsset("LuaLS/lua-language-server", /linux-x64\.tar\.gz$/);
@@ -286,6 +496,12 @@ switch (experiment.language) {
     ensureDir(target);
     run("tar", ["-xzf", archive, "-C", target]);
     appendGithubPath(path.join(target, "bin"));
+    record({
+      tool: "lua-language-server",
+      version: "unpinned",
+      source: url,
+      digest: "unpinned",
+    });
     break;
   }
   case "dart": {
@@ -299,6 +515,13 @@ switch (experiment.language) {
     ensureDir(target);
     run("unzip", ["-q", archive, "-d", target]);
     appendGithubPath(path.join(target, "dart-sdk", "bin"));
+    record({
+      tool: "dart-sdk",
+      version: "unpinned",
+      source:
+        "https://storage.googleapis.com/dart-archive/channels/stable/release/latest/sdk/dartsdk-linux-x64-release.zip",
+      digest: "unpinned",
+    });
     break;
   }
   default:

@@ -6,6 +6,8 @@ import path from "node:path";
 
 import { GraphLanguage } from "../typings";
 import { confinedProjectInput } from "../indexer/confinedProjectInput";
+import { freezeDeep } from "../utils/freezeDeep";
+import { sealedMap } from "../utils/sealedMap";
 import { ownedProcess } from "../utils/ownedProcess";
 import { spawnableCommand } from "../utils/spawnableCommand";
 import { IBulkGraphSession } from "./IBulkGraphSession";
@@ -80,7 +82,15 @@ export class BatchGraphSession implements IBulkGraphSession {
       try {
         this.assertOpen();
         throwIfAborted(signal, this.options.provider);
-        const universe = this.fingerprint();
+        // Read once and carried through this refresh. A configuration row is
+        // a toolchain version, and deriving one spawns the tool: asking again
+        // after the build made the freshness check depend on a second process
+        // launch succeeding identically, so a transient spawn failure looked
+        // exactly like a project that changed underneath the indexer. What that
+        // check exists to catch is a source or build file edited while the
+        // producer was running, and re-reading the files still catches it.
+        const configuration = [...(this.options.configuration?.() ?? [])];
+        const universe = this.fingerprint(configuration);
         if (universe === this.universe && this.snapshot !== undefined) {
           return {
             changed: false,
@@ -89,7 +99,7 @@ export class BatchGraphSession implements IBulkGraphSession {
             snapshot: this.snapshot,
           };
         }
-        const next = await this.build(universe, signal);
+        const next = await this.build(universe, configuration, signal);
         this.assertOpen();
         this.snapshot = next;
         this.universe = universe;
@@ -136,6 +146,7 @@ export class BatchGraphSession implements IBulkGraphSession {
 
   private async build(
     universe: string,
+    configuration: readonly string[],
     signal: AbortSignal | undefined,
   ): Promise<IBulkGraphSession.ISnapshot> {
     const output = fs.mkdtempSync(
@@ -159,25 +170,36 @@ export class BatchGraphSession implements IBulkGraphSession {
         signal,
         run: (command, args) => this.run(command, args, signal),
       });
-      this.options.validate?.(snapshot);
-      const after = this.fingerprint();
+      // Sealed before the gate rather than after it. A validator is a gate, not
+      // a transform, and one that kept the reference could append an unclaimed
+      // edge once `refresh` had published the generation — invalidating
+      // `current` behind a contract check that already passed.
+      // A fresh envelope rather than an assignment into what `load` returned:
+      // a producer is entitled to hand back an already-frozen snapshot, and
+      // writing `sources` into it would fail with a message naming neither the
+      // provider nor the field. The published object is this one from here on,
+      // so a reference the producer kept cannot reach the generation either.
+      const subject = `the ${this.options.provider} snapshot`;
+      const sources = sealedMap(snapshot.sources, subject);
+      const published: IBulkGraphSession.ISnapshot = { ...snapshot, sources };
+      freezeDeep(published, subject);
+      this.options.validate?.(published);
+      const after = this.fingerprint(configuration);
       if (after !== universe) {
         throw new Error(
           `${this.options.provider}: project inputs changed while its artifact ` +
             "was being built, so that artifact cannot be published",
         );
       }
-      return snapshot;
+      return published;
     } finally {
       fs.rmSync(output, { recursive: true, force: true });
     }
   }
 
-  private fingerprint(): string {
+  private fingerprint(configuration: readonly string[]): string {
     const hash = createHash("sha256");
-    for (const value of [
-      ...(this.options.configuration?.() ?? []),
-    ].sort(compareOrdinalPath)) {
+    for (const value of [...configuration].sort(compareOrdinalPath)) {
       frame(hash, "configuration", Buffer.from(value, "utf8"));
     }
     for (const file of [...this.options.inputs()].sort(compareOrdinalPath)) {

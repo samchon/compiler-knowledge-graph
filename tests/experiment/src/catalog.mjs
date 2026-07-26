@@ -11,9 +11,12 @@ export const LANGUAGE_EXPERIMENTS = [
     repository: "https://github.com/nestjs/typescript-starter.git",
     commit: "c4d9330f5513eda0fb5df594f6b34a11fde1a934",
     strictProvider: "ttscgraph",
+    strictAuthority: "compiler",
+    strictTool: "ttscgraph",
     // The pinned starter has no construction expression. The lifecycle below
     // creates one and checks the real ttscgraph generation that contains it.
     semanticEdges: ["calls", "type_ref"],
+    crossFileEdge: "calls",
     requiredCapabilities: [
       "universe",
       "sourceDigests",
@@ -44,6 +47,9 @@ export const LANGUAGE_EXPERIMENTS = [
     repository: "https://github.com/gorilla/mux.git",
     commit: "db9d1d0073d27a0a2d9a8c1bc52aa0af4374d265",
     strictProvider: "samchon-graph-go",
+    strictAuthority: "compiler",
+    strictTool: "samchon-graph-go",
+    crossFileEdge: "calls",
     requiredCapabilities: ["universe", "sourceDigests", "fullRebuild"],
     semanticEdges: [
       "imports",
@@ -167,9 +173,42 @@ export const LANGUAGE_EXPERIMENTS = [
     language: "python",
     repository: "https://github.com/pallets/click.git",
     commit: "cfa01eeb7894a408af70b29d28c0b24f8680f9fb",
-    maxFiles: 120,
-    minNodes: 1,
-    minEdges: 0,
+    strictProvider: "scip-python",
+    strictAuthority: "semantic-index",
+    strictTool: "scip-python",
+    requiredCapabilities: ["universe", "diskDigests"],
+    // The common adapter derives `contains` from SCIP `enclosing_symbol`, and
+    // scip-python 0.6.6 never populates it: all ten `SymbolInformation`
+    // construction sites in the pinned bundle pass `symbol`, `documentation`,
+    // and `relationships` only, and the field appears nowhere but the generated
+    // protobuf accessors. Expecting the family here would assert a fact the
+    // producer cannot emit, so the row claims what it proves and states the gap.
+    semanticEdges: ["references"],
+    semanticLimitation:
+      "scip-python 0.6.6 emits no SymbolInformation.enclosing_symbol, so symbol containment cannot be proven from its index and `contains` is omitted rather than inferred",
+    crossFileEdge: "references",
+    lifecycle: {
+      sourceFile: "src/click/core.py",
+      editSuffix: "\n# samchon-graph lifecycle edit\n",
+      createFile: "src/click/samchon_graph_experiment.py",
+      renamedFile: "src/click/samchon_graph_experiment_renamed.py",
+      createText:
+        'def samchonGraphExperiment() -> str:\n    return "strict-lifecycle"\n',
+      createdSymbol: "samchonGraphExperiment",
+      buildFile: "pyproject.toml",
+      failureFile: "pyproject.toml",
+      failureSuffix: "\n[malformed",
+      // scip-python 0.6.6 reads `pyproject.toml` through Pyright's
+      // `_attemptParseFile`, which retries the parse six times, logs
+      // `Config file "..." could not be parsed`, and returns `undefined`.
+      // Configuration then falls through to defaults and the index is written
+      // and published with exit code 0. The bundle constructs no SCIP
+      // `Diagnostic` either, so neither `reject` nor `diagnostic` describes
+      // this producer; claiming one would pin the harness to a fiction.
+      failurePolicy: "tolerated",
+      failureLimitation:
+        "scip-python 0.6.6 recovers from a malformed pyproject.toml and publishes an index; a broken Python build configuration is not a fail-closed boundary for this producer",
+    },
   },
   {
     language: "ruby",

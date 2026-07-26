@@ -4,27 +4,63 @@ import path from "node:path";
 import { buildGraphDump } from "@samchon/graph";
 
 import { findExperiment } from "./catalog.mjs";
-import { cloneRepository, ensureDir, parseArgs, resultsRoot, shell } from "./process.mjs";
+import {
+  assertPinnedCorpus,
+  cloneRepository,
+  ensureDir,
+  isolateCorpus,
+  parseArgs,
+  resultsRoot,
+  shell,
+  toolManifest,
+} from "./process.mjs";
 import { runStrictLifecycle } from "./strict-lifecycle.mjs";
 
 const args = parseArgs(process.argv.slice(2));
 const experiment = findExperiment(args.language);
-const cwd = cloneRepository(experiment, { refresh: args.refresh === "true" });
+const pinned = cloneRepository(experiment, { refresh: args.refresh === "true" });
 // Some language servers need the checkout prepared before they can boot —
-// ruby-lsp, for one, composes a bundle from the project's Gemfile.
+// ruby-lsp, for one, composes a bundle from the project's Gemfile. That runs in
+// a copy for both lanes, so the clone keeps proving which revision was measured.
 const strict = experiment.strictProvider !== undefined;
+
+// Read before anything is indexed: a row that cannot be satisfied should
+// fail in seconds rather than after a full real-server build.
+//
+// A default here would let a row inherit a claim it never made. "The compiler
+// resolved this" and "an index built from a navigation skeleton reports this"
+// are different grades of evidence, and a row that does not say which one it
+// expects cannot detect a provider that silently changed grade.
+if (strict) {
+  for (const field of [
+    "strictAuthority",
+    "strictTool",
+    "requiredCapabilities",
+    "semanticEdges",
+    "crossFileEdge",
+  ]) {
+    if (experiment[field] === undefined) {
+      throw new Error(
+        `${experiment.language}: a strict row must state its expected ${field}`,
+      );
+    }
+  }
+}
 let dump;
 let elapsedMs;
 let lifecycle;
+let cwd;
 if (strict) {
-  lifecycle = await runStrictLifecycle(experiment, cwd);
+  lifecycle = await runStrictLifecycle(experiment, pinned);
   dump = lifecycle.dump;
+  cwd = lifecycle.project;
   const cold = lifecycle.rows.find((row) => row.name === "cold");
   if (cold === undefined) {
     throw new Error(`${experiment.language}: strict lifecycle omitted cold row`);
   }
   elapsedMs = cold.elapsedMs;
 } else {
+  cwd = isolateCorpus(experiment, pinned, "prepared");
   if (experiment.prepare !== undefined) shell(experiment.prepare, { cwd });
   const started = performance.now();
   dump = await buildGraphDump({
@@ -64,12 +100,15 @@ if (strict && provenance === undefined) {
 }
 if (
   provenance !== undefined &&
-  (provenance.authority !== (experiment.strictAuthority ?? "compiler") ||
-    provenance.producer.tool !==
-      (experiment.strictTool ?? experiment.strictProvider) ||
+  (provenance.authority !== experiment.strictAuthority ||
+    provenance.producer.tool !== experiment.strictTool ||
     provenance.producer.version === "" ||
     provenance.producer.compiler === "" ||
-    (experiment.requiredCapabilities ?? []).some(
+    // A resolved-but-absent tool answers the shape of the question and not the
+    // question, and a row that accepted it would go green on a provenance
+    // saying nothing about which runtime resolved its facts.
+    provenance.producer.compiler.endsWith("=unavailable") ||
+    experiment.requiredCapabilities.some(
       (capability) => !provenance.capabilities.includes(capability),
     ))
 ) {
@@ -92,6 +131,20 @@ for (const kind of experiment.semanticEdges ?? []) {
     );
   }
 }
+// The negative twin of the list above. Requiring the declared families proves
+// the provider found what it claims; this proves it published nothing else —
+// so a family it cannot prove stays absent instead of arriving relabelled from
+// a generic or static lane that quietly served the same language.
+if (provenance !== undefined) {
+  const undeclared = Object.keys(edgeKindCounts).filter(
+    (kind) => !provenance.facts.includes(kind),
+  );
+  if (undeclared.length > 0) {
+    throw new Error(
+      `${experiment.language}: the published graph carries ${undeclared.join(", ")} edges although ${provenance.provider} is registered to prove only ${provenance.facts.join(", ")}`,
+    );
+  }
+}
 const nodeFiles = new Map(dump.nodes.map((node) => [node.id, node.file]));
 const crossFileEdge = experiment.crossFileEdge ?? "calls";
 const crossFileCalls = dump.edges.filter(
@@ -108,6 +161,14 @@ const crossFileRelationships = dump.edges.filter(
     nodeFiles.get(edge.to) !== undefined &&
     nodeFiles.get(edge.from) !== nodeFiles.get(edge.to),
 ).length;
+// Naming a family the provider is not registered to prove would make this row
+// unsatisfiable for a correct provider, which is the failure that produced the
+// `calls` default it replaces.
+if (provenance !== undefined && !provenance.facts.includes(crossFileEdge)) {
+  throw new Error(
+    `${experiment.language}: the row expects cross-file ${crossFileEdge} relationships although ${provenance.provider} is registered to prove only ${provenance.facts.join(", ")}`,
+  );
+}
 if (strict && crossFileRelationships === 0) {
   throw new Error(
     `${experiment.language}: strict corpus produced no cross-file ${crossFileEdge} relationship`,
@@ -118,12 +179,19 @@ if (warnings.some((warning) => /LSP indexing failed|LSP returned no symbols|serv
   throw new Error(`${experiment.language}: LSP warning failed experiment: ${warnings.join("; ")}`);
 }
 
+// Read after the whole run rather than before it: what has to be proved is that
+// nothing this run did — preparation, indexing, or lifecycle editing — reached
+// the clone whose commit the result publishes.
+assertPinnedCorpus(experiment, pinned);
+
 ensureDir(resultsRoot);
 const result = {
   language: experiment.language,
   repository: experiment.repository,
   commit: experiment.commit,
-  corpus: cwd,
+  corpus: pinned,
+  preparedCorpus: cwd,
+  tools: toolManifest(experiment.language),
   project: dump.project,
   lifecycleProject: lifecycle?.project,
   indexer: dump.indexer,
@@ -134,6 +202,7 @@ const result = {
   strictProvider: experiment.strictProvider,
   provenance,
   edgeKindCounts,
+  semanticLimitation: experiment.semanticLimitation,
   crossFileCalls,
   crossFileRelationships,
   lifecycle: lifecycle?.rows,

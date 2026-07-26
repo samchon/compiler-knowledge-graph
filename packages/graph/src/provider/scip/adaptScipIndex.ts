@@ -193,12 +193,28 @@ export function adaptScipIndex(
   // first. The language a reference *appears in* is a fact the index does
   // state, so each external leaf is created when its first occurrence names
   // it, and inherits that document's language.
+  //
+  // A document-scoped symbol is never a candidate. `local 4` is a counter the
+  // indexer resets per document, so outside the document that defines it the
+  // string names nothing: two files each holding a `local 4` are unrelated
+  // declarations, and there is no document to scope an external leaf to. A
+  // producer that lists one here has told this graph less than it needs, and
+  // materializing the leaf anyway would invent an endpoint the index never
+  // proved — so the reference is dropped and the omission is reported.
   const pendingExternals = new Map<string, IScipIndex.ISymbolInformation>();
   for (const symbol of props.index.externalSymbols ?? []) {
     const parsed = scipSymbol(symbol.symbol);
     if (parsed === undefined || definitions.has(parsed.key)) continue;
+    if (parsed.stability === "generation") continue;
     pendingExternals.set(parsed.key, symbol);
   }
+  // Counted where a reference is actually lost, not where a symbol is listed:
+  // a local that its own document declares resolves normally, and saying it had
+  // no defining document would be false. The message says only what this walk
+  // observed — the index did not resolve it — because a local can also go
+  // unresolved through a dropped declaration above, and naming a cause this
+  // counter cannot distinguish would be the same kind of falsehood.
+  let unscopedLocalReferences = 0;
 
   const externalize = (
     key: string,
@@ -320,7 +336,10 @@ export function adaptScipIndex(
       const target =
         resolve(definitions, parsed, file) ??
         externalize(parsed.key, language);
-      if (target === undefined) continue;
+      if (target === undefined) {
+        if (parsed.stability === "generation") unscopedLocalReferences += 1;
+        continue;
+      }
       const owner = scopes.find((scope) => contains(scope.range, occurrence.range));
       if (owner === undefined) continue;
       if (owner.id === target.id) continue;
@@ -414,6 +433,11 @@ export function adaptScipIndex(
   if (derivedKinds > 0) {
     warnings.push(
       `${props.provider}: ${String(derivedKinds)} node kind(s) were derived from generic SCIP descriptor suffixes because the producer supplied no mapped SymbolInformation.kind; language enrichment is required for a more specific kind`,
+    );
+  }
+  if (unscopedLocalReferences > 0) {
+    warnings.push(
+      `${props.provider}: ${String(unscopedLocalReferences)} reference(s) named a document-scoped local this index does not resolve, so they are omitted rather than attached to an invented declaration`,
     );
   }
 

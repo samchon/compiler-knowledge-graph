@@ -64,6 +64,77 @@ export const localBin = (name) => {
   return found;
 };
 
+const manifestFile = (language) =>
+  path.join(workRoot, "tools", `manifest-${language}.json`);
+
+/**
+ * Append one resolved tool to this language's setup manifest.
+ *
+ * A result that reports which corpus it read but not which build of which
+ * indexer read it cannot be reproduced or compared across runs. `digest` is
+ * `"unpinned"` when the install came from a mutable channel, so the gap is
+ * published rather than left for a reader to assume closed.
+ */
+export const recordTool = (language, tool) => {
+  const file = manifestFile(language);
+  ensureDir(path.dirname(file));
+  const tools = fs.existsSync(file)
+    ? JSON.parse(fs.readFileSync(file, "utf8"))
+    : [];
+  fs.writeFileSync(file, `${JSON.stringify([...tools, tool], null, 2)}\n`);
+};
+
+/** Start one language's manifest empty so a rerun never inherits a stale row. */
+export const resetToolManifest = (language) => {
+  fs.rmSync(manifestFile(language), { force: true });
+};
+
+/** Every tool this language's setup resolved, or nothing when it ran none. */
+export const toolManifest = (language) => {
+  const file = manifestFile(language);
+  if (!fs.existsSync(file)) return [];
+  return JSON.parse(fs.readFileSync(file, "utf8"));
+};
+
+/**
+ * Copy one pinned clone into a workspace that preparation is allowed to change.
+ *
+ * A package manager run inside the clone itself writes locks, caches, generated
+ * files, and build state, and the result still reports the pristine commit it no
+ * longer has. Both lanes therefore prepare a copy: the clone exists only to
+ * carry the commit, and `.git` is left behind so nothing can rewrite it.
+ */
+export const isolateCorpus = (experiment, pinnedRoot, label) => {
+  const root = path.join(workRoot, label, experiment.language);
+  fs.rmSync(root, { force: true, recursive: true });
+  ensureDir(path.dirname(root));
+  fs.cpSync(pinnedRoot, root, {
+    recursive: true,
+    filter: (source) => path.basename(source) !== ".git",
+  });
+  return root;
+};
+
+/** Prove the pinned clone is still exactly the revision the result names. */
+export const assertPinnedCorpus = (experiment, pinnedRoot) => {
+  const read = (args) =>
+    String(run("git", args, { cwd: pinnedRoot, stdio: "pipe" }).stdout);
+  const head = read(["rev-parse", "HEAD"]).trim();
+  if (head !== experiment.commit) {
+    throw new Error(
+      `${experiment.language}: the corpus clone is at ${head}, not the pinned ${experiment.commit}`,
+    );
+  }
+  // `--ignored` as well, because build output a run leaves behind is exactly
+  // what a `.gitignore` hides from an ordinary status.
+  const dirty = read(["status", "--porcelain", "--ignored"]).trim();
+  if (dirty !== "") {
+    throw new Error(
+      `${experiment.language}: this run modified the pinned corpus clone:\n${dirty}`,
+    );
+  }
+};
+
 export const cloneRepository = (experiment, options = {}) => {
   ensureDir(workRoot);
   const dir = path.join(workRoot, experiment.language);

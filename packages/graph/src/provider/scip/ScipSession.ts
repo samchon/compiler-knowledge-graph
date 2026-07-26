@@ -5,10 +5,12 @@ import { pathToFileURL } from "node:url";
 
 import { GraphLanguage, GraphProviderAuthority } from "../../typings";
 import { fileFromUri } from "../../utils/fileFromUri";
+import { assertGraphSnapshotContract } from "../assertGraphSnapshotContract";
 import { BatchGraphSession } from "../BatchGraphSession";
 import { IBulkGraphSession } from "../IBulkGraphSession";
 import { IGraphProvider } from "../IGraphProvider";
 import { adaptScipIndex } from "./adaptScipIndex";
+import { ScipEnrichment } from "./ScipEnrichment";
 import { IScipIndex } from "./IScipIndex";
 import { parseScipIndex } from "./parseScipIndex";
 
@@ -31,33 +33,56 @@ export class ScipSession implements IBulkGraphSession {
   private readonly batch: BatchGraphSession;
 
   public constructor(options: ScipSession.IOptions) {
+    const enrichment =
+      options.enrichment === undefined
+        ? undefined
+        : ScipEnrichment.slice(options.enrichment, options.languages);
+    this.options = {
+      ...options,
+      languages: [...options.languages],
+      ...(enrichment === undefined ? {} : { enrichment }),
+    };
+    const configured = this.options;
     const maxArtifactBytes =
-      options.maxArtifactBytes ?? DEFAULT_MAX_ARTIFACT_BYTES;
+      configured.maxArtifactBytes ?? DEFAULT_MAX_ARTIFACT_BYTES;
     if (!Number.isSafeInteger(maxArtifactBytes) || maxArtifactBytes < 1) {
       throw new TypeError(
-        `${options.provider}: maxArtifactBytes must be a positive safe integer`,
+        `${configured.provider}: maxArtifactBytes must be a positive safe integer`,
       );
     }
-    this.options = options;
+    const facts = [
+      ...adaptScipIndex.EDGE_KINDS,
+      ...(configured.enrichment?.facts ?? []),
+    ];
     this.maxArtifactBytes = maxArtifactBytes;
     this.batch = new BatchGraphSession({
-      root: options.root,
-      languages: options.languages,
-      provider: options.provider,
-      command: options.command,
+      root: configured.root,
+      languages: configured.languages,
+      provider: configured.provider,
+      command: configured.command,
       artifactName: "index.scip",
-      indexArgs: options.indexArgs,
-      inputs: options.inputs,
-      ...(options.configuration === undefined
+      indexArgs: configured.indexArgs,
+      inputs: configured.inputs,
+      ...(configured.configuration === undefined
         ? {}
-        : { configuration: options.configuration }),
+        : { configuration: configured.configuration }),
       load: (props) => this.load(props),
-      ...(options.validate === undefined
+      validate: (snapshot) => {
+        configured.validate?.(snapshot);
+        assertGraphSnapshotContract(
+          snapshot,
+          {
+            name: configured.provider,
+            authority: configured.authority,
+            facts,
+          },
+          configured.languages,
+          configured.root,
+        );
+      },
+      ...(configured.maxStdoutBytes === undefined
         ? {}
-        : { validate: options.validate }),
-      ...(options.maxStdoutBytes === undefined
-        ? {}
-        : { maxStdoutBytes: options.maxStdoutBytes }),
+        : { maxStdoutBytes: configured.maxStdoutBytes }),
     });
     this.languages = this.batch.languages;
     this.root = this.batch.root;
@@ -102,6 +127,14 @@ export class ScipSession implements IBulkGraphSession {
       languages: this.languages,
       languageOf: this.options.languageOf,
     });
+    const enriched = ScipEnrichment.apply({
+      enrichment: this.options.enrichment,
+      index,
+      root: this.root,
+      provider: this.options.provider,
+      languages: this.languages,
+      common: adapted,
+    });
     const manifest = this.manifest(
       index,
       adapted.files,
@@ -110,13 +143,16 @@ export class ScipSession implements IBulkGraphSession {
     return {
       languages: [...this.languages],
       nodes: adapted.nodes,
-      edges: adapted.edges,
+      edges: enriched.edges,
       diagnostics: adapted.diagnostics,
       sources: manifest.sources,
       provenance: {
         provider: this.options.provider,
         authority: this.options.authority,
-        facts: [...adaptScipIndex.EDGE_KINDS],
+        facts: [
+          ...adaptScipIndex.EDGE_KINDS,
+          ...(this.options.enrichment?.facts ?? []),
+        ],
         schemaVersion: SCIP_SCHEMA_VERSION,
         tool: index.metadata.toolInfo?.name ?? this.options.provider,
         toolVersion: index.metadata.toolInfo?.version ?? "",
@@ -124,13 +160,25 @@ export class ScipSession implements IBulkGraphSession {
         protocolVersion: SCIP_PROTOCOL_VERSION,
         universe: props.universe,
         capabilities: manifest.proven
-          ? [...SCIP_CAPABILITIES, SOURCE_DIGESTS_CAPABILITY]
-          : [...SCIP_CAPABILITIES],
+          ? [
+              ...SCIP_CAPABILITIES,
+              SOURCE_DIGESTS_CAPABILITY,
+              ...(this.options.enrichment === undefined
+                ? []
+                : [ScipEnrichment.capability(this.options.enrichment)]),
+            ]
+          : [
+              ...SCIP_CAPABILITIES,
+              ...(this.options.enrichment === undefined
+                ? []
+                : [ScipEnrichment.capability(this.options.enrichment)]),
+            ],
       },
       warnings: manifest.proven
-        ? adapted.warnings
+        ? [...adapted.warnings, ...enriched.warnings]
         : [
             ...adapted.warnings,
+            ...enriched.warnings,
             `${this.options.provider}: the index carries no document text, so its facts cannot be tied to the bytes they were computed from; source display falls back to what this graph can prove itself`,
           ],
     };
@@ -242,6 +290,7 @@ export namespace ScipSession {
     sourceText?: boolean;
     projectRootFromInvocation?: boolean;
     languageOf: (file: string) => GraphLanguage;
+    enrichment?: ScipEnrichment.IContract;
     maxStdoutBytes?: number;
     maxArtifactBytes?: number;
     validate?: (snapshot: IBulkGraphSession.ISnapshot) => void;

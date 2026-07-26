@@ -24,7 +24,7 @@ import { IGraphProvider } from "./IGraphProvider";
  */
 export function assertGraphSnapshotContract(
   snapshot: IBulkGraphSession.ISnapshot,
-  provider: IGraphProvider,
+  provider: Pick<IGraphProvider, "name" | "authority" | "facts">,
   languages: readonly GraphLanguage[],
   root: string = process.cwd(),
 ): void {

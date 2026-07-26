@@ -3,7 +3,7 @@ import path from "node:path";
 
 import { createResidentGraphSource } from "@samchon/graph";
 
-import { ensureDir, shell, workRoot } from "./process.mjs";
+import { isolateCorpus, shell } from "./process.mjs";
 
 /** Measure one strict provider without ever editing the pinned corpus clone. */
 export const runStrictLifecycle = async (experiment, pinnedRoot) => {
@@ -12,13 +12,7 @@ export const runStrictLifecycle = async (experiment, pinnedRoot) => {
       `${experiment.language}: strict experiment has no lifecycle fixture`,
     );
   }
-  const lifecycleRoot = path.join(workRoot, "lifecycle", experiment.language);
-  fs.rmSync(lifecycleRoot, { force: true, recursive: true });
-  ensureDir(path.dirname(lifecycleRoot));
-  fs.cpSync(pinnedRoot, lifecycleRoot, {
-    recursive: true,
-    filter: (source) => path.basename(source) !== ".git",
-  });
+  const lifecycleRoot = isolateCorpus(experiment, pinnedRoot, "lifecycle");
   if (experiment.prepare !== undefined) {
     shell(experiment.prepare, { cwd: lifecycleRoot });
   }
@@ -46,6 +40,8 @@ export const runStrictLifecycle = async (experiment, pinnedRoot) => {
   });
   let dump;
   let previousIdentity;
+  let previousProvenance;
+  let previousDiagnostics = 0;
 
   const load = async (name, expectedModes) => {
     const started = performance.now();
@@ -93,6 +89,8 @@ export const runStrictLifecycle = async (experiment, pinnedRoot) => {
     }
     dump = next;
     previousIdentity = identity;
+    previousProvenance = provenance;
+    previousDiagnostics = row.diagnosticCount;
     rows.push(row);
     return next;
   };
@@ -160,6 +158,101 @@ export const runStrictLifecycle = async (experiment, pinnedRoot) => {
         mode: resident.modes().get(experiment.strictProvider),
         elapsedMs: Math.round(performance.now() - failedAt),
         error: failure.message,
+      });
+    } else if (fixture.failurePolicy === "tolerated") {
+      // Some producers genuinely do not fail on this input class. Asserting a
+      // rejection they never make would prove only that the harness agrees with
+      // itself, and so would asserting that provenance moved: this step edits a
+      // declared build input, so the build universe cannot help but move. What
+      // is worth proving is the precise claim the catalog makes about upstream —
+      // that the producer ignored the input completely. The universe moves, the
+      // facts and the source manifest do not, and the row publishes all three so
+      // a reader can see which one carried the change.
+      if (
+        typeof fixture.failureLimitation !== "string" ||
+        fixture.failureLimitation === ""
+      ) {
+        throw new Error(
+          `${experiment.language}: a tolerated failure must publish the limitation it accepts`,
+        );
+      }
+      const prior = previousProvenance;
+      const priorDump = dump;
+      let tolerated;
+      try {
+        tolerated = await resident.load();
+      } catch (error) {
+        throw new Error(
+          `${experiment.language}: the catalog records this input as tolerated, but the provider rejected it: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+      const provenance = strictProvenance(tolerated, experiment);
+      const mode = resident.modes().get(experiment.strictProvider);
+      if (!CHANGED_MODES.includes(mode)) {
+        throw new Error(
+          `${experiment.language}: tolerated failure reported ${String(mode)}`,
+        );
+      }
+      // Not a claim about the producer: it proves the row aimed its failure at
+      // a file the provider actually declares as a build input. A `failureFile`
+      // outside that set would leave every check below comparing a generation
+      // to itself.
+      if (provenance.universe === prior.universe) {
+        throw new Error(
+          `${experiment.language}: the malformed input did not move the build universe, so this step compared a generation to itself`,
+        );
+      }
+      // The claim itself. Content and manifest cover the facts and the source
+      // evidence; capabilities and this provider's warnings are the rest of what
+      // a reader can observe, and neither digest carries them. A producer that
+      // quietly gave up a capability, or started explaining itself, has not
+      // ignored the input.
+      const spoken = (report) =>
+        (report.warnings ?? [])
+          .filter((warning) => warning.startsWith(`${experiment.strictProvider}:`))
+          .sort()
+          .join(SEPARATOR);
+      if (
+        provenance.content !== prior.content ||
+        provenance.manifest !== prior.manifest ||
+        [...provenance.capabilities].sort().join(",") !==
+          [...prior.capabilities].sort().join(",") ||
+        spoken(tolerated) !== spoken(priorDump)
+      ) {
+        throw new Error(
+          `${experiment.language}: the catalog records this input as ignored, but the published facts, source manifest, capabilities, or provider warnings changed with it`,
+        );
+      }
+      // The other half of the catalog's claim, as a delta rather than an
+      // absolute: diagnostics this corpus already had are not evidence about
+      // this input, and the dump carries every lane's diagnostics, not only
+      // this provider's slice.
+      const diagnosticCount = tolerated.diagnostics?.length ?? 0;
+      if (diagnosticCount !== previousDiagnostics) {
+        throw new Error(
+          `${experiment.language}: the catalog records this producer as reporting nothing about a malformed build input, but diagnostics moved from ${String(previousDiagnostics)} to ${String(diagnosticCount)}`,
+        );
+      }
+      dump = tolerated;
+      previousIdentity = [
+        provenance.manifest,
+        provenance.content,
+        provenance.universe,
+      ].join(":");
+      previousProvenance = provenance;
+      previousDiagnostics = diagnosticCount;
+      rows.push({
+        name: "failure",
+        status: "tolerated",
+        mode,
+        elapsedMs: Math.round(performance.now() - failedAt),
+        manifest: provenance.manifest,
+        content: provenance.content,
+        universe: provenance.universe,
+        nodeCount: tolerated.nodes.length,
+        edgeCount: tolerated.edges.length,
+        diagnosticCount,
+        limitation: fixture.failureLimitation,
       });
     } else if (
       fixture.failurePolicy === "diagnostic" ||
@@ -280,5 +373,8 @@ function assertCreatedEdge(dump, fixture, language) {
     );
   }
 }
+
+/** A separator no warning can contain, so two lists cannot collide. */
+const SEPARATOR = String.fromCharCode(0);
 
 const CHANGED_MODES = ["reload", "incremental", "rebuild"];

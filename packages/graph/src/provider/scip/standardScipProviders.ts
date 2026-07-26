@@ -12,6 +12,7 @@ import { scipProvider } from "./scipProvider";
 
 const clangScipProvider = createScipProvider({
   name: "scip-clang",
+  compiler: { command: "clang", override: "SAMCHON_GRAPH_CLANG" },
   languages: ["c", "cpp"],
   command: "scip-clang",
   override: "SAMCHON_GRAPH_SCIP_CLANG",
@@ -35,6 +36,7 @@ const clangScipProvider = createScipProvider({
 
 const jvmScipProvider = createScipProvider({
   name: "scip-java",
+  compiler: { command: "java", override: "SAMCHON_GRAPH_JAVA" },
   languages: ["java", "kotlin", "scala"],
   command: "scip-java",
   override: "SAMCHON_GRAPH_SCIP_JAVA",
@@ -54,6 +56,7 @@ const jvmScipProvider = createScipProvider({
 
 const dotnetScipProvider = createScipProvider({
   name: "scip-dotnet",
+  compiler: { command: "dotnet", override: "SAMCHON_GRAPH_DOTNET" },
   languages: ["csharp"],
   command: "scip-dotnet",
   override: "SAMCHON_GRAPH_SCIP_DOTNET",
@@ -71,6 +74,7 @@ const dotnetScipProvider = createScipProvider({
 
 const pythonScipProvider = createScipProvider({
   name: "scip-python",
+  compiler: { command: "python3", override: "SAMCHON_GRAPH_PYTHON" },
   languages: ["python"],
   command: "scip-python",
   override: "SAMCHON_GRAPH_SCIP_PYTHON",
@@ -96,6 +100,7 @@ const pythonScipProvider = createScipProvider({
 
 const rubyScipProvider = createScipProvider({
   name: "scip-ruby",
+  compiler: { command: "ruby", override: "SAMCHON_GRAPH_RUBY" },
   languages: ["ruby"],
   command: "scip-ruby",
   override: "SAMCHON_GRAPH_SCIP_RUBY",
@@ -127,6 +132,17 @@ interface IStandardScipProvider {
   buildExtensions?: readonly string[];
   resolveArgs?: (root: string) => readonly string[] | undefined;
   indexArgs: (artifact: string) => string[];
+
+  /**
+   * The toolchain whose semantics this index describes.
+   *
+   * A `semantic-index` provider still answers "which language version resolved
+   * these facts", and it is not the indexer's own version: scip-python 0.6.6
+   * says what built the artifact, while the interpreter it inferred the
+   * environment from says what the artifact means. A consumer that cannot tell
+   * them apart cannot know whether a rebuilt index describes the same program.
+   */
+  compiler: { command: string; override: string };
 }
 
 function createScipProvider(
@@ -149,10 +165,18 @@ function createScipProvider(
         override: props.override,
       });
       const decoder = resolveScipDecoder(root, env);
+      // The toolchain is required, not merely reported. A snapshot states which
+      // language version resolved its facts, and a provider that cannot answer
+      // that would publish `python3=unavailable` into the field a consumer
+      // degrades against — which is worse than declining, because a fallback at
+      // least says so. `rust-analyzer-scip` refuses without `rustc` and `cargo`
+      // for the same reason.
+      const compiler = resolveProviderCommand(root, env, props.compiler);
       const resolvedArgs = props.resolveArgs?.(root);
       if (
         indexer === undefined ||
         decoder === undefined ||
+        compiler === undefined ||
         (props.resolveArgs !== undefined && resolvedArgs === undefined)
       ) {
         return undefined;
@@ -186,7 +210,15 @@ function createScipProvider(
     configuration: (root, _languages, env = process.env) => [
       toolVersion(root, env, props.command, props.override),
       toolVersion(root, env, "scip", "SAMCHON_GRAPH_SCIP"),
+      toolVersion(root, env, props.compiler.command, props.compiler.override),
     ],
+    compilerVersion: (root) =>
+      toolVersion(
+        root,
+        process.env,
+        props.compiler.command,
+        props.compiler.override,
+      ),
     sourceText: true,
     languageOf,
   });

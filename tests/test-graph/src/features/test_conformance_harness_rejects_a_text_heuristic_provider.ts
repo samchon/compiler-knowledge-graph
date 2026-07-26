@@ -36,6 +36,41 @@ export const test_conformance_harness_rejects_a_text_heuristic_provider =
       resolved.failures,
       [],
     );
+    TestValidator.predicate(
+      "an off-by-one declaration span fails the source oracle",
+      Conformance.check(semanticSnapshot(), [
+        {
+          reason: "the exact caller declaration span",
+          node: {
+            name: "caller",
+            kind: "function",
+            language: "typescript",
+            file: "a.ts",
+            evidence: {
+              file: "a.ts",
+              startLine: 1,
+              startCol: 2,
+              endLine: 1,
+              endCol: 8,
+            },
+          },
+        },
+      ]).failures.some((failure) => failure.includes("exact source span")),
+    );
+    TestValidator.predicate(
+      "a declaration attributed to the wrong file fails the source oracle",
+      Conformance.check(semanticSnapshot(), [
+        {
+          reason: "the caller belongs to the checked-in fixture",
+          node: {
+            name: "caller",
+            kind: "function",
+            language: "typescript",
+            file: "wrong.ts",
+          },
+        },
+      ]).failures.some((failure) => failure.includes("exact source span")),
+    );
 
     const guessed = Conformance.check(heuristicSnapshot(), EXPECTATIONS);
     // Not merely "some failure": the harness must fail on the twins
@@ -120,9 +155,9 @@ export const test_conformance_harness_rejects_a_text_heuristic_provider =
         failure.includes("zero-based implementation span"),
       ),
     );
-    // A fixture that reuses a display name makes every edge expectation
-    // naming it ambiguous, and an ambiguous assertion passes for the wrong
-    // reason.
+    // A bare endpoint cannot distinguish same-named declarations. Qualified
+    // endpoints in an atomic multi-language corpus can; this legacy fixture is
+    // deliberately bare so the ambiguity gate itself remains covered.
     TestValidator.predicate(
       "a golden fixture reusing a display name is caught",
       Conformance.check(
@@ -132,7 +167,16 @@ export const test_conformance_harness_rejects_a_text_heuristic_provider =
             { ...declaration("caller", "method"), id: "a.ts#caller:method" },
           ],
         }),
-        [],
+        [
+          {
+            reason: "a bare endpoint must identify exactly one declaration",
+            edge: {
+              kind: "references",
+              from: "caller",
+              to: "caller",
+            },
+          },
+        ],
       ).failures.some((failure) => failure.includes("reuses the display name")),
     );
     TestValidator.predicate(
@@ -324,7 +368,13 @@ function declaration(
     name,
     file: "a.ts",
     external: false,
-    evidence: { file: "a.ts", startLine: 1, startCol: 1 },
+    evidence: {
+      file: "a.ts",
+      startLine: 1,
+      startCol: 1,
+      endLine: 1,
+      endCol: name.length + 1,
+    },
   };
 }
 

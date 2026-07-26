@@ -96,6 +96,28 @@ jobs:
             --doc_out_path="$GITHUB_WORKSPACE/lua-probe-out" \
             --configpath="$GITHUB_WORKSPACE/lua-probe-config.json"
 
+      # The exporter itself, on the same project, through the same seam. The
+      # probe answered what the engine exposes; this answers whether the thing
+      # built on those answers actually produces a graph.
+      - name: Run the real exporter
+        run: |
+          root="$GITHUB_WORKSPACE/lua-probe-project"
+          rel=$(realpath --relative-to="$root" "$GITHUB_WORKSPACE/sidecars/lua/export.lua")
+          printf '{\n  "Lua.docScriptPath": "/%s"\n}\n' "$rel" > lua-export-config.json
+          lua-language-server \
+            --doc="$root" \
+            --doc_out_path="$GITHUB_WORKSPACE/lua-probe-out" \
+            --configpath="$GITHUB_WORKSPACE/lua-export-config.json"
+
+      - name: Show the exported graph
+        if: ${{ always() }}
+        run: |
+          if [ -f lua-probe-out/samchon-graph-lua.json ]; then
+            cat lua-probe-out/samchon-graph-lua.json
+          else
+            echo "::warning::the exporter wrote no graph"
+          fi
+
       # Printed as well as uploaded: the whole point is to read it.
       - name: Show what the engine exposed
         if: ${{ always() }}

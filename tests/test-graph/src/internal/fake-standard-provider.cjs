@@ -193,7 +193,7 @@ if (scip !== undefined) {
 // dart is absent: it is a SCIP producer now, driven through the `contracts`
 // table above like every other one, rather than a sidecar named after a program
 // that was never written.
-const sidecarLanguages = new Set(["go", "swift", "zig", "lua"]);
+const sidecarLanguages = new Set(["go", "swift", "zig"]);
 const sidecarLanguage = producer.startsWith("samchon-graph-")
   ? producer.slice("samchon-graph-".length)
   : producer;

@@ -129,7 +129,11 @@ export class LuaGraphSession implements IBulkGraphSession {
         compilerVersion: "",
         protocolVersion: 1,
         universe: props.universe,
-        capabilities: ["diskDigests"],
+        // `universe` because the snapshot carries one and the contract requires
+        // a provider to say so. `diskDigests` and deliberately not
+        // `sourceDigests`: the bytes are read from disk after the run, which
+        // says what is on disk rather than what the checker consumed.
+        capabilities: ["universe", "diskDigests"],
       },
       warnings: adapted.warnings,
     });

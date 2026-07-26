@@ -43,12 +43,13 @@ import { resolveProviderCommand } from "./resolveProviderCommand";
  * fixed for a serving provider, in the topology snapshot that no longer
  * re-derives its configuration at all.
  *
- * Not for a candidate that is not serving. `providerTopology.available` still
- * derives those rows fresh, the resident source fingerprints them, and a
- * difference calls `replaceLanguages` — so a probe that fails to launch in a
- * provider nothing is currently using still rebuilds every language. That is
- * the same defect in the half of the path this repair did not reach, and it is
- * filed rather than claimed as done.
+ * And for a candidate that is not serving, whose rows `providerTopology.available`
+ * still derives fresh on every refresh. Those go through `reestablish` too
+ * before the resident source compares them, because it treats any topology
+ * difference as structural: without it, a probe that failed to launch inside a
+ * provider nothing was using reindexed every language in the project. The
+ * exposure grows with the registry — each provider registered for a language a
+ * project does not use is another toolchain probed for no other reason.
  *
  * The probe runs every time, and deliberately. A version is not a property of
  * the file: `rustc`, `python3`, `ruby`, `java`, and `dotnet` are all normally

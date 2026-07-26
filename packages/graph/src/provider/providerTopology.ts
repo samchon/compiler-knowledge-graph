@@ -3,6 +3,7 @@ import { GraphLanguage } from "../typings";
 import { GRAPH_PROVIDERS } from "./GRAPH_PROVIDERS";
 import { IGraphProvider } from "./IGraphProvider";
 import { selectGraphProviders } from "./selectGraphProviders";
+import { toolchainVersion } from "./toolchainVersion";
 
 export namespace providerTopology {
   export interface IRow {
@@ -83,6 +84,45 @@ export namespace providerTopology {
 
   export function serialize(available: readonly IRow[]): string {
     return JSON.stringify(available);
+  }
+
+  /**
+   * This topology, with each unasked configuration row restored from the last
+   * one that established something.
+   *
+   * `BatchGraphSession` already does this for a provider that is serving. The
+   * topology is the other half, and until now it did not: a probe that failed
+   * to launch inside a candidate nothing is currently using still changed the
+   * serialized topology, and the resident source treats any change as
+   * structural and rebuilds every language. A `where.exe` that could not start
+   * cost a full reindex of a project it had nothing to do with.
+   *
+   * The exposure grows with the registry. Every provider registered for a
+   * language this project does not use is another candidate whose toolchain
+   * gets probed on every refresh, and a half-installed toolchain is exactly the
+   * kind that fails intermittently — which is also why it is not serving.
+   *
+   * Row by row and provider by provider, for the reason the session-level
+   * repair had to be: substituting a whole derivation because one entry went
+   * unasked throws away the entries that did establish something, including a
+   * setting the user genuinely changed.
+   */
+  export function reestablish(
+    live: readonly IRow[],
+    established: readonly IRow[] | undefined,
+  ): IRow[] {
+    if (established === undefined) return [...live];
+    const prior = new Map(established.map((row) => [row.provider, row]));
+    return live.map((row) => {
+      const before = prior.get(row.provider)?.configuration;
+      if (row.configuration === undefined || before === undefined) return row;
+      return {
+        ...row,
+        configuration: [
+          ...toolchainVersion.reestablish(row.configuration, before),
+        ],
+      };
+    });
   }
 }
 

@@ -65,6 +65,16 @@ interface IResidentState {
   inputGeneration: string;
   buildInputs: string[];
   providerTopology: string;
+
+  /**
+   * The rows behind {@link providerTopology}, kept so an unasked configuration
+   * entry can be restored instead of moving the topology.
+   *
+   * The serialized form alone cannot do that: substituting requires matching a
+   * provider's entries against the last ones that established something, and a
+   * string has no rows.
+   */
+  providerTopologyRows: readonly providerTopology.IRow[];
   /** An available strict candidate fell back while this state was built. */
   providerFallback: boolean;
 }
@@ -194,6 +204,7 @@ export function createResidentGraphSource(
           }),
         buildInputs,
         providerTopology: providerTopology.serialize(availableTopology),
+        providerTopologyRows: availableTopology,
         providerFallback: availableTopology.some((row) =>
           row.languages.some(
             (language) =>
@@ -479,7 +490,16 @@ export function createResidentGraphSource(
         selected.languages,
         dependencies.providers,
       ) ?? current.buildInputs;
-      const liveTopology = providerTopology.serialize(
+      // Restored row by row before it is compared. A candidate that is not
+      // serving still gets its toolchain probed on every refresh, and a probe
+      // that failed to launch used to move the topology — which is treated as
+      // structural, so one `where.exe` that could not start reindexed every
+      // language in a project it had nothing to do with. The exposure grows
+      // with the registry: every provider registered for a language this
+      // project does not use is another candidate to probe, and a
+      // half-installed toolchain fails intermittently for the same reason it is
+      // not serving.
+      const liveRows = providerTopology.reestablish(
         providerTopology.available(
           root,
           selected.presentLanguages,
@@ -490,7 +510,9 @@ export function createResidentGraphSource(
             [...current.providers.values()].map((provider) => provider.name),
           ),
         ),
+        current.providerTopologyRows,
       );
+      const liveTopology = providerTopology.serialize(liveRows);
       if (liveTopology !== current.providerTopology) {
         await replaceLanguages(current, signal);
         return;

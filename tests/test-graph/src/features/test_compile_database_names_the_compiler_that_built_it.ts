@@ -141,6 +141,16 @@ function assertADriverWithAPathIsTakenLiterally(): void {
         arguments: [path.join(toolchain, "absent-driver"), "-c"],
       },
       { directory: root, file: "c2.c", arguments: [toolchain, "-c"] },
+      // A bare driver whose name already carries the platform's executable
+      // suffix. Command resolution appends one, so it looked in the project's
+      // own bin for `gxx.cmd.exe` and never for the file that is there; it
+      // still resolved through the global lookup, so a project-pinned driver
+      // lost to whatever the machine happened to have.
+      {
+        directory: root,
+        file: "e.c",
+        arguments: [suffixed("gxx"), "-c"],
+      },
       // An executable suffix is the machine's spelling of a location, not the
       // program's name; a provenance field compared across platforms carries
       // the name. Suffixed on every platform — `.cmd` where that is what the
@@ -161,10 +171,11 @@ function assertADriverWithAPathIsTakenLiterally(): void {
     ]),
   );
   writeShims(root, []);
+  exactShim(path.join(root, ".samchon-graph", "bin"), suffixed("gxx"), "gxx");
   TestValidator.equals(
     "an absolute and a directory-relative driver name one program, an absent one is dropped",
     drivers(root),
-    ["gcc=gcc v1.0.0", "gpp=gpp v1.0.0"],
+    ["gcc=gcc v1.0.0", "gpp=gpp v1.0.0", "gxx=gxx v1.0.0"],
   );
 }
 
@@ -258,6 +269,11 @@ function shimPath(root: string, name: string): string {
     "bin",
     process.platform === "win32" ? `${name}.cmd` : name,
   );
+}
+
+/** The file name a platform can launch, for a program of this name. */
+function suffixed(name: string): string {
+  return process.platform === "win32" ? `${name}.cmd` : `${name}.exe`;
 }
 
 /** An executable, under the platform's own suffix, answering with its name. */

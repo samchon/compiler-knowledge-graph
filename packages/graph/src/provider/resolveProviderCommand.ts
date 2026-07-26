@@ -91,30 +91,37 @@ function resolveOnPath(
 /**
  * Where a project keeps a tool of its own, in the spellings the platform uses.
  *
- * The suffixed name is tried first *and* the name as written, because a command
- * can now arrive already carrying one: a Windows compilation database records
- * its driver as `cl.exe`, and appending again would look for `cl.exe.exe`. On
- * POSIX the name as written is the only spelling there is.
+ * Windows appends its executable suffixes — except when the name already
+ * carries one. A command can arrive with a suffix attached, because a Windows
+ * compilation database records its driver as `cl.exe`, and appending again
+ * looks for `cl.exe.exe` and never finds the file that is there.
+ *
+ * The bare name is a candidate *only* in that case, and deliberately. An
+ * extensionless file in `node_modules/.bin` is npm's POSIX `sh` shim;
+ * {@link spawnableCommand} wraps `.cmd` and `.bat` in the command processor
+ * and hands anything else straight to `CreateProcess`, which cannot run a
+ * shell script. Offering the bare name for every command would resolve such a
+ * shim on a tree installed under WSL or a Linux container, and the caller would
+ * proceed with an indexer that cannot start rather than falling through to
+ * `PATH` and finding one that can.
+ *
+ * On POSIX the name as written is the only spelling there is.
  */
 function localCandidates(root: string, command: string): string[] {
   const privateBin = path.join(root, ".samchon-graph", "bin");
   const packageBin = path.join(root, "node_modules", ".bin");
   /* c8 ignore start -- each CI operating system exercises its native arm. */
-  // Written out rather than mapped: a callback here would be a function the
-  // POSIX legs never call, and this whole arm is inside one platform ignore
-  // rather than a per-function one.
-  return process.platform === "win32"
-    ? [
-        path.join(privateBin, `${command}.exe`),
-        path.join(privateBin, `${command}.cmd`),
-        path.join(privateBin, `${command}.bat`),
-        path.join(privateBin, command),
-        path.join(packageBin, `${command}.exe`),
-        path.join(packageBin, `${command}.cmd`),
-        path.join(packageBin, `${command}.bat`),
-        path.join(packageBin, command),
-      ]
-    : [path.join(privateBin, command), path.join(packageBin, command)];
+  if (process.platform !== "win32") {
+    return [path.join(privateBin, command), path.join(packageBin, command)];
+  }
+  const spellings = /\.(?:exe|cmd|bat)$/i.test(command)
+    ? [command]
+    : [`${command}.exe`, `${command}.cmd`, `${command}.bat`];
+  const candidates: string[] = [];
+  for (const bin of [privateBin, packageBin]) {
+    for (const spelling of spellings) candidates.push(path.join(bin, spelling));
+  }
+  return candidates;
   /* c8 ignore stop */
 }
 

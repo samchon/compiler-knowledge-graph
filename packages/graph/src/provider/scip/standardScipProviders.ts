@@ -300,6 +300,11 @@ function resolveToolchain(
   // the toolchain's own label. Offering it to each alias in turn would make the
   // first spelling always resolve, and the row would name `python3` for a
   // binary the developer pointed at deliberately.
+  //
+  // Consulted, not obeyed: `resolveProviderCommand` rejects an override that no
+  // longer points at a program and then continues its ordinary search, so a
+  // stale one resolves to whatever the label finds anyway. The aliases below
+  // then only run on a machine where that spelling is absent too.
   if (toolchain.override !== undefined) {
     const overridden: IToolchainTool = {
       command: toolchain.label,
@@ -573,7 +578,7 @@ const COMPILER_LAUNCHERS = new Set([
   "buildcache",
 ]);
 
-/** A separator no path or digest can contain. */
+/** A separator no path can contain. */
 const SEPARATOR = String.fromCharCode(0);
 
 const compilationDatabases = new BoundedMap<string[]>(64);

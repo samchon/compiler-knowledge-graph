@@ -88,19 +88,25 @@ function resolveOnPath(
 }
 /* c8 ignore stop */
 
+/**
+ * Where a project keeps a tool of its own, in the spellings the platform uses.
+ *
+ * The suffixed name is tried first *and* the name as written, because a command
+ * can now arrive already carrying one: a Windows compilation database records
+ * its driver as `cl.exe`, and appending again would look for `cl.exe.exe`. On
+ * POSIX the name as written is the only spelling there is.
+ */
 function localCandidates(root: string, command: string): string[] {
   const privateBin = path.join(root, ".samchon-graph", "bin");
   const packageBin = path.join(root, "node_modules", ".bin");
   /* c8 ignore start -- each CI operating system exercises its native arm. */
   return process.platform === "win32"
-    ? [
-        path.join(privateBin, `${command}.exe`),
-        path.join(privateBin, `${command}.cmd`),
-        path.join(privateBin, `${command}.bat`),
-        path.join(packageBin, `${command}.exe`),
-        path.join(packageBin, `${command}.cmd`),
-        path.join(packageBin, `${command}.bat`),
-      ]
+    ? [privateBin, packageBin].flatMap((bin) => [
+        path.join(bin, `${command}.exe`),
+        path.join(bin, `${command}.cmd`),
+        path.join(bin, `${command}.bat`),
+        path.join(bin, command),
+      ])
     : [path.join(privateBin, command), path.join(packageBin, command)];
   /* c8 ignore stop */
 }

@@ -61,11 +61,10 @@ export const luaGraphProvider: IGraphProvider = {
 
   resolve: (root, env) => {
     const script = exporterScript();
-    // Ignored one line rather than the whole body: a function whose every
-    // statement is excluded is reported as never called, which is how this
-    // arm turned a covered provider into an uncovered one.
-    /* c8 ignore next -- a package shipped without its own producer, which a
-     * suite reaches only by deleting a file out from under the run. */
+    // One line ignored rather than the whole body. A function whose every
+    // statement is excluded gets reported as never called, and that wide ignore
+    // was also hiding the fact that nothing in the suite called this at all.
+    /* c8 ignore next -- broken installation; see `exporterScript`. */
     if (script === undefined) return undefined;
     return resolveProviderCommand(root, env, {
       command: "lua-language-server",
@@ -157,9 +156,12 @@ function exporterScript(): string | undefined {
     "lua",
     "export.lua",
   );
+  // Absent means a package shipped without its own producer, which a suite can
+  // only cause by deleting a file out from under the run. The hint below is one
+  // line on purpose: `next` counts lines after itself, so a wrapped comment
+  // spends the count on its own continuation and leaves the statement counted.
   if (fs.existsSync(script)) return script;
-  /* c8 ignore next -- as in `resolve`: the producer ships with this package, so
-   * its absence is a broken installation and not a state a suite can reach. */
+  /* c8 ignore next -- broken installation; see above. */
   return undefined;
 }
 

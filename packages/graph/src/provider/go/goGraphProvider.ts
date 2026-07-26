@@ -214,39 +214,20 @@ function goConfiguration(
   env: NodeJS.ProcessEnv = process.env,
 ): string[] {
   const rows = GO_ENVIRONMENT_KEYS.map((key) => `${key}=${env[key] ?? ""}`);
-  const go = resolveProviderCommand(root, env, {
-    command: "go",
-    override: "SAMCHON_GRAPH_GO_TOOLCHAIN",
-  });
-  const probe =
-    go === undefined
-      ? undefined
-      : spawnableCommand.append(
-          { ...go, args: [...go.args] },
-          ["env", "-json", ...GO_PROBED_ENVIRONMENT_KEYS],
-        );
-  const probed =
-    probe === undefined
-      ? undefined
-      : spawnSync(
-          probe.command,
-          probe.args,
-          {
-            cwd: root,
-            env,
-            encoding: "utf8",
-            maxBuffer: 1024 * 1024,
-            timeout: 10_000,
-            windowsHide: true,
-            windowsVerbatimArguments:
-              probe.windowsVerbatimArguments,
-          },
-        );
   return [
     ...rows,
-    probed?.status === 0
-      ? `go-env=${probed.stdout.trim()}`
-      : "go-env=unavailable",
+    // Through the shared probe like every other row. Its own `spawnSync` here
+    // reported `go-env=unavailable` for any failure, and since a non-serving
+    // candidate's configuration is part of the resident topology snapshot, one
+    // transient launch failure moved that snapshot and rebuilt every language.
+    toolchainVersion({
+      root,
+      env,
+      command: "go",
+      override: "SAMCHON_GRAPH_GO_TOOLCHAIN",
+      args: ["env", "-json", ...GO_PROBED_ENVIRONMENT_KEYS],
+      label: "go-env",
+    }),
     toolVersion(
       root,
       env,

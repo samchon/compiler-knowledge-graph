@@ -156,18 +156,28 @@ export const test_provider_commands_and_inputs_respect_project_boundaries =
       fs.mkdirSync(packageBin, { recursive: true });
       const emptyPath = pathEnvironment("");
 
+      // An installed toolchain whose probe does not answer is not an absent
+      // one. Reporting `unavailable` for both moved the Go build universe over
+      // a launch failure, and since a non-serving candidate's configuration is
+      // part of the resident topology snapshot, that rebuilt every language.
       const failingGo = platformExecutable(privateBin, "go");
       writeExecutable(failingGo, 1);
       TestValidator.predicate(
-        "a failing Go environment probe is part of the effective configuration",
+        "an installed Go whose probe fails is unreported, not unavailable",
         goGraphProvider
           .effectiveConfiguration(root, {
             ...emptyPath,
             SAMCHON_GRAPH_GO_TOOLCHAIN: failingGo,
           })
-          .includes("go-env=unavailable"),
+          .includes("go-env=unreported"),
       );
       fs.rmSync(failingGo, { force: true });
+      TestValidator.predicate(
+        "a Go that is not installed is unavailable",
+        goGraphProvider
+          .effectiveConfiguration(root, emptyPath)
+          .includes("go-env=unavailable"),
+      );
 
       const local = platformExecutable(privateBin, command);
       const dependency = platformExecutable(packageBin, command);

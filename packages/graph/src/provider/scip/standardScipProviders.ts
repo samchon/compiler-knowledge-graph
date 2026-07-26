@@ -3,6 +3,7 @@ import path from "node:path";
 
 import { languageOf } from "../../indexer/languageOf";
 import { GraphLanguage } from "../../typings";
+import { BoundedMap } from "../../utils/boundedMap";
 import { spawnableCommand } from "../../utils/spawnableCommand";
 import { IGraphProvider } from "../IGraphProvider";
 import { providerInputFiles } from "../providerInputFiles";
@@ -295,10 +296,29 @@ function resolveToolchain(
   env: NodeJS.ProcessEnv,
   toolchain: IToolchain,
 ): IToolchainTool[] {
-  const override =
-    toolchain.override === undefined ? {} : { override: toolchain.override };
+  // The override selects one absolute program, so it is consulted once under
+  // the toolchain's own label. Offering it to each alias in turn would make the
+  // first spelling always resolve, and the row would name `python3` for a
+  // binary the developer pointed at deliberately.
+  if (toolchain.override !== undefined) {
+    const overridden: IToolchainTool = {
+      command: toolchain.label,
+      override: toolchain.override,
+    };
+    if (
+      env[toolchain.override] !== undefined &&
+      toolchainVersion.resolve({
+        root,
+        env,
+        args: VERSION_ARGS,
+        ...overridden,
+      }) !== undefined
+    ) {
+      return [overridden];
+    }
+  }
   for (const command of toolchain.aliases ?? []) {
-    const tool: IToolchainTool = { command, ...override };
+    const tool: IToolchainTool = { command };
     if (
       toolchainVersion.resolve({ root, env, args: VERSION_ARGS, ...tool }) !==
       undefined
@@ -312,8 +332,8 @@ function resolveToolchain(
     // file, and another program of the same basename on this machine's `PATH`
     // is not the one those translation units were compiled with.
     const tool: IToolchainTool = path.isAbsolute(named)
-      ? { command: path.basename(named), executable: named }
-      : { command: named };
+      ? { command: named, label: driverLabel(named), executable: named }
+      : { command: named, label: driverLabel(named) };
     if (
       toolchainVersion.resolve({ root, env, args: VERSION_ARGS, ...tool }) !==
       undefined
@@ -341,21 +361,63 @@ function toolchainVersions(
 
 interface IToolchainTool {
   command: string;
+  label?: string;
   override?: string;
   executable?: string;
+}
+
+/**
+ * What a compile command's driver is called, once the machine is taken off it.
+ *
+ * A database records the path the build ran, so the same compiler is
+ * `/usr/lib/ccache/gcc`, `gcc`, or `C:\LLVM\bin\clang.exe` depending on where
+ * it was configured. The provenance field is compared across platforms and
+ * checkouts, so it carries the program's name rather than one machine's spelling
+ * of its location.
+ */
+function driverLabel(named: string): string {
+  const base = path.basename(named);
+  return /\.(?:exe|cmd|bat)$/i.test(base)
+    ? base.slice(0, base.lastIndexOf("."))
+    : base;
 }
 
 /**
  * Every distinct compiler driver the project's compilation database names.
  *
  * The database is the build's own record of how each translation unit was
- * compiled, so its first token is the program whose semantics the index
- * carries. Both documented shapes are read: `command` is one shell string and
- * `arguments` is an already-split vector.
+ * compiled, so the program each entry runs is the compiler whose semantics the
+ * index carries. Both documented shapes are read: `command` is one shell string
+ * and `arguments` is an already-split vector.
+ *
+ * Memoized against the file's own identity, which for a *file* is sound in a
+ * way it is not for a program's version: the parsed content is a function of
+ * the bytes, and size plus modification time is the ordinary proxy for those.
+ * The memo matters because this is derived on every resident load for a
+ * candidate that did not serve, and a real `compile_commands.json` is routinely
+ * tens of megabytes.
  */
 function compilationDatabaseCompilers(root: string): string[] {
   const database = compilationDatabase(root);
   if (database === undefined) return [];
+  let key: string;
+  try {
+    const stat = fs.statSync(database);
+    key = `${database}${SEPARATOR}${String(stat.size)}:${String(stat.mtimeMs)}`;
+    /* c8 ignore next 4 -- the database was stat'd moments ago by
+     * `compilationDatabase`; a removal in between leaves nothing to parse and
+     * the read below reports it. */
+  } catch {
+    return [];
+  }
+  const memoized = compilationDatabases.get(key);
+  if (memoized !== undefined) return [...memoized];
+  const drivers = readCompilationDatabaseCompilers(database);
+  compilationDatabases.set(key, drivers);
+  return [...drivers];
+}
+
+function readCompilationDatabaseCompilers(database: string): string[] {
   let entries: unknown;
   try {
     entries = JSON.parse(fs.readFileSync(database, "utf8"));
@@ -366,32 +428,111 @@ function compilationDatabaseCompilers(root: string): string[] {
   const drivers = new Set<string>();
   for (const entry of entries) {
     if (typeof entry !== "object" || entry === null) continue;
-    const record = entry as { command?: unknown; arguments?: unknown };
-    const driver = Array.isArray(record.arguments)
-      ? record.arguments[0]
+    const record = entry as {
+      command?: unknown;
+      arguments?: unknown;
+      directory?: unknown;
+    };
+    const tokens = Array.isArray(record.arguments)
+      ? record.arguments.filter(
+          (argument): argument is string => typeof argument === "string",
+        )
       : typeof record.command === "string"
-        ? firstToken(record.command)
-        : undefined;
-    if (typeof driver === "string" && driver !== "") drivers.add(driver);
+        ? splitCommand(record.command)
+        : [];
+    const driver = compilerToken(tokens);
+    if (driver === undefined) continue;
+    // A driver written with a separator is relative to the entry's own
+    // directory, not to the project root — the database records where each
+    // translation unit was compiled precisely because they differ.
+    drivers.add(
+      path.isAbsolute(driver) ||
+        !/[\\/]/.test(driver) ||
+        typeof record.directory !== "string"
+        ? driver
+        : path.resolve(record.directory, driver),
+    );
   }
   return [...drivers].sort(compareOrdinal);
 }
 
 /**
- * The program a compile command runs, honouring one level of quoting.
+ * The compiler among a compile command's leading tokens.
  *
- * A Windows database records `"C:\\Program Files\\LLVM\\bin\\clang.exe" -c ...`,
- * and splitting that on whitespace would name a directory.
+ * Two things stand in front of it in ordinary builds. A leading `NAME=value` is
+ * a shell assignment, not a program. A compiler launcher — `ccache`, `sccache`,
+ * `distcc`, `icecc`, which CMake inserts through `CMAKE_<LANG>_COMPILER_LAUNCHER`
+ * — runs the real compiler as its argument, and publishing ccache's version as
+ * the toolchain that decided the index's semantics would name a cache.
  */
-function firstToken(command: string): string | undefined {
-  const trimmed = command.trimStart();
-  if (trimmed.startsWith('"')) {
-    const end = trimmed.indexOf('"', 1);
-    return end === -1 ? undefined : trimmed.slice(1, end);
+function compilerToken(tokens: readonly string[]): string | undefined {
+  for (const token of tokens) {
+    if (token === "") continue;
+    if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(token)) continue;
+    if (COMPILER_LAUNCHERS.has(path.basename(token).toLowerCase())) continue;
+    if (
+      COMPILER_LAUNCHERS.has(
+        path.basename(token, ".exe").toLowerCase(),
+      )
+    ) {
+      continue;
+    }
+    return token;
   }
-  const token = /^\S+/.exec(trimmed);
-  return token === null ? undefined : token[0];
+  return undefined;
 }
+
+/**
+ * Split one compile command into tokens, honouring the two escapes that appear.
+ *
+ * A Windows database records `"C:\\Program Files\\LLVM\\bin\\clang.exe" -c ...`
+ * and a POSIX one can record `/opt/my\ compiler -c ...`; splitting either on
+ * whitespace would name a directory.
+ */
+function splitCommand(command: string): string[] {
+  const tokens: string[] = [];
+  let current = "";
+  let quoted = false;
+  let started = false;
+  for (let index = 0; index < command.length; index += 1) {
+    const character = command[index]!;
+    if (character === "\\" && index + 1 < command.length) {
+      current += command[index + 1]!;
+      started = true;
+      index += 1;
+      continue;
+    }
+    if (character === '"') {
+      quoted = !quoted;
+      started = true;
+      continue;
+    }
+    if (!quoted && /\s/.test(character)) {
+      if (started) tokens.push(current);
+      current = "";
+      started = false;
+      continue;
+    }
+    current += character;
+    started = true;
+  }
+  if (started) tokens.push(current);
+  return tokens;
+}
+
+const COMPILER_LAUNCHERS = new Set([
+  "ccache",
+  "sccache",
+  "distcc",
+  "icecc",
+  "icecream",
+  "buildcache",
+]);
+
+/** A separator no path or digest can contain. */
+const SEPARATOR = String.fromCharCode(0);
+
+const compilationDatabases = new BoundedMap<string[]>(64);
 
 function compareOrdinal(left: string, right: string): number {
   /* c8 ignore next 2 -- driver names are distinct set members. */

@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 
+import { BoundedMap } from "../utils/boundedMap";
 import { spawnableCommand } from "../utils/spawnableCommand";
 import { IGraphProvider } from "./IGraphProvider";
 import { resolveProviderCommand } from "./resolveProviderCommand";
@@ -34,18 +35,30 @@ import { resolveProviderCommand } from "./resolveProviderCommand";
  * toolchain to another and would never notice an upgrade at all.
  */
 export function toolchainVersion(props: toolchainVersion.IProps): string {
+  const label = props.label ?? props.command;
   const resolved = toolchainVersion.resolve(props);
-  if (resolved === undefined) return `${props.command}=unavailable`;
+  if (resolved === undefined) return `${label}=unavailable`;
   const key = answerKey(resolved, props);
   const observed = probe(resolved, props);
   if (observed !== undefined) {
-    remember(key, observed);
-    return `${props.command}=${observed}`;
+    answers.set(key, { version: observed, failures: 0 });
+    return `${label}=${observed}`;
   }
   const remembered = answers.get(key);
-  return remembered === undefined
-    ? `${props.command}=unreported`
-    : `${props.command}=${remembered}`;
+  // Bounded, because a fallback with no bound is the previous commit's defect
+  // wearing different clothes: a dispatcher whose selected runtime was
+  // uninstalled resolves, fails every probe, and would go on naming the version
+  // it gave before it broke for the life of the process. A handful of
+  // consecutive failures is a blip; past that the honest answer is that this
+  // toolchain is no longer reporting.
+  if (remembered === undefined || remembered.failures >= MAX_FALLBACKS) {
+    return `${label}=unreported`;
+  }
+  answers.set(key, {
+    version: remembered.version,
+    failures: remembered.failures + 1,
+  });
+  return `${label}=${remembered.version}`;
 }
 
 export namespace toolchainVersion {
@@ -61,6 +74,9 @@ export namespace toolchainVersion {
 
     /** The probe arguments, such as `--version` or `-vV`. */
     args: readonly string[];
+
+    /** What the row is called, when that differs from the command's name. */
+    label?: string;
 
     /**
      * Probe exactly this file rather than resolving `command`.
@@ -127,9 +143,11 @@ function probe(
  *
  * Everything the probe's answer depends on: the program, the directory it runs
  * in, the environment it inherits, and what it was asked. Over-specific on
- * purpose. A key that is too narrow hands one project's toolchain version to
- * another, while a key that is too wide only forgets an answer that a fresh
- * probe is about to produce anyway.
+ * purpose, and the whole environment rather than a guessed list of
+ * version-selecting variables. Getting this too narrow hands one project's
+ * toolchain version to another, which is wrong; getting it too wide loses a
+ * fallback, and a lost fallback is `unreported`, which is the honest answer for
+ * a question that has not been asked in this form before.
  *
  * The identity reads `executable`, not `command`, because a Windows `.cmd`
  * provider is spawned as `cmd.exe` with the real program quoted inside an
@@ -178,14 +196,11 @@ function fileIdentity(executable: string): string {
  * enough that the map cannot become a leak; the oldest entry is dropped
  * because the newest answers are the ones a fallback would want.
  */
-function remember(key: string, version: string): void {
-  if (answers.has(key)) answers.delete(key);
-  else if (answers.size >= MAX_REMEMBERED) {
-    const oldest = answers.keys().next();
-    /* c8 ignore next -- `size >= MAX_REMEMBERED` guarantees a first key. */
-    if (oldest.done !== true) answers.delete(oldest.value);
-  }
-  answers.set(key, version);
+interface IAnswer {
+  version: string;
+
+  /** Consecutive launches that did not answer since this version was learned. */
+  failures: number;
 }
 
 /**
@@ -228,5 +243,8 @@ function isSpawnableFile(file: string): boolean {
 /** A separator no path, argument, environment value, or digest can contain. */
 const SEPARATOR = String.fromCharCode(0);
 
-const MAX_REMEMBERED = 256;
-const answers = new Map<string, string>();
+const answers = new BoundedMap<IAnswer>(256);
+
+/** Consecutive failures a remembered version covers before it stops standing in. */
+const MAX_FALLBACKS = 3;
+

@@ -31,6 +31,7 @@ export const test_toolchain_probes_separate_absence_from_silence = async () => {
   assertEveryProbedLineSurvivesOnOneLine();
   assertTopologyAsksOnlyTheProvidersWithoutASession();
   await assertAServingProviderIsNotAskedTwice();
+  await assertANonServingCandidateStillReportsItsRepair();
 };
 
 function assertAnUpgradedToolchainIsAlwaysObserved(): void {
@@ -109,6 +110,27 @@ function assertAFailedProbeRepeatsTheLastAnswer(): void {
     launches(log),
     2,
   );
+
+  // Bounded, and every attempt is a real launch. A fallback with no bound is
+  // the defect it replaced wearing different clothes: a dispatcher whose
+  // selected runtime was uninstalled resolves, fails forever, and would go on
+  // naming the version it gave before it broke. Past a handful of consecutive
+  // failures the honest answer is that this toolchain is no longer reporting.
+  const refusals = [ask(), ask(), ask()];
+  TestValidator.equals(
+    "the fallback is bounded and then gives way",
+    refusals,
+    [answered, answered, "flaky-toolchain=unreported"],
+  );
+  TestValidator.equals(
+    "every refusal was re-launched rather than frozen",
+    launches(log),
+    5,
+  );
+
+  // And a tool that starts answering again is believed immediately.
+  fs.rmSync(path.join(root, "toolchain-refuse"));
+  TestValidator.equals("a recovered toolchain answers again", ask(), answered);
 }
 
 function assertEveryProbedLineSurvivesOnOneLine(): void {
@@ -204,6 +226,48 @@ async function assertAServingProviderIsNotAskedTwice(): Promise<void> {
     "and never asked it from the topology snapshot either",
     afterCold,
     0,
+  );
+  await source.close();
+}
+
+async function assertANonServingCandidateStillReportsItsRepair(): Promise<void> {
+  const root = GraphPaths.createTempDirectory("graph-toolchain-fallback-");
+  const file = path.join(root, "a.ts");
+  fs.writeFileSync(file, "export const value = 1;\n");
+
+  // The whole reason a non-serving candidate keeps its configuration in the
+  // topology snapshot. This provider resolved and did not serve, so it has no
+  // session deriving its build universe, and a developer who repairs the
+  // toolchain without editing a file has nothing else that could notice.
+  let setting = "toolchain=broken";
+  const provider: IGraphProvider = {
+    ...ProviderFixtures.provider({ name: "declining-provider" }),
+    configuration: () => [setting],
+  };
+  let builds = 0;
+  const source = createResidentGraphSource(
+    { cwd: root },
+    {
+      providers: [provider],
+      buildLspGraph: async () => {
+        builds += 1;
+        return { ...resultOf(root, file), providers: new Map() };
+      },
+    },
+  );
+  await source.load();
+  await source.load();
+  TestValidator.equals(
+    "an unchanged fallback does not rebuild the resident state",
+    builds,
+    1,
+  );
+  setting = "toolchain=1.0.0";
+  await source.load();
+  TestValidator.equals(
+    "a repaired fallback candidate rebuilds so it can serve",
+    builds,
+    2,
   );
   await source.close();
 }

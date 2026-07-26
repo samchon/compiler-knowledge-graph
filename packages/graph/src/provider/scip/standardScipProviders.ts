@@ -305,48 +305,55 @@ function resolveToolchain(
   // longer points at a program and then continues its ordinary search, so a
   // stale one resolves to whatever the label finds anyway. The aliases below
   // then only run on a machine where that spelling is absent too.
-  if (toolchain.override !== undefined) {
-    const overridden: IToolchainTool = {
+  if (toolchain.override !== undefined && env[toolchain.override] !== undefined) {
+    const overridden = resolved(root, env, {
       command: toolchain.label,
       override: toolchain.override,
-    };
-    if (
-      env[toolchain.override] !== undefined &&
-      toolchainVersion.resolve({
-        root,
-        env,
-        args: VERSION_ARGS,
-        ...overridden,
-      }) !== undefined
-    ) {
-      return [overridden];
-    }
+    });
+    if (overridden !== undefined) return [overridden];
   }
   for (const command of toolchain.aliases ?? []) {
-    const tool: IToolchainTool = { command };
-    if (
-      toolchainVersion.resolve({ root, env, args: VERSION_ARGS, ...tool }) !==
-      undefined
-    ) {
-      return [tool];
-    }
+    const alias = resolved(root, env, { command });
+    if (alias !== undefined) return [alias];
   }
   const found: IToolchainTool[] = [];
   for (const named of toolchain.fromProject?.(root) ?? []) {
     // An absolute driver is probed exactly as recorded. The build named that
     // file, and another program of the same basename on this machine's `PATH`
     // is not the one those translation units were compiled with.
-    const tool: IToolchainTool = path.isAbsolute(named)
-      ? { command: named, label: driverLabel(named), executable: named }
-      : { command: named, label: driverLabel(named) };
-    if (
-      toolchainVersion.resolve({ root, env, args: VERSION_ARGS, ...tool }) !==
-      undefined
-    ) {
-      found.push(tool);
-    }
+    const driver = resolved(
+      root,
+      env,
+      path.isAbsolute(named)
+        ? { command: named, label: driverLabel(named), executable: named }
+        : { command: named, label: driverLabel(named) },
+    );
+    if (driver !== undefined) found.push(driver);
   }
   return found;
+}
+
+/**
+ * Resolve one candidate and carry the answer, rather than asking twice.
+ *
+ * Deciding whether a toolchain exists and then reading its version used to be
+ * two independent resolutions of the same name, and on Windows a resolution
+ * that misses the project's own bin is a `where.exe` launch. Every extra launch
+ * is another chance for a hiccup to report an installed tool as absent, which
+ * moves a build universe that nothing about the project moved.
+ */
+function resolved(
+  root: string,
+  env: NodeJS.ProcessEnv,
+  tool: IToolchainTool,
+): IToolchainTool | undefined {
+  const command = toolchainVersion.resolve({
+    root,
+    env,
+    args: VERSION_ARGS,
+    ...tool,
+  });
+  return command === undefined ? undefined : { ...tool, resolved: command };
 }
 
 function toolchainVersions(
@@ -369,6 +376,9 @@ interface IToolchainTool {
   label?: string;
   override?: string;
   executable?: string;
+
+  /** The invocation this candidate resolved to, once it has. */
+  resolved?: IGraphProvider.ICommand;
 }
 
 /**

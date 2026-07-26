@@ -122,11 +122,12 @@ function cargoConfigurationInputs(root: string): string[] {
 function isRegularFile(file: string): boolean {
   try {
     return fs.statSync(file).isFile();
-    /* c8 ignore next 2 -- a Cargo config disappearing during input discovery
+    /* c8 ignore start -- a Cargo config disappearing during input discovery
      * is fenced by the enclosing generation transaction. */
   } catch {
     return false;
   }
+  /* c8 ignore stop */
 }
 
 function rustProviderConfiguration(

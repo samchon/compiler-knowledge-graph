@@ -15,10 +15,16 @@ import { resolveProviderCommand } from "./resolveProviderCommand";
  * resident source went further and discarded its whole index.
  *
  * Three states replace the one word, and each is a constant for as long as it
- * holds. Absence is decided by {@link resolveProviderCommand}, which reads the
- * filesystem and launches nothing, so `unavailable` means only that. A probe
- * that answers is the version. A probe that resolves and does not answer is
+ * holds. Absence is decided by {@link resolveProviderCommand} rather than by
+ * the probe, so `unavailable` means the tool was not found. A probe that
+ * answers is the version. A probe that resolves and does not answer is
  * `unreported`, because that is a third fact.
+ *
+ * One seam remains: resolution consults `PATH` by launching `where.exe` or
+ * `command -v`, so a lookup that fails to run also reports absence. That is the
+ * same conflation one layer down, it predates this design, and closing it means
+ * teaching resolution to distinguish "asked and found nothing" from "could not
+ * ask".
  *
  * Being constants is what makes them safe to fingerprint. The row a failing
  * probe produces does not depend on *why* it failed or on how many times it
@@ -46,7 +52,7 @@ import { resolveProviderCommand } from "./resolveProviderCommand";
  */
 export function toolchainVersion(props: toolchainVersion.IProps): string {
   const label = props.label ?? props.command;
-  const resolved = toolchainVersion.resolve(props);
+  const resolved = props.resolved ?? toolchainVersion.resolve(props);
   if (resolved === undefined) return `${label}=unavailable`;
   const observed = probe(resolved, props);
   return observed === undefined
@@ -80,6 +86,17 @@ export namespace toolchainVersion {
      * the same basename happens to be on this machine's `PATH`.
      */
     executable?: string;
+
+    /**
+     * The invocation this row describes, when the caller already resolved it.
+     *
+     * Deciding whether a toolchain exists and reading its version are the same
+     * lookup asked twice, and on Windows a lookup that misses the project's own
+     * bin is a `where.exe` launch. Every extra launch is another chance for a
+     * hiccup to report an installed tool as absent — which moves a build
+     * universe that nothing about the project moved.
+     */
+    resolved?: IGraphProvider.ICommand;
   }
 
   /**

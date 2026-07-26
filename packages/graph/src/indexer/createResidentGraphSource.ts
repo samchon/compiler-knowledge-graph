@@ -389,7 +389,8 @@ export function createResidentGraphSource(
     const moved = movedConsumedSource(sources, committedInputs);
     if (moved !== undefined) {
       throw new StaleCandidateError(
-        `@samchon/graph: ${moved} changed while this refresh was preparing, so no slice of it may be published`,
+        `@samchon/graph: ${moved.file} changed while this refresh was preparing ` +
+          `(${moved.detail}), so no slice of it may be published`,
       );
     }
     const providerSources = providerSourcesOf([...merged.values()]);

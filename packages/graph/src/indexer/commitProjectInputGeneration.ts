@@ -54,7 +54,7 @@ export async function commitProjectInputGeneration(
     let candidate: {
       afterBuildInputs: string[];
       after: Map<string, string>;
-      moved: string | undefined;
+      moved: movedConsumedSource.IMovement | undefined;
       providerMovement: string | undefined;
       beforeGeneration: string;
       afterGeneration: string;
@@ -133,7 +133,7 @@ export async function commitProjectInputGeneration(
 
     lastMovement =
       candidate.moved !== undefined
-        ? `${candidate.moved} changed after this build consumed it`
+        ? `${candidate.moved.file} changed after this build consumed it (${candidate.moved.detail})`
         : candidate.providerMovement !== undefined
           ? candidate.providerMovement
           : "the selected source/config/build input generation changed while the build was preparing";

@@ -233,6 +233,38 @@ const installScip = async () => {
   fs.symlinkSync(binary, link);
 };
 
+// The strict Ruby producer, which `GRAPH_PROVIDERS` has registered since the
+// registry existed and which no runner has ever installed. Until now every Ruby
+// build fell through to the generic language-server lane, where a
+// `textDocument/references` per symbol against a server with no persistent
+// cross-file index made sinatra exceed an hour twice — at a thirty minute cap
+// and again at sixty.
+//
+// The standalone binary rather than the gem, because it is the one artifact
+// GitHub publishes a digest for, and this setup pins what it installs. Upstream
+// ships x86_64 Linux and arm64 Darwin only: there is no Windows build, which
+// matters for the product beyond this runner and is recorded rather than
+// discovered later.
+const installScipRuby = async () => {
+  const version = "v0.4.7";
+  const url = `https://github.com/sourcegraph/scip-ruby/releases/download/scip-ruby-${version}/scip-ruby-x86_64-linux`;
+  const digest =
+    "a068c7c3b2042b9eac563ce77ce35dcaca666b418530b1db9f932a3dbc7175dd";
+  const binary = path.join(toolsRoot, `scip-ruby-${version}`);
+  await downloadFile(url, binary);
+  verifySha256(binary, digest);
+  record({
+    tool: "scip-ruby",
+    version,
+    source: url,
+    digest: `sha256:${digest}`,
+  });
+  fs.chmodSync(binary, 0o755);
+  const link = path.join(binRoot, "scip-ruby");
+  fs.rmSync(link, { force: true });
+  fs.symlinkSync(binary, link);
+};
+
 // The published tarball is a webpack bundle whose only runtime `require`s are
 // Node built-ins, so extracting the integrity-verified archive installs exactly
 // the bytes the digest covers. `npm install` would instead resolve the package's
@@ -477,6 +509,8 @@ switch (experiment.language) {
       source: "gem install ruby-lsp",
       digest: "unpinned",
     });
+    await installScipRuby();
+    await installScip();
     break;
   case "php":
     shell("npm install -g intelephense");

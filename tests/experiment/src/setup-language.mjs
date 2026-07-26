@@ -245,25 +245,56 @@ const installScip = async () => {
 // ships x86_64 Linux and arm64 Darwin only: there is no Windows build, which
 // matters for the product beyond this runner and is recorded rather than
 // discovered later.
-const installScipRuby = async () => {
-  const version = "v0.4.7";
-  const url = `https://github.com/sourcegraph/scip-ruby/releases/download/scip-ruby-${version}/scip-ruby-x86_64-linux`;
-  const digest =
-    "a068c7c3b2042b9eac563ce77ce35dcaca666b418530b1db9f932a3dbc7175dd";
-  const binary = path.join(toolsRoot, `scip-ruby-${version}`);
+// Every SCIP producer upstream publishes as a single self-contained executable
+// installs the same way, so the shape is written once. The digest is taken from
+// the release API rather than computed here: GitHub reports it per asset, which
+// pins the bytes without this setup having to fetch them twice.
+const installPinnedBinary = async ({ tool, version, url, digest }) => {
+  const binary = path.join(toolsRoot, `${tool}-${version}`);
   await downloadFile(url, binary);
   verifySha256(binary, digest);
-  record({
-    tool: "scip-ruby",
-    version,
-    source: url,
-    digest: `sha256:${digest}`,
-  });
+  record({ tool, version, source: url, digest: `sha256:${digest}` });
   fs.chmodSync(binary, 0o755);
-  const link = path.join(binRoot, "scip-ruby");
+  const link = path.join(binRoot, tool);
   fs.rmSync(link, { force: true });
   fs.symlinkSync(binary, link);
 };
+
+const installScipRuby = () =>
+  installPinnedBinary({
+    tool: "scip-ruby",
+    version: "v0.4.7",
+    url: "https://github.com/sourcegraph/scip-ruby/releases/download/scip-ruby-v0.4.7/scip-ruby-x86_64-linux",
+    digest:
+      "a068c7c3b2042b9eac563ce77ce35dcaca666b418530b1db9f932a3dbc7175dd",
+  });
+
+// Indexes through the real compiler: it drives Gradle or Maven with the
+// SemanticDB plugin injected, so the JVM lanes pay a build rather than skipping
+// one. That is the trade — wall clock for facts the compiler itself produced —
+// and it has to be measured rather than assumed. Kotlin support is upstream's
+// own "less mature" than Java's, and Maven cannot index Kotlin at all; koin is
+// Gradle, so it is on the supported path.
+const installScipJava = () =>
+  installPinnedBinary({
+    tool: "scip-java",
+    version: "v0.13.1",
+    url: "https://github.com/scip-code/scip-java/releases/download/v0.13.1/scip-java-v0.13.1",
+    digest:
+      "a694cae143c32c5b6226362fb4bd268a8d13d3cd9b482819b3b0029a9a97b8fe",
+  });
+
+// Needs a compilation database, which is why the provider carries
+// `--compdb-path` and the corpus fixtures for redis and leveldb have to produce
+// `compile_commands.json` before this can say anything.
+const installScipClang = () =>
+  installPinnedBinary({
+    tool: "scip-clang",
+    version: "v0.4.0",
+    url: "https://github.com/sourcegraph/scip-clang/releases/download/v0.4.0/scip-clang-x86_64-linux",
+    digest:
+      "06fd18c576f979a726c651594644ec4a35db4f471f2160b3f72eb89fa6001784",
+  });
 
 // The published tarball is a webpack bundle whose only runtime `require`s are
 // Node built-ins, so extracting the integrity-verified archive installs exactly
@@ -395,6 +426,8 @@ switch (experiment.language) {
       source: "apt clangd",
       digest: "unpinned",
     });
+    await installScipClang();
+    await installScip();
     break;
   case "java": {
     // jdtls is not an apt package and requires Java 21+; install the JDK and the
@@ -426,6 +459,8 @@ switch (experiment.language) {
         "https://download.eclipse.org/jdtls/snapshots/jdt-language-server-latest.tar.gz",
       digest: "unpinned",
     });
+    await installScipJava();
+    await installScip();
     break;
   }
   case "csharp": {
@@ -452,10 +487,38 @@ switch (experiment.language) {
       source: "dotnet tool install --global csharp-ls",
       digest: "unpinned",
     });
+    // The strict C# producer, built on Roslyn like csharp-ls but reading the
+    // solution once instead of answering a request per symbol. Installed as a
+    // global dotnet tool, so the SDK above is its only prerequisite.
+    shell(`"${dotnet}" tool install --global scip-dotnet || "${dotnet}" tool update --global scip-dotnet`);
+    record({
+      tool: "scip-dotnet",
+      version: "unpinned",
+      source: "dotnet tool install --global scip-dotnet",
+      digest: "unpinned",
+    });
+    await installScip();
     break;
   }
   case "kotlin":
     await installKotlinLanguageServer();
+    // scip-java covers Kotlin through semanticdb-kotlinc, and it needs a JDK to
+    // run the Gradle build it indexes through. koin is the worst lane measured
+    // at 1349 s, almost all of it kotlin-language-server's Gradle sync before it
+    // answers `initialize` at all. The strict path does not skip that build; it
+    // performs one. Whether that is faster, slower, or merely truer is the thing
+    // to find out.
+    apt(["openjdk-21-jdk"]);
+    process.env.JAVA_HOME = "/usr/lib/jvm/java-21-openjdk-amd64";
+    if (process.env.GITHUB_ENV !== undefined) {
+      fs.appendFileSync(
+        process.env.GITHUB_ENV,
+        `JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64${os.EOL}`,
+      );
+    }
+    appendGithubPath("/usr/lib/jvm/java-21-openjdk-amd64/bin");
+    await installScipJava();
+    await installScip();
     break;
   case "swift":
     // sourcekit-lsp ships with the toolchain installed by the workflow's Setup
@@ -556,6 +619,20 @@ switch (experiment.language) {
         "https://storage.googleapis.com/dart-archive/channels/stable/release/latest/sdk/dartsdk-linux-x64-release.zip",
       digest: "unpinned",
     });
+    // scip_dart is a pub package rather than a released binary, so it activates
+    // through the SDK just installed and lands in the pub cache's bin directory.
+    // The registry used to name a `samchon-graph-dart` sidecar that was never
+    // written; darthttp exceeded an hour on the language-server lane while a
+    // real indexer for the language already existed on pub.dev.
+    shell("dart pub global activate scip_dart 1.6.2");
+    appendGithubPath(path.join(os.homedir(), ".pub-cache", "bin"));
+    record({
+      tool: "scip_dart",
+      version: "1.6.2",
+      source: "dart pub global activate scip_dart 1.6.2",
+      digest: "unpinned",
+    });
+    await installScip();
     break;
   }
   default:

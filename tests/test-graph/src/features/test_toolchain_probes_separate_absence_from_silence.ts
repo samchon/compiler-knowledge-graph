@@ -31,6 +31,7 @@ export const test_toolchain_probes_separate_absence_from_silence = async () => {
   assertResolutionRatherThanTheProbeDecidesAbsence();
   assertAFailedProbeIsTheSameFactEveryTime();
   assertEveryProbedLineSurvivesOnOneLine();
+  assertOnlyAKnownRowCanBeRestored();
   assertTopologyAsksOnlyTheProvidersWithoutASession();
   assertAStaleOverrideFallsThroughToTheAliases();
   assertALaunchThatNeverRanSaysNothing();
@@ -178,6 +179,52 @@ function assertAFailedProbeIsTheSameFactEveryTime(): void {
   // than on every refresh in between.
   fs.rmSync(path.join(root, "toolchain-refuse"));
   TestValidator.equals("a recovered toolchain answers again", ask(), answered);
+}
+
+/**
+ * Restoring a row is per label, and only for a label that has a prior.
+ *
+ * The session test drives this through real refreshes, which cannot reach two
+ * of its cases: a row that has never been established once, and a row that
+ * carries no `=` at all. Both are reachable in the field — a provider that adds
+ * a configuration row between refreshes produces the first, and any row that is
+ * a bare token rather than a pair produces the second — and neither should be
+ * answered by inventing a value.
+ */
+function assertOnlyAKnownRowCanBeRestored(): void {
+  TestValidator.equals(
+    "a row that has never been established stays unasked",
+    toolchainVersion.reestablish(
+      ["tool=1.0.0", `newcomer${toolchainVersion.UNASKED}`, "bare-token"],
+      ["tool=1.0.0", "bare-token"],
+    ),
+    ["tool=1.0.0", `newcomer${toolchainVersion.UNASKED}`, "bare-token"],
+  );
+  TestValidator.equals(
+    "every unasked row with a prior is restored, and only those",
+    toolchainVersion.reestablish(
+      [
+        `held${toolchainVersion.UNASKED}`,
+        "moved=2.0.0",
+        `unknown${toolchainVersion.UNASKED}`,
+      ],
+      ["held=1.0.0", "moved=1.0.0"],
+    ),
+    ["held=1.0.0", "moved=2.0.0", `unknown${toolchainVersion.UNASKED}`],
+  );
+  TestValidator.equals(
+    "a value containing the separator is restored whole",
+    toolchainVersion.reestablish(
+      [`GOFLAGS${toolchainVersion.UNASKED}`],
+      ["GOFLAGS=-tags=integration"],
+    ),
+    ["GOFLAGS=-tags=integration"],
+  );
+  TestValidator.equals(
+    "a derivation with nothing unasked is returned untouched",
+    toolchainVersion.reestablish(["tool=2.0.0"], ["tool=1.0.0"]),
+    ["tool=2.0.0"],
+  );
 }
 
 function assertEveryProbedLineSurvivesOnOneLine(): void {

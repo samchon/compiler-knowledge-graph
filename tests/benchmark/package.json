@@ -19,7 +19,8 @@
     "audit": "node graph/audit-codex-traces.mjs",
     "test": "node test/run.mjs",
     "render": "node build/graph-benchmark-svg.cjs",
-    "render:png": "node build/graph-benchmark-svg.cjs --png"
+    "render:png": "node build/graph-benchmark-svg.cjs --png",
+    "index-time:summary": "node graph/index-time-summary.mjs"
   },
   "dependencies": {
     "@samchon/graph": "workspace:*"

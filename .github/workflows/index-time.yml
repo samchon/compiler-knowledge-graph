@@ -1,0 +1,187 @@
+name: index-time
+
+# The readiness measurement, not a gate.
+#
+# `tests/benchmark/graph/index-time.mjs` times what it costs to build the index
+# before a tool can answer its first question. It has existed complete and unrun;
+# this workflow is what runs it. It is deliberately not attached to every push:
+# a measurement that gates a merge becomes a thing people make green, and the
+# number stops meaning what it says.
+#
+# One language per job, and one job per runner. That matters more here than
+# anywhere else in this repository: a cold build is one sample with no median to
+# hide behind, so two lanes sharing a machine would corrupt each other's wall
+# clock. A GitHub-hosted runner is a single-tenant VM, which is the strongest
+# quietness claim available without a dedicated host — and its CPU model varies
+# between runs, which is why every cell carries the host block that records it.
+# A reader comparing two cells has to be able to see whether they ran on the same
+# machine, and cells from different hosts are not one comparison.
+on:
+  workflow_dispatch:
+    inputs:
+      project:
+        description: "Single corpus project to measure, or all."
+        required: false
+        default: "all"
+  pull_request:
+    branches: [master]
+    paths:
+      - ".github/workflows/index-time.yml"
+      - "tests/benchmark/**"
+
+concurrency:
+  group: index-time-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  measure:
+    name: ${{ matrix.project }} index
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { project: excalidraw, language: typescript }
+          - { project: gin, language: go }
+          - { project: flask, language: python }
+          - { project: tokio, language: rust }
+          - { project: gson, language: java }
+          - { project: redis, language: c }
+          - { project: leveldb, language: cpp }
+          - { project: sinatra, language: ruby }
+          - { project: slim, language: php }
+          - { project: serilog, language: csharp }
+          - { project: koin, language: kotlin }
+          - { project: lualine, language: lua }
+          - { project: darthttp, language: dart }
+
+    steps:
+      - name: Skip unselected project
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.project != 'all' && inputs.project != matrix.project }}
+        run: echo "Skipping ${{ matrix.project }}"
+
+      - name: Checkout
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.project == 'all' || inputs.project == matrix.project }}
+        uses: actions/checkout@v7
+
+      - name: Enable pnpm
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.project == 'all' || inputs.project == matrix.project }}
+        run: corepack enable
+
+      - name: Setup Node
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.project == 'all' || inputs.project == matrix.project }}
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22.x
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      # The Go provider builds its sidecar from source, so the toolchain has to
+      # be present before the language setup runs.
+      - name: Setup Go
+        if: ${{ matrix.language == 'go' && (github.event_name != 'workflow_dispatch' || inputs.project == 'all' || inputs.project == matrix.project) }}
+        uses: actions/setup-go@v7
+        with:
+          go-version: 1.26.5
+          cache-dependency-path: sidecars/go/go.sum
+
+      - name: Install
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.project == 'all' || inputs.project == matrix.project }}
+        run: pnpm install --frozen-lockfile
+
+      - name: Build package
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.project == 'all' || inputs.project == matrix.project }}
+        run: pnpm build
+
+      # The same provisioning the experiment matrix uses. It appends each tool's
+      # directory to GITHUB_PATH, so the benchmark's own child processes resolve
+      # the server without a machine-global install.
+      - name: Install language server
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.project == 'all' || inputs.project == matrix.project }}
+        run: pnpm --filter @samchon/graph-experiment run setup -- --language ${{ matrix.language }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # `--tools samchon-graph` needs no comparator installed. The comparator
+      # arms are a separate decision with their own installation surface, and
+      # measuring this product's own readiness does not wait on it.
+      #
+      # `--no-website` keeps every job's result in its own report; folding them
+      # into one publication is the collect job's work, because a cell written by
+      # thirteen concurrent jobs would race on one file.
+      - name: Measure cold index build
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.project == 'all' || inputs.project == matrix.project }}
+        run: |
+          node tests/benchmark/graph/index-time.mjs \
+            --project ${{ matrix.project }} \
+            --tools samchon-graph \
+            --no-website \
+            --out "$GITHUB_WORKSPACE/index-time-out/${{ matrix.project }}"
+        env:
+          # A dedicated runner is the quietest host available here, so hold the
+          # measurement to it rather than warning and continuing.
+          SAMCHON_BENCH_REQUIRE_QUIET: "1"
+
+      - name: Upload report
+        if: ${{ always() && (github.event_name != 'workflow_dispatch' || inputs.project == 'all' || inputs.project == matrix.project) }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: index-time-${{ matrix.project }}
+          path: index-time-out/${{ matrix.project }}/report.json
+          if-no-files-found: ignore
+
+  collect:
+    name: collect
+    needs: measure
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Enable pnpm
+        run: corepack enable
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22.x
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Download reports
+        uses: actions/download-artifact@v7
+        with:
+          pattern: index-time-*
+          path: index-time-reports
+
+      # Folded one report at a time through the harness's own `--publish` path,
+      # which merges cells by (project, tool) and leaves `structural` and `agent`
+      # untouched. A project whose job failed contributed no report and therefore
+      # has no cell — which is the honest record of a language that could not be
+      # measured, and is not the same as a zero.
+      - name: Fold reports into the publication
+        run: |
+          shopt -s nullglob
+          found=0
+          for report in index-time-reports/*/report.json; do
+            echo "folding $report"
+            node tests/benchmark/graph/index-time.mjs --publish "$report"
+            found=$((found + 1))
+          done
+          echo "folded $found report(s)"
+          if [ "$found" = "0" ]; then
+            echo "::warning::no index-time report was produced"
+          fi
+
+      - name: Show what was measured
+        run: node tests/benchmark/graph/index-time-summary.mjs
+
+      - name: Upload publication
+        uses: actions/upload-artifact@v7
+        with:
+          name: index-time-publication
+          path: tests/benchmark/results/graph.json
+          if-no-files-found: error

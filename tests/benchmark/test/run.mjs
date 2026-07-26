@@ -42,7 +42,48 @@ assertWorkflowOptionForms(
   path.join(graphDir, "index-time.mjs"),
   path.join(repoRoot, ".github", "workflows", "index-time.yml"),
 );
+testPublishedIndexCellsNameTheirMachine();
 console.log("benchmark system tests: ok");
+
+/**
+ * A published indexing-time cell says which machine produced it.
+ *
+ * These cells are measured one language per runner, deliberately: a cold build
+ * is a single sample with no median to hide behind, so two lanes sharing a host
+ * would corrupt each other's wall clock. That makes thirteen VMs with thirteen
+ * CPU models, and the publication used to keep one host panel naming whichever
+ * fold landed last — twelve cells attributed to a machine they never touched.
+ * The fix was to give every cell its own host, and this is what keeps it: a
+ * reader comparing two rows has to be able to see whether they are one
+ * comparison.
+ *
+ * Silent until an `index` key exists, and pointedly not silent after. Until the
+ * measurement is published there is nothing to check and nothing to pretend
+ * about; the moment there is, every cell answers for itself.
+ */
+function testPublishedIndexCellsNameTheirMachine() {
+  const published = JSON.parse(
+    fs.readFileSync(path.join(benchmarkDir, "results", "graph.json"), "utf8"),
+  );
+  if (published.index === undefined || published.index === null) return;
+  const nameless = (published.index.cells ?? []).filter(
+    (cell) => typeof cell?.host?.cpu !== "string",
+  );
+  assert.deepEqual(
+    nameless.map((cell) => `${String(cell.project)}/${String(cell.tool)}`),
+    [],
+    "a published index cell must name the machine it was measured on",
+  );
+  const unmeasurable = (published.index.cells ?? []).filter(
+    (cell) =>
+      typeof cell?.buildMs !== "number" && cell?.hasBuildStep !== false,
+  );
+  assert.deepEqual(
+    unmeasurable.map((cell) => `${String(cell.project)}/${String(cell.tool)}`),
+    [],
+    "a published index cell carries a build time or says it has no build step",
+  );
+}
 
 function testCorpusAndPromptProvenance() {
   const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));

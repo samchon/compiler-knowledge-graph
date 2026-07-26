@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
-import fs from "node:fs";
 
+import { isSpawnableFile } from "../utils/isSpawnableFile";
 import { spawnableCommand } from "../utils/spawnableCommand";
 import { IGraphProvider } from "./IGraphProvider";
 import { resolveProviderCommand } from "./resolveProviderCommand";
@@ -21,10 +21,10 @@ import { resolveProviderCommand } from "./resolveProviderCommand";
  * `unreported`, because that is a third fact.
  *
  * Being constants is what makes them safe to fingerprint. The row a failing
- * probe produces no longer depends on *why* it failed or on how many times it
- * has failed, so a build universe computed from it moves once when a toolchain
- * stops answering and once when it starts again — not on every refresh, which
- * is what the old `unavailable` did.
+ * probe produces does not depend on *why* it failed or on how many times it
+ * has, so a build universe computed from it moves once when a toolchain stops
+ * answering and once when it starts again. The old `unavailable` was a constant
+ * too; what it cost was the conflation above, not extra movement.
  *
  * A remembered answer used to stand in for a failed probe, so that a single
  * blip moved nothing at all. It is gone. It bought one rebuild per outage in
@@ -154,12 +154,3 @@ function oneLine(output: string): string {
     .join(" | ");
 }
 
-function isSpawnableFile(file: string): boolean {
-  try {
-    if (!fs.statSync(file).isFile()) return false;
-    fs.accessSync(file, fs.constants.X_OK);
-    return true;
-  } catch {
-    return false;
-  }
-}

@@ -383,11 +383,6 @@ function probeEnvironment(
     PATHEXT: ".EXE;.CMD;.BAT",
     SystemRoot: process.env.SystemRoot,
     SAMCHON_GRAPH_FIXTURE_PROBE_LOG: log,
-    // A key with no value. `Object.keys` still enumerates it, and the digest
-    // that files this toolchain's last answer has to fold it in the same way on
-    // every platform — `SystemRoot` is the only naturally-unset key in these
-    // fixtures and it is always set on Windows.
-    SAMCHON_GRAPH_FIXTURE_UNSET: undefined,
     [override]: binary,
   };
 }

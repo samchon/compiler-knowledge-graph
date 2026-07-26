@@ -26,6 +26,13 @@ export namespace providerTopology {
      * Its build universe is the only evidence that the reason it fell back has
      * been repaired: a developer who fixes the toolchain and edits nothing
      * would otherwise stay on the generic lane until some unrelated file moved.
+     *
+     * The cost of that is worth stating. A probe that fails for a reason
+     * unrelated to the project moves this row, and a moved row rebuilds every
+     * language rather than one artifact. It is accepted only because a
+     * non-serving candidate is already degraded, where one rebuild is cheaper
+     * than never retrying; for a serving provider, where it would be pure loss,
+     * the derivation is absent entirely.
      */
     configuration?: string[];
   }

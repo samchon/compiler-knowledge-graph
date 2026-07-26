@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
-import fs from "node:fs";
 import path from "node:path";
 
+import { isSpawnableFile } from "../utils/isSpawnableFile";
 import { spawnableCommand } from "../utils/spawnableCommand";
 import { IGraphProvider } from "./IGraphProvider";
 
@@ -103,16 +103,6 @@ function localCandidates(root: string, command: string): string[] {
       ]
     : [path.join(privateBin, command), path.join(packageBin, command)];
   /* c8 ignore stop */
-}
-
-function isSpawnableFile(file: string): boolean {
-  try {
-    if (!fs.statSync(file).isFile()) return false;
-    fs.accessSync(file, fs.constants.X_OK);
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 function spawnable(

@@ -155,9 +155,11 @@ function exporterScript(): string | undefined {
     "lua",
     "export.lua",
   );
-  /* c8 ignore next -- the absent arm is a package shipped without its own
-   * producer, which a suite reaches only by deleting a file mid-run. */
+  /* c8 ignore start -- the absent arm is a package shipped without its own
+   * producer, which a suite reaches only by deleting a file mid-run. A
+   * multi-line hint eats the count a one-line `next` would have used. */
   return fs.existsSync(script) ? script : undefined;
+  /* c8 ignore stop */
 }
 
 /**

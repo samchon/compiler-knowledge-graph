@@ -18,6 +18,8 @@ export const test_lua_export_refuses_what_it_cannot_prove = (): void => {
   assertTheInnermostEnclosingDeclarationWins();
   assertEdgesAgainstDeclarationsThatDidNotSurvive();
   assertARecursiveUseIsNotAnEdgeToItself();
+  assertAUseInsideAnUnmappedDeclarationIsDropped();
+  assertABodylessDeclarationCanBeDisplaced();
 };
 
 function assertADuplicateIdentityIsDroppedAndNamed(): void {
@@ -368,5 +370,77 @@ function assertARecursiveUseIsNotAnEdgeToItself(): void {
     "a declaration referencing itself produces no edge",
     result.edges,
     [],
+  );
+}
+
+/**
+ * A use inside a declaration the graph has no word for names nothing.
+ *
+ * The enclosing declaration is what an edge runs from, so if the graph cannot
+ * name it the edge has no origin — and attributing the use to whatever mapped
+ * declaration sits further out would say the wrong thing referenced the target.
+ */
+function assertAUseInsideAnUnmappedDeclarationIsDropped(): void {
+  const result = adaptLuaExport(
+    {
+      schemaVersion: 1,
+      files: ["main.lua"],
+      nodes: [
+        node("target", "local", "local", "main.lua", 0, 0),
+        withBody(node("odd", "coroutine", "setcoroutine", "main.lua", 3, 0), {
+          startLine: 3,
+          startColumn: 0,
+          endLine: 9,
+          endColumn: 3,
+        }),
+      ],
+      edges: [edge(1, "main.lua", 5, 2)],
+      skipped: { unnamed: 0, outsideRoot: 0, refsFailed: 0 },
+      warnings: [],
+    },
+    "samchon-graph-lua",
+  );
+  TestValidator.equals(
+    "a use inside an unnameable declaration produces no edge",
+    result.edges,
+    [],
+  );
+}
+
+/**
+ * A declaration with no body still competes for containment, and loses.
+ *
+ * Only a function statement carries a body span; a plain local's span is its
+ * own name. When one of those happens to enclose a position — a single-line
+ * declaration and a use on the same line — the function that also encloses it
+ * has to win, and the comparison has to read the bodyless one's own span to
+ * decide that.
+ */
+function assertABodylessDeclarationCanBeDisplaced(): void {
+  const result = adaptLuaExport(
+    {
+      schemaVersion: 1,
+      files: ["main.lua"],
+      nodes: [
+        node("target", "local", "local", "util.lua", 0, 0),
+        // No body: its span is the name, and it encloses the use below.
+        node("bare", "local", "local", "main.lua", 5, 0),
+        withBody(node("inner", "function", "function", "main.lua", 5, 2), {
+          startLine: 5,
+          startColumn: 1,
+          endLine: 5,
+          endColumn: 40,
+        }),
+      ],
+      edges: [edge(1, "main.lua", 5, 3)],
+      skipped: { unnamed: 0, outsideRoot: 0, refsFailed: 0 },
+      warnings: [],
+    },
+    "samchon-graph-lua",
+  );
+  TestValidator.equals(
+    "the declaration that starts later owns the use",
+    result.edges.map((entry) => entry.from),
+    ["main.lua#inner@6:function"],
   );
 }

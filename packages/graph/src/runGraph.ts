@@ -90,8 +90,12 @@ function dumpSummary(dump: ISamchonGraphDump): string {
   const by =
     served.length === 0 ? "no strict provider served" : served.join(" ");
   const lines = [`@samchon/graph: indexer=${dump.indexer} ${by}`];
+  /* c8 ignore start -- the field is optional in the dump contract and always
+   * present in practice, so the empty-fallback arm guards a shape no producer
+   * in this repository emits. */
   for (const warning of dump.warnings ?? [])
     lines.push(`@samchon/graph: ${warning}`);
+  /* c8 ignore stop */
   return lines.join("\n");
 }
 

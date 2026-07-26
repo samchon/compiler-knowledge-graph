@@ -498,7 +498,17 @@ function assertTheFixtureRejectsAWrongInvocation(): void {
     // scip-ruby writes with `--index-file`, so `--output` is another tool's flag.
     ["scip-ruby", [".", "--output", "index.scip"]],
     // scip-clang takes its destination attached, not as a following argument.
-    ["scip-clang", ["--index-output-path", "index.scip"]],
+    // Everything else it needs is present, so the detached spelling is the only
+    // thing this case can be failing for.
+    [
+      "scip-clang",
+      [
+        "--compdb-path=compile_commands.json",
+        "--temporary-output-dir=tmp",
+        "--index-output-path",
+        "index.scip",
+      ],
+    ],
     // And an invocation that kept the destination but lost the compilation
     // database would index a different program into the right file.
     [

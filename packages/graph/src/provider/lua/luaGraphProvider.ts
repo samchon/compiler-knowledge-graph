@@ -60,7 +60,7 @@ export const luaGraphProvider: IGraphProvider = {
   },
 
   resolve: (root, env) =>
-    /* c8 ignore next -- the exporter ships with this package, so the absent
+    /* c8 ignore start -- the exporter ships with this package, so the absent
      * arm is a broken installation rather than a state a suite can reach
      * without deleting a file out from under the run. */
     exporterScript() === undefined
@@ -69,6 +69,7 @@ export const luaGraphProvider: IGraphProvider = {
           command: "lua-language-server",
           override: "SAMCHON_GRAPH_LUA",
         }),
+  /* c8 ignore stop */
 
   /**
    * Write the config that points the server at our exporter.

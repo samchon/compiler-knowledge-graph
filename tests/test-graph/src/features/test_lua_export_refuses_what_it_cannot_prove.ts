@@ -15,6 +15,7 @@ export const test_lua_export_refuses_what_it_cannot_prove = (): void => {
   assertAnEdgeWithNoDeclarationIsNamed();
   assertAUseAtFileScopeIsNotAttributed();
   assertAMalformedArtifactIsRefused();
+  assertTheInnermostEnclosingDeclarationWins();
 };
 
 function assertADuplicateIdentityIsDroppedAndNamed(): void {
@@ -254,4 +255,48 @@ function edge(
       endColumn: startColumn + 4,
     },
   };
+}
+
+/**
+ * A reference belongs to the innermost declaration that encloses it.
+ *
+ * Lua nests: a function assigned inside another function's body sits within
+ * both spans, and attributing the use to the outer one would say the wrong
+ * declaration references the target. Ties go to the later declaration, which is
+ * the inner one in source order.
+ */
+function assertTheInnermostEnclosingDeclarationWins(): void {
+  const outer = withBody(
+    node("outer", "function", "function", "main.lua", 0, 9),
+    { startLine: 0, startColumn: 0, endLine: 20, endColumn: 3 },
+  );
+  const inner = withBody(
+    node("inner", "function", "function", "main.lua", 5, 11),
+    { startLine: 5, startColumn: 2, endLine: 10, endColumn: 5 },
+  );
+  const target = node("target", "local", "local", "util.lua", 0, 6);
+  const result = adaptLuaExport(
+    {
+      schemaVersion: 1,
+      files: ["main.lua", "util.lua"],
+      // Outer first, so the inner one is found second and has to displace it.
+      nodes: [outer, inner, target],
+      edges: [edge(3, "main.lua", 7, 4)],
+      skipped: { unnamed: 0, outsideRoot: 0, refsFailed: 0 },
+      warnings: [],
+    },
+    "samchon-graph-lua",
+  );
+  TestValidator.equals(
+    "the inner declaration owns the reference",
+    result.edges.map((entry) => entry.from),
+    ["main.lua#inner@6:function"],
+  );
+}
+
+function withBody(
+  entry: adaptLuaExport.INode,
+  body: Omit<adaptLuaExport.ILocation, "file">,
+): adaptLuaExport.INode {
+  return { ...entry, body: { file: entry.location.file, ...body } };
 }

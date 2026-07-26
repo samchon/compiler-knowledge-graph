@@ -32,6 +32,7 @@ export const test_toolchain_probes_separate_absence_from_silence = async () => {
   assertAFailedProbeIsTheSameFactEveryTime();
   assertEveryProbedLineSurvivesOnOneLine();
   assertOnlyAKnownRowCanBeRestored();
+  assertATopologyRestoresPerProviderRow();
   assertTopologyAsksOnlyTheProvidersWithoutASession();
   assertAStaleOverrideFallsThroughToTheAliases();
   assertALaunchThatNeverRanSaysNothing();
@@ -645,5 +646,61 @@ function platformExecutable(directory: string, name: string): string {
   return path.join(
     directory,
     process.platform === "win32" ? `${name}.cmd` : name,
+  );
+}
+
+/**
+ * The topology restores unasked rows the same way a session does.
+ *
+ * A candidate that is not serving still has its toolchain probed on every
+ * refresh, and the resident source treats any change in the serialized topology
+ * as structural — so a probe that failed to launch inside a provider nothing was
+ * using reindexed every language in the project. Matching is per provider, and
+ * within a provider per row, for the reason the session-level repair had to be:
+ * substituting a whole derivation because one entry went unasked throws away the
+ * entries that did establish something.
+ */
+function assertATopologyRestoresPerProviderRow(): void {
+  const row = (
+    provider: string,
+    configuration?: string[],
+  ): providerTopology.IRow => ({
+    provider,
+    languages: ["lua"],
+    command: provider,
+    args: [],
+    windowsVerbatimArguments: false,
+    windowsDoubleEscapeArguments: false,
+    ...(configuration === undefined ? {} : { configuration }),
+  });
+
+  TestValidator.equals(
+    "with nothing established the live rows stand",
+    providerTopology.reestablish([row("a", ["tool=1.0.0"])], undefined),
+    [row("a", ["tool=1.0.0"])],
+  );
+
+  TestValidator.equals(
+    "an unasked row is restored while a changed sibling is kept",
+    providerTopology.reestablish(
+      [row("a", [`tool${toolchainVersion.UNASKED}`, "SETTING=new"])],
+      [row("a", ["tool=1.0.0", "SETTING=old"])],
+    ),
+    [row("a", ["tool=1.0.0", "SETTING=new"])],
+  );
+
+  TestValidator.equals(
+    "a provider with no prior entry is left alone",
+    providerTopology.reestablish(
+      [row("fresh", [`tool${toolchainVersion.UNASKED}`])],
+      [row("other", ["tool=1.0.0"])],
+    ),
+    [row("fresh", [`tool${toolchainVersion.UNASKED}`])],
+  );
+
+  TestValidator.equals(
+    "a candidate that publishes no configuration is untouched",
+    providerTopology.reestablish([row("bare")], [row("bare", ["tool=1.0.0"])]),
+    [row("bare")],
   );
 }

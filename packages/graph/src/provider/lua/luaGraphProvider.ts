@@ -60,6 +60,9 @@ export const luaGraphProvider: IGraphProvider = {
   },
 
   resolve: (root, env) =>
+    /* c8 ignore next -- the exporter ships with this package, so the absent
+     * arm is a broken installation rather than a state a suite can reach
+     * without deleting a file out from under the run. */
     exporterScript() === undefined
       ? undefined
       : resolveProviderCommand(root, env, {
@@ -81,11 +84,14 @@ export const luaGraphProvider: IGraphProvider = {
    */
   prepare: (root) => {
     const script = exporterScript();
+    /* c8 ignore start -- same broken-installation arm as `resolve`; reaching it
+     * means the package shipped without its own producer. */
     if (script === undefined) {
       throw new Error(
         "samchon-graph-lua: the exporter script is missing from this installation",
       );
     }
+    /* c8 ignore stop */
     const relative = path
       .relative(path.resolve(root), script)
       .split(path.sep)

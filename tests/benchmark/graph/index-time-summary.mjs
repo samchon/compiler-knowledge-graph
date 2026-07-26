@@ -99,8 +99,12 @@ for (const row of rows) {
         ? `${(cell.buildMs / 1000).toFixed(1)} s`
         : "no build step";
     const where = uniform ? "" : `  [${cell.host?.cpu ?? "host unrecorded"}]`;
+    // Which path produced it, because a strict provider and the language-server
+    // fallback differ by orders of magnitude and a bare duration hides that.
+    const via =
+      typeof cell.servedBy === "string" ? `  via ${cell.servedBy}` : "";
     process.stdout.write(
-      `  ${pad(row.project, 12)} ${pad(row.language, 11)} ${pad(row.commit, 13)} ${pad(tool, 17)} ${pad(time, 12)} ${scale}${where}\n`,
+      `  ${pad(row.project, 12)} ${pad(row.language, 11)} ${pad(row.commit, 13)} ${pad(tool, 17)} ${pad(time, 12)} ${scale}${where}${via}\n`,
     );
   }
 }

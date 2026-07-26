@@ -2,6 +2,7 @@ import packageJson from "../package.json";
 import { buildGraphDump } from "./indexer/buildGraphDump";
 import { startServer } from "./mcp/startServer";
 import { parseGraphArgs } from "./parseGraphArgs";
+import { ISamchonGraphDump } from "./structures";
 import { runView } from "./view";
 
 const VERSION: string = packageJson.version;
@@ -52,11 +53,34 @@ export function runGraph(argv: readonly string[] = process.argv.slice(
 async function runDump(argv: readonly string[]): Promise<void> {
   try {
     const dump = await buildGraphDump(parseGraphArgs(argv));
+    // What produced this graph, on stderr, before the payload goes to stdout.
+    //
+    // A dump says how long it took and nothing about which path it took, and
+    // the two are not separable afterwards: a strict provider and the generic
+    // language-server lane emit the same shape. A benchmark lane spent an hour
+    // timing out without its log being able to say whether the strict producer
+    // had served, had not been installed, or had been installed and declined.
+    //
+    // stderr rather than stdout because the payload reaches hundreds of
+    // megabytes and callers pipe it to /dev/null; one line beside it costs
+    // nothing and does not move a measured number the way writing the payload
+    // to a file would.
+    process.stderr.write(`${dumpSummary(dump)}\n`);
     process.stdout.write(`${JSON.stringify(dump, null, 2)}\n`);
   } catch (error) {
     writeError(error as Error);
     process.exitCode = 1;
   }
+}
+
+/** One line naming the indexer mode and every provider that actually served. */
+function dumpSummary(dump: ISamchonGraphDump): string {
+  const served = (dump.provenance ?? []).map(
+    (entry) => `${entry.provider}(${entry.languages.join(",")})`,
+  );
+  const by =
+    served.length === 0 ? "no strict provider served" : served.join(" ");
+  return `@samchon/graph: indexer=${dump.indexer} ${by}`;
 }
 
 function helpText(): string {

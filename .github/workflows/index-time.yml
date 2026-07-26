@@ -114,6 +114,22 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      # What actually got installed, printed where the run can be read.
+      # `recordTool` has always written this manifest and nothing ever surfaced
+      # it, so a lane that quietly failed to install its strict producer was
+      # indistinguishable from one that installed it and fell back anyway. An
+      # hour of sinatra was spent on exactly that ambiguity: the measurement
+      # timed out and its log could not say which of the two had happened.
+      - name: Show the installed toolchain
+        if: ${{ always() && (github.event_name != 'workflow_dispatch' || inputs.project == 'all' || inputs.project == matrix.project) }}
+        run: |
+          manifest="tests/experiment/.work/tools/manifest-${{ matrix.language }}.json"
+          if [ -f "$manifest" ]; then
+            cat "$manifest"
+          else
+            echo "::warning::no tool manifest for ${{ matrix.language }}"
+          fi
+
       # `--tools samchon-graph` needs no comparator installed. The comparator
       # arms are a separate decision with their own installation surface, and
       # measuring this product's own readiness does not wait on it.

@@ -295,7 +295,13 @@ function runIndexCell({ project, spec, repoDir, tool }) {
         discardStdout: true,
       },
     );
-    return { project, tool, buildMs: ms };
+    // Which path produced the number. A cell used to carry a duration and
+    // nothing else, so a published time could not say whether a strict provider
+    // built it or the generic language-server lane did — and those differ by
+    // orders of magnitude. The dump writes one provenance line to stderr, which
+    // is captured even while stdout goes to /dev/null, so reading it back costs
+    // nothing and happens after the clock has stopped.
+    return { project, tool, buildMs: ms, servedBy: servedBy(logStem) };
   }
   if (tool === TOOL_CODEGRAPH) {
     ensureLocalIgnored(repoDir, ".codegraph/");
@@ -531,6 +537,28 @@ function runChecked(
     throw new Error(
       `${label} failed (${result.status}); see ${path.relative(repoRoot, `${logBase}.err.log`)}`,
     );
+  }
+}
+
+/**
+ * The provenance line the dump wrote beside its payload, or an honest absence.
+ *
+ * Read from the captured stderr rather than parsed out of the graph itself: the
+ * payload is discarded on purpose, and re-running the build to learn what built
+ * it would cost as much as the measurement. A line that is not there is
+ * reported as unknown rather than guessed at, because "no strict provider
+ * served" and "this dump predates the line" are different facts.
+ */
+function servedBy(logStem) {
+  const marker = "@samchon/graph: indexer=";
+  try {
+    const line = fs
+      .readFileSync(`${logStem}.err.log`, "utf8")
+      .split(/\r?\n/)
+      .find((candidate) => candidate.startsWith(marker));
+    return line === undefined ? "unknown" : line.slice(marker.length).trim();
+  } catch {
+    return "unknown";
   }
 }
 

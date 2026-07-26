@@ -42,6 +42,8 @@ const descriptions = {
   "scip-python": [{ language: "Python", file: "src/main.py" }],
   "scip-ruby": [{ language: "Ruby", file: "src/main.rb" }],
   "scip-php": [{ language: "PHP", file: "src/main.php" }],
+  // Keyed by the binary, not the provider: dart's indexer ships as `scip_dart`.
+  scip_dart: [{ language: "Dart", file: "src/main.dart" }],
   "rust-analyzer": [{ language: "Rust", file: "src/lib.rs" }],
 };
 /**

@@ -37,7 +37,13 @@ jobs:
   measure:
     name: ${{ matrix.project }} index
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    # Ninety, because the thing being measured is allowed to be slow. Ruby and
+    # Dart both ran into the harness's own 30-minute per-spawn cap rather than
+    # into anything wrong, and a cap that fires before the build finishes turns
+    # a slow answer into no answer. How long a project waits before its first
+    # question is the entire subject here, so the budget has to be able to
+    # contain an unflattering result.
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
@@ -137,13 +143,29 @@ jobs:
           # to decay so the gate's claim is true; turning the gate off would only
           # have stopped it being checked.
           SAMCHON_BENCH_REQUIRE_QUIET: "1"
+          # One hour per spawn, against a 30-minute default. sinatra and
+          # darthttp died on that default with ETIMEDOUT after a clean setup —
+          # not a crash, not a hang anyone diagnosed, just a build still running
+          # when the stopwatch was taken away. Raising it is how the question
+          # gets answered rather than truncated; if an hour is also not enough,
+          # that is a finding worth having instead of a timeout worth repeating.
+          SAMCHON_GRAPH_BENCH_TIMEOUT_MS: "3600000"
 
-      - name: Upload report
+      # The whole output directory, not just the report. A lane that fails
+      # writes its diagnosis to `<label>.err.log` beside the report, and
+      # uploading only `report.json` meant a failed lane produced no report and
+      # therefore no artifact — so the one run where something went wrong was
+      # the one run that told you nothing. serilog's dump exited 1 with its
+      # reason sitting in a file this step used to discard.
+      #
+      # The collect job's glob is unaffected: the report is still at the root of
+      # the artifact, and the logs are extra files beside it.
+      - name: Upload report and logs
         if: ${{ always() && (github.event_name != 'workflow_dispatch' || inputs.project == 'all' || inputs.project == matrix.project) }}
         uses: actions/upload-artifact@v7
         with:
           name: index-time-${{ matrix.project }}
-          path: index-time-out/${{ matrix.project }}/report.json
+          path: index-time-out/${{ matrix.project }}
           if-no-files-found: ignore
 
   collect:

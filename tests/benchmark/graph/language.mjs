@@ -177,7 +177,15 @@ export function ensureInstalled(repoDir, { noInstall = false } = {}) {
     : fs.existsSync(path.join(repoDir, "package-lock.json"))
       ? { label: "npm", command: "npm", args: ["ci", "--ignore-scripts"] }
       : fs.existsSync(path.join(repoDir, "yarn.lock"))
-        ? { label: "yarn", command: "corepack", args: ["yarn", "install", "--frozen-lockfile", "--ignore-scripts"] }
+        // `--ignore-platform` because a lockfile can pin a native package for
+        // one operating system and yarn refuses the whole install over it.
+        // excalidraw pins `@typescript/typescript-win32-x64`, so its fixture
+        // prepared on Windows and failed on Linux CI with "The platform 'linux'
+        // is incompatible with this module" — which is true and irrelevant: the
+        // binary could not run here, nothing asks it to, and the TypeScript
+        // sources being indexed are the same either way. Skipping an unusable
+        // native package is not the same as skipping a dependency.
+        ? { label: "yarn", command: "corepack", args: ["yarn", "install", "--frozen-lockfile", "--ignore-scripts", "--ignore-platform"] }
         : { label: "npm", command: "npm", args: ["install", "--ignore-scripts", "--no-package-lock"] };
   console.log(`Installing dependencies in ${repoDir} (${plan.label})...`);
   run(plan.command, plan.args, { cwd: repoDir, shell: true, stdio: "inherit" });

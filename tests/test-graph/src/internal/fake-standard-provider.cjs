@@ -89,6 +89,17 @@ const contracts = {
     requires: [],
     output: valueAfter(args, "--index-file"),
   }),
+  // `scip_dart --output <path> .`
+  //
+  // The flag exists despite pub.dev listing none: `bin/scip_dart.dart` declares
+  // `addOption('output', abbr: 'o', defaultsTo: 'index.scip')`. Taking the
+  // published summary at its word would have put dart behind a shim it does not
+  // need.
+  scip_dart: (args) => ({
+    leading: [],
+    requires: ["."],
+    output: valueAfter(args, "--output"),
+  }),
   // `rust-analyzer scip . --exclude-vendored-libraries --output <path>`
   "rust-analyzer": (args) => ({
     leading: ["scip", "."],
@@ -163,7 +174,10 @@ if (scip !== undefined) {
   process.exit(0);
 }
 
-const sidecarLanguages = new Set(["go", "swift", "zig", "php", "lua", "dart"]);
+// dart is absent: it is a SCIP producer now, driven through the `contracts`
+// table above like every other one, rather than a sidecar named after a program
+// that was never written.
+const sidecarLanguages = new Set(["go", "swift", "zig", "php", "lua"]);
 const sidecarLanguage = producer.startsWith("samchon-graph-")
   ? producer.slice("samchon-graph-".length)
   : producer;

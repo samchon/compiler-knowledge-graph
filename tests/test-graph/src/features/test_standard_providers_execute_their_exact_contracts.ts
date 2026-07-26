@@ -59,7 +59,8 @@ export const test_standard_providers_execute_their_exact_contracts =
         "samchon-graph-zig",
         "samchon-graph-php",
         "samchon-graph-lua",
-        "samchon-graph-dart",
+        "scip_dart",
+        "dart",
       ];
       for (const name of names) {
         writeShim(platformExecutable(bin, name), name);
@@ -80,7 +81,8 @@ export const test_standard_providers_execute_their_exact_contracts =
         SAMCHON_GRAPH_ZIG: platformExecutable(bin, "samchon-graph-zig"),
         SAMCHON_GRAPH_PHP: platformExecutable(bin, "samchon-graph-php"),
         SAMCHON_GRAPH_LUA: platformExecutable(bin, "samchon-graph-lua"),
-        SAMCHON_GRAPH_DART: platformExecutable(bin, "samchon-graph-dart"),
+        SAMCHON_GRAPH_SCIP_DART: platformExecutable(bin, "scip_dart"),
+        SAMCHON_GRAPH_DART_TOOLCHAIN: platformExecutable(bin, "dart"),
       };
       for (const [key, value] of Object.entries(overrides)) {
         previous.set(key, process.env[key]);

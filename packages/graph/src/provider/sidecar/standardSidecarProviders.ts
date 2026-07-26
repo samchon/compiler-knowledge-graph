@@ -1,5 +1,4 @@
 import { GraphLanguage, GraphProviderAuthority } from "../../typings";
-import { dartPackageConfigInputs } from "../../indexer/dartPackageConfigInputs";
 import { providerInputFiles } from "../providerInputFiles";
 import { resolveProviderCommand } from "../resolveProviderCommand";
 import { sidecarProvider } from "./sidecarProvider";
@@ -34,16 +33,17 @@ const luaGraphProvider = externalSidecar({
   buildExtensions: [".rockspec"],
 });
 
-const dartGraphProvider = externalSidecar({
-  language: "dart",
-  authority: "analyzer",
-  buildFiles: [
-    "pubspec.yaml",
-    "pubspec.lock",
-    "analysis_options.yaml",
-  ],
-  derivedInputs: dartPackageConfigInputs,
-});
+// Dart is gone from this list. It named `samchon-graph-dart`, a program that
+// was never written, while `scip_dart` has existed on pub.dev the whole time —
+// so the entry was not unfinished work but the wrong architecture, and it now
+// lives in `standardScipProviders` against its real tool. Two entries claiming
+// one language is a registry defect that refuses the build, so the sidecar had
+// to leave when the SCIP provider arrived.
+//
+// The four that remain are the languages with no upstream indexer at all:
+// swift, zig, php and lua. Of those, php is also misplaced — `scip-php` exists,
+// but it takes no output path and treats the working directory as the project
+// root, so moving it needs a shim rather than a registry line.
 
 /** External analyzer sidecars in deterministic registry order. */
 export const standardSidecarProviders = [
@@ -51,7 +51,6 @@ export const standardSidecarProviders = [
   zigGraphProvider,
   phpGraphProvider,
   luaGraphProvider,
-  dartGraphProvider,
 ] as const;
 
 interface IExternalSidecar {
@@ -59,7 +58,6 @@ interface IExternalSidecar {
   authority: GraphProviderAuthority;
   buildFiles: readonly string[];
   buildExtensions?: readonly string[];
-  derivedInputs?: (root: string) => readonly string[];
 }
 
 function externalSidecar(props: IExternalSidecar) {
@@ -84,15 +82,7 @@ function externalSidecar(props: IExternalSidecar) {
       "references",
     ],
     buildInputs: (root) =>
-      mergeInputs(
-        providerInputFiles(
-          root,
-          [],
-          props.buildFiles,
-          props.buildExtensions,
-        ),
-        props.derivedInputs?.(root) ?? [],
-      ),
+      providerInputFiles(root, [], props.buildFiles, props.buildExtensions),
     resolve: (root, env) =>
       resolveProviderCommand(root, env, {
         command: name,
@@ -100,26 +90,11 @@ function externalSidecar(props: IExternalSidecar) {
       }),
     indexArgs: (artifact) => [`--output=${artifact}`, "--project=."],
     inputs: (root, languages) =>
-      mergeInputs(
-        providerInputFiles(
-          root,
-          languages,
-          props.buildFiles,
-          props.buildExtensions,
-        ),
-        props.derivedInputs?.(root) ?? [],
+      providerInputFiles(
+        root,
+        languages,
+        props.buildFiles,
+        props.buildExtensions,
       ),
   });
-}
-
-function mergeInputs(
-  left: readonly string[],
-  right: readonly string[],
-): string[] {
-  return [...new Set([...left, ...right])].sort(compareOrdinal);
-}
-
-function compareOrdinal(left: string, right: string): number {
-  /* c8 ignore next 2 -- merged input identities are distinct set members. */
-  return left < right ? -1 : left > right ? 1 : 0;
 }

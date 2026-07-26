@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
+import { dartPackageConfigInputs } from "../../indexer/dartPackageConfigInputs";
 import { languageOf } from "../../indexer/languageOf";
 import { GraphLanguage } from "../../typings";
 import { BoundedMap } from "../../utils/BoundedMap";
@@ -140,6 +141,36 @@ const rubyScipProvider = createScipProvider({
   indexArgs: (artifact) => [".", "--index-file", artifact],
 });
 
+/**
+ * Dart, which used to be registered as a sidecar that was never written.
+ *
+ * `samchon-graph-dart` named a program that does not exist anywhere in this
+ * repository — `sidecars/` holds exactly one directory, `go` — so every Dart
+ * build fell through to the language-server lane, where darthttp exceeded an
+ * hour twice. A real indexer for the language has existed on pub.dev the whole
+ * time. The entry was not unfinished work; it was the wrong architecture.
+ *
+ * `--output` despite the published docs listing no such flag: `bin/scip_dart.dart`
+ * declares it (`addOption('output', abbr: 'o', defaultsTo: 'index.scip')`). The
+ * source settles what a summary could not, which is the same reason the CLI
+ * contracts of every other entry here were read out of their upstream sources
+ * rather than their READMEs.
+ */
+const dartScipProvider = createScipProvider({
+  name: "scip-dart",
+  toolchain: {
+    label: "dart",
+    aliases: ["dart"],
+    override: "SAMCHON_GRAPH_DART_TOOLCHAIN",
+  },
+  languages: ["dart"],
+  command: "scip_dart",
+  override: "SAMCHON_GRAPH_SCIP_DART",
+  buildFiles: ["pubspec.yaml", "pubspec.lock", "analysis_options.yaml"],
+  derivedInputs: dartPackageConfigInputs,
+  indexArgs: (artifact) => ["--output", artifact, "."],
+});
+
 /** Standard SCIP producers in deterministic registry order. */
 export const standardScipProviders: readonly IGraphProvider[] = [
   clangScipProvider,
@@ -147,6 +178,7 @@ export const standardScipProviders: readonly IGraphProvider[] = [
   dotnetScipProvider,
   pythonScipProvider,
   rubyScipProvider,
+  dartScipProvider,
 ];
 
 interface IStandardScipProvider {
@@ -156,6 +188,17 @@ interface IStandardScipProvider {
   override: string;
   buildFiles: readonly string[];
   buildExtensions?: readonly string[];
+
+  /**
+   * Build inputs that are not a filename pattern but a fact about the project.
+   *
+   * Dart's resolved dependency set lives in `.dart_tool/package_config.json`,
+   * which `pub get` writes and no glob over the tracked tree would find. Leaving
+   * it out would let a changed dependency graph produce the same universe, so a
+   * project that resolved differently would serve an index built against the
+   * packages it used to have.
+   */
+  derivedInputs?: (root: string) => readonly string[];
   resolveArgs?: (root: string) => readonly string[] | undefined;
   indexArgs: (artifact: string) => string[];
 
@@ -204,6 +247,20 @@ interface IToolchain {
   label: string;
 }
 
+/** One deduplicated, ordinally sorted input list, derived entries included. */
+function withDerived(
+  found: readonly string[],
+  derived: readonly string[] | undefined,
+): string[] {
+  if (derived === undefined || derived.length === 0) return [...found];
+  return [...new Set([...found, ...derived])].sort(compareInputPath);
+}
+
+function compareInputPath(left: string, right: string): number {
+  /* c8 ignore next 2 -- merged input identities are distinct set members. */
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
 function createScipProvider(
   props: IStandardScipProvider,
 ): IGraphProvider {
@@ -212,11 +269,9 @@ function createScipProvider(
     languages: props.languages,
     authority: "semantic-index",
     buildInputs: (root) =>
-      providerInputFiles(
-        root,
-        [],
-        props.buildFiles,
-        props.buildExtensions,
+      withDerived(
+        providerInputFiles(root, [], props.buildFiles, props.buildExtensions),
+        props.derivedInputs?.(root),
       ),
     resolve: (root, env) => {
       const indexer = resolveProviderCommand(root, env, {
@@ -265,11 +320,14 @@ function createScipProvider(
     },
     indexArgs: props.indexArgs,
     inputs: (root, languages) =>
-      providerInputFiles(
-        root,
-        languages,
-        props.buildFiles,
-        props.buildExtensions,
+      withDerived(
+        providerInputFiles(
+          root,
+          languages,
+          props.buildFiles,
+          props.buildExtensions,
+        ),
+        props.derivedInputs?.(root),
       ),
     configuration: (root, _languages, env = process.env) => [
       toolVersion(root, env, props.command, props.override),

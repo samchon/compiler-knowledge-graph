@@ -112,12 +112,18 @@ jobs:
       # thirteen concurrent jobs would race on one file.
       - name: Measure cold index build
         if: ${{ github.event_name != 'workflow_dispatch' || inputs.project == 'all' || inputs.project == matrix.project }}
+        # `=` on every valued option, deliberately. `index-time.mjs`'s parser
+        # special-cases `--project` and otherwise takes `--name=value`; a bare
+        # `--name` becomes a flag and its would-be value becomes a positional,
+        # which the project selector then reads as a corpus name. Written the
+        # other way, `--tools samchon-graph` asks for a project called
+        # `samchon-graph` and the run dies before it measures anything.
         run: |
           node tests/benchmark/graph/index-time.mjs \
-            --project ${{ matrix.project }} \
-            --tools samchon-graph \
+            --project=${{ matrix.project }} \
+            --tools=samchon-graph \
             --no-website \
-            --out "$GITHUB_WORKSPACE/index-time-out/${{ matrix.project }}"
+            --out="$GITHUB_WORKSPACE/index-time-out/${{ matrix.project }}"
         env:
           # A dedicated runner is the quietest host available here, so hold the
           # measurement to it rather than warning and continuing.

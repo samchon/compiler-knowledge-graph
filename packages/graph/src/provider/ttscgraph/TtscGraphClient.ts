@@ -225,9 +225,21 @@ export class TtscGraphClient implements IBulkGraphSession {
          * POSIX-only and is exercised there. */
         if (error === null || error === undefined) return;
         if (this.pending.get(id) !== pending) return;
+        // EPIPE says our end of the pipe closed, which is never the diagnosis:
+        // the child exited before it could accept the request, and why it did
+        // is whatever it printed on the way out. The timeout path beside this
+        // one already carries that; this one dropped it, so the benchmark's
+        // typescript lane failed with `write EPIPE` and nothing else and fell
+        // to the static reader.
+        //
+        // Best-effort by nature — the write fails as soon as the pipe breaks,
+        // which can precede the last stderr chunk being drained — so this adds
+        // whatever has arrived and stays silent when nothing has.
         this.failChild(
           child,
-          new Error(`ttscgraph: could not request snapshot: ${error.message}`),
+          new Error(
+            `ttscgraph: could not request snapshot: ${error.message}${stderrSuffix(child)}`,
+          ),
         );
         /* c8 ignore stop */
       });

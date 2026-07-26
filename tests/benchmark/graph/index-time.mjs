@@ -111,6 +111,26 @@ if (selected.length === 0) {
 // publication run), and is silenced by SAMCHON_BENCH_SKIP_LOAD_CHECK=1. Note
 // os.loadavg() reports zeros on Windows, so the gate only bites on POSIX
 // hosts; on Windows quietness stays the operator's responsibility.
+// `--await-quiet=<seconds>` waits for the host to settle before that gate reads
+// it, rather than reading a machine still hot from whatever prepared it. A
+// checkout, a dependency install, and a language-server download leave a
+// one-minute load average that has nothing to do with the measurement and every
+// bit of a cold build's wall clock. Waiting makes the quiet claim true;
+// disabling the gate would only stop it being checked.
+//
+// The wait is bounded and its outcome is recorded. A host that never settles
+// falls through to the gate below and is refused, which is the honest end for a
+// machine that cannot take this measurement.
+const awaitQuietSeconds = Number(parsed.values["await-quiet"] ?? 0);
+let quietWait = null;
+if (Number.isFinite(awaitQuietSeconds) && awaitQuietSeconds > 0) {
+  quietWait = await awaitQuietHost(awaitQuietSeconds);
+  process.stdout.write(
+    `[index-time] host settled to ratio ${quietWait.ratio.toFixed(2)} after ` +
+      `${String(quietWait.waitedSeconds)}s (limit ${String(awaitQuietSeconds)}s)\n`,
+  );
+}
+
 if (process.env.SAMCHON_BENCH_SKIP_LOAD_CHECK !== "1") {
   const cpuCount = Math.max(os.cpus().length, 1);
   const load1 = os.loadavg()[0];
@@ -145,6 +165,10 @@ const report = {
   tools,
   projects: selected,
   host: hostSpec(),
+  // What the machine looked like when it was allowed to take the measurement.
+  // A cold build is one sample, so how quiet the host was is part of the result
+  // rather than a detail of how it was produced.
+  quietWait,
   scale: {},
   cells: [],
 };
@@ -350,6 +374,43 @@ const SOURCE_EXTENSIONS = {
   lua: [".lua"],
   dart: [".dart"],
 };
+
+/**
+ * Wait until the one-minute load average falls under the gate's own threshold.
+ *
+ * The same ratio the gate uses, deliberately: two thresholds would drift, and
+ * the point is to make the gate's claim true rather than to sneak past it. A
+ * checkout, a dependency install, and a language-server download leave a load
+ * average that has nothing to do with the measurement and everything to do with
+ * a cold build's wall clock.
+ *
+ * Returns how long it waited and what the ratio finally was, so the report can
+ * say the host was allowed to settle instead of leaving a reader to assume it.
+ * A host that never settles falls through to the gate and is refused, which is
+ * the honest end for a machine that cannot take this measurement.
+ *
+ * `os.loadavg()` reports zeros on Windows, where this returns immediately and
+ * quietness stays the operator's responsibility — exactly as the gate does.
+ */
+async function awaitQuietHost(limitSeconds) {
+  const cpuCount = Math.max(os.cpus().length, 1);
+  const started = process.hrtime.bigint();
+  const elapsed = () => Number(process.hrtime.bigint() - started) / 1e9;
+  let ratio = os.loadavg()[0] / cpuCount;
+  while (ratio > 0.5 && elapsed() < limitSeconds) {
+    process.stdout.write(
+      `[index-time] waiting for a quiet host: ratio ${ratio.toFixed(2)}\n`,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 5000));
+    ratio = os.loadavg()[0] / cpuCount;
+  }
+  return {
+    waitedSeconds: Math.round(elapsed()),
+    limitSeconds,
+    ratio,
+    cores: cpuCount,
+  };
+}
 
 // The same host block shape performance.json publishes — a wall-clock number
 // without the machine it ran on is not a measurement.

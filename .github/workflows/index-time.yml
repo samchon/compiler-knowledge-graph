@@ -122,11 +122,20 @@ jobs:
           node tests/benchmark/graph/index-time.mjs \
             --project=${{ matrix.project }} \
             --tools=samchon-graph \
+            --await-quiet=240 \
             --no-website \
             --out="$GITHUB_WORKSPACE/index-time-out/${{ matrix.project }}"
         env:
           # A dedicated runner is the quietest host available here, so hold the
           # measurement to it rather than warning and continuing.
+          #
+          # It has to be *allowed* to become quiet first. The steps above — a
+          # checkout, a dependency install, a build, and a language-server
+          # download — leave a one-minute load average several times the CPU
+          # count, and the first run of this workflow was refused by its own gate
+          # at ratio 1.60 on a four-core runner. `--await-quiet` waits for that
+          # to decay so the gate's claim is true; turning the gate off would only
+          # have stopped it being checked.
           SAMCHON_BENCH_REQUIRE_QUIET: "1"
 
       - name: Upload report

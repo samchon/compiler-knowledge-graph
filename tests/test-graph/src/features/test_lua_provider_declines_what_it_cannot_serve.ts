@@ -110,6 +110,9 @@ async function assertAnUnreadableSourceIsNotPublishedAround(): Promise<void> {
     },
     indexArgs: (produced) => [produced],
     inputs: () => [],
+    // Supplied here because the provider supplies one too: a session built
+    // without it takes the other arm, and both are ordinary.
+    configuration: () => ["lua-language-server=fixture"],
   });
   TestValidator.equals(
     "a session that has not built reports no generation and no snapshot",

@@ -87,6 +87,9 @@ function dumpSummary(dump: ISamchonGraphDump): string {
   const served = (dump.provenance ?? []).map(
     (entry) => `${entry.provider}(${entry.languages.join(",")})`,
   );
+  /* c8 ignore next 2 -- the served arm needs a strict producer on the machine,
+   * and this suite deliberately installs none: its providers are deterministic
+   * fixtures, so every dump it takes falls through and reports the other. */
   const by =
     served.length === 0 ? "no strict provider served" : served.join(" ");
   const lines = [`@samchon/graph: indexer=${dump.indexer} ${by}`];

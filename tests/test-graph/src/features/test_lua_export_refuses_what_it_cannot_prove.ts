@@ -198,6 +198,23 @@ function assertAMalformedArtifactIsRefused(): void {
   // Counters that are absent or nonsensical read as zero rather than throwing:
   // a producer that forgot to count is still usable, and inventing a number
   // would be worse than reporting none.
+  // A negative count is as unusable as an absent one, and inventing a number
+  // from it would be worse than reporting none.
+  TestValidator.equals(
+    "a nonsensical skip counter reads as zero",
+    adaptLuaExport.parse(
+      {
+        schemaVersion: 1,
+        files: [],
+        nodes: [],
+        edges: [],
+        warnings: [],
+        skipped: { unnamed: -3, outsideRoot: 1.5, refsFailed: 2 },
+      },
+      "samchon-graph-lua",
+    ).skipped,
+    { unnamed: 0, outsideRoot: 0, refsFailed: 2 },
+  );
   TestValidator.equals(
     "absent skip counters read as zero",
     adaptLuaExport.parse(

@@ -108,6 +108,11 @@ function assertAMalformedArtifactIsRefused(): void {
       "has no nodes",
     ],
     [
+      "a file entry that is not a string",
+      { schemaVersion: 1, files: [42], nodes: [], edges: [], warnings: [] },
+      "not a path",
+    ],
+    [
       "a file entry that is not a path",
       { schemaVersion: 1, files: [""], nodes: [], edges: [], warnings: [] },
       "not a path",

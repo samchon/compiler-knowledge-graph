@@ -19,6 +19,7 @@ export const test_lua_provider_declines_what_it_cannot_serve =
     assertBoundedOptionsAreRefusedByName();
     assertPrepareWritesAConfigOutsideTheProject();
   assertASessionNeedsNoConfiguration();
+  assertTheProviderWatchesLuaBuildInputs();
     await assertAnUnreadableSourceIsNotPublishedAround();
   };
 
@@ -158,5 +159,29 @@ function assertASessionNeedsNoConfiguration(): void {
     "the session reports the root and language it was opened for",
     [session.root, [...session.languages]],
     [root, ["lua"]],
+  );
+}
+
+/**
+ * The provider watches the files that decide what a Lua build means.
+ *
+ * `.luarc.json` names the runtime version, the library paths and the workspace
+ * roots the server resolves against, so a change there changes what an index
+ * says even when no source moved. A provider that did not watch it would serve
+ * a graph built under settings the project no longer has.
+ */
+function assertTheProviderWatchesLuaBuildInputs(): void {
+  const root = GraphPaths.createTempDirectory("samchon-graph-lua-inputs-");
+  fs.writeFileSync(
+    path.join(root, ".luarc.json"),
+    `${JSON.stringify({ "Lua.runtime.version": "Lua 5.4" })}\n`,
+  );
+  const inputs =
+    typeof luaGraphProvider.buildInputs === "function"
+      ? luaGraphProvider.buildInputs(root)
+      : luaGraphProvider.buildInputs;
+  TestValidator.predicate(
+    "the workspace configuration is a build input",
+    [...inputs].includes(".luarc.json"),
   );
 }

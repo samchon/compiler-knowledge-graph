@@ -167,4 +167,7 @@ export namespace LuaGraphSession {
     inputs: () => string[];
     configuration?: () => readonly string[];
   }
+  /* c8 ignore start -- declaration merging emits an unreachable namespace
+   * creation arm after the class object already exists. */
 }
+/* c8 ignore stop */

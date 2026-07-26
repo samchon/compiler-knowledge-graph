@@ -208,7 +208,10 @@ export namespace adaptLuaExport {
       warnings: report.warnings as string[],
     };
   }
+  /* c8 ignore start -- declaration merging emits an unreachable namespace
+   * creation arm after the function object already exists. */
 }
+/* c8 ignore stop */
 
 function assertNode(entry: adaptLuaExport.INode, provider: string): void {
   if (typeof entry?.name !== "string" || entry.name === "")

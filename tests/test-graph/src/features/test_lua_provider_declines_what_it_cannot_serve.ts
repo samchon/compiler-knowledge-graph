@@ -111,6 +111,11 @@ async function assertAnUnreadableSourceIsNotPublishedAround(): Promise<void> {
     indexArgs: (produced) => [produced],
     inputs: () => [],
   });
+  TestValidator.equals(
+    "a session that has not built reports no generation and no snapshot",
+    [session.generation, session.current],
+    [0, undefined],
+  );
   let message = "";
   try {
     await session.refresh();

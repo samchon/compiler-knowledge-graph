@@ -16,6 +16,8 @@ export const test_lua_export_refuses_what_it_cannot_prove = (): void => {
   assertAUseAtFileScopeIsNotAttributed();
   assertAMalformedArtifactIsRefused();
   assertTheInnermostEnclosingDeclarationWins();
+  assertEdgesAgainstDeclarationsThatDidNotSurvive();
+  assertARecursiveUseIsNotAnEdgeToItself();
 };
 
 function assertADuplicateIdentityIsDroppedAndNamed(): void {
@@ -299,4 +301,80 @@ function withBody(
   body: Omit<adaptLuaExport.ILocation, "file">,
 ): adaptLuaExport.INode {
   return { ...entry, body: { file: entry.location.file, ...body } };
+}
+
+/**
+ * An edge whose declaration did not survive the node pass produces nothing.
+ *
+ * Two ways a declaration is dropped — a kind the graph has no word for, and an
+ * identity already taken — and an edge naming either would otherwise be emitted
+ * against an id no node carries, which is a dangling endpoint in a published
+ * graph.
+ */
+function assertEdgesAgainstDeclarationsThatDidNotSurvive(): void {
+  const twin = node("twin", "local", "local", "main.lua", 0, 0);
+  const result = adaptLuaExport(
+    {
+      schemaVersion: 1,
+      files: ["main.lua"],
+      nodes: [
+        node("odd", "coroutine", "setcoroutine", "main.lua", 1, 0),
+        twin,
+        twin,
+        withBody(node("host", "function", "function", "main.lua", 4, 9), {
+          startLine: 4,
+          startColumn: 0,
+          endLine: 8,
+          endColumn: 3,
+        }),
+      ],
+      edges: [
+        // Against the unmapped kind.
+        edge(1, "main.lua", 5, 2),
+        // Against the duplicate that was dropped rather than the one kept.
+        edge(3, "main.lua", 6, 2),
+      ],
+      skipped: { unnamed: 0, outsideRoot: 0, refsFailed: 0 },
+      warnings: [],
+    },
+    "samchon-graph-lua",
+  );
+  TestValidator.equals(
+    "no edge names a declaration that was not published",
+    result.edges,
+    [],
+  );
+}
+
+/**
+ * A recursive call is not an edge from a function to itself.
+ *
+ * `vm.getRefs(f)` returns the call inside `f`'s own body, so the declaration
+ * containing the use and the one being used are the same. An edge there says
+ * nothing a reader can act on.
+ */
+function assertARecursiveUseIsNotAnEdgeToItself(): void {
+  const result = adaptLuaExport(
+    {
+      schemaVersion: 1,
+      files: ["main.lua"],
+      nodes: [
+        withBody(node("loop", "function", "function", "main.lua", 0, 9), {
+          startLine: 0,
+          startColumn: 0,
+          endLine: 4,
+          endColumn: 3,
+        }),
+      ],
+      edges: [edge(1, "main.lua", 2, 2)],
+      skipped: { unnamed: 0, outsideRoot: 0, refsFailed: 0 },
+      warnings: [],
+    },
+    "samchon-graph-lua",
+  );
+  TestValidator.equals(
+    "a declaration referencing itself produces no edge",
+    result.edges,
+    [],
+  );
 }

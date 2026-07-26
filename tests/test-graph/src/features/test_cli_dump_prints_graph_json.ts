@@ -35,9 +35,21 @@ export const test_cli_dump_prints_graph_json = () => {
  * names the lane that answered, and the reasons nothing better did follow it.
  */
 function assertTheDumpSaysWhatProducedIt(root: string): void {
+  // `--max-files` is the reliable way to make a strict provider decline: it
+  // publishes whole-workspace snapshots and has no bounded mode, so the refusal
+  // it returns becomes the recorded reason the language fell through.
   const ran = spawnSync(
     process.execPath,
-    [GraphPaths.graphBin, "dump", "--mode", "lsp", "--cwd", root],
+    [
+      GraphPaths.graphBin,
+      "dump",
+      "--mode",
+      "lsp",
+      "--cwd",
+      root,
+      "--max-files",
+      "1",
+    ],
     { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 },
   );
   const summary = (ran.stderr ?? "")

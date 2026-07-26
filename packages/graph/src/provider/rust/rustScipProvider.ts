@@ -1,4 +1,3 @@
-import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
@@ -10,6 +9,7 @@ import { spawnableCommand } from "../../utils/spawnableCommand";
 import { IGraphProvider } from "../IGraphProvider";
 import { providerInputFiles } from "../providerInputFiles";
 import { resolveProviderCommand } from "../resolveProviderCommand";
+import { toolchainVersion } from "../toolchainVersion";
 import { scipProvider } from "../scip";
 
 /**
@@ -122,11 +122,12 @@ function cargoConfigurationInputs(root: string): string[] {
 function isRegularFile(file: string): boolean {
   try {
     return fs.statSync(file).isFile();
-    /* c8 ignore next 2 -- a Cargo config disappearing during input discovery
+    /* c8 ignore start -- a Cargo config disappearing during input discovery
      * is fenced by the enclosing generation transaction. */
   } catch {
     return false;
   }
+  /* c8 ignore stop */
 }
 
 function rustProviderConfiguration(
@@ -208,10 +209,11 @@ function cargoConfigurationSnapshot(
 function fileDigest(file: string): string {
   try {
     return createHash("sha256").update(fs.readFileSync(file)).digest("hex");
-    /* c8 ignore next 2 -- missing candidates are the expected negative state. */
+    /* c8 ignore start -- missing candidates are the expected negative state. */
   } catch {
     return "missing";
   }
+  /* c8 ignore stop */
 }
 
 function portablePath(file: string): string {
@@ -245,30 +247,7 @@ function toolVersion(
   override: string,
   args: readonly string[],
 ): string {
-  const resolved = resolveTool(root, env, command, override);
-  if (resolved === undefined) return `${command}=unavailable`;
-  const spawnable = spawnableCommand.append(
-    { ...resolved, args: [...resolved.args] },
-    args,
-  );
-  const result = spawnSync(spawnable.command, spawnable.args, {
-    cwd: root,
-    env,
-    encoding: "utf8",
-    maxBuffer: 1024 * 1024,
-    timeout: 10_000,
-    windowsVerbatimArguments:
-      spawnable.windowsVerbatimArguments,
-    windowsHide: true,
-  });
-  /* c8 ignore start -- an executed spawnSync with UTF-8 encoding returns a
-   * string; the null arm exists only for Node's broader result type. Success
-   * and unavailable results remain asserted by provider-resolution tests. */
-  const output = String(result.stdout ?? "").trim();
-  return result.status === 0 && output !== ""
-    ? `${command}=${output}`
-    : `${command}=unavailable`;
-  /* c8 ignore stop */
+  return toolchainVersion({ root, env, command, override, args });
 }
 
 function resolveTool(

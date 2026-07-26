@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
-import fs from "node:fs";
 import path from "node:path";
 
+import { isSpawnableFile } from "../utils/isSpawnableFile";
 import { spawnableCommand } from "../utils/spawnableCommand";
 import { IGraphProvider } from "./IGraphProvider";
 
@@ -11,7 +11,12 @@ export function resolveProviderCommand(
   env: NodeJS.ProcessEnv,
   props: resolveProviderCommand.IProps,
 ): IGraphProvider.ICommand | undefined {
-  const override = env[props.override];
+  // Absent for a command the project itself named. A compilation database can
+  // record several distinct drivers, and one absolute override would redirect
+  // every one of them to the same binary — an answer about a program none of
+  // those translation units was compiled with.
+  const override =
+    props.override === undefined ? undefined : env[props.override];
   if (
     override !== undefined &&
     path.isAbsolute(override) &&
@@ -24,6 +29,12 @@ export function resolveProviderCommand(
     if (isSpawnableFile(candidate)) return spawnable(candidate, props.args);
   }
 
+  // Deliberately not memoized. A lookup is a process launch, so reusing one
+  // looks like an easy saving — but the answer depends on the working directory
+  // (`where.exe` searches it before `PATH`) and on `PATH` order, and a memo
+  // keyed by name would keep returning a lower-precedence binary after the
+  // project installed the one it pins. Confirming a remembered path still
+  // exists proves it is *an* answer, never that it is still *the* answer.
   const onPath = resolveOnPath(props.command, root, env);
   return onPath === undefined ? undefined : spawnable(onPath, props.args);
 }
@@ -31,7 +42,9 @@ export function resolveProviderCommand(
 export namespace resolveProviderCommand {
   export interface IProps {
     command: string;
-    override: string;
+
+    /** Environment variable naming an absolute build, when one may select it. */
+    override?: string;
     args?: readonly string[];
   }
 }
@@ -75,31 +88,44 @@ function resolveOnPath(
 }
 /* c8 ignore stop */
 
+/**
+ * Where a project keeps a tool of its own, in the spellings the platform uses.
+ *
+ * Windows appends its executable suffixes — except when the name already
+ * carries one. A command can arrive with a suffix attached, because a Windows
+ * compilation database records its driver as `cl.exe`, and appending again
+ * looks for `cl.exe.exe` and never finds the file that is there.
+ *
+ * The bare name is a candidate *only* in that case, and deliberately. An
+ * extensionless file in `node_modules/.bin` is npm's POSIX `sh` shim;
+ * {@link spawnableCommand} wraps `.cmd` and `.bat` in the command processor
+ * and hands anything else straight to `CreateProcess`, which cannot run a
+ * shell script. Offering the bare name for every command would resolve such a
+ * shim on a tree installed under WSL or a Linux container, and the caller would
+ * proceed with an indexer that cannot start rather than falling through to
+ * `PATH` and finding one that can.
+ *
+ * On POSIX the name as written is the only spelling there is.
+ */
 function localCandidates(root: string, command: string): string[] {
   const privateBin = path.join(root, ".samchon-graph", "bin");
   const packageBin = path.join(root, "node_modules", ".bin");
+  // One exit, deliberately. A platform arm that returns early leaves the rest
+  // of the function — including its closing brace — unreachable on the other
+  // platforms, and an ignore that stops before the brace does not cover it.
   /* c8 ignore start -- each CI operating system exercises its native arm. */
-  return process.platform === "win32"
-    ? [
-        path.join(privateBin, `${command}.exe`),
-        path.join(privateBin, `${command}.cmd`),
-        path.join(privateBin, `${command}.bat`),
-        path.join(packageBin, `${command}.exe`),
-        path.join(packageBin, `${command}.cmd`),
-        path.join(packageBin, `${command}.bat`),
-      ]
-    : [path.join(privateBin, command), path.join(packageBin, command)];
+  const spellings =
+    process.platform !== "win32"
+      ? [command]
+      : /\.(?:exe|cmd|bat)$/i.test(command)
+        ? [command]
+        : [`${command}.exe`, `${command}.cmd`, `${command}.bat`];
   /* c8 ignore stop */
-}
-
-function isSpawnableFile(file: string): boolean {
-  try {
-    if (!fs.statSync(file).isFile()) return false;
-    fs.accessSync(file, fs.constants.X_OK);
-    return true;
-  } catch {
-    return false;
+  const candidates: string[] = [];
+  for (const bin of [privateBin, packageBin]) {
+    for (const spelling of spellings) candidates.push(path.join(bin, spelling));
   }
+  return candidates;
 }
 
 function spawnable(

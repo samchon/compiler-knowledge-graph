@@ -10,6 +10,7 @@ import {
   standardScipProviders,
   standardSidecarProviders,
 } from "@samchon/graph";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -33,6 +34,7 @@ export const test_standard_providers_execute_their_exact_contracts =
       delete process.env.SAMCHON_GRAPH_FIXTURE_MODE;
       writeProject(root);
       assertFixtureRegistryCoverage();
+      assertTheFixtureRejectsAWrongInvocation();
       const bin = path.join(root, ".samchon-graph", "bin");
       fs.mkdirSync(bin, { recursive: true });
 
@@ -48,6 +50,7 @@ export const test_standard_providers_execute_their_exact_contracts =
         "scip-ruby",
         "scip",
         "clang",
+        "cc",
         "java",
         "dotnet",
         "python3",
@@ -69,11 +72,10 @@ export const test_standard_providers_execute_their_exact_contracts =
         SAMCHON_GRAPH_SCIP_PYTHON: platformExecutable(bin, "scip-python"),
         SAMCHON_GRAPH_SCIP_RUBY: platformExecutable(bin, "scip-ruby"),
         SAMCHON_GRAPH_SCIP: platformExecutable(bin, "scip"),
-        SAMCHON_GRAPH_CLANG: platformExecutable(bin, "clang"),
-        SAMCHON_GRAPH_JAVA: platformExecutable(bin, "java"),
-        SAMCHON_GRAPH_DOTNET: platformExecutable(bin, "dotnet"),
-        SAMCHON_GRAPH_PYTHON: platformExecutable(bin, "python3"),
-        SAMCHON_GRAPH_RUBY: platformExecutable(bin, "ruby"),
+        SAMCHON_GRAPH_JAVA_TOOLCHAIN: platformExecutable(bin, "java"),
+        SAMCHON_GRAPH_DOTNET_TOOLCHAIN: platformExecutable(bin, "dotnet"),
+        SAMCHON_GRAPH_PYTHON_TOOLCHAIN: platformExecutable(bin, "python3"),
+        SAMCHON_GRAPH_RUBY_TOOLCHAIN: platformExecutable(bin, "ruby"),
         SAMCHON_GRAPH_SWIFT: platformExecutable(bin, "samchon-graph-swift"),
         SAMCHON_GRAPH_ZIG: platformExecutable(bin, "samchon-graph-zig"),
         SAMCHON_GRAPH_PHP: platformExecutable(bin, "samchon-graph-php"),
@@ -99,7 +101,7 @@ export const test_standard_providers_execute_their_exact_contracts =
           sameArray(provider.configuration?.(root, process.env), [
             `${provider.name}=${provider.name} v1.0.0`,
             "scip=scip v1.0.0",
-            `${toolchainOf(provider.name)}=${toolchainOf(provider.name)} v1.0.0`,
+            ...toolchainRowsOf(provider.name),
           ]),
         );
         TestValidator.predicate(
@@ -122,7 +124,7 @@ export const test_standard_providers_execute_their_exact_contracts =
         TestValidator.predicate(
           `${provider.name} publishes the toolchain its facts describe`,
           refreshed.snapshot.provenance.compilerVersion ===
-            `${toolchainOf(provider.name)}=${toolchainOf(provider.name)} v1.0.0`,
+            toolchainRowsOf(provider.name).join("; "),
         );
         TestValidator.predicate(
           `${provider.name} publishes the shared strict-fixture corpus`,
@@ -231,15 +233,23 @@ export const test_standard_providers_execute_their_exact_contracts =
       writeFailingShim(failingIndexer);
       writeFailingShim(failingDecoder);
       fs.writeFileSync(path.join(emptyRoot, "compile_commands.json"), "[]\n");
-      TestValidator.predicate(
-        "failing standard version probes are reported as unavailable",
-        clang
-          .configuration?.(emptyRoot, {
+      // An installed tool whose probe does not answer and a tool that is not
+      // installed used to produce the same row. They are different facts, and
+      // a build universe computed from the first one rebuilt itself whenever a
+      // process launch failed for a reason having nothing to do with the
+      // project. `unavailable` is now decided by resolution rather than by the
+      // probe — which narrows the conflation without closing it, because
+      // resolution consults `PATH` by launching a lookup of its own.
+      TestValidator.equals(
+        "a resolved tool whose probe fails is unreported, not unavailable",
+        [
+          ...(clang.configuration?.(emptyRoot, {
             ...emptyPath(),
             SAMCHON_GRAPH_SCIP_CLANG: failingIndexer,
             SAMCHON_GRAPH_SCIP: failingDecoder,
-          })
-          .every((row) => row.endsWith("=unavailable")) === true,
+          }) ?? []),
+        ],
+        ["scip-clang=unreported", "scip=unreported", "cc=unavailable"],
       );
 
       const decoder = process.env.SAMCHON_GRAPH_SCIP;
@@ -309,7 +319,27 @@ function assertFixtureRegistryCoverage(): void {
 
 function writeProject(root: string): void {
   const files: Record<string, string> = {
-    "compile_commands.json": "[]\n",
+    // A real compilation database, because scip-clang's toolchain is read from
+    // it rather than from a fixed `clang` on PATH. Both documented entry shapes
+    // appear: `arguments` is an already-split vector and `command` is one shell
+    // string, and the second names a different driver so the provider cannot
+    // pass by finding one.
+    "compile_commands.json": JSON.stringify(
+      [
+        {
+          directory: root,
+          file: "src/main.c",
+          arguments: ["clang", "-c", "src/main.c"],
+        },
+        {
+          directory: root,
+          file: "src/main.cpp",
+          command: "cc -c src/main.cpp",
+        },
+      ],
+      null,
+      2,
+    ),
     "CMakeLists.txt": "project(fixture)\n",
     "pom.xml": "<project />\n",
     "global.json": "{}\n",
@@ -452,6 +482,55 @@ function expectationsOf(
   });
 }
 
+/**
+ * The fixture is an oracle only if it can say no.
+ *
+ * Every provider passing its own arguments proves nothing on its own — the
+ * fixture was written from the providers, so agreement is the default outcome.
+ * What makes the contract table evidence is that a producer asked the wrong way
+ * fails, which is the behaviour a real lane would eventually show and this
+ * suite could not.
+ */
+function assertTheFixtureRejectsAWrongInvocation(): void {
+  for (const [producer, args] of [
+    // scip-java's real CLI takes the subcommand first; the flag alone is the
+    // shape a provider would emit if it dropped it.
+    ["scip-java", ["--output", "index.scip"]],
+    // scip-ruby writes with `--index-file`, so `--output` is another tool's flag.
+    ["scip-ruby", [".", "--output", "index.scip"]],
+    // scip-clang takes its destination attached, not as a following argument.
+    // Everything else it needs is present, so the detached spelling is the only
+    // thing this case can be failing for.
+    [
+      "scip-clang",
+      [
+        "--compdb-path=compile_commands.json",
+        "--temporary-output-dir=tmp",
+        "--index-output-path",
+        "index.scip",
+      ],
+    ],
+    // And an invocation that kept the destination but lost the compilation
+    // database would index a different program into the right file.
+    [
+      "scip-clang",
+      ["--index-output-path=index.scip", "--temporary-output-dir=tmp"],
+    ],
+    // The same for a rust-analyzer run that stopped excluding vendored crates.
+    ["rust-analyzer", ["scip", ".", "--output", "index.scip"]],
+  ] as const) {
+    const result = spawnSync(
+      process.execPath,
+      [GraphPaths.fakeStandardProvider, `--producer=${producer}`, ...args],
+      { encoding: "utf8" },
+    );
+    TestValidator.predicate(
+      `the fixture refuses an invocation ${producer} would not accept`,
+      result.status !== 0,
+    );
+  }
+}
+
 async function assertRemainingRegisteredFixtures(root: string): Promise<void> {
   await assertRegisteredFixture(
     ttscGraphProvider,
@@ -471,9 +550,20 @@ async function assertRemainingRegisteredFixtures(root: string): Promise<void> {
   await assertRegisteredFixture(goGraphProvider, goCommand, root);
   await assertHeuristicTwinFails(goGraphProvider, goCommand, root);
 
+  // The arguments `resolveRustScipCommand` puts in front of the session's own,
+  // not an invocation that skips them. A synthetic command without them opens
+  // the same session against a producer that was never asked the way the
+  // provider asks it, which is how a wrong subcommand would go unnoticed here
+  // and be found only by a real lane.
   const rustCommand: IGraphProvider.ICommand = {
     command: process.execPath,
-    args: [GraphPaths.fakeStandardProvider, "--producer=rust-analyzer"],
+    args: [
+      GraphPaths.fakeStandardProvider,
+      "--producer=rust-analyzer",
+      "scip",
+      ".",
+      "--exclude-vendored-libraries",
+    ],
   };
   await assertRegisteredFixture(rustScipProvider, rustCommand, root);
   await assertHeuristicTwinFails(rustScipProvider, rustCommand, root);
@@ -672,19 +762,26 @@ function emptyPath(): NodeJS.ProcessEnv {
  * would pass if `compilerVersion` were wired to the indexer instead, which is
  * the one thing these cases exist to distinguish.
  */
-function toolchainOf(provider: string): string {
-  const toolchains: Record<string, string> = {
-    "scip-clang": "clang",
-    "scip-java": "java",
-    "scip-dotnet": "dotnet",
-    "scip-python": "python3",
-    "scip-ruby": "ruby",
+/**
+ * The toolchain rows each provider must publish for this fixture.
+ *
+ * `scip-clang` has two, because the fixture's compilation database records two
+ * drivers and both are the compiler for the translation units that named them.
+ * A single fixed name could not have said that.
+ */
+function toolchainRowsOf(provider: string): string[] {
+  const toolchains: Record<string, readonly string[]> = {
+    "scip-clang": ["cc", "clang"],
+    "scip-java": ["java"],
+    "scip-dotnet": ["dotnet"],
+    "scip-python": ["python3"],
+    "scip-ruby": ["ruby"],
   };
   const toolchain = toolchains[provider];
   if (toolchain === undefined) {
     throw new Error(`${provider}: fixture declares no toolchain`);
   }
-  return toolchain;
+  return toolchain.map((tool) => `${tool}=${tool} v1.0.0`);
 }
 
 function sameArray(

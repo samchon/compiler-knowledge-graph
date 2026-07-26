@@ -40,7 +40,7 @@ export const test_defensive_boundaries_remain_explicit = async () => {
         options: { cwd: string },
         env: NodeJS.ProcessEnv,
         providers: readonly IGraphProvider[],
-      ): Array<{ configuration: string[] }>;
+      ): Array<{ provider: string; command: string; configuration?: string[] }>;
     };
   }>("provider/providerTopology.js");
   const { spawnableCommand } = await importLib<{
@@ -118,15 +118,15 @@ export const test_defensive_boundaries_remain_explicit = async () => {
     },
   };
   TestValidator.equals(
-    "a provider without configuration publishes an empty topology vector",
+    "topology reports the resolved command for an eligible provider",
     providerTopology.available(
       root,
       ["go"],
       { cwd: root },
       emptyPath(),
       [provider],
-    )[0]?.configuration,
-    [],
+    )[0]?.command,
+    process.execPath,
   );
   const configuredProvider: IGraphProvider = {
     ...provider,
@@ -134,7 +134,7 @@ export const test_defensive_boundaries_remain_explicit = async () => {
     configuration: () => ["z-setting", "a-setting"],
   };
   TestValidator.equals(
-    "provider topology sorts effective configuration deterministically",
+    "a candidate that did not serve sorts its configuration deterministically",
     providerTopology.available(
       root,
       ["go"],

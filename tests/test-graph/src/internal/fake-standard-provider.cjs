@@ -43,14 +43,102 @@ const descriptions = {
   "scip-ruby": [{ language: "Ruby", file: "src/main.rb" }],
   "rust-analyzer": [{ language: "Rust", file: "src/lib.rs" }],
 };
+/**
+ * The exact invocation each producer's real tool accepts.
+ *
+ * This used to be one lookup that took `--index-output-path=`, `--output`, or
+ * `--index-file`, whichever was present — the union of every shape the
+ * providers happen to emit. A provider passing the wrong flag for its real tool
+ * therefore still passed, because the thing checking it was written from the
+ * thing being checked. The development skill names that shape: an expectation
+ * taken from what the code emits cannot fail for the defect it already
+ * contains.
+ *
+ * Each entry is now one claim about one upstream CLI, stated in one place a
+ * reader can audit against that tool's own documentation. A provider that
+ * changes its arguments fails here as well as in its real lane.
+ */
+const contracts = {
+  // `scip-clang --compdb-path=… --index-output-path=… --temporary-output-dir=…`
+  "scip-clang": (args) => ({
+    leading: [],
+    requires: ["--compdb-path=", "--temporary-output-dir="],
+    output: valueOf(args, "--index-output-path="),
+  }),
+  // `scip-java index --output <path>`
+  "scip-java": (args) => ({
+    leading: ["index"],
+    requires: [],
+    output: valueAfter(args, "--output"),
+  }),
+  // `scip-dotnet index --output <path>`
+  "scip-dotnet": (args) => ({
+    leading: ["index"],
+    requires: [],
+    output: valueAfter(args, "--output"),
+  }),
+  // `scip-python index . --project-name <name> --output <path>`
+  "scip-python": (args) => ({
+    leading: ["index", "."],
+    requires: ["--project-name"],
+    output: valueAfter(args, "--output"),
+  }),
+  // `scip-ruby . --index-file <path>`
+  "scip-ruby": (args) => ({
+    leading: ["."],
+    requires: [],
+    output: valueAfter(args, "--index-file"),
+  }),
+  // `rust-analyzer scip . --exclude-vendored-libraries --output <path>`
+  "rust-analyzer": (args) => ({
+    leading: ["scip", "."],
+    requires: ["--exclude-vendored-libraries"],
+    valueless: ["--exclude-vendored-libraries"],
+    output: valueAfter(args, "--output"),
+  }),
+};
+
 const scip = descriptions[producer];
 if (scip !== undefined) {
-  const output =
-    valueOf(forwarded, "--index-output-path=") ??
-    valueAfter(forwarded, "--output") ??
-    valueAfter(forwarded, "--index-file");
+  const contract = contracts[producer](forwarded);
+  for (const [index, expected] of contract.leading.entries()) {
+    if (forwarded[index] !== expected) {
+      throw new Error(
+        `fake standard provider: ${producer} expects argument ${String(index)} to be ${expected}, got ${String(forwarded[index])}`,
+      );
+    }
+  }
+  // The destination is not the only argument that has to survive. A scip-clang
+  // invocation that lost its compilation database, or a rust-analyzer one that
+  // stopped excluding vendored libraries, would index a different program and
+  // still write an artifact where the session looks for it.
+  for (const required of contract.requires ?? []) {
+    // An attached flag has to carry something after the `=`, and a detached one
+    // has to be followed by a value. Checking only that the spelling appears
+    // would accept `--project-name` with nothing after it, which indexes a
+    // different project just as surely as omitting the flag.
+    const satisfied = required.endsWith("=")
+      ? forwarded.some(
+          (argument) =>
+            argument.startsWith(required) && argument.length > required.length,
+        )
+      : forwarded.some(
+          (argument, index) =>
+            argument === required &&
+            (contract.valueless?.includes(required) === true ||
+              forwarded[index + 1] !== undefined),
+        );
+    if (!satisfied) {
+      throw new Error(
+        `fake standard provider: ${producer} was invoked without a usable ${required}`,
+      );
+    }
+  }
+  const output = contract.output;
   if (output === undefined) {
-    throw new Error(`fake standard provider: ${producer} output is required`);
+    throw new Error(
+      `fake standard provider: ${producer} did not receive the output argument its real tool accepts`,
+    );
   }
   write(output, {
     metadata: {

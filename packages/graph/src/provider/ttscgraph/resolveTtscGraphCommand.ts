@@ -3,6 +3,7 @@ import { createRequire } from "node:module";
 import fs from "node:fs";
 import path from "node:path";
 
+import { isSpawnableFile } from "../../utils/isSpawnableFile";
 import { spawnableCommand } from "../../utils/spawnableCommand";
 interface ITtscGraphCommand {
   command: string;
@@ -139,16 +140,6 @@ function resolveExecutable(
   const executable = lines.filter((line) => /\.exe$/i.test(line));
   const commandShim = lines.filter((line) => /\.(?:cmd|bat)$/i.test(line));
   return [...executable, ...commandShim, ...lines][0];
-}
-
-function isSpawnableFile(file: string): boolean {
-  try {
-    if (!fs.statSync(file).isFile()) return false;
-    fs.accessSync(file, fs.constants.X_OK);
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 function spawnable(executable: string): ITtscGraphCommand {

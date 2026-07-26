@@ -1,4 +1,3 @@
-import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -8,6 +7,7 @@ import { spawnableCommand } from "../../utils/spawnableCommand";
 import { IGraphProvider } from "../IGraphProvider";
 import { providerInputFiles } from "../providerInputFiles";
 import { resolveProviderCommand } from "../resolveProviderCommand";
+import { toolchainVersion } from "../toolchainVersion";
 import { sidecarProvider } from "../sidecar";
 
 function goIndexArgs(artifact: string): string[] {
@@ -213,39 +213,20 @@ function goConfiguration(
   env: NodeJS.ProcessEnv = process.env,
 ): string[] {
   const rows = GO_ENVIRONMENT_KEYS.map((key) => `${key}=${env[key] ?? ""}`);
-  const go = resolveProviderCommand(root, env, {
-    command: "go",
-    override: "SAMCHON_GRAPH_GO_TOOLCHAIN",
-  });
-  const probe =
-    go === undefined
-      ? undefined
-      : spawnableCommand.append(
-          { ...go, args: [...go.args] },
-          ["env", "-json", ...GO_PROBED_ENVIRONMENT_KEYS],
-        );
-  const probed =
-    probe === undefined
-      ? undefined
-      : spawnSync(
-          probe.command,
-          probe.args,
-          {
-            cwd: root,
-            env,
-            encoding: "utf8",
-            maxBuffer: 1024 * 1024,
-            timeout: 10_000,
-            windowsHide: true,
-            windowsVerbatimArguments:
-              probe.windowsVerbatimArguments,
-          },
-        );
   return [
     ...rows,
-    probed?.status === 0
-      ? `go-env=${probed.stdout.trim()}`
-      : "go-env=unavailable",
+    // Through the shared probe like every other row. Its own `spawnSync` here
+    // reported `go-env=unavailable` for any failure, and since a non-serving
+    // candidate's configuration is part of the resident topology snapshot, one
+    // transient launch failure moved that snapshot and rebuilt every language.
+    toolchainVersion({
+      root,
+      env,
+      command: "go",
+      override: "SAMCHON_GRAPH_GO_TOOLCHAIN",
+      args: ["env", "-json", ...GO_PROBED_ENVIRONMENT_KEYS],
+      label: "go-env",
+    }),
     toolVersion(
       root,
       env,
@@ -263,30 +244,7 @@ function toolVersion(
   override: string,
   args: readonly string[],
 ): string {
-  const resolved = resolveProviderCommand(root, env, { command, override });
-  if (resolved === undefined) return `${command}=unavailable`;
-  const spawnable = spawnableCommand.append(
-    { ...resolved, args: [...resolved.args] },
-    args,
-  );
-  const result = spawnSync(spawnable.command, spawnable.args, {
-    cwd: root,
-    env,
-    encoding: "utf8",
-    maxBuffer: 1024 * 1024,
-    timeout: 10_000,
-    windowsVerbatimArguments:
-      spawnable.windowsVerbatimArguments,
-    windowsHide: true,
-  });
-  /* c8 ignore start -- an executed spawnSync with UTF-8 encoding returns a
-   * string; the null arm exists only for Node's broader result type. Success
-   * and unavailable results remain asserted by provider-resolution tests. */
-  const output = String(result.stdout ?? "").trim();
-  return result.status === 0 && output !== ""
-    ? `${command}=${output}`
-    : `${command}=unavailable`;
-  /* c8 ignore stop */
+  return toolchainVersion({ root, env, command, override, args });
 }
 
 const GO_BUILD_FILE_NAMES: readonly string[] = [

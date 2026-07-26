@@ -40,7 +40,18 @@ concurrency:
 
 jobs:
   measure:
-    name: ${{ matrix.project }} index
+    # A skipped lane says so in its own name. Dispatching one project leaves the
+    # other twelve jobs running nothing but an echo, with every later step gated
+    # off, and they finish green — indistinguishable in the job list from lanes
+    # that measured something. I misread exactly that: two languages known to be
+    # failing appeared as successes because they had been skipped, and a run
+    # that measures one project should not look like a run that measured
+    # thirteen.
+    name: >-
+      ${{ (github.event_name == 'workflow_dispatch' && inputs.project != 'all'
+      && inputs.project != matrix.project)
+      && format('{0} (skipped)', matrix.project)
+      || format('{0} index', matrix.project) }}
     runs-on: ubuntu-latest
     # Ninety, because the thing being measured is allowed to be slow. Ruby and
     # Dart both ran into the harness's own 30-minute per-spawn cap rather than

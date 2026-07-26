@@ -103,7 +103,7 @@ export const test_standard_providers_execute_their_exact_contracts =
         TestValidator.predicate(
           `${provider.name} records indexer, decoder, and toolchain versions`,
           sameArray(provider.configuration?.(root, process.env), [
-            `${provider.name}=${provider.name} v1.0.0`,
+            `${producerOf(provider.name)}=${producerOf(provider.name)} v1.0.0`,
             "scip=scip v1.0.0",
             ...toolchainRowsOf(provider.name),
           ]),
@@ -773,6 +773,20 @@ function emptyPath(): NodeJS.ProcessEnv {
  * drivers and both are the compiler for the translation units that named them.
  * A single fixed name could not have said that.
  */
+/**
+ * The producer binary each provider actually runs.
+ *
+ * Usually the provider's own name, and stated here for the one place it is not:
+ * Dart's indexer ships as `scip_dart`, because pub executables are named the
+ * way Dart identifiers are. The provider stays `scip-dart` to match its five
+ * siblings and the identity it publishes in provenance, so the configuration
+ * row it emits is labelled after the command rather than the provider — and a
+ * test that assumed the two were the same name was asserting a coincidence.
+ */
+function producerOf(provider: string): string {
+  return provider === "scip-dart" ? "scip_dart" : provider;
+}
+
 function toolchainRowsOf(provider: string): string[] {
   const toolchains: Record<string, readonly string[]> = {
     "scip-clang": ["cc", "clang"],

@@ -229,40 +229,69 @@ if (producer === "lua-language-server") {
       "fake standard provider: the lua config carries no rooted docScriptPath",
     );
   }
+  // Derived from the shared corpus rather than hard-coded, so the fixture
+  // cannot drift from the source every provider is measured against. The real
+  // exporter reports a declaration's name span and, separately, the span of the
+  // function it holds — the probe measured a six-character `setglobal` whose
+  // `.value` was a thirty-character `function` — and the containing span is
+  // what lets a reference be attributed to the declaration it sits inside.
   const file = "src/main.lua";
   const text = fs.readFileSync(path.join(process.cwd(), file), "utf8");
-  const name = /function\s+([A-Za-z_][\w]*)/.exec(text)?.[1] ?? "main";
-  write(path.join(outDir, "samchon-graph-lua.json"), {
-    schemaVersion: 1,
-    files: [file],
-    nodes: [
-      {
-        name,
-        kind: "function",
-        sourceType: "function",
-        location: {
-          file,
-          startLine: 0,
-          startColumn: 0,
-          endLine: 0,
-          endColumn: name.length,
-        },
+  const lines = text.split(/\r?\n/);
+  const nodes = [];
+  const edges = [];
+  for (const [line, body] of lines.entries()) {
+    const declared = /^function\s+([A-Za-z_]\w*)/.exec(body);
+    if (declared === null) continue;
+    const name = declared[1];
+    const at = body.indexOf(name);
+    nodes.push({
+      name,
+      kind: "function",
+      sourceType: "function",
+      location: {
+        file,
+        startLine: line,
+        startColumn: at,
+        endLine: line,
+        endColumn: at + name.length,
       },
-    ],
-    edges: [
-      {
-        from: 1,
+      body: {
+        file,
+        startLine: line,
+        startColumn: 0,
+        endLine: line,
+        endColumn: body.length,
+      },
+    });
+  }
+  // `callee()` is used inside `caller`'s body, which is the relationship the
+  // shared corpus checks: the edge runs from the declaration containing the use
+  // to the one it names.
+  for (const [index, node] of nodes.entries()) {
+    for (const [line, body] of lines.entries()) {
+      if (line === node.location.startLine) continue;
+      const used = body.indexOf(`${node.name}(`);
+      if (used === -1) continue;
+      edges.push({
+        from: index + 1,
         kind: "references",
         sourceType: "getglobal",
         location: {
           file,
-          startLine: 2,
-          startColumn: 2,
-          endLine: 2,
-          endColumn: 2 + name.length,
+          startLine: line,
+          startColumn: used,
+          endLine: line,
+          endColumn: used + node.name.length,
         },
-      },
-    ],
+      });
+    }
+  }
+  write(path.join(outDir, "samchon-graph-lua.json"), {
+    schemaVersion: 1,
+    files: [file],
+    nodes,
+    edges,
     skipped: { unnamed: 0, outsideRoot: 0, refsFailed: 0 },
     warnings: [],
   });

@@ -100,13 +100,20 @@ function localCandidates(root: string, command: string): string[] {
   const privateBin = path.join(root, ".samchon-graph", "bin");
   const packageBin = path.join(root, "node_modules", ".bin");
   /* c8 ignore start -- each CI operating system exercises its native arm. */
+  // Written out rather than mapped: a callback here would be a function the
+  // POSIX legs never call, and this whole arm is inside one platform ignore
+  // rather than a per-function one.
   return process.platform === "win32"
-    ? [privateBin, packageBin].flatMap((bin) => [
-        path.join(bin, `${command}.exe`),
-        path.join(bin, `${command}.cmd`),
-        path.join(bin, `${command}.bat`),
-        path.join(bin, command),
-      ])
+    ? [
+        path.join(privateBin, `${command}.exe`),
+        path.join(privateBin, `${command}.cmd`),
+        path.join(privateBin, `${command}.bat`),
+        path.join(privateBin, command),
+        path.join(packageBin, `${command}.exe`),
+        path.join(packageBin, `${command}.cmd`),
+        path.join(packageBin, `${command}.bat`),
+        path.join(packageBin, command),
+      ]
     : [path.join(privateBin, command), path.join(packageBin, command)];
   /* c8 ignore stop */
 }

@@ -17,17 +17,23 @@ export const test_lua_export_adapts_only_what_it_proves = (): void => {
     files: ["main.lua", "util.lua"],
     nodes: [
       node("util", "local", "local", "main.lua", 0, 6),
-      node("Start", "global", "setglobal", "main.lua", 1, 9),
+      // A function statement: the name span is short, and the body span the
+      // exporter now carries covers the whole `function … end`. The probe
+      // measured exactly this shape — a six-character `setglobal` whose
+      // `.value` was a thirty-character `function`.
+      withBody(
+        node("caller", "function", "function", "main.lua", 2, 9),
+        { startLine: 2, startColumn: 0, endLine: 4, endColumn: 3 },
+      ),
       node("M", "local", "local", "util.lua", 0, 6),
       node("greet", "field", "setfield", "util.lua", 1, 9),
     ],
     edges: [
       // `vm.getRefs` reports the declaration site among the references.
       edge(1, "main.lua", 0, 6),
-      edge(1, "main.lua", 2, 9),
       // The one the whole design turned on: a module-local function used from
-      // another file.
-      edge(4, "main.lua", 2, 9),
+      // another file, inside `caller`'s body.
+      edge(4, "main.lua", 3, 9),
     ],
     skipped: { unnamed: 2, outsideRoot: 11, refsFailed: 0 },
     warnings: [],
@@ -40,7 +46,7 @@ export const test_lua_export_adapts_only_what_it_proves = (): void => {
     result.nodes.map((entry) => entry.id),
     [
       "main.lua#util@1:variable",
-      "main.lua#Start@2:variable",
+      "main.lua#caller@3:function",
       "util.lua#M@1:variable",
       "util.lua#greet@2:field",
     ],
@@ -57,15 +63,27 @@ export const test_lua_export_adapts_only_what_it_proves = (): void => {
   TestValidator.equals(
     "a declaration is not a reference to itself",
     result.edges.length,
-    2,
+    1,
   );
+  // The relationship the graph wants, and the one an earlier version had
+  // backwards. `vm.getRefs(greet)` answers "where is greet used", and the use
+  // sits inside `caller` — so the edge runs from the declaration containing the
+  // reference to the one it names, not from the named symbol to a file.
   TestValidator.equals(
-    "a module-local function keeps its cross-file use",
-    result.edges.some(
-      (entry) =>
-        entry.from === "util.lua#greet@2:field" && entry.to === "main.lua",
-    ),
-    true,
+    "a use is attributed to the declaration that contains it",
+    result.edges[0],
+    {
+      from: "main.lua#caller@3:function",
+      to: "util.lua#greet@2:field",
+      kind: "references",
+      evidence: {
+        file: "main.lua",
+        startLine: 4,
+        startCol: 10,
+        endLine: 4,
+        endCol: 14,
+      },
+    },
   );
 
   assertUnmappedKindsAreDeclinedNotGuessed();
@@ -119,6 +137,10 @@ function assertADroppedDeclarationDoesNotShiftItsNeighboursEdges(): void {
       nodes: [
         node("dropped", "coroutine", "setcoroutine", "main.lua", 0, 0),
         node("kept", "local", "local", "main.lua", 5, 0),
+        withBody(
+          node("holder", "function", "function", "main.lua", 8, 9),
+          { startLine: 8, startColumn: 0, endLine: 12, endColumn: 3 },
+        ),
       ],
       edges: [edge(2, "main.lua", 9, 0)],
       skipped: { unnamed: 0, outsideRoot: 0, refsFailed: 0 },
@@ -127,9 +149,9 @@ function assertADroppedDeclarationDoesNotShiftItsNeighboursEdges(): void {
     "samchon-graph-lua",
   );
   TestValidator.equals(
-    "the surviving declaration keeps its own edge",
-    result.edges.map((entry) => entry.from),
-    ["main.lua#kept@6:variable"],
+    "the edge still names the declaration its index pointed at",
+    result.edges.map((entry) => `${entry.from} -> ${entry.to}`),
+    ["main.lua#holder@9:function -> main.lua#kept@6:variable"],
   );
 }
 
@@ -152,6 +174,16 @@ function node(
       endLine: startLine,
       endColumn: startColumn + name.length,
     },
+  };
+}
+
+function withBody(
+  entry: adaptLuaExport.INode,
+  body: adaptLuaExport.ILocation | Omit<adaptLuaExport.ILocation, "file">,
+): adaptLuaExport.INode {
+  return {
+    ...entry,
+    body: { file: entry.location.file, ...body },
   };
 }
 

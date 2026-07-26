@@ -62,6 +62,28 @@ local function nameOf(source)
     return nil
 end
 
+---The span covering a declaration's body, when it has one.
+---
+---LuaLS keeps a declaration's name and its body on different nodes: a function
+---statement is a `setglobal` or `local` holding the name, and the node it holds
+---carries the span of the whole `function … end`. The probe measured exactly
+---this — a `setglobal` named `caller` spanning six characters whose `.value` was
+---a `function` spanning thirty.
+---
+---That span is what lets a reference be attributed to the declaration it sits
+---inside, which is the edge the graph actually wants: not "this symbol is used
+---somewhere" but "this declaration references that one". A holder whose value
+---is not a function — `local util = require 'util'` reports a `select` — has no
+---body, and its own span stands.
+local function bodyOf(source)
+    local value = source.value
+    if type(value) == 'table' and value.type == 'function'
+        and value.start ~= nil and value.finish ~= nil then
+        return value
+    end
+    return source
+end
+
 local function locationOf(uri, source, root)
     local startRow, startCol = guide.rowColOf(source.start)
     local finishRow, finishCol = guide.rowColOf(source.finish)
@@ -164,6 +186,10 @@ function export.serializeAndExport(docs, outputDir)
                 kind = kind,
                 sourceType = source.type,
                 location = location,
+                -- Where the declaration's body ends, so a reference inside it
+                -- can be attributed to it. Equal to `location` when the
+                -- declaration has no body.
+                body = locationOf(uri, bodyOf(source), root) or location,
             }
 
             -- The reason this exporter exists rather than the plain `--doc`

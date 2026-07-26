@@ -91,14 +91,24 @@ export function adaptLuaExport(
       continue;
     }
 
+    // The declaration the reference sits inside is the one doing the
+    // referencing. `vm.getRefs(D)` answers "where is D used", so the graph edge
+    // runs from whatever declaration contains that position to D — an earlier
+    // version pointed it at the file instead, which reversed the relationship
+    // and named something that is not a declaration.
+    const container = innermostContaining(report.nodes, edge.location);
+    if (container === undefined) {
+      // A use at file scope belongs to no declaration. Saying nothing is more
+      // honest than attributing it to the file or to the nearest neighbour.
+      continue;
+    }
+    const containerKind = NODE_KINDS[container.kind];
+    if (containerKind === undefined) continue;
+    const containerId = identityOf(container, containerKind);
+    if (containerId === from) continue;
     edges.push({
-      from,
-      // The reference target is a position, not a declaration: the exporter
-      // reports where the symbol is used, and the graph's `to` is a node id.
-      // Pointing at the file keeps the edge honest — it says this declaration
-      // is referenced from there — without inventing a declaration that the
-      // index never resolved.
-      to: edge.location.file,
+      from: containerId,
+      to: from,
       kind: "references",
       evidence: evidenceOf(edge.location),
     });
@@ -121,6 +131,9 @@ export namespace adaptLuaExport {
     kind: string;
     sourceType: string;
     location: ILocation;
+
+    /** Span covering the declaration body, when it has one. */
+    body?: ILocation;
   }
 
   export interface IEdge {
@@ -252,6 +265,67 @@ const NODE_KINDS: Record<string, GraphNodeKind | undefined> = {
   field: "field",
   method: "method",
 };
+
+/**
+ * The declaration whose body encloses a position, innermost first.
+ *
+ * Innermost because Lua nests: a function assigned inside another function's
+ * body sits within both spans, and the reference belongs to the one that
+ * actually contains the line. Ties go to the later declaration, which is the
+ * inner one in source order.
+ */
+function innermostContaining(
+  nodes: readonly adaptLuaExport.INode[],
+  at: adaptLuaExport.ILocation,
+): adaptLuaExport.INode | undefined {
+  let found: adaptLuaExport.INode | undefined;
+  for (const node of nodes) {
+    const body = node.body ?? node.location;
+    if (body.file !== at.file) continue;
+    if (!contains(body, at)) continue;
+    if (found === undefined || startsAfter(body, found.body ?? found.location))
+      found = node;
+  }
+  return found;
+}
+
+function contains(
+  span: adaptLuaExport.ILocation,
+  at: adaptLuaExport.ILocation,
+): boolean {
+  return (
+    !before(at.startLine, at.startColumn, span.startLine, span.startColumn) &&
+    !before(span.endLine, span.endColumn, at.startLine, at.startColumn)
+  );
+}
+
+function startsAfter(
+  span: adaptLuaExport.ILocation,
+  other: adaptLuaExport.ILocation,
+): boolean {
+  return before(
+    other.startLine,
+    other.startColumn,
+    span.startLine,
+    span.startColumn,
+  );
+}
+
+function before(
+  line: number,
+  column: number,
+  otherLine: number,
+  otherColumn: number,
+): boolean {
+  return line !== otherLine ? line < otherLine : column < otherColumn;
+}
+
+function identityOf(
+  node: adaptLuaExport.INode,
+  kind: GraphNodeKind,
+): string {
+  return `${node.location.file}#${node.name}@${String(node.location.startLine + 1)}:${kind}`;
+}
 
 function evidenceOf(location: adaptLuaExport.ILocation) {
   return {

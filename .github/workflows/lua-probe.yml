@@ -16,6 +16,15 @@ name: lua-probe
 # of being written into it. Nothing lands in the tree being analysed.
 on:
   workflow_dispatch:
+  # `workflow_dispatch` alone cannot be fired until the file reaches the default
+  # branch, and this exists precisely to answer a question before anything is
+  # merged. A `push` trigger evaluates its paths against that push's own
+  # changes — unlike `pull_request`, which matches the whole branch diff — so it
+  # runs when the probe itself changes and stays quiet otherwise.
+  push:
+    paths:
+      - ".github/workflows/lua-probe.yml"
+      - "sidecars/lua/**"
 
 concurrency:
   group: lua-probe-${{ github.ref }}

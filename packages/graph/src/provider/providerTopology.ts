@@ -12,10 +12,26 @@ export namespace providerTopology {
     args: string[];
     windowsVerbatimArguments: boolean;
     windowsDoubleEscapeArguments: boolean;
-    configuration: string[];
   }
 
-  /** Non-mutating provider eligibility/command/configuration snapshot. */
+  /**
+   * Non-mutating provider eligibility and command snapshot.
+   *
+   * Eligibility only, deliberately. This used to carry each provider's
+   * effective configuration as well, and a configuration row is a toolchain
+   * version whose derivation launches the tool — so the resident source paid
+   * several synchronous process launches per provider on every load, and then
+   * paid for them again when the session it was about to refresh derived the
+   * same rows for its own build universe.
+   *
+   * Worse than the cost was what it decided. A probe that failed for any
+   * reason unrelated to the project came back as an `unavailable` row, the
+   * serialized topology moved, and the resident answered that by discarding a
+   * valid index and rebuilding every language. The build universe already has
+   * an owner: {@link BatchGraphSession} reads the rows once per refresh and
+   * rebuilds its own snapshot when they move. Asking here as well added a
+   * second answer to a settled question and a way to get it wrong.
+   */
   export function available(
     root: string,
     languages: readonly GraphLanguage[],
@@ -40,12 +56,6 @@ export namespace providerTopology {
         candidate.command.windowsVerbatimArguments === true,
       windowsDoubleEscapeArguments:
         candidate.command.windowsDoubleEscapeArguments === true,
-      configuration:
-        candidate.provider.configuration === undefined
-          ? []
-          : [...candidate.provider.configuration(root, env)].sort(
-              compareOrdinal,
-            ),
     }));
   }
 

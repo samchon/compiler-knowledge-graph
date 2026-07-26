@@ -68,6 +68,7 @@ export const GraphPaths = {
   fakeScipIndexer: path.join(repositoryRoot, "tests", "test-graph", "src", "internal", "fake-scip-indexer.cjs"),
   fakeScipDecoder: path.join(repositoryRoot, "tests", "test-graph", "src", "internal", "fake-scip-decoder.cjs"),
   fakeStandardProvider: path.join(repositoryRoot, "tests", "test-graph", "src", "internal", "fake-standard-provider.cjs"),
+  fakeToolchain: path.join(repositoryRoot, "tests", "test-graph", "src", "internal", "fake-toolchain.cjs"),
   fakeSidecar: path.join(repositoryRoot, "tests", "test-graph", "src", "internal", "fake-sidecar.cjs"),
   graphBin: path.join(graphPackageRoot, "lib", "bin.js"),
   graphPackageRoot,

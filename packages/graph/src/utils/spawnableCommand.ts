@@ -17,7 +17,7 @@ export function spawnableCommand(
     process.platform !== "win32" ||
     !/\.(?:cmd|bat)$/i.test(executable)
   ) {
-    return { command: executable, args: [...args] };
+    return { command: executable, args: [...args], executable };
   }
   /* c8 ignore stop */
   /* c8 ignore start -- Windows-only command-processor construction. */
@@ -32,6 +32,7 @@ export function spawnableCommand(
     args: ["/d", "/s", "/v:off", "/c", `"${shellCommand}"`],
     windowsVerbatimArguments: true,
     windowsDoubleEscapeArguments: doubleEscape,
+    executable,
   };
 }
 /* c8 ignore stop */
@@ -42,6 +43,21 @@ export namespace spawnableCommand {
     args: string[];
     windowsVerbatimArguments?: boolean;
     windowsDoubleEscapeArguments?: boolean;
+
+    /**
+     * The file this invocation ultimately runs, when it differs from `command`.
+     *
+     * Every command built here sets it. It is optional because a hand-built
+     * invocation may not, and there `command` is already the file — the reader
+     * is `executable ?? command`.
+     *
+     * The distinction exists for one platform. A Windows `.cmd`/`.bat` shim is
+     * spawned as the system command processor with the real program quoted
+     * inside an argument, so anything that reasons about *which program this
+     * is* — its size, its modification time, whether it was replaced — would
+     * otherwise describe `cmd.exe` for every shim on the machine.
+     */
+    executable?: string;
   }
 
   /** Absolute native Windows executable, immune to project-controlled PATH. */

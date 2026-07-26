@@ -40,7 +40,7 @@ export const test_defensive_boundaries_remain_explicit = async () => {
         options: { cwd: string },
         env: NodeJS.ProcessEnv,
         providers: readonly IGraphProvider[],
-      ): Array<{ configuration: string[] }>;
+      ): Array<{ provider: string; command: string }>;
     };
   }>("provider/providerTopology.js");
   const { spawnableCommand } = await importLib<{
@@ -118,31 +118,38 @@ export const test_defensive_boundaries_remain_explicit = async () => {
     },
   };
   TestValidator.equals(
-    "a provider without configuration publishes an empty topology vector",
+    "topology reports the resolved command for an eligible provider",
     providerTopology.available(
       root,
       ["go"],
       { cwd: root },
       emptyPath(),
       [provider],
-    )[0]?.configuration,
-    [],
+    )[0]?.command,
+    process.execPath,
   );
+  // Deriving a configuration row launches the toolchain, and this snapshot is
+  // taken on every resident load. A provider whose `configuration` throws is
+  // the only way to prove the call is absent rather than merely cheap: an
+  // assertion on the returned rows would still pass if the derivation ran and
+  // its result were discarded.
   const configuredProvider: IGraphProvider = {
     ...provider,
     name: "configured-topology-fixture",
-    configuration: () => ["z-setting", "a-setting"],
+    configuration: () => {
+      throw new Error("topology inspection must not derive configuration");
+    },
   };
   TestValidator.equals(
-    "provider topology sorts effective configuration deterministically",
+    "topology never derives a provider's effective configuration",
     providerTopology.available(
       root,
       ["go"],
       { cwd: root },
       emptyPath(),
       [configuredProvider],
-    )[0]?.configuration,
-    ["a-setting", "z-setting"],
+    )[0]?.provider,
+    "configured-topology-fixture",
   );
 
   const rustConfiguration = rustScipProvider.configuration?.(root, {

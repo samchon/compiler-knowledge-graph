@@ -24,7 +24,7 @@ export function resolveProviderCommand(
     if (isSpawnableFile(candidate)) return spawnable(candidate, props.args);
   }
 
-  const onPath = resolveOnPath(props.command, root, env);
+  const onPath = lookupOnPath(props.command, root, env);
   return onPath === undefined ? undefined : spawnable(onPath, props.args);
 }
 
@@ -34,6 +34,38 @@ export namespace resolveProviderCommand {
     override: string;
     args?: readonly string[];
   }
+}
+
+/**
+ * Look one command up on `PATH`, reusing the answer while it still holds.
+ *
+ * The lookup itself is a process launch — `where.exe` on Windows, `command -v`
+ * on POSIX — and provider resolution runs on every resident load, for every
+ * candidate, once per tool that candidate requires. It is also the same
+ * failure shape as a version probe: `resolveOnPath` reports "not installed"
+ * from a non-zero exit, so a launch that failed for a reason unrelated to the
+ * project made an installed tool disappear, and the resident answers a
+ * provider disappearing by rebuilding every language.
+ *
+ * A hit is confirmed with a stat before it is reused, so a tool removed since
+ * the lookup is still found to be gone. Only successes are remembered: caching
+ * an absence would hide a tool installed while the server was running, which is
+ * the one direction a developer actively expects to work.
+ */
+function lookupOnPath(
+  command: string,
+  root: string,
+  env: NodeJS.ProcessEnv,
+): string | undefined {
+  const key = [command, env.PATH ?? "", env.Path ?? ""].join(SEPARATOR);
+  const cached = pathLookups.get(key);
+  if (cached !== undefined) {
+    if (isSpawnableFile(cached)) return cached;
+    pathLookups.delete(key);
+  }
+  const found = resolveOnPath(command, root, env);
+  if (found !== undefined) pathLookups.set(key, found);
+  return found;
 }
 
 function resolveOnPath(
@@ -101,6 +133,11 @@ function isSpawnableFile(file: string): boolean {
     return false;
   }
 }
+
+/** A separator no command name or `PATH` value can contain. */
+const SEPARATOR = String.fromCharCode(0);
+
+const pathLookups = new Map<string, string>();
 
 function spawnable(
   executable: string,

@@ -143,10 +143,22 @@ export const test_rust_scip_provider_preserves_cargo_and_toolchain_boundaries =
         ],
       );
 
+      // An installed compiler that says nothing and a compiler that is not
+      // there are different facts about the build universe, and only the second
+      // one means the provider cannot describe what it indexed. Collapsing them
+      // made a build universe that rebuilt itself whenever a process launch
+      // failed for a reason unrelated to the project.
       const rustc = platformExecutable(privateBin, "rustc");
       writeTool(rustc, "");
       TestValidator.predicate(
-        "a tool that cannot report its version is an unavailable configuration",
+        "an installed compiler that reports no version is unreported",
+        rustScipProvider
+          .effectiveConfiguration(root, environment)
+          .includes("rustc=unreported"),
+      );
+      fs.rmSync(rustc, { force: true });
+      TestValidator.predicate(
+        "a compiler that is not installed is unavailable",
         rustScipProvider
           .effectiveConfiguration(root, environment)
           .includes("rustc=unavailable"),

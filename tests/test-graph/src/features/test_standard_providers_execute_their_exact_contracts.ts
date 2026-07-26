@@ -231,15 +231,22 @@ export const test_standard_providers_execute_their_exact_contracts =
       writeFailingShim(failingIndexer);
       writeFailingShim(failingDecoder);
       fs.writeFileSync(path.join(emptyRoot, "compile_commands.json"), "[]\n");
-      TestValidator.predicate(
-        "failing standard version probes are reported as unavailable",
-        clang
-          .configuration?.(emptyRoot, {
+      // An installed tool whose probe does not answer and a tool that is not
+      // installed used to produce the same row. They are different facts, and
+      // a build universe computed from the first one rebuilt itself whenever a
+      // process launch failed for a reason having nothing to do with the
+      // project. `unavailable` is now decided by resolution, which reads the
+      // filesystem and launches nothing.
+      TestValidator.equals(
+        "a resolved tool whose probe fails is unreported, not unavailable",
+        [
+          ...(clang.configuration?.(emptyRoot, {
             ...emptyPath(),
             SAMCHON_GRAPH_SCIP_CLANG: failingIndexer,
             SAMCHON_GRAPH_SCIP: failingDecoder,
-          })
-          .every((row) => row.endsWith("=unavailable")) === true,
+          }) ?? []),
+        ],
+        ["scip-clang=unreported", "scip=unreported", "clang=unavailable"],
       );
 
       const decoder = process.env.SAMCHON_GRAPH_SCIP;

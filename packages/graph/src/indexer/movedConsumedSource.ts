@@ -66,7 +66,10 @@ export namespace movedConsumedSource {
  * stop retrying.
  */
 function describe(current: string, consumed: string): string {
-  const BOM = "﻿";
+  // Escaped, not literal. A byte order mark written into the source is an
+  // invisible character in the file that describes byte order marks, which the
+  // lint rule refuses and a reader would never see.
+  const BOM = "\uFEFF";
   if (current.startsWith(BOM) && !consumed.startsWith(BOM)) {
     return current.slice(BOM.length) === consumed
       ? "they differ only by a leading byte order mark the consumer stripped"

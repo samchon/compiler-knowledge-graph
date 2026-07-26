@@ -48,6 +48,7 @@ export const test_standard_providers_execute_their_exact_contracts =
         "scip-ruby",
         "scip",
         "clang",
+        "cc",
         "java",
         "dotnet",
         "python3",
@@ -69,11 +70,10 @@ export const test_standard_providers_execute_their_exact_contracts =
         SAMCHON_GRAPH_SCIP_PYTHON: platformExecutable(bin, "scip-python"),
         SAMCHON_GRAPH_SCIP_RUBY: platformExecutable(bin, "scip-ruby"),
         SAMCHON_GRAPH_SCIP: platformExecutable(bin, "scip"),
-        SAMCHON_GRAPH_CLANG: platformExecutable(bin, "clang"),
-        SAMCHON_GRAPH_JAVA: platformExecutable(bin, "java"),
-        SAMCHON_GRAPH_DOTNET: platformExecutable(bin, "dotnet"),
-        SAMCHON_GRAPH_PYTHON: platformExecutable(bin, "python3"),
-        SAMCHON_GRAPH_RUBY: platformExecutable(bin, "ruby"),
+        SAMCHON_GRAPH_JAVA_TOOLCHAIN: platformExecutable(bin, "java"),
+        SAMCHON_GRAPH_DOTNET_TOOLCHAIN: platformExecutable(bin, "dotnet"),
+        SAMCHON_GRAPH_PYTHON_TOOLCHAIN: platformExecutable(bin, "python3"),
+        SAMCHON_GRAPH_RUBY_TOOLCHAIN: platformExecutable(bin, "ruby"),
         SAMCHON_GRAPH_SWIFT: platformExecutable(bin, "samchon-graph-swift"),
         SAMCHON_GRAPH_ZIG: platformExecutable(bin, "samchon-graph-zig"),
         SAMCHON_GRAPH_PHP: platformExecutable(bin, "samchon-graph-php"),
@@ -99,7 +99,7 @@ export const test_standard_providers_execute_their_exact_contracts =
           sameArray(provider.configuration?.(root, process.env), [
             `${provider.name}=${provider.name} v1.0.0`,
             "scip=scip v1.0.0",
-            `${toolchainOf(provider.name)}=${toolchainOf(provider.name)} v1.0.0`,
+            ...toolchainRowsOf(provider.name),
           ]),
         );
         TestValidator.predicate(
@@ -122,7 +122,7 @@ export const test_standard_providers_execute_their_exact_contracts =
         TestValidator.predicate(
           `${provider.name} publishes the toolchain its facts describe`,
           refreshed.snapshot.provenance.compilerVersion ===
-            `${toolchainOf(provider.name)}=${toolchainOf(provider.name)} v1.0.0`,
+            toolchainRowsOf(provider.name).join("; "),
         );
         TestValidator.predicate(
           `${provider.name} publishes the shared strict-fixture corpus`,
@@ -246,7 +246,7 @@ export const test_standard_providers_execute_their_exact_contracts =
             SAMCHON_GRAPH_SCIP: failingDecoder,
           }) ?? []),
         ],
-        ["scip-clang=unreported", "scip=unreported", "clang=unavailable"],
+        ["scip-clang=unreported", "scip=unreported", "cc=unavailable"],
       );
 
       const decoder = process.env.SAMCHON_GRAPH_SCIP;
@@ -316,7 +316,27 @@ function assertFixtureRegistryCoverage(): void {
 
 function writeProject(root: string): void {
   const files: Record<string, string> = {
-    "compile_commands.json": "[]\n",
+    // A real compilation database, because scip-clang's toolchain is read from
+    // it rather than from a fixed `clang` on PATH. Both documented entry shapes
+    // appear: `arguments` is an already-split vector and `command` is one shell
+    // string, and the second names a different driver so the provider cannot
+    // pass by finding one.
+    "compile_commands.json": JSON.stringify(
+      [
+        {
+          directory: root,
+          file: "src/main.c",
+          arguments: ["clang", "-c", "src/main.c"],
+        },
+        {
+          directory: root,
+          file: "src/main.cpp",
+          command: "cc -c src/main.cpp",
+        },
+      ],
+      null,
+      2,
+    ),
     "CMakeLists.txt": "project(fixture)\n",
     "pom.xml": "<project />\n",
     "global.json": "{}\n",
@@ -679,19 +699,26 @@ function emptyPath(): NodeJS.ProcessEnv {
  * would pass if `compilerVersion` were wired to the indexer instead, which is
  * the one thing these cases exist to distinguish.
  */
-function toolchainOf(provider: string): string {
-  const toolchains: Record<string, string> = {
-    "scip-clang": "clang",
-    "scip-java": "java",
-    "scip-dotnet": "dotnet",
-    "scip-python": "python3",
-    "scip-ruby": "ruby",
+/**
+ * The toolchain rows each provider must publish for this fixture.
+ *
+ * `scip-clang` has two, because the fixture's compilation database records two
+ * drivers and both are the compiler for the translation units that named them.
+ * A single fixed name could not have said that.
+ */
+function toolchainRowsOf(provider: string): string[] {
+  const toolchains: Record<string, readonly string[]> = {
+    "scip-clang": ["cc", "clang"],
+    "scip-java": ["java"],
+    "scip-dotnet": ["dotnet"],
+    "scip-python": ["python3"],
+    "scip-ruby": ["ruby"],
   };
   const toolchain = toolchains[provider];
   if (toolchain === undefined) {
     throw new Error(`${provider}: fixture declares no toolchain`);
   }
-  return toolchain;
+  return toolchain.map((tool) => `${tool}=${tool} v1.0.0`);
 }
 
 function sameArray(

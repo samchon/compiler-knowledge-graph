@@ -12,25 +12,29 @@ export namespace providerTopology {
     args: string[];
     windowsVerbatimArguments: boolean;
     windowsDoubleEscapeArguments: boolean;
+
+    /**
+     * Effective settings, present only for a candidate that did not serve.
+     *
+     * A configuration row is a toolchain version, and deriving one launches the
+     * tool. For a provider that is serving, its own session already derives
+     * these once per refresh to decide whether its artifact is stale, so asking
+     * again here would be a second answer to a settled question — paid on every
+     * resident load, which is every request a long-lived server answers.
+     *
+     * A candidate that resolved and then did not serve has no session to ask.
+     * Its build universe is the only evidence that the reason it fell back has
+     * been repaired: a developer who fixes the toolchain and edits nothing
+     * would otherwise stay on the generic lane until some unrelated file moved.
+     */
+    configuration?: string[];
   }
 
   /**
    * Non-mutating provider eligibility and command snapshot.
    *
-   * Eligibility only, deliberately. This used to carry each provider's
-   * effective configuration as well, and a configuration row is a toolchain
-   * version whose derivation launches the tool — so the resident source paid
-   * several synchronous process launches per provider on every load, and then
-   * paid for them again when the session it was about to refresh derived the
-   * same rows for its own build universe.
-   *
-   * Worse than the cost was what it decided. A probe that failed for any
-   * reason unrelated to the project came back as an `unavailable` row, the
-   * serialized topology moved, and the resident answered that by discarding a
-   * valid index and rebuilding every language. The build universe already has
-   * an owner: {@link BatchGraphSession} reads the rows once per refresh and
-   * rebuilds its own snapshot when they move. Asking here as well added a
-   * second answer to a settled question and a way to get it wrong.
+   * `servedBy` names the providers that actually produced this build. Rows
+   * outside it carry their configuration, for the reason {@link IRow} states.
    */
   export function available(
     root: string,
@@ -38,6 +42,7 @@ export namespace providerTopology {
     options: IBuildGraphOptions,
     env: NodeJS.ProcessEnv = process.env,
     registry: readonly IGraphProvider[] = GRAPH_PROVIDERS,
+    servedBy: ReadonlySet<string> = new Set(),
   ): IRow[] {
     if (options.mode === "static") return [];
     return selectGraphProviders(
@@ -47,16 +52,26 @@ export namespace providerTopology {
       env,
       registry,
       false,
-    ).candidates.map((candidate) => ({
-      provider: candidate.provider.name,
-      languages: [...candidate.languages].sort(compareOrdinal),
-      command: candidate.command.command,
-      args: [...candidate.command.args],
-      windowsVerbatimArguments:
-        candidate.command.windowsVerbatimArguments === true,
-      windowsDoubleEscapeArguments:
-        candidate.command.windowsDoubleEscapeArguments === true,
-    }));
+    ).candidates.map((candidate) => {
+      const configuration =
+        servedBy.has(candidate.provider.name) ||
+        candidate.provider.configuration === undefined
+          ? undefined
+          : [...candidate.provider.configuration(root, env)].sort(
+              compareOrdinal,
+            );
+      return {
+        provider: candidate.provider.name,
+        languages: [...candidate.languages].sort(compareOrdinal),
+        command: candidate.command.command,
+        args: [...candidate.command.args],
+        windowsVerbatimArguments:
+          candidate.command.windowsVerbatimArguments === true,
+        windowsDoubleEscapeArguments:
+          candidate.command.windowsDoubleEscapeArguments === true,
+        ...(configuration === undefined ? {} : { configuration }),
+      };
+    });
   }
 
   export function serialize(available: readonly IRow[]): string {

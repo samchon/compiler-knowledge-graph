@@ -8,6 +8,7 @@ import { spawnableCommand } from "../../utils/spawnableCommand";
 import { IGraphProvider } from "../IGraphProvider";
 import { providerInputFiles } from "../providerInputFiles";
 import { resolveProviderCommand } from "../resolveProviderCommand";
+import { toolchainVersion } from "../toolchainVersion";
 import { sidecarProvider } from "../sidecar";
 
 function goIndexArgs(artifact: string): string[] {
@@ -263,30 +264,7 @@ function toolVersion(
   override: string,
   args: readonly string[],
 ): string {
-  const resolved = resolveProviderCommand(root, env, { command, override });
-  if (resolved === undefined) return `${command}=unavailable`;
-  const spawnable = spawnableCommand.append(
-    { ...resolved, args: [...resolved.args] },
-    args,
-  );
-  const result = spawnSync(spawnable.command, spawnable.args, {
-    cwd: root,
-    env,
-    encoding: "utf8",
-    maxBuffer: 1024 * 1024,
-    timeout: 10_000,
-    windowsVerbatimArguments:
-      spawnable.windowsVerbatimArguments,
-    windowsHide: true,
-  });
-  /* c8 ignore start -- an executed spawnSync with UTF-8 encoding returns a
-   * string; the null arm exists only for Node's broader result type. Success
-   * and unavailable results remain asserted by provider-resolution tests. */
-  const output = String(result.stdout ?? "").trim();
-  return result.status === 0 && output !== ""
-    ? `${command}=${output}`
-    : `${command}=unavailable`;
-  /* c8 ignore stop */
+  return toolchainVersion({ root, env, command, override, args });
 }
 
 const GO_BUILD_FILE_NAMES: readonly string[] = [

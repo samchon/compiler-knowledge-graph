@@ -151,12 +151,18 @@ export function createResidentGraphSource(
         .flatMap((session) =>
           session.current === undefined ? [] : [session.current],
         );
+      const served = new Set(
+        [...(result.providers ?? new Map()).values()].map(
+          (provider) => provider.name,
+        ),
+      );
       const availableTopology = providerTopology.available(
         root,
         selected.presentLanguages,
         options,
         process.env,
         dependencies.providers ?? [],
+        served,
       );
       return {
         dump: result.dump,
@@ -480,6 +486,9 @@ export function createResidentGraphSource(
           options,
           process.env,
           dependencies.providers ?? [],
+          new Set(
+            [...current.providers.values()].map((provider) => provider.name),
+          ),
         ),
       );
       if (liveTopology !== current.providerTopology) {

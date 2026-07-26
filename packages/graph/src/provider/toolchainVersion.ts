@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 
 import { spawnableCommand } from "../utils/spawnableCommand";
@@ -8,32 +9,43 @@ import { resolveProviderCommand } from "./resolveProviderCommand";
 /**
  * The version of one toolchain, as a single configuration row.
  *
- * Three providers derived this separately and each paid the same two costs. A
- * version probe is a process launch, and the rows are re-derived on every
- * session refresh, so a resident server spent several synchronous launches per
- * request asking about programs that had not moved. The probe also spoke about
- * two different states in one word: a tool that is not installed and a tool
- * whose probe happened not to answer both came back `unavailable`, and a build
- * universe computed from that value rebuilt itself over a spawn failure.
+ * Three providers derived this separately, and each one collapsed two different
+ * states into one word: a tool that is not installed and a tool whose probe
+ * happened not to answer both came back `unavailable`. A build universe
+ * computed from that value rebuilt itself over a spawn failure, and the
+ * resident source went further and discarded its whole index.
  *
- * Both follow from asking the wrong thing. A program's version is a property of
- * the program, so the answer is cached against the file's identity and the
- * probe runs once per distinct binary. Absence is decided by
+ * Three facts replace the one word. Absence is decided by
  * {@link resolveProviderCommand}, which reads the filesystem and launches
- * nothing, so `unavailable` now means only what it says. A resolved binary
- * whose probe does not answer is `unreported`, which is a third state because
- * it is a third fact.
+ * nothing, so `unavailable` means only that. A probe that answers is the
+ * version. A probe that does not answer falls back to the last version this
+ * exact toolchain gave, and says `unreported` only when there is no such
+ * answer — so a failed launch leaves the universe where it was instead of
+ * moving it.
+ *
+ * The probe itself runs every time, and deliberately. A version is not a
+ * property of the file: `rustc`, `python3`, `ruby`, `java`, and `dotnet` are
+ * all normally dispatcher shims — rustup, pyenv, rbenv, jenv, asdf, the .NET
+ * muxer — whose answer is decided by the working directory and the environment,
+ * and which report a new version after an in-place upgrade that leaves the
+ * shim byte-identical. This repository already knows that: `global.json`, the
+ * file that picks a project's .NET SDK, is one of `scip-dotnet`'s declared
+ * build inputs. Caching an answer against the file would serve one project's
+ * toolchain to another and would never notice an upgrade at all.
  */
 export function toolchainVersion(props: toolchainVersion.IProps): string {
-  const resolved = resolveProviderCommand(props.root, props.env, {
-    command: props.command,
-    override: props.override,
-  });
+  const resolved = toolchainVersion.resolve(props);
   if (resolved === undefined) return `${props.command}=unavailable`;
+  const key = answerKey(resolved, props);
   const observed = probe(resolved, props);
-  return observed === undefined
+  if (observed !== undefined) {
+    remember(key, observed);
+    return `${props.command}=${observed}`;
+  }
+  const remembered = answers.get(key);
+  return remembered === undefined
     ? `${props.command}=unreported`
-    : `${props.command}=${observed}`;
+    : `${props.command}=${remembered}`;
 }
 
 export namespace toolchainVersion {
@@ -44,37 +56,53 @@ export namespace toolchainVersion {
     /** The executable to probe, resolved through the provider command rules. */
     command: string;
 
-    /** Environment variable naming an absolute development build. */
-    override: string;
+    /** Environment variable naming an absolute development build, if any. */
+    override?: string;
 
     /** The probe arguments, such as `--version` or `-vV`. */
     args: readonly string[];
+
+    /**
+     * Probe exactly this file rather than resolving `command`.
+     *
+     * A project's own build description can name its compiler by absolute
+     * path — `compile_commands.json` records the driver each translation unit
+     * was compiled with — and that file is the answer, not whatever program of
+     * the same basename happens to be on this machine's `PATH`.
+     */
+    executable?: string;
+  }
+
+  /**
+   * The program this row describes, or `undefined` when it is not installed.
+   *
+   * Separate from the row so a provider can make resolution a precondition:
+   * a snapshot states which toolchain resolved its facts, and one that cannot
+   * answer should decline rather than publish `unavailable` into the field a
+   * consumer degrades against.
+   */
+  export function resolve(
+    props: IProps,
+  ): IGraphProvider.ICommand | undefined {
+    if (props.executable !== undefined) {
+      return isSpawnableFile(props.executable)
+        ? spawnableCommand(props.executable, [], props.env)
+        : undefined;
+    }
+    return resolveProviderCommand(props.root, props.env, {
+      command: props.command,
+      ...(props.override === undefined ? {} : { override: props.override }),
+    });
   }
   /* c8 ignore start -- declaration merging emits an unreachable namespace
    * creation arm after the function object already exists. */
 }
 /* c8 ignore stop */
 
-/**
- * Run the probe unless this exact binary already answered it.
- *
- * Keyed by the executable's path, size, and modification time rather than by
- * its name: a project-local tool and a global one of the same name are
- * different programs, and replacing a binary in place is exactly the event that
- * must invalidate the answer. A failed probe is never cached, so a transient
- * failure is retried rather than frozen, while a version already learned for
- * this binary wins over a later failure — the binary did not change, so neither
- * did its version.
- */
 function probe(
   resolved: IGraphProvider.ICommand,
   props: toolchainVersion.IProps,
 ): string | undefined {
-  const key = cacheKey(resolved, props.args);
-  if (key !== undefined) {
-    const cached = cache.get(key);
-    if (cached !== undefined) return cached;
-  }
   const spawnable = spawnableCommand.append(
     { ...resolved, args: [...resolved.args] },
     props.args,
@@ -91,41 +119,73 @@ function probe(
   /* c8 ignore next -- an executed spawnSync with UTF-8 encoding returns a
    * string; the null arm exists only for Node's broader result type. */
   const output = oneLine(String(result.stdout ?? ""));
-  if (result.status !== 0 || output === "") return undefined;
-  if (key !== undefined) cache.set(key, output);
-  return output;
+  return result.status === 0 && output !== "" ? output : undefined;
 }
 
 /**
- * The identity of the program this probe would launch, or `undefined` when it
- * has none to state.
+ * Where this toolchain's last answer is filed.
  *
- * Read from `executable` rather than `command`, because a Windows `.cmd`
- * provider is spawned as a `cmd.exe` invocation carrying the real program
- * inside a quoted argument: stat'ing `command` would describe the command
- * processor, which never changes, and every shim on the machine would share one
- * cached answer that no toolchain replacement could invalidate.
+ * Everything the probe's answer depends on: the program, the directory it runs
+ * in, the environment it inherits, and what it was asked. Over-specific on
+ * purpose. A key that is too narrow hands one project's toolchain version to
+ * another, while a key that is too wide only forgets an answer that a fresh
+ * probe is about to produce anyway.
  *
- * A path that cannot be stat'd is not cacheable under any key: the answer would
- * have to be filed under the absence of an identity, where the next program
- * that also has none would find it.
+ * The identity reads `executable`, not `command`, because a Windows `.cmd`
+ * provider is spawned as `cmd.exe` with the real program quoted inside an
+ * argument, and every shim on the machine would otherwise share one entry.
  */
-function cacheKey(
+function answerKey(
   resolved: IGraphProvider.ICommand,
-  args: readonly string[],
-): string | undefined {
+  props: toolchainVersion.IProps,
+): string {
   const executable = resolved.executable ?? resolved.command;
-  let identity: string;
+  const environment = createHash("sha256");
+  for (const name of Object.keys(props.env).sort(compareOrdinal)) {
+    environment.update(name, "utf8");
+    environment.update(SEPARATOR, "utf8");
+    environment.update(props.env[name] ?? "", "utf8");
+    environment.update(SEPARATOR, "utf8");
+  }
+  return [
+    executable,
+    fileIdentity(executable),
+    props.root,
+    environment.digest("hex"),
+    ...resolved.args,
+    ...props.args,
+  ].join(SEPARATOR);
+}
+
+function fileIdentity(executable: string): string {
   try {
     const stat = fs.statSync(executable);
-    identity = `${String(stat.size)}:${String(stat.mtimeMs)}`;
-    /* c8 ignore next 4 -- a PATH-resolved executable removed between lookup
-     * and this stat has no identity to file an answer under; the spawn below
-     * then reports the real failure. */
+    return `${String(stat.size)}:${String(stat.mtimeMs)}`;
+    /* c8 ignore next 3 -- a PATH-resolved executable removed between lookup
+     * and this stat still gets a key; the probe that follows reports the real
+     * failure and nothing is filed under it. */
   } catch {
-    return undefined;
+    return "unstatable";
   }
-  return [executable, identity, ...resolved.args, ...args].join(SEPARATOR);
+}
+
+/**
+ * File one answer, under a bound.
+ *
+ * A resident server that outlives many toolchain upgrades would otherwise
+ * accumulate one permanent entry per replaced binary. The bound is generous
+ * relative to the number of distinct toolchains any project has and small
+ * enough that the map cannot become a leak; the oldest entry is dropped
+ * because the newest answers are the ones a fallback would want.
+ */
+function remember(key: string, version: string): void {
+  if (answers.has(key)) answers.delete(key);
+  else if (answers.size >= MAX_REMEMBERED) {
+    const oldest = answers.keys().next();
+    /* c8 ignore next -- `size >= MAX_REMEMBERED` guarantees a first key. */
+    if (oldest.done !== true) answers.delete(oldest.value);
+  }
+  answers.set(key, version);
 }
 
 /**
@@ -137,16 +197,36 @@ function cacheKey(
  * what a compiled artifact means. Keeping only the first would drop them;
  * keeping the newlines puts a multi-line value in a published provenance field
  * that every other producer fills with one line.
+ *
+ * ` | ` rather than `; ` because callers join whole rows with `; `. One
+ * separator for both would leave a reader unable to tell where one tool's
+ * answer ends and the next begins.
  */
 function oneLine(output: string): string {
   return output
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter((line) => line !== "")
-    .join("; ");
+    .join(" | ");
 }
 
-/** A separator no path, argument, or digest can contain. */
+function compareOrdinal(left: string, right: string): number {
+  /* c8 ignore next 2 -- environment names are distinct object keys. */
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
+function isSpawnableFile(file: string): boolean {
+  try {
+    if (!fs.statSync(file).isFile()) return false;
+    fs.accessSync(file, fs.constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** A separator no path, argument, environment value, or digest can contain. */
 const SEPARATOR = String.fromCharCode(0);
 
-const cache = new Map<string, string>();
+const MAX_REMEMBERED = 256;
+const answers = new Map<string, string>();

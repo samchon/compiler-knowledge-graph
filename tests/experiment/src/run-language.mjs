@@ -104,10 +104,13 @@ if (
     provenance.producer.tool !== experiment.strictTool ||
     provenance.producer.version === "" ||
     provenance.producer.compiler === "" ||
-    // A resolved-but-absent tool answers the shape of the question and not the
+    // A tool that did not answer answers the shape of the question and not the
     // question, and a row that accepted it would go green on a provenance
-    // saying nothing about which runtime resolved its facts.
-    provenance.producer.compiler.endsWith("=unavailable") ||
+    // saying nothing about which runtime resolved its facts. Both spellings,
+    // because a provider that declines when its toolchain is absent can still
+    // publish a toolchain that resolved and then said nothing — and a check for
+    // only the first is a check that can no longer fail.
+    /=(?:unavailable|unreported)(?:;|$)/.test(provenance.producer.compiler) ||
     experiment.requiredCapabilities.some(
       (capability) => !provenance.capabilities.includes(capability),
     ))

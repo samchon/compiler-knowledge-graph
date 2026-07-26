@@ -40,7 +40,7 @@ export const test_defensive_boundaries_remain_explicit = async () => {
         options: { cwd: string },
         env: NodeJS.ProcessEnv,
         providers: readonly IGraphProvider[],
-      ): Array<{ provider: string; command: string }>;
+      ): Array<{ provider: string; command: string; configuration?: string[] }>;
     };
   }>("provider/providerTopology.js");
   const { spawnableCommand } = await importLib<{
@@ -128,28 +128,21 @@ export const test_defensive_boundaries_remain_explicit = async () => {
     )[0]?.command,
     process.execPath,
   );
-  // Deriving a configuration row launches the toolchain, and this snapshot is
-  // taken on every resident load. A provider whose `configuration` throws is
-  // the only way to prove the call is absent rather than merely cheap: an
-  // assertion on the returned rows would still pass if the derivation ran and
-  // its result were discarded.
   const configuredProvider: IGraphProvider = {
     ...provider,
     name: "configured-topology-fixture",
-    configuration: () => {
-      throw new Error("topology inspection must not derive configuration");
-    },
+    configuration: () => ["z-setting", "a-setting"],
   };
   TestValidator.equals(
-    "topology never derives a provider's effective configuration",
+    "a candidate that did not serve sorts its configuration deterministically",
     providerTopology.available(
       root,
       ["go"],
       { cwd: root },
       emptyPath(),
       [configuredProvider],
-    )[0]?.provider,
-    "configured-topology-fixture",
+    )[0]?.configuration,
+    ["a-setting", "z-setting"],
   );
 
   const rustConfiguration = rustScipProvider.configuration?.(root, {

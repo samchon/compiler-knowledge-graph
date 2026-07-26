@@ -381,11 +381,10 @@ export class BatchGraphSession implements IBulkGraphSession {
           resolve(stdout);
           return;
         }
+        const detail = failureDetail(stderr, stdout);
         reject(
           new Error(
-            `${this.options.provider}: ${command.command} exited with code ${String(code)}${
-              stderr === "" ? "" : `: ${stderr.trim()}`
-            }`,
+            `${this.options.provider}: ${command.command} exited with code ${String(code)}${detail}`,
           ),
         );
       };
@@ -566,3 +565,31 @@ function combineSignals(
     /* c8 ignore stop */
   } as AbortSignal;
 }
+
+/**
+ * What the tool said about its own failure, wherever it said it.
+ *
+ * stderr first, because that is where a well-behaved tool puts diagnostics. But
+ * a build wrapper is not one tool — `scip-java` runs the project's real Gradle
+ * or Maven build, and Gradle reports failures on stdout. The benchmark's java
+ * lane failed with `exited with code 1` and nothing else for exactly that
+ * reason: the whole explanation had been captured and then dropped because it
+ * arrived on the wrong stream.
+ *
+ * The tail rather than the head, since a build prints its failure last. Bounded
+ * because stdout is the artifact channel for some providers, and an index is not
+ * something to paste into an error message.
+ */
+function failureDetail(stderr: string, stdout: string): string {
+  const detail = stderr.trim();
+  if (detail !== "") return `: ${detail}`;
+  const fallback = stdout.trim();
+  if (fallback === "") return "";
+  const tail = fallback.slice(-FAILURE_DETAIL_LIMIT);
+  return `: (no stderr; last of stdout) ${
+    tail.length < fallback.length ? `…${tail}` : tail
+  }`;
+}
+
+/** Enough for a build tool's failure summary, short of an artifact. */
+const FAILURE_DETAIL_LIMIT = 2000;

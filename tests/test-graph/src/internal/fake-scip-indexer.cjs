@@ -51,6 +51,15 @@ if (mode === "silent-fail") {
   process.exit(3);
 }
 
+if (mode === "stdout-fail") {
+  // A build wrapper's shape: a long log on stdout, the failure at the end of
+  // it, and nothing on stderr at all. `scip-java` runs the project's real
+  // Gradle build and reports exactly this way.
+  process.stdout.write(`OPENING LINE\n${"noise\n".repeat(600)}`);
+  process.stdout.write("FAILURE: compilation failed\n");
+  process.exit(3);
+}
+
 if (mode === "silent") {
   // Exits cleanly having written nothing. The session must notice the missing
   // artifact rather than decoding whatever was there before.

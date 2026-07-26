@@ -404,6 +404,29 @@ async function assertFailuresRetainTheGeneration(): Promise<void> {
   } catch (error) {
     silentFailureMessage = (error as Error).message;
   }
+  // A tool that failed and said so on stdout. The java lane came back as
+  // `scip-java: … exited with code 1` and nothing else, because scip-java runs
+  // the project's Gradle build and Gradle reports on stdout — so the entire
+  // explanation was captured and then dropped for arriving on the wrong stream.
+  const loudFailure = sessionOf(root, { mode: "stdout-fail" });
+  let loudFailureMessage = "";
+  try {
+    await loudFailure.refresh();
+  } catch (error) {
+    loudFailureMessage = (error as Error).message;
+  }
+  TestValidator.predicate(
+    "a failure explained only on stdout still reaches the message",
+    loudFailureMessage.includes("FAILURE: compilation failed") &&
+      loudFailureMessage.includes("no stderr"),
+  );
+  // Bounded, and bounded from the end: a build prints its failure last, and
+  // stdout is the artifact channel for some providers.
+  TestValidator.predicate(
+    "and is truncated to its tail rather than pasted whole",
+    !loudFailureMessage.includes("OPENING LINE") &&
+      loudFailureMessage.includes("…"),
+  );
   TestValidator.predicate(
     "a silent non-zero exit has no invented stderr suffix",
     silentFailureMessage.endsWith("exited with code 3"),

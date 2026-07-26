@@ -157,12 +157,15 @@ function exporterScript(): string | undefined {
     "export.lua",
   );
   // Absent means a package shipped without its own producer, which a suite can
-  // only cause by deleting a file out from under the run. The hint below is one
-  // line on purpose: `next` counts lines after itself, so a wrapped comment
-  // spends the count on its own continuation and leaves the statement counted.
+  // only cause by deleting a file out from under the run.
+  //
+  // start/stop rather than `next`, matching `prepare` below. The counted form
+  // is the one demonstrably working in this file; `next` was tried four times
+  // here and excused the wrong line each time.
   if (fs.existsSync(script)) return script;
-  /* c8 ignore next -- broken installation; see above. */
+  /* c8 ignore start -- broken installation; see above. */
   return undefined;
+  /* c8 ignore stop */
 }
 
 /**

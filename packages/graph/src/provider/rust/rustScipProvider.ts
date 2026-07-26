@@ -209,10 +209,11 @@ function cargoConfigurationSnapshot(
 function fileDigest(file: string): string {
   try {
     return createHash("sha256").update(fs.readFileSync(file)).digest("hex");
-    /* c8 ignore next 2 -- missing candidates are the expected negative state. */
+    /* c8 ignore start -- missing candidates are the expected negative state. */
   } catch {
     return "missing";
   }
+  /* c8 ignore stop */
 }
 
 function portablePath(file: string): string {

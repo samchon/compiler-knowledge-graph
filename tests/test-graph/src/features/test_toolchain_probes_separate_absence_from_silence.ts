@@ -115,8 +115,12 @@ function assertResolutionRatherThanTheProbeDecidesAbsence(): void {
   const root = GraphPaths.createTempDirectory("graph-toolchain-absent-");
   const log = path.join(root, "probe.log");
   const binary = shim(root, "present-toolchain");
+  // Named for what it measures. Absence is decided before the probe, so no
+  // probe runs — but resolution itself consults `PATH` by launching `where.exe`
+  // or `command -v`, so this is not a claim that nothing was launched at all.
+  // That seam is why a lookup which fails to run still reports absence.
   TestValidator.equals(
-    "a tool that does not resolve is unavailable without a launch",
+    "a tool that does not resolve is unavailable without being probed",
     toolchainVersion({
       root,
       env: probeEnvironment(log, binary, "SAMCHON_GRAPH_FIXTURE_UNUSED"),
@@ -126,7 +130,7 @@ function assertResolutionRatherThanTheProbeDecidesAbsence(): void {
     }),
     "missing-toolchain=unavailable",
   );
-  TestValidator.equals("deciding absence launches nothing", launches(log), 0);
+  TestValidator.equals("deciding absence probes nothing", launches(log), 0);
 
   fs.writeFileSync(path.join(root, "toolchain-refuse"), "");
   TestValidator.equals(

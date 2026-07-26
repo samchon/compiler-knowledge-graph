@@ -20,11 +20,13 @@ import { resolveProviderCommand } from "./resolveProviderCommand";
  * answers is the version. A probe that resolves and does not answer is
  * `unreported`, because that is a third fact.
  *
- * One seam remains: resolution consults `PATH` by launching `where.exe` or
- * `command -v`, so a lookup that fails to run also reports absence. That is the
- * same conflation one layer down, it predates this design, and closing it means
- * teaching resolution to distinguish "asked and found nothing" from "could not
- * ask".
+ * Two seams remain, and they are the same seam twice. Resolution consults
+ * `PATH` by launching `where.exe` or `command -v`, so a lookup that fails to
+ * run reports absence; and {@link probe} reads a non-zero exit, which a launch
+ * that failed to start also produces, so it reports silence. Either one moves a
+ * row that nothing about the project moved. Both predate this design and both
+ * need the same repair — `spawnSync` distinguishes "ran and answered" from
+ * "could not run", and neither call site asks it.
  *
  * Being constants is what makes them safe to fingerprint. The row a failing
  * probe produces does not depend on *why* it failed or on how many times it

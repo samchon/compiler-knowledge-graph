@@ -237,8 +237,9 @@ export const test_standard_providers_execute_their_exact_contracts =
       // installed used to produce the same row. They are different facts, and
       // a build universe computed from the first one rebuilt itself whenever a
       // process launch failed for a reason having nothing to do with the
-      // project. `unavailable` is now decided by resolution, which reads the
-      // filesystem and launches nothing.
+      // project. `unavailable` is now decided by resolution rather than by the
+      // probe — which narrows the conflation without closing it, because
+      // resolution consults `PATH` by launching a lookup of its own.
       TestValidator.equals(
         "a resolved tool whose probe fails is unreported, not unavailable",
         [

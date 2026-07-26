@@ -93,6 +93,7 @@ const contracts = {
   "rust-analyzer": (args) => ({
     leading: ["scip", "."],
     requires: ["--exclude-vendored-libraries"],
+    valueless: ["--exclude-vendored-libraries"],
     output: valueAfter(args, "--output"),
   }),
 };
@@ -111,16 +112,25 @@ if (scip !== undefined) {
   // invocation that lost its compilation database, or a rust-analyzer one that
   // stopped excluding vendored libraries, would index a different program and
   // still write an artifact where the session looks for it.
-  for (const required of contract.requires) {
-    if (
-      !forwarded.some((argument) =>
-        required.endsWith("=")
-          ? argument.startsWith(required)
-          : argument === required,
-      )
-    ) {
+  for (const required of contract.requires ?? []) {
+    // An attached flag has to carry something after the `=`, and a detached one
+    // has to be followed by a value. Checking only that the spelling appears
+    // would accept `--project-name` with nothing after it, which indexes a
+    // different project just as surely as omitting the flag.
+    const satisfied = required.endsWith("=")
+      ? forwarded.some(
+          (argument) =>
+            argument.startsWith(required) && argument.length > required.length,
+        )
+      : forwarded.some(
+          (argument, index) =>
+            argument === required &&
+            (contract.valueless?.includes(required) === true ||
+              forwarded[index + 1] !== undefined),
+        );
+    if (!satisfied) {
       throw new Error(
-        `fake standard provider: ${producer} was invoked without ${required}`,
+        `fake standard provider: ${producer} was invoked without a usable ${required}`,
       );
     }
   }

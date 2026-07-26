@@ -153,4 +153,3 @@ function oneLine(output: string): string {
     .filter((line) => line !== "")
     .join(" | ");
 }
-

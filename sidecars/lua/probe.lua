@@ -45,7 +45,7 @@ end
 
 function export.serializeAndExport(docs, outputDir)
     local report = {
-        probeVersion = 1,
+        probeVersion = 2,
         globals = {},
         errors = {},
     }
@@ -107,6 +107,81 @@ function export.serializeAndExport(docs, outputDir)
         end
 
         report.globals[#report.globals + 1] = entry
+    end
+
+    -- Round two. Round one proved the chain works and that it reaches almost
+    -- nothing: `getExportableGlobals` returned a single entry for a project
+    -- whose real content is a module-local function, which is how idiomatic Lua
+    -- is written. An exporter built on that list would index one symbol and
+    -- look successful. So the question becomes whether the workspace itself can
+    -- be enumerated and its local declarations reached.
+    local filesOk, filesModule = pcall(require, 'files')
+    report.filesModuleOk = filesOk
+    if filesOk and type(filesModule) == 'table' then
+        report.filesApi = {}
+        for _, name in ipairs({
+            'getAllUris', 'eachFile', 'getState', 'getText', 'getVisibleUris',
+        }) do
+            report.filesApi[name] = type(filesModule[name])
+        end
+
+        local urisOk, uris = pcall(function()
+            return filesModule.getAllUris(ws.rootUri)
+        end)
+        report.getAllUrisOk = urisOk
+        if urisOk and type(uris) == 'table' then
+            report.uriCount = #uris
+            report.uriSample = {}
+            for index = 1, math.min(#uris, 5) do
+                report.uriSample[index] = uris[index]
+            end
+
+            -- One file walked to its declarations. `guide.eachSource` over a
+            -- parsed state is the route a real exporter would take, so the
+            -- probe reports which declaration kinds it actually sees and
+            -- whether one of them answers `vm.getRefs`.
+            local first = uris[1]
+            if first ~= nil then
+                local stateOk, state = pcall(function()
+                    return filesModule.getState(first)
+                end)
+                report.getStateOk = stateOk
+                if stateOk and type(state) == 'table' and state.ast ~= nil then
+                    local kinds, locals = {}, 0
+                    local sample
+                    guide.eachSource(state.ast, function(source)
+                        local kind = source.type
+                        if type(kind) == 'string' then
+                            kinds[kind] = (kinds[kind] or 0) + 1
+                            if (kind == 'local' or kind == 'setfield'
+                                or kind == 'setmethod' or kind == 'function')
+                                and sample == nil then
+                                sample = source
+                            end
+                            if kind == 'local' then locals = locals + 1 end
+                        end
+                    end)
+                    report.declarationKinds = kinds
+                    report.localCount = locals
+                    if sample ~= nil then
+                        report.localSample = describe(sample, 1)
+                        local refsOk, refs = pcall(function()
+                            return vm.getRefs(sample)
+                        end)
+                        report.localGetRefsOk = refsOk
+                        report.localRefCount =
+                            (refsOk and type(refs) == 'table') and #refs or nil
+                        if not refsOk then
+                            report.localGetRefsError = tostring(refs)
+                        end
+                    end
+                else
+                    report.getStateError = tostring(state)
+                end
+            end
+        else
+            report.getAllUrisError = tostring(uris)
+        end
     end
 
     local path = outputDir .. '/samchon-graph-lua-probe.json'

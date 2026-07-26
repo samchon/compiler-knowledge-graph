@@ -59,17 +59,19 @@ export const luaGraphProvider: IGraphProvider = {
     );
   },
 
-  resolve: (root, env) =>
-    /* c8 ignore start -- the exporter ships with this package, so the absent
-     * arm is a broken installation rather than a state a suite can reach
-     * without deleting a file out from under the run. */
-    exporterScript() === undefined
-      ? undefined
-      : resolveProviderCommand(root, env, {
-          command: "lua-language-server",
-          override: "SAMCHON_GRAPH_LUA",
-        }),
-  /* c8 ignore stop */
+  resolve: (root, env) => {
+    const script = exporterScript();
+    // Ignored one line rather than the whole body: a function whose every
+    // statement is excluded is reported as never called, which is how this
+    // arm turned a covered provider into an uncovered one.
+    /* c8 ignore next -- a package shipped without its own producer, which a
+     * suite reaches only by deleting a file out from under the run. */
+    if (script === undefined) return undefined;
+    return resolveProviderCommand(root, env, {
+      command: "lua-language-server",
+      override: "SAMCHON_GRAPH_LUA",
+    });
+  },
 
   /**
    * Write the config that points the server at our exporter.
@@ -155,11 +157,10 @@ function exporterScript(): string | undefined {
     "lua",
     "export.lua",
   );
-  /* c8 ignore start -- the absent arm is a package shipped without its own
-   * producer, which a suite reaches only by deleting a file mid-run. A
-   * multi-line hint eats the count a one-line `next` would have used. */
-  return fs.existsSync(script) ? script : undefined;
-  /* c8 ignore stop */
+  if (fs.existsSync(script)) return script;
+  /* c8 ignore next -- as in `resolve`: the producer ships with this package, so
+   * its absence is a broken installation and not a state a suite can reach. */
+  return undefined;
 }
 
 /**

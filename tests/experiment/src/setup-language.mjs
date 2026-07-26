@@ -352,8 +352,47 @@ const findFile = (dir, name) => {
 };
 
 switch (experiment.language) {
-  case "typescript":
+  case "typescript": {
+    // This case used to be `break;` — the flagship language provisioned
+    // nothing, so excalidraw came back `indexer=static` and its 172,012 lines
+    // in 2.8 s read as the compiler-owned provider being fast when the
+    // best-effort syntax reader had produced it.
+    //
+    // `resolveTtscGraphCommand` prefers the indexed project's own `ttsc`
+    // installation, then a `ttscserver` beside it, and only then `ttscgraph` on
+    // PATH. A corpus fixture on stock TypeScript has neither of the first two,
+    // so the PATH fallback is the only route — and the binary lives inside the
+    // platform package rather than in `@ttsc/graph`, whose npm `bin` publishes
+    // `ttsc-graph` and not this.
+    const ttscVersion = "0.22.0";
+    shell(`npm install -g @ttsc/linux-x64@${ttscVersion}`);
+    const globalRoot = shell("npm root -g", {
+      stdio: ["ignore", "pipe", "inherit"],
+    })
+      .stdout.toString()
+      .trim();
+    const ttscGraph = path.join(
+      globalRoot,
+      "@ttsc",
+      "linux-x64",
+      "bin",
+      "ttscgraph",
+    );
+    if (!fs.existsSync(ttscGraph)) {
+      throw new Error(`ttscgraph not found after install at ${ttscGraph}`);
+    }
+    fs.chmodSync(ttscGraph, 0o755);
+    const link = path.join(binRoot, "ttscgraph");
+    fs.rmSync(link, { force: true });
+    fs.symlinkSync(ttscGraph, link);
+    record({
+      tool: "ttscgraph",
+      version: ttscVersion,
+      source: `npm install -g @ttsc/linux-x64@${ttscVersion}`,
+      digest: "unpinned",
+    });
     break;
+  }
   case "go": {
     const archive = path.join(
       toolsRoot,

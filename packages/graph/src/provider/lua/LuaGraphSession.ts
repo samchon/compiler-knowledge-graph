@@ -95,9 +95,13 @@ export class LuaGraphSession implements IBulkGraphSession {
 
     const sources = new Map<string, IBulkGraphSession.ISourceDigest>();
     for (const file of adapted.files) {
+      // The exporter reports paths relative to the project, because that is what
+      // a graph node's `file` is. A source manifest identity is the other thing:
+      // absolute and normalized, so two providers naming one file agree on it.
+      const identity = path.resolve(root, file);
       let bytes: Buffer;
       try {
-        bytes = fs.readFileSync(path.join(root, file));
+        bytes = fs.readFileSync(identity);
       } catch {
         // A file the server indexed and that cannot be read back is a moved
         // generation, not a snapshot to publish around.
@@ -105,7 +109,7 @@ export class LuaGraphSession implements IBulkGraphSession {
           `${provider}: ${file} was indexed but could not be read back`,
         );
       }
-      sources.set(file, {
+      sources.set(identity, {
         // Empty on purpose: `sourceDigests` is not claimed, and the contract
         // refuses a digest for a capability the provider did not declare.
         checkerDigest: "",

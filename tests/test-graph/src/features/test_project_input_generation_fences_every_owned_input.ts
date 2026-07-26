@@ -371,7 +371,7 @@ export const test_project_input_generation_fences_every_owned_input =
     fs.writeFileSync(first, `${consumed}// moved\n`);
     TestValidator.equals(
       "the first changed consumed source is named",
-      movedConsumedSource(new Map([[first, consumed]])),
+      movedConsumedSource(new Map([[first, consumed]]))?.file,
       first,
     );
     fs.writeFileSync(first, consumed);
@@ -380,15 +380,17 @@ export const test_project_input_generation_fences_every_owned_input =
       movedConsumedSource(
         new Map([[first, consumed]]),
         new Map([[first, digest(Buffer.from(`${consumed}// other\n`))]]),
-      ),
+      )?.file,
       first,
     );
     const removed = path.join(root, "removed.ts");
     TestValidator.equals(
       "a consumed source removed before the final fence is named",
-      movedConsumedSource(new Map([[removed, "export const gone = true;\n"]])),
+      movedConsumedSource(new Map([[removed, "export const gone = true;\n"]]))
+        ?.file,
       removed,
     );
+    assertMovementSaysHowTheTextsDiffer(root);
 
     const committed = await commitProjectInputGeneration(
       { cwd: root, languages: ["typescript", "go"] },
@@ -681,4 +683,66 @@ function resultOf(root: string): IIndexerResult {
     },
     warnings: [],
   };
+}
+
+/**
+ * A movement says which kind of difference it found.
+ *
+ * The guard used to report only that a file had moved, and a C# corpus lane
+ * failed it three bounded attempts running, twice over, with no way to tell a
+ * real edit from text the producer had normalized. The first clears on a retry
+ * and the other two never do, so the distinction is the difference between
+ * retrying and stopping.
+ */
+function assertMovementSaysHowTheTextsDiffer(root: string): void {
+  const file = path.join(root, "moved-detail.ts");
+  const body = "export const value = 1;\r\nexport const other = 2;\r\n";
+
+  fs.writeFileSync(file, `\uFEFF${body.replace(/\r\n/g, "\n")}`);
+  TestValidator.predicate(
+    "a stripped byte order mark is named as the only difference",
+    movedConsumedSource(
+      new Map([[file, body.replace(/\r\n/g, "\n")]]),
+    )?.detail.includes("only by a leading byte order mark") === true,
+  );
+
+  fs.writeFileSync(file, `\uFEFF${body.replace(/\r\n/g, "\n")}extra\n`);
+  TestValidator.predicate(
+    "a byte order mark plus a real edit says both",
+    movedConsumedSource(
+      new Map([[file, body.replace(/\r\n/g, "\n")]]),
+    )?.detail.includes("differs further from offset") === true,
+  );
+
+  fs.writeFileSync(file, body);
+  TestValidator.predicate(
+    "line endings alone are named as the only difference",
+    movedConsumedSource(
+      new Map([[file, body.replace(/\r\n/g, "\n")]]),
+    )?.detail.includes("only by line endings") === true,
+  );
+
+  fs.writeFileSync(file, "export const value = 9;\n");
+  TestValidator.predicate(
+    "an ordinary edit reports lengths and the first differing offset",
+    movedConsumedSource(
+      new Map([[file, "export const value = 1;\n"]]),
+    )?.detail.includes("first difference at offset 21") === true,
+  );
+
+  TestValidator.predicate(
+    "an unreadable source says it could not be read back",
+    movedConsumedSource(
+      new Map([[path.join(root, "absent.ts"), "gone\n"]]),
+    )?.detail.includes("could not be read back") === true,
+  );
+
+  fs.writeFileSync(file, "export const value = 1;\n");
+  TestValidator.predicate(
+    "a digest mismatch on identical text says so",
+    movedConsumedSource(
+      new Map([[file, "export const value = 1;\n"]]),
+      new Map([[file, digest(Buffer.from("something else"))]]),
+    )?.detail.includes("manifest digest") === true,
+  );
 }

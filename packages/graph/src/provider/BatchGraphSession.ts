@@ -187,6 +187,20 @@ export class BatchGraphSession implements IBulkGraphSession {
         this.options.indexArgs(artifact),
         signal,
       );
+      // Some producers cannot be told where to write. `scip-php` declares only
+      // `--help` and `--memory-limit`, takes `getcwd()` as the project root, and
+      // ends with `file_put_contents('index.scip', …)` — so it writes into the
+      // project being indexed and nowhere else. Naming that path here moves the
+      // artifact out before anything reads it, which keeps the tool honest
+      // rather than wrapping it in a shim a user would also have to install.
+      //
+      // Moved rather than copied, and moved even though the run may have
+      // failed: a producer that wrote into someone's working tree does not get
+      // to leave the file there because it exited non-zero.
+      const produced = this.options.artifactFrom?.(this.root);
+      if (produced !== undefined && fs.existsSync(produced)) {
+        fs.renameSync(produced, artifact);
+      }
       if (!fs.existsSync(artifact)) {
         throw new Error(
           `${this.options.provider}: the producer exited without writing ${artifact}`,
@@ -447,6 +461,17 @@ export namespace BatchGraphSession {
     command: IGraphProvider.ICommand;
     artifactName: string;
     indexArgs: (artifact: string) => string[];
+
+    /**
+     * Where a producer that cannot be told an output path writes instead.
+     *
+     * Most indexers take a flag. A few are hard-wired to a filename relative to
+     * their working directory, which for those tools is the project root — so
+     * the artifact lands inside the tree being indexed. Declaring the path lets
+     * the session move it out immediately, rather than every caller learning to
+     * clean up after one awkward tool.
+     */
+    artifactFrom?: (root: string) => string;
     inputs: () => string[];
     /** Non-file build settings whose change invalidates the complete artifact. */
     configuration?: () => readonly string[];

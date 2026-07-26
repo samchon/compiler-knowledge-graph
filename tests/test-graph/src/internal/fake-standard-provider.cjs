@@ -41,6 +41,7 @@ const descriptions = {
   "scip-dotnet": [{ language: "C#", file: "src/Main.cs" }],
   "scip-python": [{ language: "Python", file: "src/main.py" }],
   "scip-ruby": [{ language: "Ruby", file: "src/main.rb" }],
+  "scip-php": [{ language: "PHP", file: "src/main.php" }],
   "rust-analyzer": [{ language: "Rust", file: "src/lib.rs" }],
 };
 /**
@@ -99,6 +100,16 @@ const contracts = {
     leading: [],
     requires: ["."],
     output: valueAfter(args, "--output"),
+  }),
+  // `scip-php` — no output flag at all. `bin/scip-php` declares only `--help`
+  // and `--memory-limit`, takes `getcwd()` as the project root, and ends with
+  // `file_put_contents('index.scip', …)`. The fixture writes exactly where the
+  // real tool would, which is what makes the session's `artifactFrom` move a
+  // tested path rather than an assumed one.
+  "scip-php": () => ({
+    leading: [],
+    requires: [],
+    output: path.join(process.cwd(), "index.scip"),
   }),
   // `rust-analyzer scip . --exclude-vendored-libraries --output <path>`
   "rust-analyzer": (args) => ({
@@ -177,7 +188,7 @@ if (scip !== undefined) {
 // dart is absent: it is a SCIP producer now, driven through the `contracts`
 // table above like every other one, rather than a sidecar named after a program
 // that was never written.
-const sidecarLanguages = new Set(["go", "swift", "zig", "php", "lua"]);
+const sidecarLanguages = new Set(["go", "swift", "zig", "lua"]);
 const sidecarLanguage = producer.startsWith("samchon-graph-")
   ? producer.slice("samchon-graph-".length)
   : producer;

@@ -583,6 +583,23 @@ switch (experiment.language) {
       source: "npm install -g intelephense",
       digest: "unpinned",
     });
+    // Globally, not as a dependency of the project being indexed. `bin/scip-php`
+    // opens with `include $_composer_autoload_path ?? …`, so a global install
+    // brings its own autoloader and the target's `composer.json` stays
+    // untouched — which the benchmark's pinned checkout requires and a user's
+    // repository deserves.
+    apt(["php-cli", "php-xml", "php-mbstring", "composer"]);
+    shell("composer global require davidrjenni/scip-php");
+    appendGithubPath(
+      path.join(os.homedir(), ".config", "composer", "vendor", "bin"),
+    );
+    record({
+      tool: "scip-php",
+      version: "unpinned",
+      source: "composer global require davidrjenni/scip-php",
+      digest: "unpinned",
+    });
+    await installScip();
     break;
   case "lua": {
     const url = await latestAsset("LuaLS/lua-language-server", /linux-x64\.tar\.gz$/);

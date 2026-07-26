@@ -15,17 +15,6 @@ const zigGraphProvider = externalSidecar({
   buildFiles: ["build.zig", "build.zig.zon"],
 });
 
-const phpGraphProvider = externalSidecar({
-  language: "php",
-  authority: "analyzer",
-  buildFiles: [
-    "composer.json",
-    "composer.lock",
-    "phpstan.neon",
-    "phpstan.neon.dist",
-  ],
-});
-
 const luaGraphProvider = externalSidecar({
   language: "lua",
   authority: "analyzer",
@@ -33,23 +22,25 @@ const luaGraphProvider = externalSidecar({
   buildExtensions: [".rockspec"],
 });
 
-// Dart is gone from this list. It named `samchon-graph-dart`, a program that
-// was never written, while `scip_dart` has existed on pub.dev the whole time —
-// so the entry was not unfinished work but the wrong architecture, and it now
-// lives in `standardScipProviders` against its real tool. Two entries claiming
-// one language is a registry defect that refuses the build, so the sidecar had
-// to leave when the SCIP provider arrived.
+// Dart and php have both left this list. Each named a `samchon-graph-<lang>`
+// program that was never written, while a real indexer for the language already
+// existed — `scip_dart` on pub.dev, `scip-php` on Packagist. Neither entry was
+// unfinished work; both were the wrong architecture, and each now lives in
+// `standardScipProviders` against its actual tool. Two entries claiming one
+// language is a registry defect that refuses the build, so a sidecar has to
+// leave when its SCIP provider arrives.
 //
-// The four that remain are the languages with no upstream indexer at all:
-// swift, zig, php and lua. Of those, php is also misplaced — `scip-php` exists,
-// but it takes no output path and treats the working directory as the project
-// root, so moving it needs a shim rather than a registry line.
+// What remains is the honest residue: swift, zig and lua have no upstream SCIP
+// indexer at all, so for these three the name still describes work rather than
+// a mistake. Even here two of the three have a channel that is not a new
+// analyzer — swift through IndexStoreDB, lua through a script injected into
+// lua-language-server's own `--doc` export, which is handed the `vm` module and
+// can therefore resolve references the plain export omits. Only zig has nothing.
 
 /** External analyzer sidecars in deterministic registry order. */
 export const standardSidecarProviders = [
   swiftGraphProvider,
   zigGraphProvider,
-  phpGraphProvider,
   luaGraphProvider,
 ] as const;
 

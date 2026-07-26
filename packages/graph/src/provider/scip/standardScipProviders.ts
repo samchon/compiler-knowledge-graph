@@ -172,6 +172,43 @@ const dartScipProvider = createScipProvider({
   indexArgs: (artifact) => ["--output", artifact, "."],
 });
 
+/**
+ * PHP, whose indexer cannot be told where to put its own output.
+ *
+ * `bin/scip-php` declares exactly two options, `--help` and `--memory-limit`.
+ * It takes `getcwd()` as the project root and ends with
+ * `file_put_contents('index.scip', …)`, so it writes into the tree it is
+ * indexing and there is no flag to say otherwise. `artifactFrom` names that
+ * path and the session moves the file out before anything reads it — which is
+ * why this needed a mechanism rather than a registry line, and why it arrived
+ * after dart despite both having had a real indexer all along.
+ *
+ * Composer, not a released binary: `include $_composer_autoload_path ?? …`
+ * means a global install supplies its own autoloader, so the tool does not have
+ * to become a dependency of the project it indexes. It does need that project's
+ * own `vendor/` present, because it resolves classes through the autoloader the
+ * project generated.
+ */
+const phpScipProvider = createScipProvider({
+  name: "scip-php",
+  toolchain: {
+    label: "php",
+    aliases: ["php"],
+    override: "SAMCHON_GRAPH_PHP_TOOLCHAIN",
+  },
+  languages: ["php"],
+  command: "scip-php",
+  override: "SAMCHON_GRAPH_SCIP_PHP",
+  buildFiles: [
+    "composer.json",
+    "composer.lock",
+    "phpstan.neon",
+    "phpstan.neon.dist",
+  ],
+  indexArgs: () => [],
+  artifactFrom: (root) => path.join(root, "index.scip"),
+});
+
 /** Standard SCIP producers in deterministic registry order. */
 export const standardScipProviders: readonly IGraphProvider[] = [
   clangScipProvider,
@@ -180,6 +217,7 @@ export const standardScipProviders: readonly IGraphProvider[] = [
   pythonScipProvider,
   rubyScipProvider,
   dartScipProvider,
+  phpScipProvider,
 ];
 
 interface IStandardScipProvider {
@@ -202,6 +240,9 @@ interface IStandardScipProvider {
   derivedInputs?: (root: string) => readonly string[];
   resolveArgs?: (root: string) => readonly string[] | undefined;
   indexArgs: (artifact: string) => string[];
+
+  /** Where a producer that takes no output flag writes, relative to the root. */
+  artifactFrom?: (root: string) => string;
 
   /**
    * The toolchain whose semantics this index describes.
@@ -320,6 +361,9 @@ function createScipProvider(
       );
     },
     indexArgs: props.indexArgs,
+    ...(props.artifactFrom === undefined
+      ? {}
+      : { artifactFrom: props.artifactFrom }),
     inputs: (root, languages) =>
       withDerived(
         providerInputFiles(

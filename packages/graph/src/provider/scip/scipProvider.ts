@@ -27,6 +27,7 @@ export function scipProvider(props: scipProvider.IProps): IGraphProvider {
   const prepare = props.prepare;
   const decode = props.decode;
   const indexArgs = props.indexArgs;
+  const artifactFrom = props.artifactFrom;
   const inputs = props.inputs;
   const configuration = props.configuration;
   const compilerVersion = props.compilerVersion;
@@ -92,6 +93,7 @@ export function scipProvider(props: scipProvider.IProps): IGraphProvider {
         command: open.command,
         decode: decode(open.root),
         indexArgs,
+        ...(artifactFrom === undefined ? {} : { artifactFrom }),
         inputs: () => inputs(open.root, open.languages),
         ...(configuration === undefined
           ? {}
@@ -149,6 +151,7 @@ export namespace scipProvider {
 
     /** Arguments that direct the indexer's output to one isolated artifact. */
     indexArgs: (artifact: string) => string[];
+    artifactFrom?: (root: string) => string;
 
     /** Every project-relative input whose change invalidates the artifact. */
     inputs: (root: string, languages: readonly GraphLanguage[]) => string[];

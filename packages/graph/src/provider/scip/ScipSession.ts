@@ -62,6 +62,9 @@ export class ScipSession implements IBulkGraphSession {
       command: configured.command,
       artifactName: "index.scip",
       indexArgs: configured.indexArgs,
+      ...(configured.artifactFrom === undefined
+        ? {}
+        : { artifactFrom: configured.artifactFrom }),
       inputs: configured.inputs,
       ...(configured.configuration === undefined
         ? {}
@@ -284,6 +287,7 @@ export namespace ScipSession {
     command: IGraphProvider.ICommand;
     decode: IGraphProvider.ICommand;
     indexArgs: (artifact: string) => string[];
+    artifactFrom?: (root: string) => string;
     inputs: () => string[];
     configuration?: () => readonly string[];
     compilerVersion?: () => string;

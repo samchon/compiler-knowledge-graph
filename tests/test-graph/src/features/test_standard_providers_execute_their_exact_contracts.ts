@@ -57,10 +57,11 @@ export const test_standard_providers_execute_their_exact_contracts =
         "ruby",
         "samchon-graph-swift",
         "samchon-graph-zig",
-        "samchon-graph-php",
         "samchon-graph-lua",
         "scip_dart",
         "dart",
+        "scip-php",
+        "php",
       ];
       for (const name of names) {
         writeShim(platformExecutable(bin, name), name);
@@ -79,10 +80,11 @@ export const test_standard_providers_execute_their_exact_contracts =
         SAMCHON_GRAPH_RUBY_TOOLCHAIN: platformExecutable(bin, "ruby"),
         SAMCHON_GRAPH_SWIFT: platformExecutable(bin, "samchon-graph-swift"),
         SAMCHON_GRAPH_ZIG: platformExecutable(bin, "samchon-graph-zig"),
-        SAMCHON_GRAPH_PHP: platformExecutable(bin, "samchon-graph-php"),
         SAMCHON_GRAPH_LUA: platformExecutable(bin, "samchon-graph-lua"),
         SAMCHON_GRAPH_SCIP_DART: platformExecutable(bin, "scip_dart"),
         SAMCHON_GRAPH_DART_TOOLCHAIN: platformExecutable(bin, "dart"),
+        SAMCHON_GRAPH_SCIP_PHP: platformExecutable(bin, "scip-php"),
+        SAMCHON_GRAPH_PHP_TOOLCHAIN: platformExecutable(bin, "php"),
       };
       for (const [key, value] of Object.entries(overrides)) {
         previous.set(key, process.env[key]);
@@ -779,6 +781,7 @@ function toolchainRowsOf(provider: string): string[] {
     "scip-python": ["python3"],
     "scip-ruby": ["ruby"],
     "scip-dart": ["dart"],
+    "scip-php": ["php"],
   };
   const toolchain = toolchains[provider];
   if (toolchain === undefined) {

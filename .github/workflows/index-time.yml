@@ -177,13 +177,23 @@ jobs:
       # untouched. A project whose job failed contributed no report and therefore
       # has no cell — which is the honest record of a language that could not be
       # measured, and is not the same as a zero.
+      #
+      # `--publish=` with the `=`, for the same reason the measure step spells its
+      # options that way, and this step got it wrong while the one above it
+      # explained why. Written `--publish "$report"` the parser files `--publish`
+      # as a valueless flag and the path as a positional, and `selectProjects` —
+      # which runs at module scope, above the publish branch — rejects it as an
+      # unknown project. The mistake hid because it needs a report to reveal it:
+      # with none, `nullglob` skips the loop entirely and the step passes. It
+      # would have failed on the first language that ever measured successfully,
+      # which is the only run this workflow exists to produce.
       - name: Fold reports into the publication
         run: |
           shopt -s nullglob
           found=0
           for report in index-time-reports/*/report.json; do
             echo "folding $report"
-            node tests/benchmark/graph/index-time.mjs --publish "$report"
+            node tests/benchmark/graph/index-time.mjs --publish="$report"
             found=$((found + 1))
           done
           echo "folded $found report(s)"

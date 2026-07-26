@@ -34,6 +34,8 @@ export const test_toolchain_probes_separate_absence_from_silence = async () => {
   assertTopologyAsksOnlyTheProvidersWithoutASession();
   assertAStaleOverrideFallsThroughToTheAliases();
   assertALaunchThatNeverRanSaysNothing();
+  assertAProbeThatCouldNotStartIsNotSilence();
+  assertALookupThatCouldNotRunIsNotAnAbsentTool();
   await assertAnUnaskedQuestionDoesNotMoveTheUniverse();
   await assertAServingProviderIsNotAskedTwice();
   await assertANonServingCandidateStillReportsItsRepair();
@@ -339,14 +341,74 @@ function assertALaunchThatNeverRanSaysNothing(): void {
     command: "broken-toolchain",
     args: ["--version"],
   });
-  // On Windows a `.cmd` is handed to the command processor, which runs and
-  // fails rather than failing to start — that is a program which ran and said
-  // nothing. On POSIX the exec itself fails. Both are honest; neither may be
-  // `unavailable`, because the file is right there.
+  // Which of the two it is depends on the platform, and this assertion is
+  // deliberately not the one that pins `unasked`. On Windows a `.cmd` goes to
+  // the command processor, which runs and fails rather than failing to start.
+  // On Linux glibc's `execvp` implements the POSIX ENOEXEC fallback and hands
+  // the file to `/bin/sh`, which also runs. Only Darwin's `posix_spawn` returns
+  // ENOEXEC to the caller. So this file proves `unasked` on exactly one of three
+  // platforms, and a predicate accepting both would have passed before the state
+  // existed — which is why the two assertions below do the pinning instead.
+  //
+  // What it does prove everywhere is the thing that was wrong: a file sitting
+  // right there is never reported as an absent tool.
   TestValidator.predicate(
     "a launch that cannot start is never reported as an absent tool",
     row === "broken-toolchain=unasked" ||
       row === "broken-toolchain=unreported",
+  );
+}
+
+/**
+ * The one launch failure every platform agrees on: the working directory is
+ * gone.
+ *
+ * `spawnSync` chdirs in the child before it execs, so a missing `cwd` fails
+ * ahead of the program — `error` set, status null, on Windows and POSIX alike,
+ * with a shell and without one. That makes it the only way to pin these two
+ * states deterministically across the matrix, and it is not a contrivance: a
+ * project directory deleted or unmounted under a long-lived session is exactly
+ * the transient this distinction was built for.
+ */
+function assertAProbeThatCouldNotStartIsNotSilence(): void {
+  const root = path.join(
+    GraphPaths.createTempDirectory("graph-toolchain-vanished-"),
+    "removed",
+  );
+  // `resolved` given, so resolution is settled and only the probe can fail. A
+  // real program, on a working directory that is not there.
+  TestValidator.equals(
+    "a probe that never started is unasked, not unreported",
+    toolchainVersion({
+      root,
+      env: process.env,
+      command: "node",
+      resolved: { command: process.execPath, args: [] },
+      args: ["--version"],
+    }),
+    "node=unasked",
+  );
+}
+
+function assertALookupThatCouldNotRunIsNotAnAbsentTool(): void {
+  const root = path.join(
+    GraphPaths.createTempDirectory("graph-toolchain-vanished-lookup-"),
+    "removed",
+  );
+  // No `resolved` this time, so the row goes through the `PATH` lookup — itself
+  // a launch, of `where.exe` or a shell. It cannot start either, and the tool it
+  // was asked about is one that certainly exists on this machine. Reporting
+  // `unavailable` here would be a claim about the world drawn from a failure to
+  // ask a question.
+  TestValidator.equals(
+    "a lookup that never ran is unasked, not unavailable",
+    toolchainVersion({
+      root,
+      env: process.env,
+      command: "node",
+      args: ["--version"],
+    }),
+    "node=unasked",
   );
 }
 

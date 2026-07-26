@@ -19,6 +19,7 @@ import {
 } from "../graph/website-cell.mjs";
 import ordinal from "../graph/ordinal.cjs";
 import { assertDeclarationsPrecedeExecution } from "./declaration-order.mjs";
+import { assertWorkflowOptionForms } from "./option-form.mjs";
 
 const { compareNaturalOrdinal } = ordinal;
 
@@ -37,6 +38,10 @@ testPublicationRequiresMatchingCodexTraceAudit();
 testFixtureAndPreflightIntegrity();
 testReferenceRenderer();
 assertDeclarationsPrecedeExecution(graphDir, ["index-time.mjs"]);
+assertWorkflowOptionForms(
+  path.join(graphDir, "index-time.mjs"),
+  path.join(repoRoot, ".github", "workflows", "index-time.yml"),
+);
 console.log("benchmark system tests: ok");
 
 function testCorpusAndPromptProvenance() {

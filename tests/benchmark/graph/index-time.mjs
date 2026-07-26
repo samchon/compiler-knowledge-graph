@@ -212,7 +212,15 @@ for (const project of selected) {
   for (const tool of tools) {
     const cell = runIndexCell({ project, spec, repoDir, tool });
     assertPinnedCheckout(spec, repoDir);
-    report.cells.push(cell);
+    // The machine and its quietness travel with the cell, not with the
+    // publication. One host panel is only truthful when one sweep measured
+    // everything, and `index-time.yml` deliberately gives each language its own
+    // runner — thirteen VMs with thirteen CPU models, because two lanes sharing
+    // a machine would corrupt each other's wall clock. Folding those under a
+    // single panel would attribute twelve cells to a machine they never ran on,
+    // and the workflow's own header says cells from different hosts are not one
+    // comparison. A cold build is one sample; what it ran on is part of it.
+    report.cells.push({ ...cell, host: report.host, quietWait });
     writeJson(reportPath, report);
     printCellSummary(project, cell);
     publishWebsiteIndex(report);
@@ -461,9 +469,13 @@ function publishWebsiteIndex(currentReport) {
     generatedAt: new Date().toISOString(),
     structural: prior?.structural ?? null,
     agent: prior?.agent ?? { cells: [] },
-    // One host panel per publication, like performance.json: merged cells are
-    // only comparable when a full sweep re-measures them on one machine, so
-    // the panel always names the machine of the latest write.
+    // The panel still names the machine of the latest write, as
+    // performance.json does — but it is no longer the only record of one, and
+    // it is no longer what a reader should trust. Each cell now carries the
+    // host it was measured on, because this benchmark's cells are produced by
+    // thirteen separate runners on purpose and a single panel would speak for
+    // twelve machines it never saw. Read the cell; the panel is a summary of
+    // whichever fold happened to land last.
     index: { host: currentReport.host, scale, cells },
   };
   fs.mkdirSync(path.dirname(websiteJson), { recursive: true });

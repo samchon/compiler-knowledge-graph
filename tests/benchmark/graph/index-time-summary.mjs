@@ -60,11 +60,25 @@ if (process.argv.includes("--json")) {
   process.exit(0);
 }
 
-const host = index.host ?? {};
-process.stdout.write(
-  `host: ${host.cpu ?? "unknown"} — ${String(host.cores ?? "?")} cores, ` +
-    `${String(host.ramGB ?? "?")} GB, ${host.os ?? "unknown"}, node ${host.node ?? "?"}\n\n`,
+// One banner only when one machine really did measure everything. These cells
+// normally come from thirteen runners, one per language, because two lanes
+// sharing a host would corrupt each other's wall clock — so a single header
+// would be naming a CPU that twelve of the rows never touched. When the cells
+// disagree, each says what it ran on and the reader can see that two rows are
+// not one comparison.
+const hosts = new Set(
+  cells.map((cell) => cell.host?.cpu).filter((cpu) => typeof cpu === "string"),
 );
+const uniform = hosts.size === 1 ? (cells[0]?.host ?? index.host) : null;
+if (uniform)
+  process.stdout.write(
+    `host: ${uniform.cpu ?? "unknown"} — ${String(uniform.cores ?? "?")} cores, ` +
+      `${String(uniform.ramGB ?? "?")} GB, ${uniform.os ?? "unknown"}, node ${uniform.node ?? "?"}\n\n`,
+  );
+else
+  process.stdout.write(
+    `measured across ${String(hosts.size)} distinct hosts; each row names its own.\n\n`,
+  );
 
 for (const row of rows) {
   const scale =
@@ -72,8 +86,10 @@ for (const row of rows) {
       ? "scale unmeasured"
       : `${String(row.files)} files / ${String(row.lines)} lines`;
   if (row.tools.length === 0) {
+    // The scale still prints. A project can be cloned and counted and then fail
+    // to index, and saying so is more use than a bare NOT MEASURED.
     process.stdout.write(
-      `  ${pad(row.project, 12)} ${pad(row.language, 11)} ${pad(row.commit, 13)} NOT MEASURED\n`,
+      `  ${pad(row.project, 12)} ${pad(row.language, 11)} ${pad(row.commit, 13)} ${pad("NOT MEASURED", 17)} ${pad("", 12)} ${scale}\n`,
     );
     continue;
   }
@@ -82,8 +98,9 @@ for (const row of rows) {
       typeof cell.buildMs === "number"
         ? `${(cell.buildMs / 1000).toFixed(1)} s`
         : "no build step";
+    const where = uniform ? "" : `  [${cell.host?.cpu ?? "host unrecorded"}]`;
     process.stdout.write(
-      `  ${pad(row.project, 12)} ${pad(row.language, 11)} ${pad(row.commit, 13)} ${pad(tool, 17)} ${pad(time, 12)} ${scale}\n`,
+      `  ${pad(row.project, 12)} ${pad(row.language, 11)} ${pad(row.commit, 13)} ${pad(tool, 17)} ${pad(time, 12)} ${scale}${where}\n`,
     );
   }
 }

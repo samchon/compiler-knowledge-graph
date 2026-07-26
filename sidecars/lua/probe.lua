@@ -45,7 +45,7 @@ end
 
 function export.serializeAndExport(docs, outputDir)
     local report = {
-        probeVersion = 2,
+        probeVersion = 3,
         globals = {},
         errors = {},
     }
@@ -163,6 +163,49 @@ function export.serializeAndExport(docs, outputDir)
                     end)
                     report.declarationKinds = kinds
                     report.localCount = locals
+
+                    -- Round three. The conformance corpus wants an edge from
+                    -- the declaration a reference sits inside to the one it
+                    -- names, which needs every declaration to carry a span
+                    -- covering its body. LuaLS puts the name and the body on
+                    -- different nodes: `function caller() ... end` is a
+                    -- `setglobal` or `local` holding the name, whose value is
+                    -- the `function` node that spans the whole thing. If that
+                    -- link is `.value`, the exporter can name a declaration and
+                    -- still know where its body ends.
+                    report.namedFunctions = {}
+                    guide.eachSource(state.ast, function(source)
+                        if #report.namedFunctions >= 4 then return end
+                        local holder = source.type
+                        if holder ~= 'local' and holder ~= 'setglobal'
+                            and holder ~= 'setfield'
+                            and holder ~= 'setmethod' then
+                            return
+                        end
+                        local entry = {
+                            holderType = holder,
+                            holderStart = source.start,
+                            holderFinish = source.finish,
+                            hasValue = source.value ~= nil,
+                            valueType = type(source.value) == 'table'
+                                and source.value.type or nil,
+                            valueStart = type(source.value) == 'table'
+                                and source.value.start or nil,
+                            valueFinish = type(source.value) == 'table'
+                                and source.value.finish or nil,
+                        }
+                        entry.name = type(source[1]) == 'string'
+                            and source[1]
+                            or (type(source.field) == 'table'
+                                and source.field[1] or nil)
+                        -- Positions are packed; the exporter converts through
+                        -- rowColOf, so report both forms to be sure they agree.
+                        if entry.valueStart ~= nil then
+                            local row, col = guide.rowColOf(entry.valueStart)
+                            entry.valueStartRowCol = { row = row, col = col }
+                        end
+                        report.namedFunctions[#report.namedFunctions + 1] = entry
+                    end)
                     if sample ~= nil then
                         report.localSample = describe(sample, 1)
                         local refsOk, refs = pcall(function()

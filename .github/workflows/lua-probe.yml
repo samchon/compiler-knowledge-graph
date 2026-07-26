@@ -73,9 +73,8 @@ jobs:
           LUA
           cat > lua-probe-project/main.lua <<'LUA'
           local util = require 'util'
-          function Start()
-            return util.greet('world')
-          end
+          function caller() callee() end
+          function callee() return util.greet('world') end
           LUA
 
       # docScriptPath is resolved as `<root> .. sub_path`, so the leading `/`

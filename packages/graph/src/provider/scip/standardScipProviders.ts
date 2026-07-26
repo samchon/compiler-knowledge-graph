@@ -506,9 +506,9 @@ function programName(token: string): string {
  * POSIX records `'/usr/bin/g++' -c a.cc` or `/opt/my\ compiler -c a.cc`, and
  * splitting any of them on whitespace names a directory.
  *
- * So a backslash escapes only what a backslash is ever used to escape — a
- * space, a tab, a quote, or another backslash. Before anything else it is a
- * path separator, and treating it as an escape unconditionally turned
+ * So a backslash escapes only what a backslash is used to escape here — a
+ * space, a tab, or a quote, and never another backslash. Before anything else
+ * it is a path separator, and treating it as an escape unconditionally turned
  * `C:\Program Files\LLVM` into `C:Program FilesLLVM`, which is exactly the
  * input the quoting exists for.
  */

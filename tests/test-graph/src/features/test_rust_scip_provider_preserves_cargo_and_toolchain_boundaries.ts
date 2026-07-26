@@ -156,10 +156,10 @@ export const test_rust_scip_provider_preserves_cargo_and_toolchain_boundaries =
       const rustc = platformExecutable(privateBin, "rustc");
       writeTool(rustc, "");
       TestValidator.predicate(
-        "a compiler that stops answering keeps the version it last gave",
+        "an installed compiler that reports no version is unreported",
         rustScipProvider
           .effectiveConfiguration(root, environment)
-          .includes("rustc=fixture rustc"),
+          .includes("rustc=unreported"),
       );
       fs.rmSync(rustc, { force: true });
       TestValidator.predicate(

@@ -28,7 +28,7 @@ import { ProviderFixtures } from "../internal/ProviderFixtures";
 export const test_toolchain_probes_separate_absence_from_silence = async () => {
   assertAnUpgradedToolchainIsAlwaysObserved();
   assertResolutionRatherThanTheProbeDecidesAbsence();
-  assertAFailedProbeRepeatsTheLastAnswer();
+  assertAFailedProbeIsTheSameFactEveryTime();
   assertEveryProbedLineSurvivesOnOneLine();
   assertTopologyAsksOnlyTheProvidersWithoutASession();
   assertAStaleOverrideFallsThroughToTheAliases();
@@ -136,49 +136,37 @@ function assertResolutionRatherThanTheProbeDecidesAbsence(): void {
   );
 }
 
-function assertAFailedProbeRepeatsTheLastAnswer(): void {
+function assertAFailedProbeIsTheSameFactEveryTime(): void {
   const root = GraphPaths.createTempDirectory("graph-toolchain-transient-");
   const log = path.join(root, "probe.log");
   const ask = asker(root, log, "flaky-toolchain");
   const answered = ask();
 
   // A launch can fail for reasons that have nothing to do with the project — a
-  // timeout, an EAGAIN, a file lock. The row it produced used to be
-  // `unavailable`, which moved the build universe and rebuilt an artifact that
-  // was never stale. The tool is still installed and its version did not
-  // change, so the last answer it gave is what the row should still say. The
-  // switch is a file rather than an environment variable precisely so the probe
-  // inherits the same environment it did when it succeeded.
+  // timeout, an EAGAIN, a file lock. What matters for a build universe is not
+  // which value the row takes but that it takes the *same* value for as long as
+  // the condition holds: `unavailable` used to be the answer, and because
+  // absence produced it too, a fingerprint could not tell a missing toolchain
+  // from a launch that did not land.
   fs.writeFileSync(path.join(root, "toolchain-refuse"), "");
-  TestValidator.equals(
-    "a launch that fails repeats the last version this toolchain gave",
-    ask(),
-    answered,
-  );
-  TestValidator.equals(
-    "the failing launch was really attempted",
-    launches(log),
-    2,
-  );
-
-  // Bounded, and every attempt is a real launch. A fallback with no bound is
-  // the defect it replaced wearing different clothes: a dispatcher whose
-  // selected runtime was uninstalled resolves, fails forever, and would go on
-  // naming the version it gave before it broke. Past a handful of consecutive
-  // failures the honest answer is that this toolchain is no longer reporting.
   const refusals = [ask(), ask(), ask()];
   TestValidator.equals(
-    "the fallback is bounded and then gives way",
+    "a launch that keeps failing keeps giving the same row",
     refusals,
-    [answered, answered, "flaky-toolchain=unreported"],
+    [
+      "flaky-toolchain=unreported",
+      "flaky-toolchain=unreported",
+      "flaky-toolchain=unreported",
+    ],
   );
   TestValidator.equals(
-    "every refusal was re-launched rather than frozen",
+    "and every one of them was a real launch",
     launches(log),
-    5,
+    4,
   );
 
-  // And a tool that starts answering again is believed immediately.
+  // So the universe moves once on the way out and once on the way back, rather
+  // than on every refresh in between.
   fs.rmSync(path.join(root, "toolchain-refuse"));
   TestValidator.equals("a recovered toolchain answers again", ask(), answered);
 }

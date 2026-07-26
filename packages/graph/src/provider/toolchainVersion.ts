@@ -1,8 +1,6 @@
 import { spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
 import fs from "node:fs";
 
-import { BoundedMap } from "../utils/BoundedMap";
 import { spawnableCommand } from "../utils/spawnableCommand";
 import { IGraphProvider } from "./IGraphProvider";
 import { resolveProviderCommand } from "./resolveProviderCommand";
@@ -16,49 +14,44 @@ import { resolveProviderCommand } from "./resolveProviderCommand";
  * computed from that value rebuilt itself over a spawn failure, and the
  * resident source went further and discarded its whole index.
  *
- * Three facts replace the one word. Absence is decided by
- * {@link resolveProviderCommand}, which reads the filesystem and launches
- * nothing, so `unavailable` means only that. A probe that answers is the
- * version. A probe that does not answer falls back to the last version this
- * exact toolchain gave, and says `unreported` only when there is no such
- * answer — so a failed launch leaves the universe where it was instead of
- * moving it.
+ * Three states replace the one word, and each is a constant for as long as it
+ * holds. Absence is decided by {@link resolveProviderCommand}, which reads the
+ * filesystem and launches nothing, so `unavailable` means only that. A probe
+ * that answers is the version. A probe that resolves and does not answer is
+ * `unreported`, because that is a third fact.
  *
- * The probe itself runs every time, and deliberately. A version is not a
- * property of the file: `rustc`, `python3`, `ruby`, `java`, and `dotnet` are
- * all normally dispatcher shims — rustup, pyenv, rbenv, jenv, asdf, the .NET
- * muxer — whose answer is decided by the working directory and the environment,
- * and which report a new version after an in-place upgrade that leaves the
- * shim byte-identical. This repository already knows that: `global.json`, the
- * file that picks a project's .NET SDK, is one of `scip-dotnet`'s declared
- * build inputs. Caching an answer against the file would serve one project's
- * toolchain to another and would never notice an upgrade at all.
+ * Being constants is what makes them safe to fingerprint. The row a failing
+ * probe produces no longer depends on *why* it failed or on how many times it
+ * has failed, so a build universe computed from it moves once when a toolchain
+ * stops answering and once when it starts again — not on every refresh, which
+ * is what the old `unavailable` did.
+ *
+ * A remembered answer used to stand in for a failed probe, so that a single
+ * blip moved nothing at all. It is gone. It bought one rebuild per outage in
+ * exchange for a value that depended on process history: the same code answered
+ * differently depending on what else had run, which is how it passed in
+ * isolation and failed on all three platforms in the full suite. The defect it
+ * was reaching for — a failed probe discarding the whole resident index — is
+ * fixed where it belongs, in the topology snapshot that no longer re-derives a
+ * serving provider's configuration at all.
+ *
+ * The probe runs every time, and deliberately. A version is not a property of
+ * the file: `rustc`, `python3`, `ruby`, `java`, and `dotnet` are all normally
+ * dispatcher shims — rustup, pyenv, rbenv, jenv, asdf, the .NET muxer — whose
+ * answer is decided by the working directory and the environment, and which
+ * report a new version after an in-place upgrade that leaves the shim
+ * byte-identical. This repository already knows that: `global.json`, the file
+ * that picks a project's .NET SDK, is one of `scip-dotnet`'s declared build
+ * inputs.
  */
 export function toolchainVersion(props: toolchainVersion.IProps): string {
   const label = props.label ?? props.command;
   const resolved = toolchainVersion.resolve(props);
   if (resolved === undefined) return `${label}=unavailable`;
-  const key = answerKey(resolved, props);
   const observed = probe(resolved, props);
-  if (observed !== undefined) {
-    answers.set(key, { version: observed, failures: 0 });
-    return `${label}=${observed}`;
-  }
-  const remembered = answers.get(key);
-  // Bounded, because a fallback with no bound is the previous commit's defect
-  // wearing different clothes: a dispatcher whose selected runtime was
-  // uninstalled resolves, fails every probe, and would go on naming the version
-  // it gave before it broke for the life of the process. A handful of
-  // consecutive failures is a blip; past that the honest answer is that this
-  // toolchain is no longer reporting.
-  if (remembered === undefined || remembered.failures >= MAX_FALLBACKS) {
-    return `${label}=unreported`;
-  }
-  answers.set(key, {
-    version: remembered.version,
-    failures: remembered.failures + 1,
-  });
-  return `${label}=${remembered.version}`;
+  return observed === undefined
+    ? `${label}=unreported`
+    : `${label}=${observed}`;
 }
 
 export namespace toolchainVersion {
@@ -140,71 +133,6 @@ function probe(
 }
 
 /**
- * Which question this toolchain's last answer belongs to.
- *
- * Everything the probe's answer depends on: the program, the directory it runs
- * in, the environment it inherits, and what it was asked. Over-specific on
- * purpose, and the whole environment rather than a guessed list of
- * version-selecting variables. Getting this too narrow hands one project's
- * toolchain version to another, which is wrong; getting it too wide loses a
- * fallback, and a lost fallback is `unreported`, which is the honest answer for
- * a question that has not been asked in this form before.
- *
- * The file's own bytes are deliberately *not* in the key. They were, on the
- * reasoning that a replaced binary should not inherit its predecessor's answer.
- * But the probe runs on every call, so a replaced binary is observed by the
- * probe rather than by the key: the identity bought nothing, while making the
- * fallback depend on a modification time holding still between two calls
- * moments apart — which POSIX CI showed it does not.
- *
- * The path reads `executable`, not `command`, because a Windows `.cmd`
- * provider is spawned as `cmd.exe` with the real program quoted inside an
- * argument, and every shim on the machine would otherwise share one entry.
- */
-function answerKey(
-  resolved: IGraphProvider.ICommand,
-  props: toolchainVersion.IProps,
-): string {
-  /* c8 ignore start -- `resolve` only ever returns an invocation built by
-   * `spawnableCommand`, which sets `executable` on both of its arms. The
-   * fallback is here because the shared command type also admits a hand-built
-   * invocation, where `command` is already the file. */
-  const executable = resolved.executable ?? resolved.command;
-  /* c8 ignore stop */
-  const environment = createHash("sha256");
-  for (const name of Object.keys(props.env).sort(compareOrdinal)) {
-    environment.update(name, "utf8");
-    environment.update(SEPARATOR, "utf8");
-    environment.update(props.env[name] ?? "", "utf8");
-    environment.update(SEPARATOR, "utf8");
-  }
-  return [
-    executable,
-    props.root,
-    environment.digest("hex"),
-    ...resolved.args,
-    ...props.args,
-  ].join(SEPARATOR);
-}
-
-
-/**
- * File one answer, under a bound.
- *
- * A resident server that outlives many toolchain upgrades would otherwise
- * accumulate one permanent entry per replaced binary. The bound is generous
- * relative to the number of distinct toolchains any project has and small
- * enough that the map cannot become a leak; the oldest entry is dropped
- * because the newest answers are the ones a fallback would want.
- */
-interface IAnswer {
-  version: string;
-
-  /** Consecutive launches that did not answer since this version was learned. */
-  failures: number;
-}
-
-/**
  * Every line of the probe's answer, on one line.
  *
  * Joining rather than truncating. `java --version` and `clang --version` answer
@@ -226,10 +154,6 @@ function oneLine(output: string): string {
     .join(" | ");
 }
 
-function compareOrdinal(left: string, right: string): number {
-  /* c8 ignore next 2 -- environment names are distinct object keys. */
-  return left < right ? -1 : left > right ? 1 : 0;
-}
 
 function isSpawnableFile(file: string): boolean {
   try {
@@ -240,12 +164,4 @@ function isSpawnableFile(file: string): boolean {
     return false;
   }
 }
-
-/** A separator no path, argument, environment value, or digest can contain. */
-const SEPARATOR = String.fromCharCode(0);
-
-const answers = new BoundedMap<IAnswer>(256);
-
-/** Consecutive failures a remembered version covers before it stops standing in. */
-const MAX_FALLBACKS = 3;
 

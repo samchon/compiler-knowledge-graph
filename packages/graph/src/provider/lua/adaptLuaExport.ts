@@ -204,11 +204,7 @@ export namespace adaptLuaExport {
       files: report.files as string[],
       nodes: report.nodes as INode[],
       edges: report.edges as IEdge[],
-      skipped: {
-        unnamed: countOf(report.skipped?.unnamed),
-        outsideRoot: countOf(report.skipped?.outsideRoot),
-        refsFailed: countOf(report.skipped?.refsFailed),
-      },
+      skipped: countsOf(report.skipped),
       warnings: report.warnings as string[],
     };
   }
@@ -247,6 +243,23 @@ function assertLocation(
     if (!Number.isSafeInteger(value) || value < 0)
       throw new Error(`${subject} has no ${axis}`);
   }
+}
+
+/**
+ * The three skip counters, whatever the producer managed to report.
+ *
+ * One place rather than three optional chains: a producer that omitted the
+ * block and one that omitted a field are the same situation, and reading it as
+ * zero keeps a miscount from becoming an invented number.
+ */
+function countsOf(
+  skipped: adaptLuaExport.IReport["skipped"] | undefined,
+): adaptLuaExport.IReport["skipped"] {
+  return {
+    unnamed: countOf(skipped?.unnamed),
+    outsideRoot: countOf(skipped?.outsideRoot),
+    refsFailed: countOf(skipped?.refsFailed),
+  };
 }
 
 function countOf(value: unknown): number {

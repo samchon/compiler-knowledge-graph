@@ -87,11 +87,12 @@ function dumpSummary(dump: ISamchonGraphDump): string {
   const served = (dump.provenance ?? []).map(
     (entry) => `${entry.provider}(${entry.languages.join(",")})`,
   );
-  /* c8 ignore next 2 -- the served arm needs a strict producer on the machine,
-   * and this suite deliberately installs none: its providers are deterministic
-   * fixtures, so every dump it takes falls through and reports the other. */
+  /* c8 ignore start -- naming a provider needs one installed, and this suite
+   * installs none by design: its producers are deterministic fixtures, so every
+   * dump it takes falls through and reports the other arm. */
   const by =
     served.length === 0 ? "no strict provider served" : served.join(" ");
+  /* c8 ignore stop */
   const lines = [`@samchon/graph: indexer=${dump.indexer} ${by}`];
   /* c8 ignore start -- the field is optional in the dump contract and always
    * present in practice, so the empty-fallback arm guards a shape no producer

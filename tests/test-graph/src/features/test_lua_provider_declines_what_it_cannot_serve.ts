@@ -18,6 +18,7 @@ export const test_lua_provider_declines_what_it_cannot_serve =
   async (): Promise<void> => {
     assertBoundedOptionsAreRefusedByName();
     assertPrepareWritesAConfigOutsideTheProject();
+  assertASessionNeedsNoConfiguration();
     await assertAnUnreadableSourceIsNotPublishedAround();
   };
 
@@ -131,5 +132,31 @@ async function assertAnUnreadableSourceIsNotPublishedAround(): Promise<void> {
   TestValidator.predicate(
     "a source that cannot be read back refuses the snapshot",
     message.includes("could not be read back"),
+  );
+}
+
+/**
+ * A session built without a configuration is ordinary.
+ *
+ * The provider supplies one, because a Lua build universe should move when the
+ * server's version does. A caller driving the session directly need not, and
+ * the session has to accept both — so both are built here rather than one being
+ * swapped for the other, which is how the arm this covers went bare in the
+ * first place.
+ */
+function assertASessionNeedsNoConfiguration(): void {
+  const root = GraphPaths.createTempDirectory("samchon-graph-lua-bare-");
+  const session = new LuaGraphSession({
+    root,
+    languages: ["lua"],
+    provider: "samchon-graph-lua",
+    command: { command: process.execPath, args: ["-e", ""] },
+    indexArgs: (produced) => [produced],
+    inputs: () => [],
+  });
+  TestValidator.equals(
+    "the session reports the root and language it was opened for",
+    [session.root, [...session.languages]],
+    [root, ["lua"]],
   );
 }

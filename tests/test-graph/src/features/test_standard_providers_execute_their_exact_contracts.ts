@@ -10,6 +10,7 @@ import {
   standardScipProviders,
   standardSidecarProviders,
 } from "@samchon/graph";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -33,6 +34,7 @@ export const test_standard_providers_execute_their_exact_contracts =
       delete process.env.SAMCHON_GRAPH_FIXTURE_MODE;
       writeProject(root);
       assertFixtureRegistryCoverage();
+      assertTheFixtureRejectsAWrongInvocation();
       const bin = path.join(root, ".samchon-graph", "bin");
       fs.mkdirSync(bin, { recursive: true });
 
@@ -479,6 +481,37 @@ function expectationsOf(
   });
 }
 
+/**
+ * The fixture is an oracle only if it can say no.
+ *
+ * Every provider passing its own arguments proves nothing on its own — the
+ * fixture was written from the providers, so agreement is the default outcome.
+ * What makes the contract table evidence is that a producer asked the wrong way
+ * fails, which is the behaviour a real lane would eventually show and this
+ * suite could not.
+ */
+function assertTheFixtureRejectsAWrongInvocation(): void {
+  for (const [producer, args] of [
+    // scip-java's real CLI takes the subcommand first; the flag alone is the
+    // shape a provider would emit if it dropped it.
+    ["scip-java", ["--output", "index.scip"]],
+    // scip-ruby writes with `--index-file`, so `--output` is another tool's flag.
+    ["scip-ruby", [".", "--output", "index.scip"]],
+    // scip-clang takes its destination attached, not as a following argument.
+    ["scip-clang", ["--index-output-path", "index.scip"]],
+  ] as const) {
+    const result = spawnSync(
+      process.execPath,
+      [GraphPaths.fakeStandardProvider, `--producer=${producer}`, ...args],
+      { encoding: "utf8" },
+    );
+    TestValidator.predicate(
+      `the fixture refuses an invocation ${producer} would not accept`,
+      result.status !== 0,
+    );
+  }
+}
+
 async function assertRemainingRegisteredFixtures(root: string): Promise<void> {
   await assertRegisteredFixture(
     ttscGraphProvider,
@@ -498,9 +531,20 @@ async function assertRemainingRegisteredFixtures(root: string): Promise<void> {
   await assertRegisteredFixture(goGraphProvider, goCommand, root);
   await assertHeuristicTwinFails(goGraphProvider, goCommand, root);
 
+  // The arguments `resolveRustScipCommand` puts in front of the session's own,
+  // not an invocation that skips them. A synthetic command without them opens
+  // the same session against a producer that was never asked the way the
+  // provider asks it, which is how a wrong subcommand would go unnoticed here
+  // and be found only by a real lane.
   const rustCommand: IGraphProvider.ICommand = {
     command: process.execPath,
-    args: [GraphPaths.fakeStandardProvider, "--producer=rust-analyzer"],
+    args: [
+      GraphPaths.fakeStandardProvider,
+      "--producer=rust-analyzer",
+      "scip",
+      ".",
+      "--exclude-vendored-libraries",
+    ],
   };
   await assertRegisteredFixture(rustScipProvider, rustCommand, root);
   await assertHeuristicTwinFails(rustScipProvider, rustCommand, root);

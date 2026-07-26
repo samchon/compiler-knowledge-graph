@@ -78,6 +78,12 @@ export function adaptLuaExport(
     const kind = NODE_KINDS[origin.kind];
     if (kind === undefined) continue;
     const from = `${origin.location.file}#${origin.name}@${String(origin.location.startLine + 1)}:${kind}`;
+    // Defensive rather than reachable, and worth keeping. A duplicate origin
+    // resolves to the identity its twin already published, which is the right
+    // endpoint — so the only way here is an origin whose kind mapped and whose
+    // node was still never emitted, a state the loop above does not produce
+    // today and a dangling endpoint if it ever did.
+    /* c8 ignore next */
     if (!seen.has(from)) continue;
 
     // A reference whose own position is the declaration's is the declaration

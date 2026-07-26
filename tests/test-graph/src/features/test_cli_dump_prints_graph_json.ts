@@ -1,5 +1,6 @@
 import { TestValidator } from "@nestia/e2e";
 import { execFileSync, spawnSync } from "node:child_process";
+import path from "node:path";
 
 import { GraphFixtures } from "../internal/GraphFixtures";
 import { GraphPaths } from "../internal/GraphPaths";
@@ -35,9 +36,14 @@ export const test_cli_dump_prints_graph_json = () => {
  * names the lane that answered, and the reasons nothing better did follow it.
  */
 function assertTheDumpSaysWhatProducedIt(root: string): void {
-  // `--max-files` is the reliable way to make a strict provider decline: it
-  // publishes whole-workspace snapshots and has no bounded mode, so the refusal
-  // it returns becomes the recorded reason the language fell through.
+  // A server that is not there. The lsp lane cannot start it, falls through,
+  // and records why — which is the pair this asserts: the summary naming the
+  // lane that answered, and the reasons nothing better did.
+  //
+  // `--server` and not `--max-files`: the CLI takes `--cwd`, `--graph-file`,
+  // `--language`, `--lsp-concurrency`, `--lsp-ready-quiet-ms`, `--mode`,
+  // `--server` and `--server-arg`, and an option it does not know is rejected
+  // before the dump runs at all.
   const ran = spawnSync(
     process.execPath,
     [
@@ -47,8 +53,8 @@ function assertTheDumpSaysWhatProducedIt(root: string): void {
       "lsp",
       "--cwd",
       root,
-      "--max-files",
-      "1",
+      "--server",
+      path.join(root, "no-such-language-server"),
     ],
     { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 },
   );

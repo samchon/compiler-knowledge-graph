@@ -312,15 +312,12 @@ function withBody(
  * graph.
  */
 function assertEdgesAgainstDeclarationsThatDidNotSurvive(): void {
-  const twin = node("twin", "local", "local", "main.lua", 0, 0);
   const result = adaptLuaExport(
     {
       schemaVersion: 1,
       files: ["main.lua"],
       nodes: [
         node("odd", "coroutine", "setcoroutine", "main.lua", 1, 0),
-        twin,
-        twin,
         withBody(node("host", "function", "function", "main.lua", 4, 9), {
           startLine: 4,
           startColumn: 0,
@@ -328,19 +325,14 @@ function assertEdgesAgainstDeclarationsThatDidNotSurvive(): void {
           endColumn: 3,
         }),
       ],
-      edges: [
-        // Against the unmapped kind.
-        edge(1, "main.lua", 5, 2),
-        // Against the duplicate that was dropped rather than the one kept.
-        edge(3, "main.lua", 6, 2),
-      ],
+      edges: [edge(1, "main.lua", 5, 2)],
       skipped: { unnamed: 0, outsideRoot: 0, refsFailed: 0 },
       warnings: [],
     },
     "samchon-graph-lua",
   );
   TestValidator.equals(
-    "no edge names a declaration that was not published",
+    "no edge names a declaration the graph has no word for",
     result.edges,
     [],
   );

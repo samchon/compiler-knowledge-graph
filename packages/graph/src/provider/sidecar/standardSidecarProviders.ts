@@ -34,10 +34,28 @@ const zigGraphProvider = externalSidecar({
 // Two entries claiming one language is a registry defect that refuses the
 // build, so each departure had to be a move rather than an addition.
 //
-// swift is next and lands in lua's shape for lua's reason: IndexStoreDB is a
-// native on-disk index read through an official API, not a snapshot any
-// analyzer hands over pre-formed. zig is the one language on the list with no
-// channel of any kind, so its entry still describes work nobody has started.
+// swift stays here, and unlike the three that left, its entry is the right
+// shape already — only the program behind the name is missing.
+//
+// Lua took the run-then-adapt form because its producer is somebody else's
+// server: lua-language-server ships no hashing primitive anywhere in its source,
+// so it cannot hand back a snapshot and what it writes is raw material. A swift
+// producer is not in that position. It has to be a compiled Swift program
+// regardless — the index store's on-disk format is toolchain-internal, carries
+// a `v5` layout version with no third-party stability claim, and is described
+// conceptually rather than as a binary specification, so reading it means
+// linking IndexStoreDB and not parsing bytes from Node. A program we write can
+// digest what it read, which is exactly what this file's shape asks for.
+//
+// Two facts make it more tractable than lua was. `swift build` emits the index
+// store during an ordinary debug build, so there is no separate indexing pass to
+// pay for. And its records carry `RelChild`, meaning an occurrence arrives
+// already naming the declaration that encloses it — the one thing lua's exporter
+// could not answer, and the reason `innermostContaining` had to reconstruct it.
+//
+// zig is the one language on the list with no channel of any kind: no SCIP
+// indexer, and ZLS has no batch mode and no injection point of lua's kind. Its
+// entry still describes work nobody has started.
 
 /** External analyzer sidecars in deterministic registry order. */
 export const standardSidecarProviders = [

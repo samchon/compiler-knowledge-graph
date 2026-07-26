@@ -97,21 +97,26 @@ export class BatchGraphSession implements IBulkGraphSession {
         // A derivation that could not put its question establishes nothing, and
         // a universe computed from "nothing" is not a smaller universe — it is
         // a different one, which rebuilds an artifact the project never changed.
-        // The last rows that did establish something stand in until the question
+        // The last row that did establish something stands in until the question
         // can be put again.
         //
+        // Row by row, never the whole derivation. A configuration is several
+        // rows, so substituting all of them because one went unasked would throw
+        // away the rows that had just been derived — including a setting the
+        // user genuinely changed in the same refresh.
+        //
         // This is not the version memory that was removed: it is one field on
-        // one session, it applies only while a row explicitly says its question
-        // was unasked, and it never presents a stale answer as a fresh one.
+        // one session, it applies only to a row that explicitly says its
+        // question was unasked, and it never presents a stale answer as a fresh
+        // one.
         //
         // The inputs are hashed separately and always read from disk, so a
         // source edited during that window still rebuilds. Declining to conclude
         // about the toolchain must not let the session claim a file did not move.
-        const established =
-          toolchainVersion.inconclusive(configuration) &&
-          this.established !== undefined
-            ? this.established
-            : configuration;
+        const established = toolchainVersion.reestablish(
+          configuration,
+          this.established,
+        );
         const universe = this.fingerprint(established);
         if (universe === this.universe && this.snapshot !== undefined) {
           return {

@@ -159,6 +159,40 @@ export namespace toolchainVersion {
   export function inconclusive(rows: readonly string[]): boolean {
     return rows.some((row) => row.endsWith(UNASKED));
   }
+
+  /**
+   * This derivation, with each unasked row restored from the last one that
+   * established something.
+   *
+   * Row by row, and that is the whole point. Substituting the entire previous
+   * derivation whenever any single row went unasked was wrong in a way that is
+   * worse than the bug it fixed: a configuration is several rows — an indexer,
+   * `scip`, and every toolchain program — so one probe failing to launch also
+   * discarded the rows that had just been derived successfully. A user who set
+   * `GOFLAGS` and whose `go` probe happened to fail in the same refresh got the
+   * old flags back, a universe that did not move, and an index built with
+   * settings they had changed. On a host where that probe always fails to
+   * start, the session would never notice a configuration change again.
+   *
+   * A row's identity is its label — everything before the first `=` — because
+   * the value can contain one, as `GOFLAGS=-tags=x` does. A row with no prior
+   * stays unasked rather than being invented.
+   */
+  export function reestablish(
+    rows: readonly string[],
+    established: readonly string[] | undefined,
+  ): readonly string[] {
+    if (established === undefined || !inconclusive(rows)) return rows;
+    const prior = new Map(established.map((row) => [label(row), row]));
+    return rows.map((row) =>
+      row.endsWith(UNASKED) ? (prior.get(label(row)) ?? row) : row,
+    );
+  }
+
+  function label(row: string): string {
+    const at = row.indexOf("=");
+    return at === -1 ? row : row.slice(0, at);
+  }
   /* c8 ignore start -- declaration merging emits an unreachable namespace
    * creation arm after the function object already exists. */
 }

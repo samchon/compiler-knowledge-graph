@@ -11,35 +11,50 @@ import { GraphPaths } from "../internal/GraphPaths";
  * every test and experiment job. The release lane matters beyond the warning:
  * download-artifact v8 also makes an artifact digest mismatch fail closed, so
  * the exact tarballs verified before publication retain an enforced hand-off.
+ *
+ * Every workflow in the directory, not a list of three. The list was the three
+ * that existed when this was written, and `index-time.yml` was then added on
+ * `download-artifact@v7` without failing anything — a policy that only covers
+ * the files it was born with is not a policy. Enumerating the directory means a
+ * new workflow is held to it by existing, and the maintained majors are named
+ * once instead of being counted per file.
  */
-export const test_workflows_use_current_core_action_runtimes = () => {
-  const workflows = ["test.yml", "experiment.yml", "release.yml"].map(
-    (file) =>
-      fs.readFileSync(
-        path.join(GraphPaths.repositoryRoot, ".github", "workflows", file),
-        "utf8",
-      ),
-  );
-  const actual = workflows.flatMap((workflow) => {
-    const matches = workflow.matchAll(
-      /uses:\s+actions\/(checkout|setup-go|setup-node|upload-artifact|download-artifact)@v(\d+)/g,
-    );
-    return [...matches].map((match) => `${match[1]}@v${match[2]}`);
-  });
+const MAINTAINED: Record<string, number> = {
+  checkout: 7,
+  "setup-go": 7,
+  "setup-node": 7,
+  "upload-artifact": 7,
+  "download-artifact": 8,
+};
 
+export const test_workflows_use_current_core_action_runtimes = () => {
+  const directory = path.join(GraphPaths.repositoryRoot, ".github", "workflows");
+  const files = fs
+    .readdirSync(directory)
+    .filter((file) => file.endsWith(".yml") || file.endsWith(".yaml"))
+    .sort();
+  TestValidator.predicate(
+    "the workflow directory is being read at all",
+    files.length >= 4,
+  );
+  const stale: string[] = [];
+  for (const file of files) {
+    const text = fs.readFileSync(path.join(directory, file), "utf8");
+    for (const match of text.matchAll(
+      /uses:\s+actions\/([\w-]+)@v(\d+)/g,
+    )) {
+      const maintained = MAINTAINED[match[1]!];
+      if (maintained !== undefined && Number(match[2]) !== maintained)
+        stale.push(`${file}: ${match[1]}@v${match[2]} (maintained: v${String(maintained)})`);
+    }
+  }
   TestValidator.equals(
     "every core action use names the maintained major",
-    actual.sort(),
-    [
-      ...Array(6).fill("checkout@v7"),
-      ...Array(2).fill("download-artifact@v8"),
-      ...Array(3).fill("setup-go@v7"),
-      ...Array(5).fill("setup-node@v7"),
-      ...Array(2).fill("upload-artifact@v7"),
-    ].sort(),
+    stale,
+    [],
   );
 
-  const release = workflows[2]!;
+  const release = fs.readFileSync(path.join(directory, "release.yml"), "utf8");
   TestValidator.equals(
     "release verification uploads both inspected tarballs together",
     occurrences(release, "name: tarballs"),

@@ -472,6 +472,32 @@ async function assertAnUnaskedQuestionDoesNotMoveTheUniverse(): Promise<void> {
       upgraded.mode,
       "rebuild",
     );
+
+    // The case that made substituting the whole derivation wrong. A real
+    // configuration is several rows, and one probe failing to launch says
+    // nothing about the others. Here a setting genuinely changed in the same
+    // refresh that lost the toolchain probe: standing in the previous rows
+    // wholesale would restore the old setting too, report `unchanged`, and go
+    // on serving an index built with flags the project no longer uses.
+    rows = ["tool=2.0.0", "SETTING=old"];
+    await session.refresh();
+    rows = [`tool${toolchainVersion.UNASKED}`, "SETTING=new"];
+    const partial = await session.refresh();
+    TestValidator.equals(
+      "an established change is kept even when a sibling row went unasked",
+      partial.mode,
+      "rebuild",
+    );
+
+    // And the unasked row itself is still held to its last known value rather
+    // than moving the universe on its own.
+    rows = [`tool${toolchainVersion.UNASKED}`, "SETTING=new"];
+    const quiet = await session.refresh();
+    TestValidator.equals(
+      "the unasked row alone still does not move the universe",
+      [quiet.mode, quiet.generation],
+      ["unchanged", partial.generation],
+    );
   } finally {
     await session.close();
     fs.rmSync(artifact, { force: true });

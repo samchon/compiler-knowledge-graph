@@ -202,11 +202,10 @@ function assertTheMemoCannotGrowWithoutBound(): void {
   bounded.set("a", 1);
   bounded.set("b", 2);
   bounded.set("c", 3);
-  TestValidator.equals("the bound holds", bounded.size, 2);
   TestValidator.equals(
-    "the oldest entry went first",
-    bounded.get("a"),
-    undefined,
+    "the bound holds by dropping the oldest entry",
+    [bounded.get("a"), bounded.get("b"), bounded.get("c")],
+    [undefined, 2, 3],
   );
   // Re-setting a key keeps it, so the entry a caller is still using is not the
   // one evicted next.

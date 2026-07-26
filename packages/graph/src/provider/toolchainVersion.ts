@@ -154,7 +154,6 @@ function oneLine(output: string): string {
     .join(" | ");
 }
 
-
 function isSpawnableFile(file: string): boolean {
   try {
     if (!fs.statSync(file).isFile()) return false;
@@ -164,4 +163,3 @@ function isSpawnableFile(file: string): boolean {
     return false;
   }
 }
-

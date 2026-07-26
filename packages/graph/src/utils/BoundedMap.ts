@@ -1,13 +1,12 @@
 /**
  * A memo that cannot become a leak.
  *
- * Two derivations in the provider layer remember an answer for the life of the
- * process: a toolchain's last reported version and a compilation database's
- * parsed compiler list. Both are keyed by something that changes when the thing
- * behind it is replaced, so a developer rebuilding a local toolchain or
- * regenerating a database in a loop adds one permanently dead entry per
- * rebuild. Neither map is large enough to matter in an afternoon and neither
- * has any reason to be unbounded in a server that runs for weeks.
+ * The provider layer parses each project's compilation database once and keeps
+ * the driver list for the life of the process, keyed by the file's size and
+ * modification time. A developer regenerating that database in a loop therefore
+ * adds one permanently dead entry per regeneration. It is not large enough to
+ * matter in an afternoon, and it has no reason to be unbounded in a server that
+ * runs for weeks.
  *
  * The oldest entry goes first because the newest answers are the ones a caller
  * is about to ask for again; a re-set key is re-inserted so that using an entry
@@ -30,9 +29,5 @@ export class BoundedMap<Value> {
       if (oldest.done !== true) this.entries.delete(oldest.value);
     }
     this.entries.set(key, value);
-  }
-
-  public get size(): number {
-    return this.entries.size;
   }
 }

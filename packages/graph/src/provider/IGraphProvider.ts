@@ -135,15 +135,6 @@ export namespace IGraphProvider {
     windowsVerbatimArguments?: boolean;
     /** npm command shims reparse forwarded arguments through a second cmd. */
     windowsDoubleEscapeArguments?: boolean;
-    /**
-     * The file this invocation runs, when `command` is a shim wrapper.
-     *
-     * On Windows a `.cmd` provider becomes a `cmd.exe` invocation with the real
-     * program quoted inside an argument, so `command` identifies the command
-     * processor rather than the tool. Anything that reasons about *which
-     * program this is* — whether it was replaced, how old it is — reads this.
-     */
-    executable?: string;
   }
 
   /** Everything a session needs that only the coordinator knows. */

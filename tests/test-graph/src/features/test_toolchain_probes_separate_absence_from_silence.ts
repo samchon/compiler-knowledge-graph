@@ -255,15 +255,16 @@ async function assertAServingProviderIsNotAskedTwice(): Promise<void> {
   await source.load();
   const afterCold = derivations;
   await source.load();
+  // Both numbers, because comparing the warm count to the cold one would hold
+  // at zero and prove nothing. What is being claimed is that the topology
+  // snapshot asks a serving provider for its configuration neither time: its
+  // own session already derives those rows once per refresh, and asking here
+  // would be a second answer to a settled question, paid on every request a
+  // long-lived server answers.
   TestValidator.equals(
-    "the resident stops asking a provider that serves the build",
-    derivations,
-    afterCold,
-  );
-  TestValidator.equals(
-    "and never asked it from the topology snapshot either",
-    afterCold,
-    0,
+    "the resident topology never asks a serving provider for its configuration",
+    [afterCold, derivations],
+    [0, 0],
   );
   await source.close();
 }

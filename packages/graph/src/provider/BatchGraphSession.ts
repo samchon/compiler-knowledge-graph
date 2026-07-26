@@ -12,6 +12,7 @@ import { ownedProcess } from "../utils/ownedProcess";
 import { spawnableCommand } from "../utils/spawnableCommand";
 import { IBulkGraphSession } from "./IBulkGraphSession";
 import { IGraphProvider } from "./IGraphProvider";
+import { toolchainVersion } from "./toolchainVersion";
 
 /**
  * Atomic lifecycle shared by batch semantic providers.
@@ -34,6 +35,9 @@ export class BatchGraphSession implements IBulkGraphSession {
   private readonly children = new Set<ISpawned>();
   private snapshot: IBulkGraphSession.ISnapshot | undefined;
   private universe = "";
+
+  /** The last configuration rows that established anything. */
+  private established: readonly string[] | undefined;
   private version = 0;
   private closed = false;
   private closing: Promise<void> | undefined;
@@ -90,7 +94,25 @@ export class BatchGraphSession implements IBulkGraphSession {
         // check exists to catch is a source or build file edited while the
         // producer was running, and re-reading the files still catches it.
         const configuration = [...(this.options.configuration?.() ?? [])];
-        const universe = this.fingerprint(configuration);
+        // A derivation that could not put its question establishes nothing, and
+        // a universe computed from "nothing" is not a smaller universe — it is
+        // a different one, which rebuilds an artifact the project never changed.
+        // The last rows that did establish something stand in until the question
+        // can be put again.
+        //
+        // This is not the version memory that was removed: it is one field on
+        // one session, it applies only while a row explicitly says its question
+        // was unasked, and it never presents a stale answer as a fresh one.
+        //
+        // The inputs are hashed separately and always read from disk, so a
+        // source edited during that window still rebuilds. Declining to conclude
+        // about the toolchain must not let the session claim a file did not move.
+        const established =
+          toolchainVersion.inconclusive(configuration) &&
+          this.established !== undefined
+            ? this.established
+            : configuration;
+        const universe = this.fingerprint(established);
         if (universe === this.universe && this.snapshot !== undefined) {
           return {
             changed: false,
@@ -99,10 +121,11 @@ export class BatchGraphSession implements IBulkGraphSession {
             snapshot: this.snapshot,
           };
         }
-        const next = await this.build(universe, configuration, signal);
+        const next = await this.build(universe, established, signal);
         this.assertOpen();
         this.snapshot = next;
         this.universe = universe;
+        this.established = established;
         this.version += 1;
         return {
           changed: true,

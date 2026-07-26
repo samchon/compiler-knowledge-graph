@@ -5,6 +5,7 @@ import path from "node:path";
 import { createResidentGraphSource } from "../../../../packages/graph/src/indexer/createResidentGraphSource";
 import type { IIndexerResult } from "../../../../packages/graph/src/indexer/IIndexerResult";
 import type { IGraphProvider } from "../../../../packages/graph/src/provider/IGraphProvider";
+import { BatchGraphSession } from "../../../../packages/graph/src/provider/BatchGraphSession";
 import { providerTopology } from "../../../../packages/graph/src/provider/providerTopology";
 import { standardScipProviders } from "../../../../packages/graph/src/provider/scip/standardScipProviders";
 import { toolchainVersion } from "../../../../packages/graph/src/provider/toolchainVersion";
@@ -32,6 +33,8 @@ export const test_toolchain_probes_separate_absence_from_silence = async () => {
   assertEveryProbedLineSurvivesOnOneLine();
   assertTopologyAsksOnlyTheProvidersWithoutASession();
   assertAStaleOverrideFallsThroughToTheAliases();
+  assertALaunchThatNeverRanSaysNothing();
+  await assertAnUnaskedQuestionDoesNotMoveTheUniverse();
   await assertAServingProviderIsNotAskedTwice();
   await assertANonServingCandidateStillReportsItsRepair();
 };
@@ -313,6 +316,104 @@ async function assertANonServingCandidateStillReportsItsRepair(): Promise<void> 
     2,
   );
   await source.close();
+}
+
+function assertALaunchThatNeverRanSaysNothing(): void {
+  const root = GraphPaths.createTempDirectory("graph-toolchain-unasked-");
+  const bin = path.join(root, ".samchon-graph", "bin");
+  fs.mkdirSync(bin, { recursive: true });
+  // A file the operating system cannot execute. `isSpawnableFile` accepts it —
+  // it is a regular file with the executable bit — and `spawnSync` then fails to
+  // start it, which is the shape of every transient launch failure: an EAGAIN
+  // under load, a scanner holding the image, a timeout. The probe used to read
+  // "the exit was not zero" and call that silence.
+  const unlaunchable = path.join(
+    bin,
+    process.platform === "win32" ? "broken-toolchain.cmd" : "broken-toolchain",
+  );
+  fs.writeFileSync(unlaunchable, "  not a program ");
+  fs.chmodSync(unlaunchable, 0o755);
+  const row = toolchainVersion({
+    root,
+    env: { PATH: "", Path: "", PATHEXT: ".EXE;.CMD;.BAT" },
+    command: "broken-toolchain",
+    args: ["--version"],
+  });
+  // On Windows a `.cmd` is handed to the command processor, which runs and
+  // fails rather than failing to start — that is a program which ran and said
+  // nothing. On POSIX the exec itself fails. Both are honest; neither may be
+  // `unavailable`, because the file is right there.
+  TestValidator.predicate(
+    "a launch that cannot start is never reported as an absent tool",
+    row === "broken-toolchain=unasked" ||
+      row === "broken-toolchain=unreported",
+  );
+}
+
+async function assertAnUnaskedQuestionDoesNotMoveTheUniverse(): Promise<void> {
+  const root = GraphPaths.createTempDirectory("graph-toolchain-universe-");
+  const source = path.join(root, "a.ts");
+  fs.writeFileSync(source, "export const value = 1;\n");
+  const artifact = path.join(root, "index.json");
+
+  let rows = ["tool=1.0.0"];
+  const session = new BatchGraphSession({
+    root,
+    languages: ["typescript"],
+    provider: "unasked-fixture",
+    command: {
+      command: process.execPath,
+      args: ["-e", "require('node:fs').writeFileSync(process.argv[1], '{}')"],
+    },
+    artifactName: "index.json",
+    indexArgs: (produced) => [produced],
+    inputs: () => ["a.ts"],
+    configuration: () => rows,
+    load: () =>
+      Promise.resolve(
+        ProviderFixtures.snapshot({
+          root,
+          provider: "unasked-fixture",
+          languages: ["typescript"],
+        }),
+      ),
+  });
+  try {
+    const cold = await session.refresh();
+    // The question could not be put this time. Nothing was established, so
+    // nothing changed — the row that would have moved the universe is exactly
+    // the one that says it learned nothing.
+    rows = [`tool${toolchainVersion.UNASKED}`];
+    const inconclusive = await session.refresh();
+    TestValidator.equals(
+      "a derivation that established nothing does not move the build universe",
+      [cold.mode, inconclusive.mode, inconclusive.generation],
+      ["initial", "unchanged", cold.generation],
+    );
+
+    // But it must not mask the project. An edited input is read from disk on
+    // every refresh, so a source that moved still rebuilds while the toolchain
+    // question stays unanswerable.
+    fs.writeFileSync(source, "export const value = 2;\n");
+    const edited = await session.refresh();
+    TestValidator.equals(
+      "an edited source still rebuilds while the question stays unanswerable",
+      edited.mode,
+      "rebuild",
+    );
+
+    // And a genuine change is believed as soon as it can be established.
+    rows = ["tool=2.0.0"];
+    const upgraded = await session.refresh();
+    TestValidator.equals(
+      "a toolchain change is believed once the question can be put again",
+      upgraded.mode,
+      "rebuild",
+    );
+  } finally {
+    await session.close();
+    fs.rmSync(artifact, { force: true });
+  }
 }
 
 function resultOf(root: string, file: string): IIndexerResult {

@@ -54,12 +54,20 @@ import { resolveProviderCommand } from "./resolveProviderCommand";
  */
 export function toolchainVersion(props: toolchainVersion.IProps): string {
   const label = props.label ?? props.command;
-  const resolved = props.resolved ?? toolchainVersion.resolve(props);
-  if (resolved === undefined) return `${label}=unavailable`;
-  const observed = probe(resolved, props);
-  return observed === undefined
+  const attempt =
+    props.resolved === undefined
+      ? toolchainVersion.attempt(props)
+      : { command: props.resolved, asked: true };
+  if (attempt.command === undefined) {
+    return attempt.asked
+      ? `${label}=unavailable`
+      : `${label}${toolchainVersion.UNASKED}`;
+  }
+  const observed = probe(attempt.command, props);
+  if (observed.version !== undefined) return `${label}=${observed.version}`;
+  return observed.ran
     ? `${label}=unreported`
-    : `${label}=${observed}`;
+    : `${label}${toolchainVersion.UNASKED}`;
 }
 
 export namespace toolchainVersion {
@@ -112,25 +120,63 @@ export namespace toolchainVersion {
   export function resolve(
     props: IProps,
   ): IGraphProvider.ICommand | undefined {
+    return attempt(props).command;
+  }
+
+  /**
+   * The program, and whether finding out was possible at all.
+   *
+   * A named file is decided by reading the filesystem, so the question always
+   * gets put. A command may end in a `PATH` lookup, which is itself a process
+   * launch and can fail to run — and a lookup that never ran says nothing about
+   * whether the tool is installed.
+   */
+  export function attempt(props: IProps): resolveProviderCommand.IAttempt {
     if (props.executable !== undefined) {
       return isSpawnableFile(props.executable)
-        ? spawnableCommand(props.executable, [], props.env)
-        : undefined;
+        ? {
+            command: spawnableCommand(props.executable, [], props.env),
+            asked: true,
+          }
+        : { asked: true };
     }
-    return resolveProviderCommand(props.root, props.env, {
+    return resolveProviderCommand.attempt(props.root, props.env, {
       command: props.command,
       ...(props.override === undefined ? {} : { override: props.override }),
     });
+  }
+
+  /**
+   * The suffix a row carries when its question could not be put.
+   *
+   * Exported so a reader names the state instead of sniffing a string. A build
+   * universe has to know that a derivation established nothing, and it should
+   * learn that from a contract rather than from row grammar.
+   */
+  export const UNASKED = "=unasked";
+
+  /** Whether any row in this derivation failed to establish anything. */
+  export function inconclusive(rows: readonly string[]): boolean {
+    return rows.some((row) => row.endsWith(UNASKED));
   }
   /* c8 ignore start -- declaration merging emits an unreachable namespace
    * creation arm after the function object already exists. */
 }
 /* c8 ignore stop */
 
+/**
+ * Run the probe and say which of three things happened.
+ *
+ * A program that ran and printed a version answered. One that ran and printed
+ * nothing is silent. One that never started — `spawnSync` sets `error`, or
+ * reports a null status for a signal or the timeout — said nothing about the
+ * toolchain at all, and reading only "the exit was not zero" made those last
+ * two the same fact.
+ */
 function probe(
   resolved: IGraphProvider.ICommand,
   props: toolchainVersion.IProps,
-): string | undefined {
+): { ran: boolean; version?: string } {
   const spawnable = spawnableCommand.append(
     { ...resolved, args: [...resolved.args] },
     props.args,
@@ -148,7 +194,12 @@ function probe(
    * string; the null arm exists only for Node's broader result type. */
   const output = oneLine(String(result.stdout ?? ""));
   /* c8 ignore stop */
-  return result.status === 0 && output !== "" ? output : undefined;
+  if (result.error !== undefined || result.status === null) {
+    return { ran: false };
+  }
+  return result.status === 0 && output !== ""
+    ? { ran: true, version: output }
+    : { ran: true };
 }
 
 /**

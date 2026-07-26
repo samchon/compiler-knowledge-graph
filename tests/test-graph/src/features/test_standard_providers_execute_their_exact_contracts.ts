@@ -778,6 +778,7 @@ function toolchainRowsOf(provider: string): string[] {
     "scip-dotnet": ["dotnet"],
     "scip-python": ["python3"],
     "scip-ruby": ["ruby"],
+    "scip-dart": ["dart"],
   };
   const toolchain = toolchains[provider];
   if (toolchain === undefined) {

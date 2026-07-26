@@ -146,9 +146,10 @@ const rubyScipProvider = createScipProvider({
  *
  * `samchon-graph-dart` named a program that does not exist anywhere in this
  * repository — `sidecars/` holds exactly one directory, `go` — so every Dart
- * build fell through to the language-server lane, where darthttp exceeded an
- * hour twice. A real indexer for the language has existed on pub.dev the whole
- * time. The entry was not unfinished work; it was the wrong architecture.
+ * build fell through to the language-server lane, which exceeded an hour on a
+ * mid-sized package twice over. A real indexer for the language has existed on
+ * pub.dev the whole time. The entry was not unfinished work; it was the wrong
+ * architecture.
  *
  * `--output` despite the published docs listing no such flag: `bin/scip_dart.dart`
  * declares it (`addOption('output', abbr: 'o', defaultsTo: 'index.scip')`). The

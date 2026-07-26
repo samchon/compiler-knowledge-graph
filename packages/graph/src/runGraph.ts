@@ -73,14 +73,26 @@ async function runDump(argv: readonly string[]): Promise<void> {
   }
 }
 
-/** One line naming the indexer mode and every provider that actually served. */
+/**
+ * What produced this graph, and what stopped anything better from producing it.
+ *
+ * The second half is not decoration. A dump that fell to the static syntax
+ * reader looks, from its duration alone, like a fast semantic index — a
+ * TypeScript corpus came back in under three seconds and was read as the
+ * flagship provider being quick, when in fact neither the strict provider nor
+ * the language server had served at all. The build already collects the reasons
+ * and used to keep them inside a payload every caller discards.
+ */
 function dumpSummary(dump: ISamchonGraphDump): string {
   const served = (dump.provenance ?? []).map(
     (entry) => `${entry.provider}(${entry.languages.join(",")})`,
   );
   const by =
     served.length === 0 ? "no strict provider served" : served.join(" ");
-  return `@samchon/graph: indexer=${dump.indexer} ${by}`;
+  const lines = [`@samchon/graph: indexer=${dump.indexer} ${by}`];
+  for (const warning of dump.warnings ?? [])
+    lines.push(`@samchon/graph: ${warning}`);
+  return lines.join("\n");
 }
 
 function helpText(): string {

@@ -99,12 +99,20 @@ for (const row of rows) {
         ? `${(cell.buildMs / 1000).toFixed(1)} s`
         : "no build step";
     const where = uniform ? "" : `  [${cell.host?.cpu ?? "host unrecorded"}]`;
-    // Which path produced it, because a strict provider and the language-server
-    // fallback differ by orders of magnitude and a bare duration hides that.
+    // Which path produced it, because a strict provider, the language-server
+    // lane, and the static syntax reader differ by orders of magnitude and a
+    // bare duration hides that. A static cell is marked, not merely labelled: a
+    // TypeScript corpus indexed in 2.8 s reads as the flagship provider being
+    // fast, and it was the best-effort syntax fallback doing almost none of the
+    // work the other rows did.
     const via =
       typeof cell.servedBy === "string" ? `  via ${cell.servedBy}` : "";
+    const caveat =
+      typeof cell.servedBy === "string" && cell.servedBy.startsWith("static")
+        ? "  <- NOT A SEMANTIC INDEX"
+        : "";
     process.stdout.write(
-      `  ${pad(row.project, 12)} ${pad(row.language, 11)} ${pad(row.commit, 13)} ${pad(tool, 17)} ${pad(time, 12)} ${scale}${where}${via}\n`,
+      `  ${pad(row.project, 12)} ${pad(row.language, 11)} ${pad(row.commit, 13)} ${pad(tool, 17)} ${pad(time, 12)} ${scale}${where}${via}${caveat}\n`,
     );
   }
 }

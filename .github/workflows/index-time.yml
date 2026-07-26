@@ -28,6 +28,11 @@ on:
     paths:
       - ".github/workflows/index-time.yml"
       - "tests/benchmark/**"
+      # Except the results themselves. Committing a measurement would otherwise
+      # trigger the measurement, whose collect job publishes results, which is a
+      # loop with a benchmark inside it. What the numbers are is not a reason to
+      # take them again; what produced them is.
+      - "!tests/benchmark/results/**"
 
 concurrency:
   group: index-time-${{ github.event.pull_request.number || github.ref }}

@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 
-import { BoundedMap } from "../utils/boundedMap";
+import { BoundedMap } from "../utils/BoundedMap";
 import { spawnableCommand } from "../utils/spawnableCommand";
 import { IGraphProvider } from "./IGraphProvider";
 import { resolveProviderCommand } from "./resolveProviderCommand";
@@ -132,9 +132,10 @@ function probe(
     windowsVerbatimArguments: spawnable.windowsVerbatimArguments,
     windowsHide: true,
   });
-  /* c8 ignore next -- an executed spawnSync with UTF-8 encoding returns a
+  /* c8 ignore start -- an executed spawnSync with UTF-8 encoding returns a
    * string; the null arm exists only for Node's broader result type. */
   const output = oneLine(String(result.stdout ?? ""));
+  /* c8 ignore stop */
   return result.status === 0 && output !== "" ? output : undefined;
 }
 
@@ -179,11 +180,12 @@ function fileIdentity(executable: string): string {
   try {
     const stat = fs.statSync(executable);
     return `${String(stat.size)}:${String(stat.mtimeMs)}`;
-    /* c8 ignore next 3 -- a PATH-resolved executable removed between lookup
+    /* c8 ignore start -- a PATH-resolved executable removed between lookup
      * and this stat still gets a key; the probe that follows reports the real
      * failure and nothing is filed under it. */
   } catch {
     return "unstatable";
+    /* c8 ignore stop */
   }
 }
 

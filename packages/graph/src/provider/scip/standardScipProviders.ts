@@ -3,7 +3,7 @@ import path from "node:path";
 
 import { languageOf } from "../../indexer/languageOf";
 import { GraphLanguage } from "../../typings";
-import { BoundedMap } from "../../utils/boundedMap";
+import { BoundedMap } from "../../utils/BoundedMap";
 import { spawnableCommand } from "../../utils/spawnableCommand";
 import { IGraphProvider } from "../IGraphProvider";
 import { providerInputFiles } from "../providerInputFiles";
@@ -376,10 +376,9 @@ interface IToolchainTool {
  * of its location.
  */
 function driverLabel(named: string): string {
-  const base = path.basename(named);
-  return /\.(?:exe|cmd|bat)$/i.test(base)
-    ? base.slice(0, base.lastIndexOf("."))
-    : base;
+  const segments = named.split(/[\\/]/);
+  const base = segments[segments.length - 1]!;
+  return base.replace(/\.(?:exe|cmd|bat)$/i, "");
 }
 
 /**
@@ -404,11 +403,12 @@ function compilationDatabaseCompilers(root: string): string[] {
   try {
     const stat = fs.statSync(database);
     key = `${database}${SEPARATOR}${String(stat.size)}:${String(stat.mtimeMs)}`;
-    /* c8 ignore next 4 -- the database was stat'd moments ago by
+    /* c8 ignore start -- the database was stat'd moments ago by
      * `compilationDatabase`; a removal in between leaves nothing to parse and
      * the read below reports it. */
   } catch {
     return [];
+    /* c8 ignore stop */
   }
   const memoized = compilationDatabases.get(key);
   if (memoized !== undefined) return [...memoized];
@@ -469,45 +469,71 @@ function compilerToken(tokens: readonly string[]): string | undefined {
   for (const token of tokens) {
     if (token === "") continue;
     if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(token)) continue;
-    if (COMPILER_LAUNCHERS.has(path.basename(token).toLowerCase())) continue;
-    if (
-      COMPILER_LAUNCHERS.has(
-        path.basename(token, ".exe").toLowerCase(),
-      )
-    ) {
-      continue;
-    }
+    if (COMPILER_LAUNCHERS.has(programName(token))) continue;
     return token;
   }
   return undefined;
 }
 
 /**
- * Split one compile command into tokens, honouring the two escapes that appear.
+ * The name of the program a path names, whatever machine wrote the path.
  *
- * A Windows database records `"C:\\Program Files\\LLVM\\bin\\clang.exe" -c ...`
- * and a POSIX one can record `/opt/my\ compiler -c ...`; splitting either on
- * whitespace would name a directory.
+ * `path.basename` follows the *running* platform's separator rules, so a
+ * database authored on Windows and read on Linux would hand back
+ * `C:\ccache\ccache.exe` whole and recognise no launcher at all. The comparison
+ * is case-folded and extension-stripped for the same reason: `CCACHE.EXE` is
+ * `ccache`, and a launcher that is not recognised gets published as the
+ * compiler that decided the program's semantics.
+ */
+function programName(token: string): string {
+  const segments = token.split(/[\\/]/);
+  const base = segments[segments.length - 1]!;
+  return base.toLowerCase().replace(/\.(?:exe|cmd|bat)$/, "");
+}
+
+/**
+ * Split one compile command into tokens.
+ *
+ * A database is a record of what a shell was given, and nothing in it says
+ * which shell. A Windows build records
+ * `"C:\Program Files\LLVM\bin\clang.exe" -c a.c`, a Ninja or Make build on
+ * POSIX records `'/usr/bin/g++' -c a.cc` or `/opt/my\ compiler -c a.cc`, and
+ * splitting any of them on whitespace names a directory.
+ *
+ * So a backslash escapes only what a backslash is ever used to escape — a
+ * space, a tab, a quote, or another backslash. Before anything else it is a
+ * path separator, and treating it as an escape unconditionally turned
+ * `C:\Program Files\LLVM` into `C:Program FilesLLVM`, which is exactly the
+ * input the quoting exists for.
  */
 function splitCommand(command: string): string[] {
   const tokens: string[] = [];
   let current = "";
-  let quoted = false;
+  let quote: string | undefined;
   let started = false;
   for (let index = 0; index < command.length; index += 1) {
     const character = command[index]!;
-    if (character === "\\" && index + 1 < command.length) {
-      current += command[index + 1]!;
+    const next = command[index + 1];
+    if (
+      character === "\\" &&
+      next !== undefined &&
+      ESCAPABLE.has(next)
+    ) {
+      current += next;
       started = true;
       index += 1;
       continue;
     }
-    if (character === '"') {
-      quoted = !quoted;
+    if (quote === undefined && (character === '"' || character === "'")) {
+      quote = character;
       started = true;
       continue;
     }
-    if (!quoted && /\s/.test(character)) {
+    if (quote === character) {
+      quote = undefined;
+      continue;
+    }
+    if (quote === undefined && /\s/.test(character)) {
       if (started) tokens.push(current);
       current = "";
       started = false;
@@ -520,12 +546,15 @@ function splitCommand(command: string): string[] {
   return tokens;
 }
 
+const ESCAPABLE = new Set([" ", "\t", '"', "'", "\\"]);
+
 const COMPILER_LAUNCHERS = new Set([
   "ccache",
   "sccache",
   "distcc",
   "icecc",
   "icecream",
+  "env",
   "buildcache",
 ]);
 

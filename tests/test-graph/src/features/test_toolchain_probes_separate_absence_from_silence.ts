@@ -6,6 +6,7 @@ import { createResidentGraphSource } from "../../../../packages/graph/src/indexe
 import type { IIndexerResult } from "../../../../packages/graph/src/indexer/IIndexerResult";
 import type { IGraphProvider } from "../../../../packages/graph/src/provider/IGraphProvider";
 import { providerTopology } from "../../../../packages/graph/src/provider/providerTopology";
+import { standardScipProviders } from "../../../../packages/graph/src/provider/scip/standardScipProviders";
 import { toolchainVersion } from "../../../../packages/graph/src/provider/toolchainVersion";
 import { GraphPaths } from "../internal/GraphPaths";
 import { ProviderFixtures } from "../internal/ProviderFixtures";
@@ -30,9 +31,39 @@ export const test_toolchain_probes_separate_absence_from_silence = async () => {
   assertAFailedProbeRepeatsTheLastAnswer();
   assertEveryProbedLineSurvivesOnOneLine();
   assertTopologyAsksOnlyTheProvidersWithoutASession();
+  assertAStaleOverrideFallsThroughToTheAliases();
   await assertAServingProviderIsNotAskedTwice();
   await assertANonServingCandidateStillReportsItsRepair();
 };
+
+function assertAStaleOverrideFallsThroughToTheAliases(): void {
+  const root = GraphPaths.createTempDirectory("graph-toolchain-alias-");
+  const bin = path.join(root, ".samchon-graph", "bin");
+  fs.mkdirSync(bin, { recursive: true });
+  for (const name of ["scip-python", "scip", "python"]) shim(bin, name);
+  const python = standardScipProviders.find(
+    (provider) => provider.name === "scip-python",
+  )!;
+  const rows = python.configuration?.(root, {
+    PATH: "",
+    Path: "",
+    PATHEXT: ".EXE;.CMD;.BAT",
+    SystemRoot: process.env.SystemRoot,
+    SAMCHON_GRAPH_SCIP_PYTHON: platformExecutable(bin, "scip-python"),
+    SAMCHON_GRAPH_SCIP: platformExecutable(bin, "scip"),
+    // Pointed at a build that is no longer there. Falling through to the
+    // aliases is the decision, not an accident: the row then names the
+    // interpreter that answered rather than the one that was asked for.
+    SAMCHON_GRAPH_PYTHON_TOOLCHAIN: path.join(bin, "absent-python"),
+  });
+  TestValidator.equals(
+    "a stale override falls through and the row names what answered",
+    rows?.filter((row) => !row.startsWith("scip")),
+    [
+      "python=fake-toolchain 1.2.3 | Runtime Environment (build 1.2.3+7) | 64-Bit Server VM",
+    ],
+  );
+}
 
 function assertAnUpgradedToolchainIsAlwaysObserved(): void {
   const root = GraphPaths.createTempDirectory("graph-toolchain-upgrade-");
@@ -360,4 +391,11 @@ function launches(log: string): number {
   } catch {
     return 0;
   }
+}
+
+function platformExecutable(directory: string, name: string): string {
+  return path.join(
+    directory,
+    process.platform === "win32" ? `${name}.cmd` : name,
+  );
 }

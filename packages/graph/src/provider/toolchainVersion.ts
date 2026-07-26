@@ -140,7 +140,7 @@ function probe(
 }
 
 /**
- * Where this toolchain's last answer is filed.
+ * Which question this toolchain's last answer belongs to.
  *
  * Everything the probe's answer depends on: the program, the directory it runs
  * in, the environment it inherits, and what it was asked. Over-specific on
@@ -150,7 +150,14 @@ function probe(
  * fallback, and a lost fallback is `unreported`, which is the honest answer for
  * a question that has not been asked in this form before.
  *
- * The identity reads `executable`, not `command`, because a Windows `.cmd`
+ * The file's own bytes are deliberately *not* in the key. They were, on the
+ * reasoning that a replaced binary should not inherit its predecessor's answer.
+ * But the probe runs on every call, so a replaced binary is observed by the
+ * probe rather than by the key: the identity bought nothing, while making the
+ * fallback depend on a modification time holding still between two calls
+ * moments apart — which POSIX CI showed it does not.
+ *
+ * The path reads `executable`, not `command`, because a Windows `.cmd`
  * provider is spawned as `cmd.exe` with the real program quoted inside an
  * argument, and every shim on the machine would otherwise share one entry.
  */
@@ -158,7 +165,12 @@ function answerKey(
   resolved: IGraphProvider.ICommand,
   props: toolchainVersion.IProps,
 ): string {
+  /* c8 ignore start -- `resolve` only ever returns an invocation built by
+   * `spawnableCommand`, which sets `executable` on both of its arms. The
+   * fallback is here because the shared command type also admits a hand-built
+   * invocation, where `command` is already the file. */
   const executable = resolved.executable ?? resolved.command;
+  /* c8 ignore stop */
   const environment = createHash("sha256");
   for (const name of Object.keys(props.env).sort(compareOrdinal)) {
     environment.update(name, "utf8");
@@ -168,7 +180,6 @@ function answerKey(
   }
   return [
     executable,
-    fileIdentity(executable),
     props.root,
     environment.digest("hex"),
     ...resolved.args,
@@ -176,18 +187,6 @@ function answerKey(
   ].join(SEPARATOR);
 }
 
-function fileIdentity(executable: string): string {
-  try {
-    const stat = fs.statSync(executable);
-    return `${String(stat.size)}:${String(stat.mtimeMs)}`;
-    /* c8 ignore start -- a PATH-resolved executable removed between lookup
-     * and this stat still gets a key; the probe that follows reports the real
-     * failure and nothing is filed under it. */
-  } catch {
-    return "unstatable";
-    /* c8 ignore stop */
-  }
-}
 
 /**
  * File one answer, under a bound.

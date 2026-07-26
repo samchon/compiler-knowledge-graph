@@ -123,7 +123,14 @@ function assertADriverWithAPathIsTakenLiterally(): void {
     path.join(root, "compile_commands.json"),
     JSON.stringify([
       { directory: root, file: "a.c", arguments: [absolute, "-c", "a.c"] },
-      { directory: root, file: "b.c", command: "toolchain/gcc -c b.c" },
+      // The same file, named the way the build wrote it. `path.basename` of the
+      // absolute one, so the entry demonstrates directory-relative resolution
+      // on every platform rather than only where the suffix happens to match.
+      {
+        directory: root,
+        file: "b.c",
+        command: `toolchain/${path.basename(absolute)} -c b.c`,
+      },
       // A driver the machine does not have contributes nothing rather than
       // failing the whole database — whether it was named bare, named by a
       // path that leads nowhere, or named as a directory.

@@ -148,13 +148,18 @@ export const test_rust_scip_provider_preserves_cargo_and_toolchain_boundaries =
       // one means the provider cannot describe what it indexed. Collapsing them
       // made a build universe that rebuilt itself whenever a process launch
       // failed for a reason unrelated to the project.
+      //
+      // This compiler has already answered once, so the row repeats what it
+      // said rather than going quiet: a launch that stops answering is not
+      // evidence that the toolchain changed, and treating it as evidence is
+      // what rebuilt an artifact that was never stale.
       const rustc = platformExecutable(privateBin, "rustc");
       writeTool(rustc, "");
       TestValidator.predicate(
-        "an installed compiler that reports no version is unreported",
+        "a compiler that stops answering keeps the version it last gave",
         rustScipProvider
           .effectiveConfiguration(root, environment)
-          .includes("rustc=unreported"),
+          .includes("rustc=fixture rustc"),
       );
       fs.rmSync(rustc, { force: true });
       TestValidator.predicate(

@@ -63,6 +63,25 @@ function assertAStaleOverrideFallsThroughToTheAliases(): void {
       "python=fake-toolchain 1.2.3 | Runtime Environment (build 1.2.3+7) | 64-Bit Server VM",
     ],
   );
+
+  // And when no spelling resolves at all, the row still names what was looked
+  // for. An absent field would leave a reader unable to tell a toolchain the
+  // build has no opinion about from one it could not find.
+  // A different root, because a project-local `.samchon-graph/bin` resolves
+  // whatever `PATH` says.
+  const bare = GraphPaths.createTempDirectory("graph-toolchain-bare-");
+  TestValidator.equals(
+    "a toolchain with no spelling on this machine is named and unavailable",
+    python
+      .configuration?.(bare, {
+        PATH: "",
+        Path: "",
+        PATHEXT: ".EXE;.CMD;.BAT",
+        SystemRoot: process.env.SystemRoot,
+      })
+      .filter((row) => !row.startsWith("scip")),
+    ["python3=unavailable"],
+  );
 }
 
 function assertAnUpgradedToolchainIsAlwaysObserved(): void {
@@ -376,6 +395,11 @@ function probeEnvironment(
     PATHEXT: ".EXE;.CMD;.BAT",
     SystemRoot: process.env.SystemRoot,
     SAMCHON_GRAPH_FIXTURE_PROBE_LOG: log,
+    // A key with no value. `Object.keys` still enumerates it, and the digest
+    // that files this toolchain's last answer has to fold it in the same way on
+    // every platform — `SystemRoot` is the only naturally-unset key in these
+    // fixtures and it is always set on Windows.
+    SAMCHON_GRAPH_FIXTURE_UNSET: undefined,
     [override]: binary,
   };
 }

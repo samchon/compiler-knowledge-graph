@@ -376,9 +376,20 @@ interface IToolchainTool {
  * of its location.
  */
 function driverLabel(named: string): string {
+  return lastSegment(named).replace(/\.(?:exe|cmd|bat)$/i, "");
+}
+
+/**
+ * The last path segment, on either platform's separator.
+ *
+ * `path.basename` follows the *running* platform's rules, and a compilation
+ * database is written by one machine and can be read on another: a
+ * Windows-authored `C:\ccache\ccache.exe` read on Linux comes back whole, so
+ * every comparison against it fails.
+ */
+function lastSegment(named: string): string {
   const segments = named.split(/[\\/]/);
-  const base = segments[segments.length - 1]!;
-  return base.replace(/\.(?:exe|cmd|bat)$/i, "");
+  return segments[segments.length - 1]!;
 }
 
 /**
@@ -408,8 +419,8 @@ function compilationDatabaseCompilers(root: string): string[] {
      * the read below reports it. */
   } catch {
     return [];
-    /* c8 ignore stop */
   }
+  /* c8 ignore stop */
   const memoized = compilationDatabases.get(key);
   if (memoized !== undefined) return [...memoized];
   const drivers = readCompilationDatabaseCompilers(database);
@@ -476,19 +487,14 @@ function compilerToken(tokens: readonly string[]): string | undefined {
 }
 
 /**
- * The name of the program a path names, whatever machine wrote the path.
+ * The name a launcher list can be matched against.
  *
- * `path.basename` follows the *running* platform's separator rules, so a
- * database authored on Windows and read on Linux would hand back
- * `C:\ccache\ccache.exe` whole and recognise no launcher at all. The comparison
- * is case-folded and extension-stripped for the same reason: `CCACHE.EXE` is
- * `ccache`, and a launcher that is not recognised gets published as the
- * compiler that decided the program's semantics.
+ * {@link driverLabel} without the case, because `CCACHE.EXE` is `ccache` and a
+ * launcher that is not recognised gets published as the compiler that decided
+ * the program's semantics.
  */
 function programName(token: string): string {
-  const segments = token.split(/[\\/]/);
-  const base = segments[segments.length - 1]!;
-  return base.toLowerCase().replace(/\.(?:exe|cmd|bat)$/, "");
+  return driverLabel(token).toLowerCase();
 }
 
 /**
@@ -546,7 +552,16 @@ function splitCommand(command: string): string[] {
   return tokens;
 }
 
-const ESCAPABLE = new Set([" ", "\t", '"', "'", "\\"]);
+/**
+ * What a backslash can escape here, and what it cannot.
+ *
+ * Not another backslash. `\\server\share\clang.exe` is a UNC path whose two
+ * leading separators are two separators, and consuming the pair as one escaped
+ * backslash names a host that does not exist. A POSIX command with a literal
+ * backslash in a path is the losing side of that trade, and it is the rarer one
+ * by a wide margin in a file whose whole purpose is recording build commands.
+ */
+const ESCAPABLE = new Set([" ", "\t", '"', "'"]);
 
 const COMPILER_LAUNCHERS = new Set([
   "ccache",

@@ -101,6 +101,9 @@ const contracts = {
   scip_dart: (args) => ({
     leading: [],
     requires: ["."],
+    // A positional, not a flag: nothing follows it, and the required-argument
+    // check otherwise demands a value after every non-`=` entry.
+    valueless: ["."],
     output: valueAfter(args, "--output"),
   }),
   // `scip-php` — no output flag at all. `bin/scip-php` declares only `--help`

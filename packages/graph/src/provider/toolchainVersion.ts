@@ -40,8 +40,15 @@ import { resolveProviderCommand } from "./resolveProviderCommand";
  * differently depending on what else had run, which is how it passed in
  * isolation and failed on all three platforms in the full suite. The defect it
  * was reaching for — a failed probe discarding the whole resident index — is
- * fixed where it belongs, in the topology snapshot that no longer re-derives a
- * serving provider's configuration at all.
+ * fixed for a serving provider, in the topology snapshot that no longer
+ * re-derives its configuration at all.
+ *
+ * Not for a candidate that is not serving. `providerTopology.available` still
+ * derives those rows fresh, the resident source fingerprints them, and a
+ * difference calls `replaceLanguages` — so a probe that fails to launch in a
+ * provider nothing is currently using still rebuilds every language. That is
+ * the same defect in the half of the path this repair did not reach, and it is
+ * filed rather than claimed as done.
  *
  * The probe runs every time, and deliberately. A version is not a property of
  * the file: `rustc`, `python3`, `ruby`, `java`, and `dotnet` are all normally

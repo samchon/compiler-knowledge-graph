@@ -188,7 +188,10 @@ export class ScipSession implements IBulkGraphSession {
         // provenance that this universe never saw.
         compilerVersion:
           this.options.compilerVersion?.(props.configuration) ?? "",
-        protocolVersion: SCIP_PROTOCOL_VERSION,
+        protocolVersion: protocolVersionOf(
+          index.metadata.version,
+          this.options.provider,
+        ),
         universe: props.universe,
         capabilities: manifest.proven
           ? [
@@ -342,9 +345,32 @@ export namespace ScipSession {
 
 const DEFAULT_MAX_ARTIFACT_BYTES = 256 * 1024 * 1024;
 const SCIP_SCHEMA_VERSION = 5;
-const SCIP_PROTOCOL_VERSION = 0;
 const SCIP_CAPABILITIES: readonly string[] = ["universe", "diskDigests"];
 const SOURCE_DIGESTS_CAPABILITY = "sourceDigests";
+
+/**
+ * Publish the producer's protocol, not the decoder's schema assumption.
+ *
+ * The parser retains unknown non-negative enum numbers so a newer producer can
+ * still be consumed. Named future versions cannot honestly be projected onto
+ * the public numeric provenance contract until this client learns their
+ * number, so they fail closed instead of being mislabeled as version zero.
+ */
+function protocolVersionOf(
+  version: string | undefined,
+  provider: string,
+): number {
+  if (version === undefined || version === "UnspecifiedProtocolVersion") {
+    return 0;
+  }
+  if (/^(?:0|[1-9]\d*)$/.test(version)) {
+    const numeric = Number(version);
+    if (Number.isSafeInteger(numeric)) return numeric;
+  }
+  throw new Error(
+    `${provider}: SCIP protocol version ${JSON.stringify(version)} cannot be represented as a non-negative integer`,
+  );
+}
 
 function samePath(left: string, right: string): boolean {
   const normalizedLeft = path.resolve(left);

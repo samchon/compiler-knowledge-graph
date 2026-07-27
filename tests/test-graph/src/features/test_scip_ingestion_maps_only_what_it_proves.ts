@@ -331,12 +331,8 @@ function assertIndexValidation(): void {
         },
         documents: [],
       }).metadata.version,
-      parseScipIndex({
-        metadata: { projectRoot: "file:///r", version: -1 },
-        documents: [],
-      }).metadata.version,
     ],
-    ["1", "FutureProtocolVersion", "-1"],
+    ["1", "FutureProtocolVersion"],
   );
 
   // Every rejection below is a shape that, if accepted, would attribute facts
@@ -397,6 +393,13 @@ function assertIndexValidation(): void {
       },
     ],
     [
+      "a negative protocol version",
+      {
+        metadata: { projectRoot: "file:///r", version: -1 },
+        documents: [],
+      },
+    ],
+    [
       "a negative protocol version outside int32",
       {
         metadata: { projectRoot: "file:///r", version: -0x80000001 },
@@ -451,6 +454,17 @@ function assertIndexValidation(): void {
       withOccurrence({
         symbol: "s",
         singleLineRange: { line: 0, startCharacter: 0, endCharacter: "1" },
+      }),
+    ],
+    [
+      "a typed range with an explicitly null coordinate",
+      withOccurrence({
+        symbol: "s",
+        singleLineRange: {
+          line: 0,
+          startCharacter: 0,
+          endCharacter: null,
+        },
       }),
     ],
     [

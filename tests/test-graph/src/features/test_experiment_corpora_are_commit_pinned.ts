@@ -70,9 +70,14 @@ export const test_experiment_corpora_are_commit_pinned = () => {
       setup.includes("await installGradle()"),
   );
   TestValidator.predicate(
-    "a local start process reactivates the tools installed by setup",
+    "a local start process reactivates the complete environment from setup",
     helpers.includes("export const activateProvisionedTools") &&
-      helpers.includes('path.join(workRoot, "tools", "bin")') &&
+      helpers.includes('"environment.json"') &&
+      helpers.includes("provisioned.paths") &&
+      helpers.includes("provisioned.environment") &&
+      setup.includes("recordProvisionedEnvironment") &&
+      setup.includes("resetProvisionedEnvironment();") &&
+      setup.includes('recordProvisionedEnvironment("JAVA_HOME", javaHome)') &&
       runner.includes("activateProvisionedTools();"),
   );
   TestValidator.predicate(
@@ -81,6 +86,13 @@ export const test_experiment_corpora_are_commit_pinned = () => {
       java.includes("class SamchonGraphExperimentRenamed") &&
       lifecycle.includes("fixture.renamedText !== undefined") &&
       lifecycle.includes("fs.writeFileSync(renamedFile, fixture.renamedText)"),
+  );
+  TestValidator.predicate(
+    "a PHP lifecycle rename preserves its PSR-4 class/file contract",
+    php.includes("renamedText:") &&
+      php.includes("final class SamchonGraphExperimentRenamed") &&
+      php.includes('renamedSymbol: "SamchonGraphExperimentRenamed"') &&
+      lifecycle.includes("fixture.renamedSymbol ?? fixture.createdSymbol"),
   );
   TestValidator.predicate(
     "isolated lifecycle edges can prove a pinned corpus relationship claim",

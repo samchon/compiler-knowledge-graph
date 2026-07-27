@@ -324,9 +324,14 @@ function singleLineRangeOf(value: unknown, label: string): number[] {
   // not a missing coordinate.
   return rangeOf(
     [
-      fieldOf(range, "line", "line", label) ?? 0,
-      fieldOf(range, "startCharacter", "start_character", label) ?? 0,
-      fieldOf(range, "endCharacter", "end_character", label) ?? 0,
+      proto3ScalarFieldOf(range, "line", "line", label),
+      proto3ScalarFieldOf(
+        range,
+        "startCharacter",
+        "start_character",
+        label,
+      ),
+      proto3ScalarFieldOf(range, "endCharacter", "end_character", label),
     ],
     label,
   );
@@ -336,10 +341,15 @@ function multiLineRangeOf(value: unknown, label: string): number[] {
   const range = objectOf(value, label);
   return rangeOf(
     [
-      fieldOf(range, "startLine", "start_line", label) ?? 0,
-      fieldOf(range, "startCharacter", "start_character", label) ?? 0,
-      fieldOf(range, "endLine", "end_line", label) ?? 0,
-      fieldOf(range, "endCharacter", "end_character", label) ?? 0,
+      proto3ScalarFieldOf(range, "startLine", "start_line", label),
+      proto3ScalarFieldOf(
+        range,
+        "startCharacter",
+        "start_character",
+        label,
+      ),
+      proto3ScalarFieldOf(range, "endLine", "end_line", label),
+      proto3ScalarFieldOf(range, "endCharacter", "end_character", label),
     ],
     label,
   );
@@ -609,10 +619,11 @@ function optionalEnumName<K extends string>(
  *
  * Protobuf keeps unknown enum numbers for forward compatibility. Most SCIP
  * enums affect graph meaning and therefore remain closed below, but protocol
- * version is metadata that graph does not interpret. Refusing a structurally
- * valid int32 here would reject an otherwise usable index merely because its
+ * version is metadata that graph does not interpret. Refusing a non-negative
+ * int32 here would reject an otherwise usable index merely because its
  * producer is ahead of the decoder (and scip-php 0.1.0 already writes `1`
- * despite bundling a schema that only names `0`).
+ * despite bundling a schema that only names `0`). Negative values cannot be
+ * represented by graph's public protocol provenance contract.
  */
 function optionalProtocolVersion(
   value: unknown,
@@ -623,10 +634,12 @@ function optionalProtocolVersion(
   if (
     typeof value !== "number" ||
     !Number.isInteger(value) ||
-    value < -0x80000000 ||
+    value < 0 ||
     value > 0x7fffffff
   ) {
-    throw new Error(`scip: ${label} must be an enum name or int32 number`);
+    throw new Error(
+      `scip: ${label} must be an enum name or non-negative int32 number`,
+    );
   }
   return { version: PROTOCOL_VERSIONS[value] ?? String(value) };
 }
@@ -666,6 +679,17 @@ function fieldOf(
     );
   }
   return camelValue !== undefined ? camelValue : snakeValue;
+}
+
+/** Apply proto3's scalar default only when JSON omitted the field. */
+function proto3ScalarFieldOf(
+  object: Record<string, unknown>,
+  camel: string,
+  snake: string,
+  label: string,
+): unknown {
+  const value = fieldOf(object, camel, snake, label);
+  return value === undefined ? 0 : value;
 }
 
 function nonEmptyString(value: unknown, label: string): string {

@@ -436,6 +436,9 @@ export const LANGUAGE_EXPERIMENTS = [
       createText:
         "<?php\n\ndeclare(strict_types=1);\n\nnamespace ScipPhp;\n\nfinal class SamchonGraphExperiment {}\n",
       createdSymbol: "SamchonGraphExperiment",
+      renamedText:
+        "<?php\n\ndeclare(strict_types=1);\n\nnamespace ScipPhp;\n\nfinal class SamchonGraphExperimentRenamed {}\n",
+      renamedSymbol: "SamchonGraphExperimentRenamed",
       buildFile: "composer.json",
       failureFile: "composer.json",
       failureSuffix: "\n{ not json",

@@ -123,9 +123,9 @@ export const runStrictLifecycle = async (experiment, pinnedRoot) => {
     const created = await load("create", CHANGED_MODES);
     assertCreatedSymbol(
       created,
-      fixture,
       experiment.language,
       fixture.createFile,
+      fixture.createdSymbol,
     );
     assertCreatedEdge(created, fixture, experiment.language);
 
@@ -143,10 +143,19 @@ export const runStrictLifecycle = async (experiment, pinnedRoot) => {
     const renamed = await load("rename", CHANGED_MODES);
     assertCreatedSymbol(
       renamed,
-      fixture,
       experiment.language,
       fixture.renamedFile,
+      fixture.renamedSymbol ?? fixture.createdSymbol,
     );
+    if (
+      fixture.renamedSymbol !== undefined &&
+      fixture.renamedSymbol !== fixture.createdSymbol &&
+      renamed.nodes.some((node) => node.name === fixture.createdSymbol)
+    ) {
+      throw new Error(
+        `${experiment.language}: rename retained lifecycle declaration ${fixture.createdSymbol}`,
+      );
+    }
     assertCreatedEdge(renamed, fixture, experiment.language);
 
     fs.rmSync(renamedFile);
@@ -154,7 +163,7 @@ export const runStrictLifecycle = async (experiment, pinnedRoot) => {
       compilationDatabaseLifecycle.remove(compilationDatabase, renamedFile);
     }
     const deleted = await load("delete", CHANGED_MODES);
-    if (deleted.nodes.some((node) => node.name === fixture.createdSymbol)) {
+    if (hasLifecycleDeclaration(deleted, fixture)) {
       throw new Error(
         `${experiment.language}: deleted lifecycle declaration remained in the graph`,
       );
@@ -467,7 +476,7 @@ export const runStrictLifecycle = async (experiment, pinnedRoot) => {
         ? ["initial", ...CHANGED_MODES]
         : CHANGED_MODES,
     );
-    if (retried.nodes.some((node) => node.name === fixture.createdSymbol)) {
+    if (hasLifecycleDeclaration(retried, fixture)) {
       throw new Error(
         `${experiment.language}: retry retained a removed lifecycle declaration`,
       );
@@ -491,15 +500,28 @@ function strictProvenance(dump, experiment) {
   return provenance;
 }
 
-function assertCreatedSymbol(dump, fixture, language, expectedFile) {
+function assertCreatedSymbol(
+  dump,
+  language,
+  expectedFile,
+  expectedSymbol,
+) {
   const created = dump.nodes.find(
-    (node) => node.name === fixture.createdSymbol,
+    (node) => node.name === expectedSymbol,
   );
   if (created === undefined || created.file !== expectedFile) {
     throw new Error(
-      `${language}: lifecycle declaration was not published from ${expectedFile}`,
+      `${language}: lifecycle declaration ${expectedSymbol} was not published from ${expectedFile}`,
     );
   }
+}
+
+function hasLifecycleDeclaration(dump, fixture) {
+  const symbols = new Set([
+    fixture.createdSymbol,
+    fixture.renamedSymbol ?? fixture.createdSymbol,
+  ]);
+  return dump.nodes.some((node) => symbols.has(node.name));
 }
 
 function assertCreatedEdge(dump, fixture, language) {

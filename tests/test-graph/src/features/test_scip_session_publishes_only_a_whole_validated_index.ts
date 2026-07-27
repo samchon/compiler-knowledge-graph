@@ -197,9 +197,18 @@ async function assertGenerations(): Promise<void> {
       initial.snapshot.provenance.toolVersion,
       initial.snapshot.provenance.provider,
       initial.snapshot.provenance.authority,
+      initial.snapshot.provenance.protocolVersion,
     ],
-    ["fake-scip", "1.2.3", "scip-fake", "semantic-index"],
+    ["fake-scip", "1.2.3", "scip-fake", "semantic-index", 0],
   );
+  const futureProtocol = sessionOf(root, { protocolVersion: 1 });
+  const future = await futureProtocol.refresh();
+  TestValidator.equals(
+    "the producer's unknown numeric protocol reaches public provenance",
+    future.snapshot.provenance.protocolVersion,
+    1,
+  );
+  await futureProtocol.close();
   // The index carries no document text, so there is no honest checker digest
   // to give: hashing the disk here and calling it one would let a reader
   // "prove" byte-identity against text the facts were never computed from.
@@ -757,6 +766,7 @@ interface IFixtureOptions {
   languages?: ("go" | "rust")[];
   mutateInput?: string;
   goJson?: boolean;
+  protocolVersion?: number;
   projectRootFromInvocation?: boolean;
   maxStdoutBytes?: number;
   maxArtifactBytes?: number;
@@ -794,6 +804,9 @@ function sessionOf(root: string, options: IFixtureOptions = {}): ScipSession {
         ...(options.bare === true ? ["--no-tool-info"] : []),
         ...(options.plainRoot === true ? ["--plain-root"] : []),
         ...(options.goJson === true ? ["--go-json"] : []),
+        ...(options.protocolVersion === undefined
+          ? []
+          : [`--protocol-version=${options.protocolVersion}`]),
         ...(options.state === undefined ? [] : [`--state=${options.state}`]),
         ...(options.mutateInput === undefined
           ? []

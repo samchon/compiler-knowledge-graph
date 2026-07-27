@@ -112,6 +112,9 @@ function indexOf(generation) {
         : plainRoot
           ? root
           : `file://${root.startsWith("/") ? "" : "/"}${root.replace(/\\/g, "/")}`,
+      ...(options.has("protocol-version")
+        ? { version: Number(options.get("protocol-version")) }
+        : {}),
       ...(bare ? {} : { toolInfo: { name: "fake-scip", version: "1.2.3" } }),
     },
     documents: [

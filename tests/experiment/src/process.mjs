@@ -8,6 +8,11 @@ export const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.met
 export const experimentRoot = path.join(repositoryRoot, "tests", "experiment");
 export const workRoot = path.join(experimentRoot, ".work");
 export const resultsRoot = path.join(experimentRoot, "results");
+const provisionedEnvironmentFile = path.join(
+  workRoot,
+  "tools",
+  "environment.json",
+);
 
 export const parseArgs = (argv) => {
   const out = {};
@@ -47,23 +52,89 @@ export const ensureDir = (dir) => {
 };
 
 export const appendGithubPath = (dir) => {
-  process.env.PATH = `${dir}${path.delimiter}${process.env.PATH ?? ""}`;
+  const resolved = path.resolve(dir);
+  process.env.PATH = `${resolved}${path.delimiter}${process.env.PATH ?? ""}`;
   if (process.env.GITHUB_PATH !== undefined) {
-    fs.appendFileSync(process.env.GITHUB_PATH, `${dir}${os.EOL}`);
+    fs.appendFileSync(process.env.GITHUB_PATH, `${resolved}${os.EOL}`);
   }
+  const provisioned = readProvisionedEnvironment();
+  writeProvisionedEnvironment({
+    ...provisioned,
+    paths: [
+      resolved,
+      ...provisioned.paths.filter((candidate) => candidate !== resolved),
+    ],
+  });
+};
+
+/** Start one setup run without inheriting another language's tool contract. */
+export const resetProvisionedEnvironment = () => {
+  writeProvisionedEnvironment({ paths: [], environment: {} });
 };
 
 /**
  * Re-enter the tool environment created by a prior setup process.
  *
  * GitHub carries `GITHUB_PATH` into the next step, but a local `pnpm setup`
- * process cannot mutate the shell that later launches `pnpm start`. Every
- * durable setup link lives in this directory, so the runner activates it
- * explicitly instead of depending on a machine-global installation.
+ * process cannot mutate the shell that later launches `pnpm start`. The setup
+ * manifest retains every path and required variable it provisioned, so the
+ * runner activates the exact same environment instead of depending on a
+ * machine-global installation.
  */
 export const activateProvisionedTools = () => {
   const bin = path.join(workRoot, "tools", "bin");
-  process.env.PATH = `${bin}${path.delimiter}${process.env.PATH ?? ""}`;
+  const provisioned = readProvisionedEnvironment();
+  const paths = [
+    bin,
+    ...provisioned.paths,
+  ].filter((candidate, index, all) => all.indexOf(candidate) === index);
+  process.env.PATH = `${paths.join(path.delimiter)}${path.delimiter}${process.env.PATH ?? ""}`;
+  for (const [name, value] of Object.entries(provisioned.environment)) {
+    process.env[name] = value;
+  }
+};
+
+/** Retain one non-PATH value needed by a later local start process. */
+export const recordProvisionedEnvironment = (name, value) => {
+  const provisioned = readProvisionedEnvironment();
+  writeProvisionedEnvironment({
+    ...provisioned,
+    environment: { ...provisioned.environment, [name]: value },
+  });
+};
+
+const readProvisionedEnvironment = () => {
+  if (!fs.existsSync(provisionedEnvironmentFile)) {
+    return { paths: [], environment: {} };
+  }
+  const parsed = JSON.parse(
+    fs.readFileSync(provisionedEnvironmentFile, "utf8"),
+  );
+  if (
+    typeof parsed !== "object" ||
+    parsed === null ||
+    !Array.isArray(parsed.paths) ||
+    parsed.paths.some((entry) => typeof entry !== "string") ||
+    typeof parsed.environment !== "object" ||
+    parsed.environment === null ||
+    Array.isArray(parsed.environment) ||
+    Object.values(parsed.environment).some(
+      (entry) => typeof entry !== "string",
+    )
+  ) {
+    throw new Error(
+      `Invalid provisioned environment at ${provisionedEnvironmentFile}`,
+    );
+  }
+  return parsed;
+};
+
+const writeProvisionedEnvironment = (provisioned) => {
+  ensureDir(path.dirname(provisionedEnvironmentFile));
+  fs.writeFileSync(
+    provisionedEnvironmentFile,
+    `${JSON.stringify(provisioned, null, 2)}\n`,
+  );
 };
 
 export const localBin = (name) => {

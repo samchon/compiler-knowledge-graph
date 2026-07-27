@@ -9,8 +9,10 @@ import {
   appendGithubPath,
   ensureDir,
   parseArgs,
+  recordProvisionedEnvironment,
   recordTool,
   repositoryRoot,
+  resetProvisionedEnvironment,
   run,
   shell,
   resetToolManifest,
@@ -22,6 +24,7 @@ const experiment = findExperiment(args.language);
 const toolsRoot = path.join(workRoot, "tools");
 const binRoot = path.join(toolsRoot, "bin");
 ensureDir(binRoot);
+resetProvisionedEnvironment();
 appendGithubPath(binRoot);
 resetToolManifest(experiment.language);
 
@@ -526,6 +529,7 @@ switch (experiment.language) {
     // jdtls crashes on the runner's default JDK; point it at Java 21.
     const javaHome = "/usr/lib/jvm/java-21-openjdk-amd64";
     process.env.JAVA_HOME = javaHome;
+    recordProvisionedEnvironment("JAVA_HOME", javaHome);
     if (process.env.GITHUB_ENV !== undefined) {
       fs.appendFileSync(process.env.GITHUB_ENV, `JAVA_HOME=${javaHome}${os.EOL}`);
     }
@@ -598,14 +602,16 @@ switch (experiment.language) {
     // performs one. Whether that is faster, slower, or merely truer is the thing
     // to find out.
     apt(["openjdk-21-jdk"]);
-    process.env.JAVA_HOME = "/usr/lib/jvm/java-21-openjdk-amd64";
+    const javaHome = "/usr/lib/jvm/java-21-openjdk-amd64";
+    process.env.JAVA_HOME = javaHome;
+    recordProvisionedEnvironment("JAVA_HOME", javaHome);
     if (process.env.GITHUB_ENV !== undefined) {
       fs.appendFileSync(
         process.env.GITHUB_ENV,
-        `JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64${os.EOL}`,
+        `JAVA_HOME=${javaHome}${os.EOL}`,
       );
     }
-    appendGithubPath("/usr/lib/jvm/java-21-openjdk-amd64/bin");
+    appendGithubPath(path.join(javaHome, "bin"));
     await installScipJava();
     await installScip();
     break;

@@ -80,6 +80,16 @@ export const CORPUS = [
     url: "https://github.com/samchon/graph-benchmark-leveldb.git",
     commit: "7ee830d02b623e8ffe0b95d59a74db1e58da04c5",
     preflight: preflightMinimums(500, 1_500, 800, 3),
+    // scip-clang consumes a compilation database and declines without one, so
+    // this lane could only ever reach the fallback. CMake writes one during
+    // configure — nothing is compiled — and `build/compile_commands.json` is
+    // already a path the provider looks in, so no provider change is involved.
+    //
+    // Optional: without it the lane measures what it measures today rather than
+    // not measuring at all.
+    prepare: "cmake -S . -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
+    prepareIgnores: ["build/"],
+    prepareOptional: true,
   },
   {
     name: "sinatra",

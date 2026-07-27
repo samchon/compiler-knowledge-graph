@@ -34,9 +34,21 @@ on:
       # take them again; what produced them is.
       - "!tests/benchmark/results/**"
 
+# One measurement at a time, and never cancelled once it has started.
+#
+# Cancelling in progress is right for a gate: a superseded check is wasted work.
+# It is wrong for a measurement. A lane that is killed at minute fifty has spent
+# provisioning, a checkout and most of an hour to produce nothing, and during
+# active work every push kills the run before it — eleven consecutive runs of
+# this workflow were cancelled without one of them finishing, so the numbers
+# stopped moving while the code that produces them changed underneath.
+#
+# Serialized instead. Pushes queue behind the running measurement rather than
+# killing it, so each one completes and the newest queued run picks up the
+# newest code when its turn comes.
 concurrency:
   group: index-time-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: false
 
 jobs:
   measure:

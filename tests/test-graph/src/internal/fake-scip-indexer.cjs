@@ -51,6 +51,13 @@ if (mode === "silent-fail") {
   process.exit(3);
 }
 
+if (mode === "short-stdout-fail") {
+  // The ordinary case: a tool that fails with one line and prints it on stdout.
+  // Nothing to truncate, so nothing should be marked as truncated.
+  process.stdout.write("cannot open project\n");
+  process.exit(3);
+}
+
 if (mode === "stdout-fail") {
   // A build wrapper's shape: a long log on stdout, the failure at the end of
   // it, and nothing on stderr at all. `scip-java` runs the project's real

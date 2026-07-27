@@ -427,6 +427,21 @@ async function assertFailuresRetainTheGeneration(): Promise<void> {
     !loudFailureMessage.includes("OPENING LINE") &&
       loudFailureMessage.includes("…"),
   );
+  // The ordinary shape: one line, nothing to cut. An ellipsis here would claim
+  // the tool said more than it did, which is the same kind of untruth as
+  // dropping what it said.
+  const shortFailure = sessionOf(root, { mode: "short-stdout-fail" });
+  let shortFailureMessage = "";
+  try {
+    await shortFailure.refresh();
+  } catch (error) {
+    shortFailureMessage = (error as Error).message;
+  }
+  TestValidator.predicate(
+    "a short stdout failure is carried whole and unmarked",
+    shortFailureMessage.endsWith("cannot open project") &&
+      !shortFailureMessage.includes("…"),
+  );
   TestValidator.predicate(
     "a silent non-zero exit has no invented stderr suffix",
     silentFailureMessage.endsWith("exited with code 3"),

@@ -183,7 +183,12 @@ export const CORPUS = [
     name: "koin",
     language: "kotlin",
     url: "https://github.com/samchon/graph-benchmark-koin.git",
-    commit: "dc86ef8dd8fbe8564fb7453c03f5b738da3450bb",
+    // Koin already declares its complete Google and Maven Central repository
+    // set in settings and has no project-level repositories. The pinned fork
+    // makes that centralized boundary explicit: otherwise scip-java's
+    // defensive project-level Maven Central/Local injection takes precedence,
+    // hides Google Maven, and makes released AndroidX dependencies look absent.
+    commit: "9fbbdfb319bceeec4b13838bbe34cde48f2f3b05",
     preflight: preflightMinimums(1_000, 3_000, 1_500, 3),
     // koin keeps no build file at its checkout root — every module lives under
     // `projects/`, which is where its own build and its contributors work. An

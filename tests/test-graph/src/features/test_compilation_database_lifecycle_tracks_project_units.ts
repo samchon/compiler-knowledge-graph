@@ -16,10 +16,16 @@ export const test_compilation_database_lifecycle_tracks_project_units =
       "samchon-graph-compilation-lifecycle-",
     );
     const source = path.join(root, "source.c");
+    const argumentsSource = path.join(root, "arguments.c");
     const created = path.join(root, "created.c");
+    const argumentsCreated = path.join(root, "arguments-created.c");
     const renamed = path.join(root, "renamed.c");
     const databaseFile = path.join(root, "compile_commands.json");
     fs.writeFileSync(source, "int source(void) { return 0; }\n");
+    fs.writeFileSync(
+      argumentsSource,
+      "int arguments_source(void) { return 0; }\n",
+    );
     fs.writeFileSync(
       databaseFile,
       `${JSON.stringify(
@@ -32,8 +38,9 @@ export const test_compilation_database_lifecycle_tracks_project_units =
           },
           {
             directory: root,
-            file: "source.c",
-            arguments: ["cc", "-c", "source.c", "-o", "source-args.c.o"],
+            file: "arguments.c",
+            arguments: ["cc", "-c", "arguments.c", "-o", "arguments.c.o"],
+            output: "arguments.c.o",
           },
         ],
         null,
@@ -58,16 +65,26 @@ export const test_compilation_database_lifecycle_tracks_project_units =
     const lifecycle = imported.compilationDatabaseLifecycle;
 
     lifecycle.add(databaseFile, source, created);
+    lifecycle.add(databaseFile, argumentsSource, argumentsCreated);
     let database = readDatabase(databaseFile);
     TestValidator.equals(
       "creating a unit preserves the template and registers the new source",
       database.map((entry) => path.resolve(entry.directory, entry.file)),
-      [source, source, created],
+      [source, argumentsSource, created, argumentsCreated],
     );
     TestValidator.predicate(
-      "the cloned command and output point at the created unit",
+      "the cloned command and metadata name one unique created output",
       database[2]?.command?.includes(created) === true &&
+        database[2]?.command?.includes("-o created.c.o") === true &&
+        database[2]?.command?.includes("-o source.c.o") === false &&
         database[2]?.output === "created.c.o",
+    );
+    TestValidator.predicate(
+      "the cloned argument vector and metadata name one unique created output",
+      database[3]?.arguments?.includes("arguments-created.c") === true &&
+        database[3]?.arguments?.includes("arguments-created.c.o") === true &&
+        database[3]?.arguments?.includes("arguments.c.o") === false &&
+        database[3]?.output === "arguments-created.c.o",
     );
 
     lifecycle.move(databaseFile, created, renamed);
@@ -84,11 +101,27 @@ export const test_compilation_database_lifecycle_tracks_project_units =
     TestValidator.equals(
       "deleting a unit removes only its cloned compilation command",
       database.map((entry) => path.resolve(entry.directory, entry.file)),
-      [source, source],
+      [source, argumentsSource, argumentsCreated],
     );
+    lifecycle.remove(databaseFile, argumentsCreated);
     TestValidator.error(
       "an unregistered unit cannot be moved",
       () => lifecycle.move(databaseFile, renamed, created),
+    );
+    fs.writeFileSync(
+      databaseFile,
+      `${JSON.stringify([
+        {
+          directory: root,
+          file: source,
+          command: `cc -c "${source}" -o command.o`,
+          output: "metadata.o",
+        },
+      ])}\n`,
+    );
+    TestValidator.error(
+      "conflicting output evidence cannot be cloned",
+      () => lifecycle.add(databaseFile, source, created),
     );
   };
 

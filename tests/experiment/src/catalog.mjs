@@ -232,9 +232,51 @@ export const LANGUAGE_EXPERIMENTS = [
   },
   {
     language: "lua",
-    repository: "https://github.com/nvim-lualine/lualine.nvim.git",
-    commit: "221ce6b2d999187044529f49da6554a92f740a96",
-    maxFiles: 120,
+    // The benchmark fork, because it carries the `.luarc.json` the provider
+    // declares as a build input and upstream does not. A strict row has to be
+    // able to move a build configuration, and there was none here to move.
+    repository: "https://github.com/samchon/graph-benchmark-lualine.git",
+    commit: "fa111072655a5c669f466aa36c7dbd34e4f7012c",
+    // No `maxFiles`: `samchon-graph-lua` refuses a cap outright. It exports the
+    // whole workspace in one pass and has no bounded mode, so honouring a limit
+    // would mean indexing everything and then deleting facts — which costs what
+    // the cap was meant to save and leaves missing edges indistinguishable from
+    // absent ones. Every capped row in this catalog is a row no strict provider
+    // can serve, which is why the four that declare one all run uncapped.
+    strictProvider: "samchon-graph-lua",
+    strictAuthority: "analyzer",
+    strictTool: "lua-language-server",
+    requiredCapabilities: ["universe", "diskDigests"],
+    // `references` and nothing else. `vm.getRefs` answers "where else does this
+    // symbol appear", and the exporter cannot tell a call from a read or an
+    // assignment, so declaring `calls` would be inference dressed as a fact.
+    semanticEdges: ["references"],
+    semanticLimitation:
+      "lua-language-server's vm.getRefs reports occurrences without distinguishing a call from a read or an assignment, so samchon-graph-lua proves references and no narrower family",
+    crossFileEdge: "references",
+    lifecycle: {
+      sourceFile: "lua/lualine/config.lua",
+      editSuffix: "\n-- samchon-graph lifecycle edit\n",
+      createFile: "lua/lualine/samchon_graph_experiment.lua",
+      renamedFile: "lua/lualine/samchon_graph_experiment_renamed.lua",
+      createText:
+        'local M = {}\n\nfunction M.samchonGraphExperiment()\n  return "strict-lifecycle"\nend\n\nreturn M\n',
+      createdSymbol: "samchonGraphExperiment",
+      // The build input the fork now carries. Before it, this project declared
+      // no file the provider watches, so a moving build configuration was
+      // untestable rather than merely untested.
+      buildFile: ".luarc.json",
+      failureFile: ".luarc.json",
+      failureSuffix: "\n{ not json",
+      // lua-language-server reads a malformed `.luarc.json`, logs it, and
+      // carries on with defaults rather than refusing to start — so the export
+      // still lands and the provider still publishes. `tolerated` is what that
+      // is; claiming `reject` would pin this harness to a boundary the producer
+      // does not have.
+      failurePolicy: "tolerated",
+      failureLimitation:
+        "lua-language-server recovers from a malformed .luarc.json and serves with default settings, so a broken Lua workspace configuration is not a fail-closed boundary for this producer",
+    },
     minNodes: 1,
     minEdges: 0,
   },

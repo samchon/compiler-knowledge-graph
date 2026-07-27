@@ -698,7 +698,7 @@ async function openLanguageSession(
     root,
     options.lspMaxMessageBytes,
     windowsVerbatimArguments,
-    lspRequestTrace(),
+    lspRequestTrace(process.env, undefined, options.signal),
   );
   const diagnostics = new Map<string, ISamchonGraphDiagnostic[]>();
   let lastProgressAt = 0;

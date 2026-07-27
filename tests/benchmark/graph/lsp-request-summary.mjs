@@ -1,14 +1,24 @@
 /**
  * Fold the content-minimal LSP request log into evidence a timeout can use.
  *
- * Requests with a start and no end are the server calls still outstanding when
- * the outer diagnostic process stopped. Completed counts and durations show
- * whether the client lane continued making progress around them.
+ * A cutoff marker freezes the server calls outstanding when the outer
+ * diagnostic stopped. Later error ends belong to graceful process cleanup, not
+ * to server progress before the deadline, so they are retained separately.
  */
 export function summarizeLspRequestTrace(log) {
   const requests = new Map();
   const methods = new Map();
+  let cutoffInFlight;
+  let postCutoffEndCount = 0;
+  let postCutoffErrorCount = 0;
   for (const line of log.split(/\r?\n/)) {
+    if (
+      line === "@samchon/graph: lsp-request phase=cutoff" &&
+      cutoffInFlight === undefined
+    ) {
+      cutoffInFlight = new Map(requests);
+      continue;
+    }
     const match =
       /^@samchon\/graph: lsp-request id=(\d+) method=("(?:\\.|[^"\\])*") phase=(start|end)(?: status=(success|error) durationMs=([0-9.]+))?$/.exec(
         line,
@@ -23,21 +33,35 @@ export function summarizeLspRequestTrace(log) {
       errors: 0,
       totalDurationMs: 0,
       maxDurationMs: 0,
+      postCutoffEnds: 0,
+      postCutoffErrors: 0,
+      postCutoffMaxDurationMs: 0,
     };
     methods.set(method, aggregate);
     if (phase === "start") {
-      aggregate.started += 1;
+      if (cutoffInFlight === undefined) aggregate.started += 1;
       requests.set(id, { id, method });
       continue;
     }
     const durationMs = Number(match[5]);
-    aggregate.completed += 1;
-    aggregate.errors += match[4] === "error" ? 1 : 0;
-    aggregate.totalDurationMs += durationMs;
-    aggregate.maxDurationMs = Math.max(
-      aggregate.maxDurationMs,
-      durationMs,
-    );
+    if (cutoffInFlight !== undefined) {
+      postCutoffEndCount += 1;
+      postCutoffErrorCount += match[4] === "error" ? 1 : 0;
+      aggregate.postCutoffEnds += 1;
+      aggregate.postCutoffErrors += match[4] === "error" ? 1 : 0;
+      aggregate.postCutoffMaxDurationMs = Math.max(
+        aggregate.postCutoffMaxDurationMs,
+        durationMs,
+      );
+    } else {
+      aggregate.completed += 1;
+      aggregate.errors += match[4] === "error" ? 1 : 0;
+      aggregate.totalDurationMs += durationMs;
+      aggregate.maxDurationMs = Math.max(
+        aggregate.maxDurationMs,
+        durationMs,
+      );
+    }
     requests.delete(id);
   }
   const methodRows = Object.fromEntries(
@@ -56,9 +80,14 @@ export function summarizeLspRequestTrace(log) {
     0,
   );
   return {
+    cutoffObserved: cutoffInFlight !== undefined,
     requestCount,
     completedCount,
-    inFlight: [...requests.values()].sort((left, right) => left.id - right.id),
+    postCutoffEndCount,
+    postCutoffErrorCount,
+    inFlight: [...(cutoffInFlight ?? requests).values()].sort(
+      (left, right) => left.id - right.id,
+    ),
     methods: methodRows,
   };
 }

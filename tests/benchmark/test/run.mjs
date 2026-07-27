@@ -758,14 +758,20 @@ function testLspRequestDiagnosisSummary() {
   );
   assert.deepEqual(
     {
+      cutoffObserved: summary.cutoffObserved,
       requestCount: summary.requestCount,
       completedCount: summary.completedCount,
+      postCutoffEndCount: summary.postCutoffEndCount,
+      postCutoffErrorCount: summary.postCutoffErrorCount,
       inFlight: summary.inFlight,
       methods: summary.methods,
     },
     {
+      cutoffObserved: false,
       requestCount: 3,
       completedCount: 2,
+      postCutoffEndCount: 0,
+      postCutoffErrorCount: 0,
       inFlight: [{ id: 2, method: "textDocument/references" }],
       methods: {
         initialize: {
@@ -774,6 +780,9 @@ function testLspRequestDiagnosisSummary() {
           errors: 0,
           totalDurationMs: 12.5,
           maxDurationMs: 12.5,
+          postCutoffEnds: 0,
+          postCutoffErrors: 0,
+          postCutoffMaxDurationMs: 0,
         },
         "textDocument/references": {
           started: 2,
@@ -781,10 +790,62 @@ function testLspRequestDiagnosisSummary() {
           errors: 1,
           totalDurationMs: 4.25,
           maxDurationMs: 4.25,
+          postCutoffEnds: 0,
+          postCutoffErrors: 0,
+          postCutoffMaxDurationMs: 0,
         },
       },
     },
     "request diagnosis must preserve completed progress and the exact call still in flight",
+  );
+
+  const cutoff = summarizeLspRequestTrace(
+    [
+      '@samchon/graph: lsp-request id=1 method="initialize" phase=start',
+      '@samchon/graph: lsp-request id=1 method="initialize" phase=end status=success durationMs=12.500',
+      '@samchon/graph: lsp-request id=2 method="textDocument/references" phase=start',
+      '@samchon/graph: lsp-request id=3 method="textDocument/references" phase=start',
+      "@samchon/graph: lsp-request phase=cutoff",
+      '@samchon/graph: lsp-request id=2 method="textDocument/references" phase=end status=error durationMs=300001.000',
+      '@samchon/graph: lsp-request id=3 method="textDocument/references" phase=end status=error durationMs=299999.000',
+    ].join("\n"),
+  );
+  assert.deepEqual(
+    cutoff,
+    {
+      cutoffObserved: true,
+      requestCount: 3,
+      completedCount: 1,
+      postCutoffEndCount: 2,
+      postCutoffErrorCount: 2,
+      inFlight: [
+        { id: 2, method: "textDocument/references" },
+        { id: 3, method: "textDocument/references" },
+      ],
+      methods: {
+        initialize: {
+          started: 1,
+          completed: 1,
+          errors: 0,
+          totalDurationMs: 12.5,
+          maxDurationMs: 12.5,
+          postCutoffEnds: 0,
+          postCutoffErrors: 0,
+          postCutoffMaxDurationMs: 0,
+        },
+        "textDocument/references": {
+          started: 2,
+          completed: 0,
+          errors: 0,
+          totalDurationMs: 0,
+          maxDurationMs: 0,
+          postCutoffEnds: 2,
+          postCutoffErrors: 2,
+          postCutoffMaxDurationMs: 300001,
+        },
+      },
+    },
+    "request diagnosis must freeze in-flight identities before abort cleanup emits terminal errors",
   );
 }
 

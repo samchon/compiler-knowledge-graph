@@ -2,6 +2,7 @@ import type { LspClient } from "./LspClient";
 
 const LSP_REQUEST_TRACE_ENV =
   "SAMCHON_GRAPH_LSP_REQUEST_TRACE";
+const CUTOFF_SIGNALS = new WeakSet<AbortSignal>();
 
 /**
  * Opt-in request timing for long-running benchmark diagnosis.
@@ -12,8 +13,21 @@ const LSP_REQUEST_TRACE_ENV =
 export function lspRequestTrace(
   env: NodeJS.ProcessEnv = process.env,
   write: (line: string) => unknown = process.stderr.write.bind(process.stderr),
+  signal?: AbortSignal,
 ): LspClient.IRequestObserver | undefined {
   if (env[LSP_REQUEST_TRACE_ENV] !== "1") return undefined;
+  if (signal !== undefined && !CUTOFF_SIGNALS.has(signal)) {
+    CUTOFF_SIGNALS.add(signal);
+    const cutoff = (): void => {
+      try {
+        write("@samchon/graph: lsp-request phase=cutoff\n");
+      } catch {
+        // Diagnostics must never change signal or transport behavior.
+      }
+    };
+    if (signal.aborted) cutoff();
+    else signal.addEventListener("abort", cutoff, { once: true });
+  }
   return (event) => {
     const prefix =
       `@samchon/graph: lsp-request id=${String(event.id)}` +

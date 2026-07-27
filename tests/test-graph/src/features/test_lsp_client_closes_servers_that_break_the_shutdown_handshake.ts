@@ -284,6 +284,7 @@ const assertRequestTraceFormatting = async (): Promise<void> => {
     lspRequestTrace(
       env?: NodeJS.ProcessEnv,
       write?: (line: string) => unknown,
+      signal?: AbortSignal,
     ): ((event: LspRequestTrace) => void) | undefined;
   }>("lsp/lspRequestTrace.js");
   const LSP_REQUEST_TRACE_ENV = "SAMCHON_GRAPH_LSP_REQUEST_TRACE";
@@ -301,9 +302,11 @@ const assertRequestTraceFormatting = async (): Promise<void> => {
   }
 
   const lines: string[] = [];
+  const cutoff = new AbortController();
   const trace = lspRequestTrace(
     { [LSP_REQUEST_TRACE_ENV]: "1" },
     (line) => lines.push(line),
+    cutoff.signal,
   );
   trace?.({
     phase: "start",
@@ -317,13 +320,62 @@ const assertRequestTraceFormatting = async (): Promise<void> => {
     status: "success",
     durationMs: 12.3456,
   });
+  cutoff.abort();
   TestValidator.equals(
-    "request timing names no parameters or paths",
+    "request timing names no parameters or paths and marks the abort cutoff",
     lines,
     [
       '@samchon/graph: lsp-request id=7 method="textDocument/references" phase=start\n',
       '@samchon/graph: lsp-request id=7 method="textDocument/references" phase=end status=success durationMs=12.346\n',
+      "@samchon/graph: lsp-request phase=cutoff\n",
     ],
+  );
+  lspRequestTrace(
+    { [LSP_REQUEST_TRACE_ENV]: "1" },
+    (line) => lines.push(line),
+    cutoff.signal,
+  );
+  TestValidator.equals(
+    "one abort signal emits one cutoff across clients",
+    [lines.length, lines.at(-1)],
+    [3, "@samchon/graph: lsp-request phase=cutoff\n"],
+  );
+
+  const alreadyAborted = new AbortController();
+  alreadyAborted.abort();
+  const alreadyAbortedLines: string[] = [];
+  lspRequestTrace(
+    { [LSP_REQUEST_TRACE_ENV]: "1" },
+    (line) => alreadyAbortedLines.push(line),
+    alreadyAborted.signal,
+  );
+  TestValidator.equals(
+    "an already-aborted trace marks its cutoff immediately",
+    alreadyAbortedLines,
+    ["@samchon/graph: lsp-request phase=cutoff\n"],
+  );
+
+  const unbounded = lspRequestTrace(
+    { [LSP_REQUEST_TRACE_ENV]: "1" },
+    () => undefined,
+  );
+  TestValidator.predicate(
+    "an enabled trace does not require a cutoff signal",
+    unbounded !== undefined,
+  );
+
+  const resilientCutoff = new AbortController();
+  lspRequestTrace(
+    { [LSP_REQUEST_TRACE_ENV]: "1" },
+    () => {
+      throw new Error("diagnostic cutoff failed");
+    },
+    resilientCutoff.signal,
+  );
+  resilientCutoff.abort();
+  TestValidator.predicate(
+    "a cutoff observer cannot change abort behavior",
+    resilientCutoff.signal.aborted,
   );
 };
 

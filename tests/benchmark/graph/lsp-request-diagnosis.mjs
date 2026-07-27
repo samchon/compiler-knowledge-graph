@@ -152,8 +152,11 @@ const summary = {
       : "completed",
   exitStatus: result.status,
   signal: result.signal,
+  cutoffObserved: trace.cutoffObserved,
   requestCount: trace.requestCount,
   completedCount: trace.completedCount,
+  postCutoffEndCount: trace.postCutoffEndCount,
+  postCutoffErrorCount: trace.postCutoffErrorCount,
   inFlight: trace.inFlight,
   methods: trace.methods,
 };

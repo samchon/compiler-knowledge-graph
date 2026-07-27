@@ -185,10 +185,12 @@ export const CORPUS = [
     url: "https://github.com/samchon/graph-benchmark-koin.git",
     // Koin already declares its complete Google and Maven Central repository
     // set in settings and has no project-level repositories. The pinned fork
-    // makes that centralized boundary explicit: otherwise scip-java's
-    // defensive project-level Maven Central/Local injection takes precedence,
-    // hides Google Maven, and makes released AndroidX dependencies look absent.
-    commit: "9fbbdfb319bceeec4b13838bbe34cde48f2f3b05",
+    // preserves that centralized boundary against scip-java's repository
+    // injection. It also disables only scip-java 0.13.1's optional dependency
+    // metadata task in Android modules, where resolving a live Gradle
+    // configuration container throws ConcurrentModificationException; the
+    // compiler-backed scipCompileAll task still indexes every module.
+    commit: "b6b55191a3fc380e616d7c9e91cf573af9f9b9a3",
     preflight: preflightMinimums(1_000, 3_000, 1_500, 3),
     // koin keeps no build file at its checkout root — every module lives under
     // `projects/`, which is where its own build and its contributors work. An

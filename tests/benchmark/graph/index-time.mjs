@@ -50,6 +50,7 @@ import {
   assertIndexReport,
   assertWebsitePublication,
 } from "./publication-document.mjs";
+import { javaSystemProperty } from "./java-tool-options.mjs";
 import { removeTree } from "./remove-tree.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -250,7 +251,7 @@ for (const project of selected) {
         // on is part of it.
         report.cells.push({
           ...cell,
-          measuredAt: report.date,
+          measuredAt: new Date().toISOString(),
           cacheIsolation: cellCache.kind,
           host: report.host,
           quietWait,
@@ -601,6 +602,7 @@ function hostSpec() {
 function publishWebsiteIndex(currentReport) {
   if (parsed.flags.has("--no-website")) return;
   assertIndexReport(currentReport, "incoming index-time result");
+  assertIncomingReportScope(currentReport);
   const prior = fs.existsSync(websiteJson) ? loadJson(websiteJson) : null;
   if (prior !== null) {
     assertWebsitePublication(prior);
@@ -608,13 +610,13 @@ function publishWebsiteIndex(currentReport) {
   const keepPrior = !parsed.flags.has("--reset-index");
   const priorIndex = keepPrior ? (prior?.index ?? null) : null;
   const scale = { ...(priorIndex?.scale ?? {}), ...currentReport.scale };
-  const cells = [...(priorIndex?.cells ?? [])];
+  const projects = new Set(currentReport.projects);
+  const tools = new Set(currentReport.tools);
+  const cells = (priorIndex?.cells ?? []).filter(
+    (cell) => !projects.has(cell.project) || !tools.has(cell.tool),
+  );
   for (const cell of currentReport.cells) {
-    const at = cells.findIndex(
-      (old) => old.project === cell.project && old.tool === cell.tool,
-    );
-    if (at >= 0) cells[at] = cell;
-    else cells.push(cell);
+    cells.push(cell);
   }
   const out = {
     schemaVersion: prior?.schemaVersion ?? 1,
@@ -635,13 +637,58 @@ function publishWebsiteIndex(currentReport) {
 }
 
 /**
+ * A measured report owns the whole project/tool rectangle it declares.
+ *
+ * The file is written before the first tool and after every successful tool.
+ * If a later tool crashes, its final uploaded report is intentionally
+ * incomplete. Folding only the cells that happened to finish would retain the
+ * failed tool's old value and manufacture a strict/fallback pair from separate
+ * runs. The scope metadata makes absence authoritative instead.
+ */
+function assertIncomingReportScope(incoming) {
+  for (const field of ["projects", "tools"]) {
+    const values = incoming[field];
+    if (
+      !Array.isArray(values) ||
+      values.length === 0 ||
+      values.some((value) => typeof value !== "string" || value.trim() === "")
+    ) {
+      throw new TypeError(
+        `incoming index-time result.${field} must be a nonempty string array`,
+      );
+    }
+    if (new Set(values).size !== values.length) {
+      throw new TypeError(
+        `incoming index-time result.${field} must not contain duplicates`,
+      );
+    }
+  }
+  const projects = new Set(incoming.projects);
+  const tools = new Set(incoming.tools);
+  for (const project of projects) {
+    if (incoming.scale[project] === undefined) {
+      throw new TypeError(
+        `incoming index-time result.scale must describe scoped project ${project}`,
+      );
+    }
+  }
+  for (const cell of incoming.cells) {
+    if (!projects.has(cell.project) || !tools.has(cell.tool)) {
+      throw new TypeError(
+        `incoming index-time result cell ${cell.project}/${cell.tool} is outside its declared scope`,
+      );
+    }
+  }
+}
+
+/**
  * Begin a complete matrix without inheriting cells this run did not produce.
  *
- * Partial manual dispatches intentionally merge one project into the durable
- * publication. A full workflow run is different: if one lane fails before
- * writing a report, retaining its old cell would make a partial run look
- * complete. Preserve the unrelated benchmark axes and remove the whole index
- * axis before the first full-matrix report is folded.
+ * Partial manual dispatches replace their declared project/tool rectangle and
+ * preserve every unrelated cell. A full workflow run is different: if one
+ * lane fails before writing any report, no scoped fold can remove its old
+ * cells. Preserve the unrelated benchmark axes and remove the whole index axis
+ * before the first full-matrix report is folded.
  */
 function resetWebsiteIndex() {
   const prior = fs.existsSync(websiteJson) ? loadJson(websiteJson) : null;
@@ -946,9 +993,9 @@ function prepareCellCache(project, spec, tool) {
     if (spec.language === "java" || spec.language === "kotlin") {
       env.GRADLE_USER_HOME = path.join(root, "gradle");
       const localRepository = path.join(root, "maven").replaceAll("\\", "/");
-      env.MAVEN_OPTS = [
-        process.env.MAVEN_OPTS,
-        `-Dmaven.repo.local=${localRepository}`,
+      env.JAVA_TOOL_OPTIONS = [
+        process.env.JAVA_TOOL_OPTIONS,
+        javaSystemProperty("maven.repo.local", localRepository),
       ]
         .filter(Boolean)
         .join(" ");

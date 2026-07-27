@@ -12,6 +12,7 @@ import {
   pubspecRequiresFlutter,
   assertPinnedCheckout,
 } from "../graph/language.mjs";
+import { javaSystemProperty } from "../graph/java-tool-options.mjs";
 import { assertPublicationCandidates } from "../graph/publication-gate.mjs";
 import { agentPublicationDocument } from "../graph/publication-document.mjs";
 import { removeTree } from "../graph/remove-tree.mjs";
@@ -69,6 +70,7 @@ testPublishedIndexCellsNameTheirMachine();
 testAgentPublicationPreservesIndexResults();
 testIndexPublicationRefusesMalformedJson();
 testIndexCellIsolationContract();
+testJavaToolOptionEncoding();
 testReadOnlyCellCacheCleanup();
 console.log("benchmark system tests: ok");
 
@@ -259,6 +261,8 @@ function testIndexPublicationRefusesMalformedJson() {
   });
   const validReport = JSON.stringify({
     host: FIXTURE_HOST,
+    projects: ["fixture"],
+    tools: ["samchon-graph"],
     scale: { fixture: { files: 1, lines: 1 } },
     cells: [
       {
@@ -380,6 +384,8 @@ function testIndexPublicationRefusesMalformedJson() {
   fs.writeFileSync(publication, validPublication);
   const hostlessIncomingReport = JSON.stringify({
     host: { cpu: "fixture" },
+    projects: ["fixture"],
+    tools: ["samchon-graph"],
     scale: { fixture: { files: 1, lines: 1 } },
     cells: [
       {
@@ -457,6 +463,8 @@ function testIndexPublicationRefusesMalformedJson() {
     fs.writeFileSync(publication, validPublication);
     const invalidOutcomeReport = JSON.stringify({
       host: FIXTURE_HOST,
+      projects: ["fixture"],
+      tools: ["samchon-graph"],
       scale: { fixture: { files: 1, lines: 1 } },
       cells: [invalidCell],
     });
@@ -477,6 +485,127 @@ function testIndexPublicationRefusesMalformedJson() {
       `a ${label} incoming cell must not change the publication`,
     );
   }
+  const validReportDocument = JSON.parse(validReport);
+  for (const [label, invalidScope] of [
+    [
+      "missing project scope",
+      { ...validReportDocument, projects: undefined },
+    ],
+    [
+      "duplicate tool scope",
+      {
+        ...validReportDocument,
+        tools: ["samchon-graph", "samchon-graph"],
+      },
+    ],
+    [
+      "missing scoped scale",
+      { ...validReportDocument, scale: {} },
+    ],
+    [
+      "out-of-scope cell",
+      {
+        ...validReportDocument,
+        cells: [
+          {
+            ...validReportDocument.cells[0],
+            tool: "samchon-graph-fallback",
+          },
+        ],
+      },
+    ],
+  ]) {
+    fs.writeFileSync(publication, validPublication);
+    fs.writeFileSync(report, JSON.stringify(invalidScope));
+    const invalidScopeOutcome = cp.spawnSync(
+      process.execPath,
+      [runner, `--publish=${report}`],
+      {
+        encoding: "utf8",
+        env: { ...process.env, SAMCHON_BENCH_INDEX_JSON: publication },
+        windowsHide: true,
+      },
+    );
+    assert.notEqual(invalidScopeOutcome.status, 0);
+    assert.equal(
+      fs.readFileSync(publication, "utf8"),
+      validPublication,
+      `a report with ${label} must not change the publication`,
+    );
+  }
+  const partialPrior = {
+    ...JSON.parse(validPublication),
+    index: {
+      host: FIXTURE_HOST,
+      scale: {
+        fixture: { files: 1, lines: 1 },
+        unrelated: { files: 2, lines: 2 },
+      },
+      cells: [
+        {
+          project: "fixture",
+          tool: "samchon-graph",
+          buildMs: 1,
+          host: FIXTURE_HOST,
+        },
+        {
+          project: "fixture",
+          tool: "samchon-graph-fallback",
+          buildMs: 2,
+          host: FIXTURE_HOST,
+        },
+        {
+          project: "unrelated",
+          tool: "samchon-graph",
+          buildMs: 3,
+          host: FIXTURE_HOST,
+        },
+      ],
+    },
+  };
+  const incompletePairReport = {
+    host: FIXTURE_HOST,
+    projects: ["fixture"],
+    tools: ["samchon-graph", "samchon-graph-fallback"],
+    scale: { fixture: { files: 4, lines: 4 } },
+    cells: [
+      {
+        project: "fixture",
+        tool: "samchon-graph",
+        buildMs: 4,
+        host: FIXTURE_HOST,
+      },
+    ],
+  };
+  fs.writeFileSync(publication, JSON.stringify(partialPrior));
+  fs.writeFileSync(report, JSON.stringify(incompletePairReport));
+  const partial = cp.spawnSync(
+    process.execPath,
+    [runner, `--publish=${report}`],
+    {
+      encoding: "utf8",
+      env: { ...process.env, SAMCHON_BENCH_INDEX_JSON: publication },
+      windowsHide: true,
+    },
+  );
+  assert.equal(partial.status, 0, partial.stderr);
+  const partialPublication = JSON.parse(fs.readFileSync(publication, "utf8"));
+  assert.deepEqual(
+    partialPublication.index.cells.map((cell) => [
+      cell.project,
+      cell.tool,
+      cell.buildMs,
+    ]),
+    [
+      ["unrelated", "samchon-graph", 3],
+      ["fixture", "samchon-graph", 4],
+    ],
+    "an incomplete partial report must remove every old cell in its declared project/tool scope",
+  );
+  assert.deepEqual(partialPublication.structural, { retained: true });
+  assert.deepEqual(partialPublication.agent, {
+    cells: [FIXTURE_AGENT_CELL],
+  });
   const stalePublication = {
     ...JSON.parse(validPublication),
     index: {
@@ -543,9 +672,13 @@ function testIndexCellIsolationContract() {
     );
   }
   assert.ok(
-    source.includes("`-Dmaven.repo.local=${localRepository}`") &&
-      !source.includes('`-Dmaven.repo.local="${localRepository}"`'),
-    "Maven must receive an absolute local repository without literal quote characters",
+    source.includes("env.JAVA_TOOL_OPTIONS = [") &&
+      source.includes("process.env.JAVA_TOOL_OPTIONS") &&
+      source.includes(
+        'javaSystemProperty("maven.repo.local", localRepository)',
+      ) &&
+      !source.includes("env.MAVEN_OPTS = ["),
+    "Maven-launched JVMs and direct JDTLS must share one quoted, caller-preserving local-repository property",
   );
   assert.ok(
     source.includes("copyPreparedFixtureCompanion(spec, source, target)") &&
@@ -561,6 +694,26 @@ function testIndexCellIsolationContract() {
           'node tests/benchmark/graph/index-time.mjs --publish="$report"',
         ),
     "a complete matrix must discard stale index cells before folding current reports",
+  );
+}
+
+function testJavaToolOptionEncoding() {
+  assert.equal(
+    javaSystemProperty(
+      "maven.repo.local",
+      "D:/benchmark output/cell cache/maven",
+    ),
+    '-Dmaven.repo.local="D:/benchmark output/cell cache/maven"',
+    "the JVM-owned Maven repository property must preserve spaces in a legal output path",
+  );
+  assert.equal(
+    javaSystemProperty("fixture", 'D:/benchmark "quoted"/cache'),
+    '-Dfixture="D:/benchmark \\"quoted\\"/cache"',
+    "the JVM-owned property must escape quotes inside its value",
+  );
+  assert.throws(
+    () => javaSystemProperty("invalid property", "fixture"),
+    /invalid Java system property name/,
   );
 }
 

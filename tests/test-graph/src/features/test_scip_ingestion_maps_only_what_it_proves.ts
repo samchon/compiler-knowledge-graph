@@ -20,6 +20,7 @@ import {
 export const test_scip_ingestion_maps_only_what_it_proves = async () => {
   assertSymbolParsing();
   assertIndexValidation();
+  assertDocumentOrderIsDecidedHere();
   assertTranslationUnitsFoldIntoOneDocument();
   assertDisagreeingUnitsAreNamed();
   assertDisagreeingTextIsRefused();
@@ -1760,5 +1761,44 @@ function assertDisagreeingTextIsRefused(): void {
   TestValidator.predicate(
     "a text disagreement across units is refused",
     message.includes("disagree about the text of moved.c"),
+  );
+}
+
+/**
+ * Document order is the producer's business, so the parse decides it.
+ *
+ * rust-analyzer walks crates in parallel and its document order varies between
+ * runs of an unchanged project. Two indexes of one source then normalized to
+ * different bytes, which the graph reported as the project having moved —
+ * intermittently, and on every platform at once, which is the shape of a
+ * schedule rather than a change.
+ */
+function assertDocumentOrderIsDecidedHere(): void {
+  const index = parseScipIndex({
+    metadata: { projectRoot: "file:///r" },
+    documents: [
+      { relative_path: "z.rs" },
+      { relative_path: "a.rs" },
+      { relative_path: "m.rs" },
+    ],
+  });
+  TestValidator.equals(
+    "documents are ordered by path, not by arrival",
+    index.documents.map((document) => document.relativePath),
+    ["a.rs", "m.rs", "z.rs"],
+  );
+
+  const reversed = parseScipIndex({
+    metadata: { projectRoot: "file:///r" },
+    documents: [
+      { relative_path: "m.rs" },
+      { relative_path: "z.rs" },
+      { relative_path: "a.rs" },
+    ],
+  });
+  TestValidator.equals(
+    "so two arrival orders of one project parse identically",
+    JSON.stringify(reversed.documents),
+    JSON.stringify(index.documents),
   );
 }

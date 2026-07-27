@@ -874,7 +874,20 @@ function foldDocumentsByPath(
       `scip: ${relativePath} was indexed as ${String(count)} translation units; their occurrences are folded into one document`,
     );
   }
-  return [...byPath.values()];
+  // Sorted, because an indexer's document order is its own business and at
+  // least one producer's varies between runs of an unchanged project.
+  // rust-analyzer walks crates in parallel, and two indexes of one source have
+  // published different normalized snapshot bytes purely from the order they
+  // came back in — a difference the graph then reported as the project having
+  // moved. Ordering here makes every downstream digest a function of the facts
+  // rather than of the schedule that produced them.
+  return [...byPath.values()].sort((left, right) =>
+    left.relativePath < right.relativePath
+      ? -1
+      : left.relativePath > right.relativePath
+        ? 1
+        : 0,
+  );
 }
 
 function mergeDocuments(

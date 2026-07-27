@@ -381,7 +381,7 @@ function assertALaunchThatNeverRanSaysNothing(): void {
     bin,
     process.platform === "win32" ? "broken-toolchain.cmd" : "broken-toolchain",
   );
-  fs.writeFileSync(unlaunchable, "  not a program ");
+  fs.writeFileSync(unlaunchable, "\0\0not a program\0");
   fs.chmodSync(unlaunchable, 0o755);
   const row = toolchainVersion({
     root,

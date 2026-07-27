@@ -120,7 +120,9 @@ const { index: currentIndex } = selectCurrentIndex(
 // keeps the standalone token charts from relabelling an old agent result after
 // the corpus advances.
 const allCells = (report.agent?.cells ?? []).filter(
-  (cell) => cell.fixtureBranch === selectedFixtures[cell.repo],
+  (cell) =>
+    Object.hasOwn(selectedFixtures, cell.repo) &&
+    cell.fixtureBranch === selectedFixtures[cell.repo],
 );
 
 const combos = new Map();
@@ -198,7 +200,13 @@ function writeSvg(name, svg) {
     !fs.existsSync(file) || fs.readFileSync(file, "utf8") !== content;
   if (changed) fs.writeFileSync(file, content);
   const pngFile = path.join(PNG_DIR, name.replace(/\.svg$/, ".png"));
-  if (changed || !fs.existsSync(pngFile)) pngQueue.push(file);
+  if (EXPORT_PNG && (changed || !fs.existsSync(pngFile))) {
+    pngQueue.push(file);
+  } else if (changed) {
+    // A same-name PNG is still stale when its source SVG changed. An SVG-only
+    // render cannot refresh those pixels, so it must remove them.
+    fs.rmSync(pngFile, { force: true });
+  }
   written += 1;
 }
 
@@ -641,15 +649,17 @@ function renderTime(index, cells) {
       label: REPO_LABELS[project] ?? project,
       scale: index.scale?.[project] ?? { files: 0, lines: 0 },
       values: TOOLS.map((tool) => {
+        const answerMs = medianAnswerMs(cells, project, tool.key);
+        if (answerMs <= 0) return null;
         const build = index.cells.find(
           (item) => item.project === project && item.tool === tool.key,
         );
-        return {
-          ...tool,
-          buildMs: build?.buildMs ?? 0,
-          answerMs: medianAnswerMs(cells, project, tool.key),
-        };
-      }).filter((value) => value.answerMs > 0),
+        const buildMs = finiteIndexBuildMs(tool.key, build);
+        // A timeout or absent comparator is not a zero-second success. Its
+        // bounded outcome remains visible in the index-time summary, while
+        // this finite-total chart admits only completed or no-build cells.
+        return buildMs === null ? null : { ...tool, buildMs, answerMs };
+      }).filter((value) => value !== null),
     }))
     .filter((row) => row.values.length > 0)
     .sort((a, b) => compareOrdinal(a.label, b.label));
@@ -791,6 +801,21 @@ function medianAnswerMs(cells, project, tool) {
   return durations.length % 2 === 0
     ? (durations[mid - 1] + durations[mid]) / 2
     : durations[mid];
+}
+
+function finiteIndexBuildMs(tool, cell) {
+  if (tool === "baseline") return 0;
+  const measured =
+    typeof cell?.buildMs === "number" &&
+    Number.isFinite(cell.buildMs) &&
+    cell.buildMs >= 0;
+  const timedOut =
+    typeof cell?.timedOutMs === "number" &&
+    Number.isFinite(cell.timedOutMs) &&
+    cell.timedOutMs >= 0;
+  const noBuild = cell?.hasBuildStep === false;
+  if (Number(measured) + Number(timedOut) + Number(noBuild) !== 1) return null;
+  return measured ? cell.buildMs : noBuild ? 0 : null;
 }
 
 function fmtBuildMs(ms) {

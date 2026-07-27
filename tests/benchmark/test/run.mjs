@@ -1543,21 +1543,24 @@ function testReferenceRenderer() {
   );
 
   const staleAgentReport = sampleReport();
+  const staleAgentOut = path.join(root, "stale-agent-out");
+  fs.writeFileSync(input, JSON.stringify(sampleReport()));
+  run(
+    process.execPath,
+    [path.join(benchmarkDir, "build", "graph-benchmark-svg.cjs"), "--png"],
+    {
+      ...env,
+      SAMCHON_GRAPH_BENCH_RENDER_OUT: staleAgentOut,
+    },
+  );
+  assert.equal(
+    fs.existsSync(
+      path.join(staleAgentOut, "png", "graph-time-to-answer.png"),
+    ),
+    true,
+  );
   for (const cell of staleAgentReport.agent.cells) {
     if (cell.repo === "excalidraw") cell.fixtureBranch = "0".repeat(40);
-  }
-  const staleAgentOut = path.join(root, "stale-agent-out");
-  fs.mkdirSync(path.join(staleAgentOut, "svg"), { recursive: true });
-  fs.mkdirSync(path.join(staleAgentOut, "png"), { recursive: true });
-  for (const extension of ["svg", "png"]) {
-    fs.writeFileSync(
-      path.join(
-        staleAgentOut,
-        extension,
-        `graph-excalidraw-common-codex-gpt-5.6-terra.${extension}`,
-      ),
-      "stale",
-    );
   }
   fs.writeFileSync(input, JSON.stringify(staleAgentReport));
   run(
@@ -1572,11 +1575,12 @@ function testReferenceRenderer() {
   assert.deepEqual(
     staleAgentFiles,
     [
+      "png/graph-gin-common-codex-gpt-5.6-terra.png",
       "svg/graph-common-codex-gpt-5.6-terra.svg",
       "svg/graph-gin-common-codex-gpt-5.6-terra.svg",
       "svg/graph-time-to-answer.svg",
     ],
-    "stale agent cells and their prior SVG/PNG artifacts are omitted",
+    "stale agent charts and same-name PNG pixels are removed while unchanged current PNGs survive",
   );
   for (const name of [
     "graph-common-codex-gpt-5.6-terra.svg",
@@ -1587,10 +1591,54 @@ function testReferenceRenderer() {
     assert.match(svg, /Gin|12,000 lines/);
   }
 
+  const outcomeReport = sampleReport();
+  outcomeReport.agent.cells = outcomeReport.agent.cells.filter(
+    (cell) => cell.repo === "gin",
+  );
+  const timeoutCell = outcomeReport.index.cells.find(
+    (cell) => cell.project === "gin" && cell.tool === "samchon-graph",
+  );
+  delete timeoutCell.buildMs;
+  timeoutCell.timedOutMs = 3_600_000;
+  outcomeReport.index.cells = outcomeReport.index.cells.filter(
+    (cell) => cell.project !== "gin" || cell.tool !== "codegraph",
+  );
+  const noBuildCell = outcomeReport.index.cells.find(
+    (cell) => cell.project === "gin" && cell.tool === "codebase-memory",
+  );
+  delete noBuildCell.buildMs;
+  noBuildCell.hasBuildStep = false;
+  const outcomeOut = path.join(root, "outcome-out");
+  fs.writeFileSync(input, JSON.stringify(outcomeReport));
+  run(
+    process.execPath,
+    [path.join(benchmarkDir, "build", "graph-benchmark-svg.cjs")],
+    {
+      ...env,
+      SAMCHON_GRAPH_BENCH_RENDER_OUT: outcomeOut,
+    },
+  );
+  const outcomeTime = fs.readFileSync(
+    path.join(outcomeOut, "svg", "graph-time-to-answer.svg"),
+    "utf8",
+  );
+  assert.doesNotMatch(outcomeTime, />@samchon\/graph<\/text>/);
+  assert.doesNotMatch(outcomeTime, />codegraph<\/text>/);
+  assert.match(outcomeTime, /baseline[\s\S]{0,300}>0s \/ 20s<\/text>/);
+  assert.match(
+    outcomeTime,
+    /codebase-memory[\s\S]{0,300}>0s \/ 13s<\/text>/,
+  );
+  assert.match(outcomeTime, /serena[\s\S]{0,300}>2\.1s \/ 15s<\/text>/);
+
   const revisionlessAgentReport = sampleReport();
   for (const cell of revisionlessAgentReport.agent.cells) {
     delete cell.fixtureBranch;
   }
+  revisionlessAgentReport.agent.cells.push({
+    ...revisionlessAgentReport.agent.cells[0],
+    repo: "outside-manifest",
+  });
   const revisionlessAgentOut = path.join(root, "revisionless-agent-out");
   fs.mkdirSync(path.join(revisionlessAgentOut, "svg"), { recursive: true });
   fs.mkdirSync(path.join(revisionlessAgentOut, "png"), { recursive: true });
@@ -1614,7 +1662,7 @@ function testReferenceRenderer() {
   assert.deepEqual(
     [...snapshot(revisionlessAgentOut).keys()],
     [],
-    "revisionless agent evidence cannot leave a token or time chart behind",
+    "known and outside-manifest revisionless agent evidence cannot leave a token or time chart behind",
   );
 
   for (const [relative] of first) {

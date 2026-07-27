@@ -84,7 +84,7 @@ export class SidecarSession implements IBulkGraphSession {
       );
     }
     const wire = parseSidecarSnapshot(
-      JSON.parse(fs.readFileSync(props.artifact, "utf8")),
+      this.decode(fs.readFileSync(props.artifact, "utf8")),
     );
     this.assertProjectRoot(wire.projectRoot);
     assertSameLanguages(wire.languages, this.languages, this.options.provider);
@@ -137,6 +137,28 @@ export class SidecarSession implements IBulkGraphSession {
       },
       warnings: wire.warnings,
     });
+  }
+
+  /**
+   * Read the artifact, saying whose it is and what was in it when it will not.
+   *
+   * A raw `JSON.parse` throws `Unexpected token …` with no provider name and no
+   * trace of the bytes, which is the least useful sentence available about a
+   * producer that crashed mid-write or printed a message where its snapshot
+   * should be. The head rather than the tail, because that is where a stray
+   * line starts, and bounded because the rest of the file is a graph.
+   */
+  private decode(text: string): unknown {
+    try {
+      return JSON.parse(text) as unknown;
+    } catch (error) {
+      const head = text.trimStart().slice(0, 400);
+      throw new Error(
+        `${this.options.provider}: the snapshot artifact is not JSON: ${
+          error instanceof Error ? error.message : String(error)
+        }${head === "" ? " (the file is empty)" : `: ${head}`}`,
+      );
+    }
   }
 
   private assertProjectRoot(projectRoot: string): void {

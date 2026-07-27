@@ -14,11 +14,14 @@ import { IScipIndex } from "./IScipIndex";
  * range is validated structurally and then omitted when it cannot enclose the
  * occurrence; definition scopes remain strict.
  */
-export function parseScipIndex(value: unknown, label = "scip"): IScipIndex {
+export function parseScipIndex(
+  value: unknown,
+  label = "scip",
+  warnings: string[] = [],
+): IScipIndex {
   const index = objectOf(value, label);
   const metadata = objectOf(index.metadata, `${label}.metadata`);
   const documents = arrayOf(index.documents, `${label}.documents`);
-  const seen = new Set<string>();
   const toolInfo = fieldOf(
     metadata,
     "toolInfo",
@@ -65,19 +68,12 @@ export function parseScipIndex(value: unknown, label = "scip"): IScipIndex {
         TEXT_ENCODINGS,
       ),
     },
-    documents: documents.map((document, index) => {
-      const parsed = documentOf(document, `${label}.documents[${index}]`);
-      // One document per path. Two records for one file cannot both be the
-      // complete occurrence list for it, and merging them would double every
-      // reference they share while hiding which of the two the reader got.
-      if (seen.has(parsed.relativePath)) {
-        throw new Error(
-          `scip: two documents describe ${parsed.relativePath}, so neither is its complete occurrence list`,
-        );
-      }
-      seen.add(parsed.relativePath);
-      return parsed;
-    }),
+    documents: foldDocumentsByPath(
+      documents.map((document, index) =>
+        documentOf(document, `${label}.documents[${index}]`),
+      ),
+      warnings,
+    ),
     ...(externalSymbols === undefined
       ? {}
       : {
@@ -830,3 +826,120 @@ const SYMBOL_KINDS: Readonly<Record<number, string>> = {
   85: "Mixin",
   86: "Concept",
 };
+
+/**
+ * One document per path, folding the several a multi-TU language emits.
+ *
+ * The SCIP schema calls `relative_path` a "Unique path to the text document",
+ * and for a language whose file belongs to exactly one compilation that holds.
+ * C and C++ are not such languages: a source compiled into several translation
+ * units is indexed once per unit, and scip-clang emits a document for each.
+ * redis does this with `deps/xxhash/xxhash.c`. Neither the schema nor
+ * scip-clang says how a consumer should read that, so this decides.
+ *
+ * Refusing was the previous answer, on the ground that two records cannot both
+ * be one file's complete occurrence list and that merging would double every
+ * shared reference. The second half is what exact deduplication answers: two
+ * translation units reporting the same symbol at the same range with the same
+ * roles have stated one fact twice, not two facts. The union of what they say
+ * is the file's occurrence list; the alternative was that no C project with a
+ * shared source could be indexed at all, which is nearly all of them.
+ *
+ * Where they genuinely disagree — one range, two different symbols, which
+ * conditional compilation can produce — the union keeps both and says so.
+ * Publishing both is truthful, since the file really does mean two things in
+ * two units, but a reader must not discover that by accident.
+ */
+function foldDocumentsByPath(
+  documents: readonly IScipIndex.IDocument[],
+  warnings: string[],
+): IScipIndex.IDocument[] {
+  const byPath = new Map<string, IScipIndex.IDocument>();
+  const folded = new Map<string, number>();
+  for (const document of documents) {
+    const existing = byPath.get(document.relativePath);
+    if (existing === undefined) {
+      byPath.set(document.relativePath, document);
+      continue;
+    }
+    folded.set(
+      document.relativePath,
+      (folded.get(document.relativePath) ?? 1) + 1,
+    );
+    byPath.set(document.relativePath, mergeDocuments(existing, document, warnings));
+  }
+  for (const [relativePath, count] of folded) {
+    warnings.push(
+      `scip: ${relativePath} was indexed as ${String(count)} translation units; their occurrences are folded into one document`,
+    );
+  }
+  return [...byPath.values()];
+}
+
+function mergeDocuments(
+  left: IScipIndex.IDocument,
+  right: IScipIndex.IDocument,
+  warnings: string[],
+): IScipIndex.IDocument {
+  // Text is per-file, not per-unit: two units compile the same bytes. A
+  // disagreement means they did not, which is a moved source rather than a
+  // merge to attempt.
+  if (
+    left.text !== undefined &&
+    right.text !== undefined &&
+    left.text !== right.text
+  ) {
+    throw new Error(
+      `scip: two translation units disagree about the text of ${left.relativePath}`,
+    );
+  }
+  const occurrences = [...(left.occurrences ?? [])];
+  const claimed = new Map<string, string>();
+  for (const occurrence of left.occurrences ?? [])
+    claimed.set(rangeKey(occurrence.range), occurrence.symbol ?? "");
+  for (const occurrence of right.occurrences ?? []) {
+    const key = rangeKey(occurrence.range);
+    const already = claimed.get(key);
+    const symbol = occurrence.symbol ?? "";
+    if (already === undefined) {
+      claimed.set(key, symbol);
+      occurrences.push(occurrence);
+      continue;
+    }
+    if (already === symbol) continue;
+    // Same range, different symbol. Conditional compilation makes this real
+    // rather than impossible, so both are kept and the ambiguity is named.
+    warnings.push(
+      `scip: ${left.relativePath} resolves one range to both ${already} and ${symbol} across translation units; both are published`,
+    );
+    occurrences.push(occurrence);
+  }
+  const symbols = [...(left.symbols ?? [])];
+  const seenSymbols = new Set(symbols.map((entry) => entry.symbol));
+  for (const symbol of right.symbols ?? []) {
+    if (seenSymbols.has(symbol.symbol)) continue;
+    seenSymbols.add(symbol.symbol);
+    symbols.push(symbol);
+  }
+  return {
+    ...left,
+    ...(right.text !== undefined && left.text === undefined
+      ? { text: right.text }
+      : {}),
+    // Absent stays absent: a document that carried no occurrence list is not
+    // the same claim as one carrying an empty list, and the adapter downstream
+    // reads that difference.
+    ...(occurrences.length === 0 ? {} : { occurrences }),
+    ...(symbols.length === 0 ? {} : { symbols }),
+  };
+}
+
+/**
+ * A range's identity, exact rather than normalized.
+ *
+ * Two units describing one token produce byte-identical ranges, so equality is
+ * the right test; anything looser would fold a genuinely different span.
+ */
+function rangeKey(range: readonly number[]): string {
+  return range.join(",");
+}

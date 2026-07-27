@@ -121,7 +121,16 @@ export class ScipSession implements IBulkGraphSession {
     const json = await props.run(this.options.decode, [props.artifact]);
     const decoded = JSON.parse(json) as unknown;
     this.bindInvocationProjectRoot(decoded);
-    const index = parseScipIndex(decoded, this.options.provider);
+    // Folding several translation units into one document is a fact about the
+    // index rather than a detail: a C source compiled more than once is indexed
+    // more than once, and a reader deserves to know which files that happened
+    // to before trusting an occurrence count.
+    const indexWarnings: string[] = [];
+    const index = parseScipIndex(
+      decoded,
+      this.options.provider,
+      indexWarnings,
+    );
     this.assertProjectRoot(index.metadata.projectRoot);
     const adapted = adaptScipIndex({
       index,
@@ -178,8 +187,9 @@ export class ScipSession implements IBulkGraphSession {
             ],
       },
       warnings: manifest.proven
-        ? [...adapted.warnings, ...enriched.warnings]
+        ? [...indexWarnings, ...adapted.warnings, ...enriched.warnings]
         : [
+            ...indexWarnings,
             ...adapted.warnings,
             ...enriched.warnings,
             `${this.options.provider}: the index carries no document text, so its facts cannot be tied to the bytes they were computed from; source display falls back to what this graph can prove itself`,

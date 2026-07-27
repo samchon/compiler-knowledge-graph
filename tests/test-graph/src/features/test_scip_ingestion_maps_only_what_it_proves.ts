@@ -20,6 +20,9 @@ import {
 export const test_scip_ingestion_maps_only_what_it_proves = async () => {
   assertSymbolParsing();
   assertIndexValidation();
+  assertTranslationUnitsFoldIntoOneDocument();
+  assertDisagreeingUnitsAreNamed();
+  assertDisagreeingTextIsRefused();
   assertMapping();
   assertForwardDefinitionOrdering();
 };
@@ -1621,4 +1624,141 @@ function withOccurrence(occurrence: Record<string, unknown>): unknown {
 
 function withSymbol(symbol: Record<string, unknown>): unknown {
   return withDocument({ relativePath: "a.go", symbols: [symbol] });
+}
+
+/**
+ * A source compiled twice is one document, and the folding is said out loud.
+ *
+ * SCIP calls `relative_path` unique, and for one-compilation-per-file languages
+ * it is. C is not one: scip-clang indexes per translation unit, and redis
+ * brought the whole build down on `deps/xxhash/xxhash.c` appearing twice.
+ *
+ * Refusing was defensible — two records cannot both be a complete occurrence
+ * list — but it meant no C project sharing a source could ever be indexed. What
+ * makes folding safe is that two units reporting the same symbol at the same
+ * range stated one fact twice, so exact deduplication answers the doubling
+ * objection directly.
+ */
+function assertTranslationUnitsFoldIntoOneDocument(): void {
+  const warnings: string[] = [];
+  const index = parseScipIndex(
+    {
+      metadata: { projectRoot: "file:///r" },
+      documents: [
+        {
+          relative_path: "xxhash.c",
+          occurrences: [
+            { range: [1, 0, 4], symbol: "shared" },
+            { range: [2, 0, 4], symbol: "only-first" },
+          ],
+          symbols: [{ symbol: "shared" }],
+        },
+        {
+          relative_path: "xxhash.c",
+          occurrences: [
+            { range: [1, 0, 4], symbol: "shared" },
+            { range: [3, 0, 4], symbol: "only-second" },
+          ],
+          symbols: [{ symbol: "second-only-symbol" }],
+        },
+      ],
+    },
+    "scip-clang",
+    warnings,
+  );
+
+  TestValidator.equals(
+    "two translation units become one document",
+    index.documents.map((document) => document.relativePath),
+    ["xxhash.c"],
+  );
+  // The shared occurrence appears once: it is one fact stated twice, not two.
+  TestValidator.equals(
+    "their occurrences are unioned without doubling what they share",
+    (index.documents[0]?.occurrences ?? []).map(
+      (occurrence) => occurrence.symbol,
+    ),
+    ["shared", "only-first", "only-second"],
+  );
+  TestValidator.equals(
+    "and their symbol tables merge by symbol",
+    (index.documents[0]?.symbols ?? []).map((entry) => entry.symbol),
+    ["shared", "second-only-symbol"],
+  );
+  TestValidator.predicate(
+    "the fold is reported rather than performed silently",
+    warnings.some(
+      (warning) =>
+        warning.includes("xxhash.c") && warning.includes("2 translation units"),
+    ),
+  );
+}
+
+/**
+ * When two units disagree about one range, both survive and the reader is told.
+ *
+ * Conditional compilation makes this real rather than impossible. Publishing
+ * both is truthful — the file does mean two things in two units — but nobody
+ * should have to discover that by comparing counts.
+ */
+function assertDisagreeingUnitsAreNamed(): void {
+  const warnings: string[] = [];
+  const index = parseScipIndex(
+    {
+      metadata: { projectRoot: "file:///r" },
+      documents: [
+        {
+          relative_path: "cfg.c",
+          occurrences: [{ range: [1, 0, 4], symbol: "posix-impl" }],
+        },
+        {
+          relative_path: "cfg.c",
+          occurrences: [{ range: [1, 0, 4], symbol: "win32-impl" }],
+        },
+      ],
+    },
+    "scip-clang",
+    warnings,
+  );
+
+  TestValidator.equals(
+    "a range resolved two ways keeps both readings",
+    (index.documents[0]?.occurrences ?? []).map(
+      (occurrence) => occurrence.symbol,
+    ),
+    ["posix-impl", "win32-impl"],
+  );
+  TestValidator.predicate(
+    "and the disagreement is named, not folded away",
+    warnings.some(
+      (warning) =>
+        warning.includes("posix-impl") && warning.includes("win32-impl"),
+    ),
+  );
+}
+
+/**
+ * Two units that disagree about the bytes are not a merge to attempt.
+ *
+ * Text is per-file: two compilations of one source read the same bytes. A
+ * difference means they did not, which is a moved generation and exactly what
+ * the digest machinery exists to catch.
+ */
+function assertDisagreeingTextIsRefused(): void {
+  let message = "";
+  try {
+    parseScipIndex({
+      metadata: { projectRoot: "file:///r" },
+      documents: [
+        { relative_path: "moved.c", text: "before" },
+        { relative_path: "moved.c", text: "after" },
+      ],
+    });
+  } catch (error) {
+    message = error instanceof Error ? error.message : String(error);
+  }
+  TestValidator.predicate(
+    "a text disagreement across units is refused",
+    message.includes("disagree about the text of moved.c"),
+  );
 }

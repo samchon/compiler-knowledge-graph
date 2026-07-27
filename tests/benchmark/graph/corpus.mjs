@@ -97,7 +97,13 @@ export const CORPUS = [
     //
     // Optional: without it the lane measures what it measures today rather than
     // not measuring at all.
-    prepare: "cmake -S . -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
+    // Tests and benchmarks off because they `add_subdirectory` into
+    // `third_party/googletest` and `third_party/benchmark`, which are git
+    // submodules the corpus clone does not fetch — configure died there and,
+    // being optional, said so only in the log. What is wanted here is leveldb's
+    // own translation units, which those options do not touch.
+    prepare:
+      "cmake -S . -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DLEVELDB_BUILD_TESTS=OFF -DLEVELDB_BUILD_BENCHMARKS=OFF",
     prepareIgnores: ["build/", ".cache/"],
     prepareOptional: true,
   },

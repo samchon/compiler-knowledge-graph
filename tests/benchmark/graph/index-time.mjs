@@ -210,7 +210,24 @@ for (const project of selected) {
   writeJson(reportPath, report);
 
   for (const tool of tools) {
-    const cell = runIndexCell({ project, spec, repoDir, tool });
+    let cell;
+    try {
+      cell = runIndexCell({ project, spec, repoDir, tool });
+    } catch (error) {
+      // Only a timeout becomes a cell. Anything else is still a broken run and
+      // has to stop the lane, or a genuine defect would publish as a number.
+      if (typeof error?.timedOutMs !== "number") throw error;
+      cell = {
+        project,
+        tool,
+        buildMs: null,
+        timedOutMs: error.timedOutMs,
+        // The process was killed, so it never wrote its provenance line. Saying
+        // unknown is the honest reading: what would have built this is exactly
+        // what the run failed to establish.
+        servedBy: "unknown",
+      };
+    }
     assertPinnedCheckout(spec, repoDir);
     // The machine and its quietness travel with the cell, not with the
     // publication. One host panel is only truthful when one sweep measured
@@ -488,7 +505,20 @@ function publishWebsiteIndex(currentReport) {
   fs.writeFileSync(websiteJson, `${JSON.stringify(out)}\n`);
 }
 
+/** One place, so the limit reported always matches the limit enforced. */
+function benchTimeoutMs() {
+  return Number(process.env.SAMCHON_GRAPH_BENCH_TIMEOUT_MS ?? 1_800_000);
+}
+
 function printCellSummary(project, cell) {
+  if (typeof cell.timedOutMs === "number") {
+    process.stdout.write(
+      `[index-time] ${project} ${cell.tool}: timed out after ${(
+        cell.timedOutMs / 1000
+      ).toFixed(0)} s\n`,
+    );
+    return;
+  }
   if (cell.hasBuildStep === false) {
     process.stdout.write(
       `[index-time] ${project} ${cell.tool}: no build step\n`,
@@ -524,7 +554,7 @@ function runChecked(
       env: { ...process.env, ...env },
       windowsHide: true,
       maxBuffer: 512 * 1024 * 1024,
-      timeout: Number(process.env.SAMCHON_GRAPH_BENCH_TIMEOUT_MS ?? 1_800_000),
+      timeout: benchTimeoutMs(),
       ...(devNull !== null ? { stdio: ["ignore", devNull, "pipe"] } : {}),
     });
   } finally {
@@ -532,7 +562,27 @@ function runChecked(
   }
   fs.writeFileSync(`${logBase}.out.log`, result.stdout ?? "");
   fs.writeFileSync(`${logBase}.err.log`, result.stderr ?? "");
-  if (result.error) throw result.error;
+  if (result.error) {
+    // A timeout is a measurement, not a crash. "ruby's language-server lane does
+    // not finish inside an hour" is one of the more useful things this benchmark
+    // can say, and spawnSync reports it as an ETIMEDOUT that took the whole lane
+    // down instead — losing the columns that had already been measured and
+    // publishing nothing at all for that language.
+    //
+    // Marked rather than swallowed: the caller decides, because the same helper
+    // fetches git objects and creates serena projects, and a timeout there is an
+    // error like any other.
+    if (result.error.code === "ETIMEDOUT") {
+      const limitMs = benchTimeoutMs();
+      const timedOut = new Error(
+        `${label} did not finish within ${String(Math.round(limitMs / 1000))}s; ` +
+          `see ${path.relative(repoRoot, `${logBase}.err.log`)}`,
+      );
+      timedOut.timedOutMs = limitMs;
+      throw timedOut;
+    }
+    throw result.error;
+  }
   if (result.status !== 0) {
     throw new Error(
       `${label} failed (${result.status}); see ${path.relative(repoRoot, `${logBase}.err.log`)}`,

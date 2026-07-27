@@ -94,10 +94,16 @@ for (const row of rows) {
     continue;
   }
   for (const [tool, cell] of row.tools) {
+    // A timed-out cell has no duration and is not a tool without a build step.
+    // Both would print the same words if this only asked whether buildMs is a
+    // number, and "this configuration does not finish inside the limit" is a
+    // measurement — arguably the most important one this table can carry.
     const time =
       typeof cell.buildMs === "number"
         ? `${(cell.buildMs / 1000).toFixed(1)} s`
-        : "no build step";
+        : typeof cell.timedOutMs === "number"
+          ? `>${(cell.timedOutMs / 1000).toFixed(0)} s`
+          : "no build step";
     const where = uniform ? "" : `  [${cell.host?.cpu ?? "host unrecorded"}]`;
     // Which path produced it, because a strict provider, the language-server
     // lane, and the static syntax reader differ by orders of magnitude and a

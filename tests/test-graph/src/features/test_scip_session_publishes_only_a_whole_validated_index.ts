@@ -209,6 +209,38 @@ async function assertGenerations(): Promise<void> {
     1,
   );
   await futureProtocol.close();
+  const namedRoot = GraphPaths.createTempDirectory(
+    "samchon-graph-scip-protocol-",
+  );
+  fs.writeFileSync(path.join(namedRoot, "main.go"), "package main\n");
+  for (const rejectedVersion of [
+    "FutureProtocolVersion",
+    "9007199254740992",
+    "1",
+  ]) {
+    const named = sessionOf(namedRoot, {
+      state: path.join(namedRoot, `${rejectedVersion}.txt`),
+      protocolVersionName: "UnspecifiedProtocolVersion",
+      nextProtocolVersionName: rejectedVersion,
+    });
+    const known = await named.refresh();
+    TestValidator.equals(
+      "a known named protocol reaches public provenance",
+      known.snapshot.provenance.protocolVersion,
+      0,
+    );
+    fs.appendFileSync(path.join(namedRoot, "main.go"), "// changed\n");
+    await rejects(
+      named.refresh(),
+      `an unrepresentable protocol is rejected: ${rejectedVersion}`,
+    );
+    TestValidator.equals(
+      "a rejected protocol leaves the whole prior generation published",
+      [named.generation, named.current === known.snapshot],
+      [1, true],
+    );
+    await named.close();
+  }
   // The index carries no document text, so there is no honest checker digest
   // to give: hashing the disk here and calling it one would let a reader
   // "prove" byte-identity against text the facts were never computed from.
@@ -767,6 +799,8 @@ interface IFixtureOptions {
   mutateInput?: string;
   goJson?: boolean;
   protocolVersion?: number;
+  protocolVersionName?: string;
+  nextProtocolVersionName?: string;
   projectRootFromInvocation?: boolean;
   maxStdoutBytes?: number;
   maxArtifactBytes?: number;
@@ -807,6 +841,12 @@ function sessionOf(root: string, options: IFixtureOptions = {}): ScipSession {
         ...(options.protocolVersion === undefined
           ? []
           : [`--protocol-version=${options.protocolVersion}`]),
+        ...(options.protocolVersionName === undefined
+          ? []
+          : [`--protocol-version-name=${options.protocolVersionName}`]),
+        ...(options.nextProtocolVersionName === undefined
+          ? []
+          : [`--next-protocol-version-name=${options.nextProtocolVersionName}`]),
         ...(options.state === undefined ? [] : [`--state=${options.state}`]),
         ...(options.mutateInput === undefined
           ? []

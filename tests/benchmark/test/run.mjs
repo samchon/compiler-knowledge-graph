@@ -14,6 +14,7 @@ import {
 } from "../graph/language.mjs";
 import { assertPublicationCandidates } from "../graph/publication-gate.mjs";
 import { agentPublicationDocument } from "../graph/publication-document.mjs";
+import { removeTree } from "../graph/remove-tree.mjs";
 import {
   invalidWebsiteCellReason,
   sanitizeWebsiteSamples,
@@ -68,6 +69,7 @@ testPublishedIndexCellsNameTheirMachine();
 testAgentPublicationPreservesIndexResults();
 testIndexPublicationRefusesMalformedJson();
 testIndexCellIsolationContract();
+testReadOnlyCellCacheCleanup();
 console.log("benchmark system tests: ok");
 
 /**
@@ -147,6 +149,7 @@ function testAgentPublicationPreservesIndexResults() {
         project: "fixture",
         tool: "samchon-graph",
         buildMs: 1,
+        measuredAt: "2026-07-28T00:00:00.000Z",
         host: FIXTURE_HOST,
       },
     ],
@@ -440,6 +443,16 @@ function testIndexPublicationRefusesMalformedJson() {
         host: { cpu: "fixture" },
       },
     ],
+    [
+      "invalid-measurement-date",
+      {
+        project: "fixture",
+        tool: "samchon-graph",
+        buildMs: 1,
+        measuredAt: "not a date",
+        host: FIXTURE_HOST,
+      },
+    ],
   ]) {
     fs.writeFileSync(publication, validPublication);
     const invalidOutcomeReport = JSON.stringify({
@@ -464,12 +477,46 @@ function testIndexPublicationRefusesMalformedJson() {
       `a ${label} incoming cell must not change the publication`,
     );
   }
+  const stalePublication = {
+    ...JSON.parse(validPublication),
+    index: {
+      host: FIXTURE_HOST,
+      scale: { stale: { files: 1, lines: 1 } },
+      cells: [
+        {
+          project: "stale",
+          tool: "samchon-graph",
+          buildMs: 1,
+          host: FIXTURE_HOST,
+        },
+      ],
+    },
+  };
+  fs.writeFileSync(publication, JSON.stringify(stalePublication));
+  const reset = cp.spawnSync(process.execPath, [runner, "--reset-index-only"], {
+    encoding: "utf8",
+    env: { ...process.env, SAMCHON_BENCH_INDEX_JSON: publication },
+    windowsHide: true,
+  });
+  assert.equal(reset.status, 0, reset.stderr);
+  const resetPublication = JSON.parse(fs.readFileSync(publication, "utf8"));
+  assert.equal(
+    resetPublication.index,
+    undefined,
+    "a complete matrix must not inherit an unmeasured stale index cell",
+  );
+  assert.deepEqual(resetPublication.structural, { retained: true });
+  assert.deepEqual(resetPublication.agent, { cells: [FIXTURE_AGENT_CELL] });
   fs.rmSync(root, { recursive: true, force: true });
 }
 
 function testIndexCellIsolationContract() {
   const source = fs.readFileSync(
     path.join(graphDir, "index-time.mjs"),
+    "utf8",
+  );
+  const workflow = fs.readFileSync(
+    path.join(repoRoot, ".github", "workflows", "index-time.yml"),
     "utf8",
   );
   const prepared = source.indexOf(
@@ -496,13 +543,56 @@ function testIndexCellIsolationContract() {
     );
   }
   assert.ok(
+    source.includes("`-Dmaven.repo.local=${localRepository}`") &&
+      !source.includes('`-Dmaven.repo.local="${localRepository}"`'),
+    "Maven must receive an absolute local repository without literal quote characters",
+  );
+  assert.ok(
     source.includes("copyPreparedFixtureCompanion(spec, source, target)") &&
       source.includes("const cellRoot = path.dirname(path.resolve(target))") &&
       source.includes("removeTree(cellRoot)") &&
-      source.includes("maxRetries: 5") &&
-      source.includes("retryDelay: 100"),
+      source.includes('import { removeTree } from "./remove-tree.mjs"'),
     "a disposable cell must copy and remove its external prepared companion",
   );
+  assert.ok(
+    workflow.indexOf("--reset-index-only") >= 0 &&
+      workflow.indexOf("--reset-index-only") <
+        workflow.indexOf(
+          'node tests/benchmark/graph/index-time.mjs --publish="$report"',
+        ),
+    "a complete matrix must discard stale index cells before folding current reports",
+  );
+}
+
+/**
+ * Ecosystem caches are disposable benchmark state even when their tool marks
+ * them read-only. Go's module cache does this on POSIX, and a retry without a
+ * permission repair produced the exact same EACCES until the lane failed.
+ */
+function testReadOnlyCellCacheCleanup() {
+  const root = fs.mkdtempSync(
+    path.join(os.tmpdir(), "samchon-graph-readonly-cache-"),
+  );
+  const nested = path.join(root, "module");
+  const file = path.join(nested, ".gitignore");
+  fs.mkdirSync(nested);
+  fs.writeFileSync(file, "fixture\n");
+  fs.chmodSync(file, 0o400);
+  fs.chmodSync(nested, 0o500);
+  try {
+    removeTree(root);
+    assert.equal(
+      fs.existsSync(root),
+      false,
+      "a read-only module cache must not stop the next benchmark column",
+    );
+  } finally {
+    if (fs.existsSync(root)) {
+      if (fs.existsSync(nested)) fs.chmodSync(nested, 0o700);
+      fs.chmodSync(root, 0o700);
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  }
 }
 
 function testCorpusAndPromptProvenance() {

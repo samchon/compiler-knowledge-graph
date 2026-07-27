@@ -623,14 +623,23 @@ function optionalEnumName<K extends string>(
  * int32 here would reject an otherwise usable index merely because its
  * producer is ahead of the decoder (and scip-php 0.1.0 already writes `1`
  * despite bundling a schema that only names `0`). Negative values cannot be
- * represented by graph's public protocol provenance contract.
+ * represented by graph's public protocol provenance contract. ProtoJSON enum
+ * strings remain enum identifiers: accepting a decimal string here would lose
+ * whether the producer wrote a name or a number before provenance sees it.
  */
 function optionalProtocolVersion(
   value: unknown,
   label: string,
 ): Partial<Record<"version", string>> {
   if (value === undefined) return {};
-  if (typeof value === "string") return { version: value };
+  if (typeof value === "string") {
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(value)) {
+      throw new Error(
+        `scip: ${label} must be a protobuf enum name or non-negative int32 number`,
+      );
+    }
+    return { version: value };
+  }
   if (
     typeof value !== "number" ||
     !Number.isInteger(value) ||
@@ -638,7 +647,7 @@ function optionalProtocolVersion(
     value > 0x7fffffff
   ) {
     throw new Error(
-      `scip: ${label} must be an enum name or non-negative int32 number`,
+      `scip: ${label} must be a protobuf enum name or non-negative int32 number`,
     );
   }
   return { version: PROTOCOL_VERSIONS[value] ?? String(value) };

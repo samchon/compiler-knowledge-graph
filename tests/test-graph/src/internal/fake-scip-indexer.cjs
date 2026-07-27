@@ -96,6 +96,14 @@ function indexOf(generation) {
   const name = generation === 0 ? "first" : "second";
   const symbol = `scip-fake fake example v1 \`pkg\`/${name}().`;
   const relativePath = options.get("document") ?? "main.go";
+  const protocolVersion =
+    generation > 0 && options.has("next-protocol-version-name")
+      ? options.get("next-protocol-version-name")
+      : options.has("protocol-version-name")
+        ? options.get("protocol-version-name")
+        : options.has("protocol-version")
+          ? Number(options.get("protocol-version"))
+          : undefined;
   // Most indexers omit `text`. The ones that carry it are the only ones whose
   // facts can be tied to the bytes they were computed from, so both shapes are
   // producible here.
@@ -112,9 +120,7 @@ function indexOf(generation) {
         : plainRoot
           ? root
           : `file://${root.startsWith("/") ? "" : "/"}${root.replace(/\\/g, "/")}`,
-      ...(options.has("protocol-version")
-        ? { version: Number(options.get("protocol-version")) }
-        : {}),
+      ...(protocolVersion === undefined ? {} : { version: protocolVersion }),
       ...(bare ? {} : { toolInfo: { name: "fake-scip", version: "1.2.3" } }),
     },
     documents: [

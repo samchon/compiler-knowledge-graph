@@ -119,6 +119,15 @@ function assertIndexCells(value, label) {
         throw new TypeError(`${cellLabel}.${field} must be a boolean`);
       }
     }
+    if (
+      cell.measuredAt !== undefined &&
+      (typeof cell.measuredAt !== "string" ||
+        Number.isNaN(Date.parse(cell.measuredAt)))
+    ) {
+      throw new TypeError(
+        `${cellLabel}.measuredAt must be an ISO-compatible date string`,
+      );
+    }
     const outcomes = [
       typeof cell.buildMs === "number",
       typeof cell.timedOutMs === "number",

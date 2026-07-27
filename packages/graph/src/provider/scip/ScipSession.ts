@@ -364,8 +364,7 @@ function protocolVersionOf(
     return 0;
   }
   if (/^(?:0|[1-9]\d*)$/.test(version)) {
-    const numeric = Number(version);
-    if (Number.isSafeInteger(numeric)) return numeric;
+    return Number(version);
   }
   throw new Error(
     `${provider}: SCIP protocol version ${JSON.stringify(version)} cannot be represented as a non-negative integer`,

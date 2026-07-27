@@ -50,6 +50,7 @@ import {
   assertIndexReport,
   assertWebsitePublication,
 } from "./publication-document.mjs";
+import { removeTree } from "./remove-tree.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, "../../..");
@@ -137,6 +138,12 @@ if (parsed.flags.has("--list")) {
       `${project}: ${projectDir(workDir, spec)} (${spec.language} @ ${spec.commit.slice(0, 12)})\n`,
     );
   }
+  process.exit(0);
+}
+
+if (parsed.flags.has("--reset-index-only")) {
+  resetWebsiteIndex();
+  process.stdout.write("Index-time publication reset for a complete matrix.\n");
   process.exit(0);
 }
 
@@ -243,6 +250,7 @@ for (const project of selected) {
         // on is part of it.
         report.cells.push({
           ...cell,
+          measuredAt: report.date,
           cacheIsolation: cellCache.kind,
           host: report.host,
           quietWait,
@@ -626,6 +634,28 @@ function publishWebsiteIndex(currentReport) {
   fs.writeFileSync(websiteJson, `${JSON.stringify(out)}\n`);
 }
 
+/**
+ * Begin a complete matrix without inheriting cells this run did not produce.
+ *
+ * Partial manual dispatches intentionally merge one project into the durable
+ * publication. A full workflow run is different: if one lane fails before
+ * writing a report, retaining its old cell would make a partial run look
+ * complete. Preserve the unrelated benchmark axes and remove the whole index
+ * axis before the first full-matrix report is folded.
+ */
+function resetWebsiteIndex() {
+  const prior = fs.existsSync(websiteJson) ? loadJson(websiteJson) : null;
+  if (prior !== null) assertWebsitePublication(prior);
+  const out = {
+    schemaVersion: prior?.schemaVersion ?? 1,
+    generatedAt: new Date().toISOString(),
+    structural: prior?.structural ?? null,
+    agent: prior?.agent ?? { cells: [] },
+  };
+  fs.mkdirSync(path.dirname(websiteJson), { recursive: true });
+  fs.writeFileSync(websiteJson, `${JSON.stringify(out)}\n`);
+}
+
 /** One place, so the limit reported always matches the limit enforced. */
 function benchTimeoutMs() {
   return Number(process.env.SAMCHON_GRAPH_BENCH_TIMEOUT_MS ?? 1_800_000);
@@ -918,7 +948,7 @@ function prepareCellCache(project, spec, tool) {
       const localRepository = path.join(root, "maven").replaceAll("\\", "/");
       env.MAVEN_OPTS = [
         process.env.MAVEN_OPTS,
-        `-Dmaven.repo.local="${localRepository}"`,
+        `-Dmaven.repo.local=${localRepository}`,
       ]
         .filter(Boolean)
         .join(" ");
@@ -966,22 +996,6 @@ function cleanupCellCache(target) {
     throw new Error(`refusing to remove cell cache outside output: ${target}`);
   }
   removeTree(resolved);
-}
-
-/**
- * Remove a disposable measurement tree despite short-lived filesystem races.
- *
- * A completed Go cell left its module cache behind and stopped the lane before
- * the fallback column because one recursive removal hit a transient
- * `ENOTEMPTY`. Node retries only when `maxRetries` is explicitly non-zero.
- */
-function removeTree(target) {
-  fs.rmSync(target, {
-    recursive: true,
-    force: true,
-    maxRetries: 5,
-    retryDelay: 100,
-  });
 }
 
 /**

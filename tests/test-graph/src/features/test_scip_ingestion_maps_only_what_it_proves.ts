@@ -386,6 +386,13 @@ function assertIndexValidation(): void {
       },
     ],
     [
+      "a numeric-looking protocol enum string",
+      {
+        metadata: { projectRoot: "file:///r", version: "1" },
+        documents: [],
+      },
+    ],
+    [
       "a protocol version outside int32",
       {
         metadata: { projectRoot: "file:///r", version: 0x80000000 },

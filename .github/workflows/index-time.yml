@@ -244,11 +244,20 @@ jobs:
           pattern: index-time-*
           path: index-time-reports
 
+      # A complete matrix owns the complete index axis. Reset it before folding
+      # so a lane that failed before writing a report is visibly absent instead
+      # of inheriting a stale cell from the checkout. A one-project manual
+      # dispatch remains a preserving update of that project.
+      - name: Reset complete-matrix publication
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.project == 'all' }}
+        run: node tests/benchmark/graph/index-time.mjs --reset-index-only
+
       # Folded one report at a time through the harness's own `--publish` path,
       # which merges cells by (project, tool) and leaves `structural` and `agent`
-      # untouched. A project whose job failed contributed no report and therefore
-      # has no cell — which is the honest record of a language that could not be
-      # measured, and is not the same as a zero.
+      # untouched. The complete matrix was reset above, so a project whose job
+      # failed contributes no report and therefore has no cell: the honest
+      # record of a language that could not be measured, not a stale result and
+      # not a zero.
       #
       # `--publish=` with the `=`, for the same reason the measure step spells its
       # options that way, and this step got it wrong while the one above it

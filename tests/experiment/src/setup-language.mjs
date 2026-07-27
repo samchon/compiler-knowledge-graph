@@ -458,11 +458,21 @@ switch (experiment.language) {
     break;
   case "cpp":
   case "c":
-    apt(["clangd"]);
+    // `bear` alongside clangd because scip-clang declines without a compilation
+    // database, and a Makefile project has no way to emit one — bear records
+    // the compiler invocations as the build runs. A CMake project needs nothing
+    // extra, since configure writes the database on its own.
+    apt(["clangd", "bear"]);
     record({
       tool: "clangd",
       version: "unpinned",
       source: "apt clangd",
+      digest: "unpinned",
+    });
+    record({
+      tool: "bear",
+      version: "unpinned",
+      source: "apt bear",
       digest: "unpinned",
     });
     await installScipClang();

@@ -69,6 +69,16 @@ export const CORPUS = [
     url: "https://github.com/samchon/graph-benchmark-redis.git",
     commit: "6bf6224c3dad518329ddc893ef9c5d58dcbabdeb",
     preflight: preflightMinimums(3_000, 10_000, 5_000, 4),
+    // A Makefile emits no compilation database, and scip-clang declines without
+    // one. bear records the compiler invocations as the build runs, which means
+    // an actual build rather than leveldb's configure — minutes of job time, but
+    // none of the measured cell, since only the dump invocation is timed.
+    //
+    // The build's own outputs are covered by redis's .gitignore; the database it
+    // produces is not, so it is declared here rather than assumed.
+    prepare: "bear -- make -j$(nproc)",
+    prepareIgnores: ["compile_commands.json"],
+    prepareOptional: true,
   },
   {
     // codegraph's cpp pick (nlohmann/json) is a single-header library — it

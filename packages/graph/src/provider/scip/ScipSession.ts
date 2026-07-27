@@ -168,7 +168,12 @@ export class ScipSession implements IBulkGraphSession {
         schemaVersion: SCIP_SCHEMA_VERSION,
         tool: index.metadata.toolInfo?.name ?? this.options.provider,
         toolVersion: index.metadata.toolInfo?.version ?? "",
-        compilerVersion: this.options.compilerVersion?.() ?? "",
+        // Read from the rows this universe was computed from, never asked
+        // again. A second probe is a second instant: one row held to its last
+        // established value while the other re-asks can put a compiler in the
+        // provenance that this universe never saw.
+        compilerVersion:
+          this.options.compilerVersion?.(props.configuration) ?? "",
         protocolVersion: SCIP_PROTOCOL_VERSION,
         universe: props.universe,
         capabilities: manifest.proven
@@ -300,7 +305,7 @@ export namespace ScipSession {
     artifactFrom?: (root: string) => string;
     inputs: () => string[];
     configuration?: () => readonly string[];
-    compilerVersion?: () => string;
+    compilerVersion?: (configuration: readonly string[]) => string;
     sourceText?: boolean;
     projectRootFromInvocation?: boolean;
     languageOf: (file: string) => GraphLanguage;

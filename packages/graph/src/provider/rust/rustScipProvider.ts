@@ -220,8 +220,24 @@ function portablePath(file: string): string {
   return path.resolve(file).replaceAll("\\", "/");
 }
 
-function rustCompilerVersion(root: string): string {
-  return rustCompilerVersionFor(root, process.env);
+/**
+ * Selected from the rows this universe was computed from, not probed again.
+ *
+ * rustc and cargo already appear in the configuration, so re-deriving them was
+ * a second instant that could disagree with the first — a row held to its last
+ * established value beside one that re-asks publishes a compiler the universe
+ * never saw. Labelled rather than positional, since the configuration also
+ * carries environment keys and the indexer's own version.
+ */
+function rustCompilerVersion(
+  _root: string,
+  _languages: readonly GraphLanguage[] | undefined,
+  configuration: readonly string[],
+): string {
+  const wanted = new Set(["rustc", "cargo"]);
+  return configuration
+    .filter((row) => wanted.has(row.slice(0, Math.max(0, row.indexOf("=")))))
+    .join("; ");
 }
 
 function rustCompilerVersionFor(

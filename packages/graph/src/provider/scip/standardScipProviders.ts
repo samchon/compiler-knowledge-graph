@@ -379,8 +379,17 @@ function createScipProvider(
       toolVersion(root, env, "scip", "SAMCHON_GRAPH_SCIP"),
       ...toolchainVersions(root, env, props.toolchain),
     ],
-    compilerVersion: (root) =>
-      toolchainVersions(root, process.env, props.toolchain).join("; "),
+    // Selected from the configuration rather than re-derived, so the
+    // published compiler is the one this universe was computed from. Labelled
+    // rather than positional: the indexer and the decoder are named exactly,
+    // and whatever remains is the toolchain.
+    compilerVersion: (_root, _languages, configuration) =>
+      configuration
+        .filter((row) => {
+          const label = row.slice(0, Math.max(0, row.indexOf("=")));
+          return label !== props.command && label !== "scip";
+        })
+        .join("; "),
     sourceText: true,
     languageOf,
   });

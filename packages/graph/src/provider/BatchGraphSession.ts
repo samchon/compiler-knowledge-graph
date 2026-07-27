@@ -209,6 +209,12 @@ export class BatchGraphSession implements IBulkGraphSession {
       const snapshot = await this.options.load({
         artifact,
         universe,
+        // The exact rows the universe was computed from. A loader that wants
+        // to publish a toolchain version must read it from here rather than
+        // asking again: a second probe is a second instant, and one held to
+        // its last established value while the other re-asks can put a
+        // compiler in the provenance that this universe never saw.
+        configuration,
         signal,
         run: (command, args) => this.run(command, args, signal),
       });
@@ -483,6 +489,9 @@ export namespace BatchGraphSession {
   export interface ILoadProps {
     artifact: string;
     universe: string;
+
+    /** The configuration rows this universe was computed from. */
+    configuration: readonly string[];
     signal: AbortSignal | undefined;
     run: (
       command: IGraphProvider.ICommand,

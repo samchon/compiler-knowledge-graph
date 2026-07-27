@@ -104,8 +104,8 @@ export function scipProvider(props: scipProvider.IProps): IGraphProvider {
         ...(compilerVersion === undefined
           ? {}
           : {
-              compilerVersion: () =>
-                compilerVersion(open.root, open.languages),
+              compilerVersion: (configuration) =>
+                compilerVersion(open.root, open.languages, configuration),
             }),
         ...(sourceText === undefined
           ? {}
@@ -164,9 +164,15 @@ export namespace scipProvider {
     ) => readonly string[];
 
     /** The compiler/toolchain revision that the indexer's analysis targets. */
+    /**
+     * Given the configuration rows the universe was computed from, so the
+     * published compiler is the one that universe saw rather than whatever a
+     * second probe would return a moment later.
+     */
     compilerVersion?: (
       root: string,
       languages: readonly GraphLanguage[],
+      configuration: readonly string[],
     ) => string;
 
     /** Whether this producer's document text is exact source evidence. */

@@ -834,8 +834,9 @@ const SYMBOL_KINDS: Readonly<Record<number, string>> = {
  * and for a language whose file belongs to exactly one compilation that holds.
  * C and C++ are not such languages: a source compiled into several translation
  * units is indexed once per unit, and scip-clang emits a document for each.
- * redis does this with `deps/xxhash/xxhash.c`. Neither the schema nor
- * scip-clang says how a consumer should read that, so this decides.
+ * A vendored helper compiled into two binaries is the ordinary case. Neither
+ * the schema nor scip-clang says how a consumer should read that, so this
+ * decides.
  *
  * Refusing was the previous answer, on the ground that two records cannot both
  * be one file's complete occurrence list and that merging would double every

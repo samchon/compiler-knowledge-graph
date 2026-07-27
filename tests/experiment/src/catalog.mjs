@@ -184,11 +184,11 @@ export const LANGUAGE_EXPERIMENTS = [
   },
   {
     language: "java",
-    // The benchmark fork, which carries a  selecting
-    // gson's own  profile. Upstream, scip-java drives the
-    // real Maven build and javac rejects gson's Error Prone arguments
-    // outright, so no indexer reaches this project at all — a row asked here
-    // would only ever record that.
+    // The benchmark fork, which carries a `.mvn/maven.config` selecting gson's
+    // own `disable-error-prone` profile. Upstream, scip-java drives the real
+    // Maven build and javac rejects gson's Error Prone arguments outright, so no
+    // indexer reaches this project at all — a row asked here would only ever
+    // record that.
     repository: "https://github.com/samchon/graph-benchmark-gson.git",
     commit: "0395e46886d032843f87a7ed73207cf5ba23007e",
     maxFiles: 120,

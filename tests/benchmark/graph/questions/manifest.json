@@ -204,7 +204,7 @@
       "repo": "lualine",
       "family": "dedicated",
       "file": "lualine.md",
-      "fixtureCommit": "221ce6b2d999187044529f49da6554a92f740a96",
+      "fixtureCommit": "fa111072655a5c669f466aa36c7dbd34e4f7012c",
       "language": "lua",
       "questionSha256": "709c330ccc5210a69034a9fd99e8b4f2a5edbe722721b597197a5180116d0db3"
     },
@@ -213,7 +213,7 @@
       "repo": "lualine",
       "family": "common",
       "file": "common.md",
-      "fixtureCommit": "221ce6b2d999187044529f49da6554a92f740a96",
+      "fixtureCommit": "fa111072655a5c669f466aa36c7dbd34e4f7012c",
       "language": "lua",
       "questionSha256": "efe22b2b8f0d37d2e74fc2391ba689b5c455e16a1f261fd821f209bd7ad20517"
     },

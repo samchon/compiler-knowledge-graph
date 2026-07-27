@@ -11,6 +11,15 @@ export const test_experiment_corpora_are_commit_pinned = () => {
   const lifecycle = experimentSource("strict-lifecycle.mjs");
   const runner = experimentSource("run-language.mjs");
   const setup = experimentSource("setup-language.mjs");
+  const workflow = fs.readFileSync(
+    path.join(
+      GraphPaths.repositoryRoot,
+      ".github",
+      "workflows",
+      "experiment.yml",
+    ),
+    "utf8",
+  );
 
   const repositories = [...catalog.matchAll(/repository:\s*"[^"]+"/g)];
   const commits = [...catalog.matchAll(/commit:\s*"([0-9a-f]{40})"/g)];
@@ -25,10 +34,56 @@ export const test_experiment_corpora_are_commit_pinned = () => {
     [...catalog.matchAll(/lifecycle:\s*\{/g)].length,
   );
   const python = region(catalog, 'language: "python"', 'language: "ruby"');
+  const java = region(catalog, 'language: "java"', 'language: "csharp"');
   const csharp = region(catalog, 'language: "csharp"', 'language: "kotlin"');
+  const kotlin = region(catalog, 'language: "kotlin"', 'language: "swift"');
   const cpp = region(catalog, 'language: "cpp"', 'language: "c"');
   const c = region(catalog, 'language: "c"', 'language: "java"');
+  const ruby = region(catalog, 'language: "ruby"', 'language: "php"');
+  const php = region(catalog, 'language: "php"', 'language: "lua"');
   const lua = region(catalog, 'language: "lua"', 'language: "dart"');
+  const dart = region(catalog, 'language: "dart"', "\n];");
+  TestValidator.equals(
+    "every registered strict-provider language has a lifecycle row",
+    [...catalog.matchAll(/strictProvider:\s*"[^"]+"/g)].length,
+    13,
+  );
+  TestValidator.predicate(
+    "the remaining SCIP providers use isolated upstream lifecycle projects",
+    [java, kotlin, ruby, php, dart].every(
+      (row) =>
+        row.includes("projectRoot:") &&
+        row.includes('strictAuthority: "semantic-index"') &&
+        row.includes("lifecycle: {"),
+    ) &&
+      helpers.includes('experiment.projectRoot ?? "."') &&
+      helpers.includes("projectRoot escapes its isolated corpus"),
+  );
+  TestValidator.predicate(
+    "an unavailable compiler identity requires an explicit row limitation",
+    kotlin.includes("compilerLimitation:") &&
+      runner.includes("experiment.compilerLimitation.trim()") &&
+      runner.includes("provenance.producer.compiler ===") &&
+      runner.includes("compilerLimitation: experiment.compilerLimitation"),
+  );
+  TestValidator.predicate(
+    "the wrapperless Kotlin fixture and its tool manifest share one Gradle",
+    workflow.includes('gradle-version: "8.14.3"') &&
+      setup.includes('shell("gradle --version")') &&
+      setup.includes('version: "8.14.3"') &&
+      setup.includes('source: "gradle/actions/setup-gradle@v5"'),
+  );
+  TestValidator.predicate(
+    "isolated lifecycle edges can prove a pinned corpus relationship claim",
+    [java, kotlin].every(
+      (row) =>
+        row.includes('kind: "references"') &&
+        row.includes("crossFile: true"),
+    ) &&
+      lifecycle.includes("fixture.createdEdge.crossFile !== true") &&
+      runner.includes("const lifecycleCreatedEdge") &&
+      runner.includes("lifecycleCreatedEdge?.kind !== kind"),
+  );
   TestValidator.predicate(
     "the dynamic SCIP smoke proves a versioned Python lifecycle, not an edge count",
     python.includes('strictProvider: "scip-python"') &&

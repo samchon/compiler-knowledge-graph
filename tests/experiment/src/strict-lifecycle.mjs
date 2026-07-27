@@ -502,18 +502,24 @@ function assertCreatedSymbol(dump, fixture, language, expectedFile) {
 function assertCreatedEdge(dump, fixture, language) {
   if (fixture.createdEdge === undefined) return;
   const nodes = new Map(dump.nodes.map((node) => [node.id, node]));
-  const found = dump.edges.some((edge) => {
+  const found = dump.edges.find((edge) => {
     const from = nodes.get(edge.from);
     const to = nodes.get(edge.to);
     return (
       edge.kind === fixture.createdEdge.kind &&
       from?.name === fixture.createdEdge.from &&
-      to?.name === fixture.createdEdge.to
+      to?.name === fixture.createdEdge.to &&
+      (fixture.createdEdge.crossFile !== true ||
+        (typeof from.file === "string" &&
+          from.file !== "" &&
+          typeof to.file === "string" &&
+          to.file !== "" &&
+          from.file !== to.file))
     );
   });
-  if (!found) {
+  if (found === undefined) {
     throw new Error(
-      `${language}: lifecycle lost ${fixture.createdEdge.kind} ${fixture.createdEdge.from} -> ${fixture.createdEdge.to}`,
+      `${language}: lifecycle lost ${fixture.createdEdge.crossFile === true ? "cross-file " : ""}${fixture.createdEdge.kind} ${fixture.createdEdge.from} -> ${fixture.createdEdge.to}`,
     );
   }
 }

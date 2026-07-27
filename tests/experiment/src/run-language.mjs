@@ -127,7 +127,6 @@ if (
   (provenance.authority !== experiment.strictAuthority ||
     provenance.producer.tool !== experiment.strictTool ||
     provenance.producer.version === "" ||
-    provenance.producer.compiler === "" ||
     // A tool that did not answer answers the shape of the question and not the
     // question, and a row that accepted it would go green on a provenance
     // saying nothing about which runtime resolved its facts. Both spellings,
@@ -143,6 +142,20 @@ if (
     `${experiment.language}: strict provenance is incomplete: ${JSON.stringify(provenance)}`,
   );
 }
+if (provenance !== undefined) {
+  const compilerLimitation =
+    typeof experiment.compilerLimitation === "string"
+      ? experiment.compilerLimitation.trim()
+      : "";
+  if (
+    (provenance.producer.compiler === "" && compilerLimitation === "") ||
+    (provenance.producer.compiler !== "" && compilerLimitation !== "")
+  ) {
+    throw new Error(
+      `${experiment.language}: strict compiler provenance and its limitation disagree: ${JSON.stringify(provenance)}`,
+    );
+  }
+}
 const edgeKindCounts = Object.fromEntries(
   [...new Set(dump.edges.map((edge) => edge.kind))]
     .sort()
@@ -151,10 +164,18 @@ const edgeKindCounts = Object.fromEntries(
       dump.edges.filter((edge) => edge.kind === kind).length,
     ]),
 );
+// A small pinned build fixture can truthfully exercise a relationship only in
+// the isolated create/rename transition. `runStrictLifecycle` has already
+// required this exact edge in both generations; count that evidence instead of
+// pre-editing the pinned baseline merely to make the final cold dump contain it.
+const lifecycleCreatedEdge = experiment.lifecycle?.createdEdge;
 for (const kind of experiment.semanticEdges ?? []) {
-  if ((edgeKindCounts[kind] ?? 0) === 0) {
+  if (
+    (edgeKindCounts[kind] ?? 0) === 0 &&
+    lifecycleCreatedEdge?.kind !== kind
+  ) {
     throw new Error(
-      `${experiment.language}: strict corpus produced no ${kind} semantic edge; observed ${JSON.stringify(edgeKindCounts)}`,
+      `${experiment.language}: strict corpus or lifecycle produced no ${kind} semantic edge; observed ${JSON.stringify(edgeKindCounts)}`,
     );
   }
 }
@@ -181,7 +202,7 @@ const crossFileCalls = dump.edges.filter(
     nodeFiles.get(edge.to) !== undefined &&
     nodeFiles.get(edge.from) !== nodeFiles.get(edge.to),
 ).length;
-const crossFileRelationships = dump.edges.filter(
+const coldCrossFileRelationships = dump.edges.filter(
   (edge) =>
     crossFileEdge !== undefined &&
     edge.kind === crossFileEdge &&
@@ -189,6 +210,12 @@ const crossFileRelationships = dump.edges.filter(
     nodeFiles.get(edge.to) !== undefined &&
     nodeFiles.get(edge.from) !== nodeFiles.get(edge.to),
 ).length;
+const crossFileRelationships =
+  coldCrossFileRelationships +
+  (lifecycleCreatedEdge?.crossFile === true &&
+  lifecycleCreatedEdge.kind === crossFileEdge
+    ? 1
+    : 0);
 // Naming a family the provider is not registered to prove would make this row
 // unsatisfiable for a correct provider, which is the failure that produced the
 // `calls` default it replaces.
@@ -235,6 +262,8 @@ const result = {
   provenance,
   edgeKindCounts,
   semanticLimitation: experiment.semanticLimitation,
+  compilerLimitation: experiment.compilerLimitation,
+  lifecycleCreatedEdge,
   crossFileCalls,
   crossFileRelationships,
   lifecycle: lifecycle?.rows,

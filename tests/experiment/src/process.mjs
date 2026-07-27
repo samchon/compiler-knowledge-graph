@@ -112,7 +112,23 @@ export const isolateCorpus = (experiment, pinnedRoot, label) => {
     recursive: true,
     filter: (source) => path.basename(source) !== ".git",
   });
-  return root;
+  const project = path.resolve(root, experiment.projectRoot ?? ".");
+  const relative = path.relative(root, project);
+  if (
+    relative === ".." ||
+    relative.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(relative)
+  ) {
+    throw new Error(
+      `${experiment.language}: projectRoot escapes its isolated corpus: ${String(experiment.projectRoot)}`,
+    );
+  }
+  if (!fs.statSync(project, { throwIfNoEntry: false })?.isDirectory()) {
+    throw new Error(
+      `${experiment.language}: projectRoot is not a directory in its pinned corpus: ${String(experiment.projectRoot)}`,
+    );
+  }
+  return project;
 };
 
 /** Prove the pinned clone is still exactly the revision the result names. */

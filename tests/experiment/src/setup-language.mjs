@@ -551,6 +551,13 @@ switch (experiment.language) {
   }
   case "kotlin":
     await installKotlinLanguageServer();
+    shell("gradle --version");
+    record({
+      tool: "gradle",
+      version: "8.14.3",
+      source: "gradle/actions/setup-gradle@v5",
+      digest: "unpinned",
+    });
     // scip-java covers Kotlin through semanticdb-kotlinc, and it needs a JDK to
     // run the Gradle build it indexes through. koin is the worst lane measured
     // at 1349 s, almost all of it kotlin-language-server's Gradle sync before it

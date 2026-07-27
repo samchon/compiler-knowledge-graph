@@ -70,10 +70,9 @@ export const CORPUS = [
     // below 21, and the benchmark provisions 21 so it never fired. Selecting it
     // explicitly asks for a configuration the project already supports.
     // SemanticDB then introduces warnings under the project's independent
-    // fail-on-warning setting, so the fork disables that failure through the
-    // Maven compiler plugin's public user property. Maven reads both choices
-    // from `.mvn/maven.config` unprompted, so no indexer learns a
-    // project-specific flag.
+    // fail-on-warning setting. The fork disables that setting inside the same
+    // profile's compiler-plugin configuration; `.mvn/maven.config` selects the
+    // profile unprompted, so no indexer learns a project-specific flag.
     commit: "a32fbc7fce43841e859b14184984dacd382115e9",
     preflight: preflightMinimums(1_000, 5_000, 3_000, 4),
   },

@@ -188,15 +188,38 @@ export const LANGUAGE_EXPERIMENTS = [
   },
   {
     language: "java",
-    // The benchmark fork, whose `.mvn/maven.config` selects gson's own
-    // `disable-error-prone` profile and disables the compiler plugin's
-    // independent fail-on-warning setting. scip-java drives the real Maven
-    // build with SemanticDB attached; without both fixture-owned choices javac
-    // rejects either gson's Error Prone arguments or SemanticDB's warnings, so
-    // no indexer reaches this project at all.
-    repository: "https://github.com/samchon/graph-benchmark-gson.git",
-    commit: "a32fbc7fce43841e859b14184984dacd382115e9",
-    maxFiles: 120,
+    // Conformance repeats a full compiler build for every lifecycle transition.
+    // Use scip-java's own pinned Maven fixture for that contract; Gson remains
+    // the separate large-corpus timing proof.
+    repository: "https://github.com/scip-code/scip-java.git",
+    commit: "a609ba1adaf630292df5a73ec4ba06c170caba93",
+    projectRoot: "scip-java/src/test/resources/fixtures/maven/basic",
+    strictProvider: "scip-java",
+    strictAuthority: "semantic-index",
+    strictTool: "scip-java",
+    requiredCapabilities: ["universe", "diskDigests"],
+    semanticEdges: ["references"],
+    crossFileEdge: "references",
+    lifecycle: {
+      sourceFile: "src/main/java/com/Example.java",
+      editSuffix: "\n// samchon-graph lifecycle edit\n",
+      createFile: "src/main/java/com/SamchonGraphExperiment.java",
+      renamedFile:
+        "src/main/java/com/SamchonGraphExperimentRenamed.java",
+      createText:
+        "package com;\n\npublic final class SamchonGraphExperiment {\n    public static Example samchonGraphExperiment() {\n        return new Example();\n    }\n}\n",
+      createdSymbol: "samchonGraphExperiment",
+      createdEdge: {
+        kind: "references",
+        from: "samchonGraphExperiment",
+        to: "Example",
+        crossFile: true,
+      },
+      buildFile: "pom.xml",
+      failureFile: "pom.xml",
+      failureSuffix: "\n<not-closed",
+      failurePolicy: "reject",
+    },
     minNodes: 1,
     minEdges: 0,
   },
@@ -249,11 +272,46 @@ export const LANGUAGE_EXPERIMENTS = [
   },
   {
     language: "kotlin",
-    repository: "https://github.com/Kotlin/kotlin-koans.git",
-    commit: "5935a3cab5293bd7967b1bf1f4d2ae713f9e0e9e",
-    maxFiles: 120,
+    // A current Gradle fixture from the pinned producer keeps ten clean
+    // lifecycle builds bounded. The workflow supplies one exact Gradle version
+    // because this fixture intentionally carries no wrapper.
+    repository: "https://github.com/scip-code/scip-java.git",
+    commit: "a609ba1adaf630292df5a73ec4ba06c170caba93",
+    projectRoot:
+      "scip-java/src/test/resources/fixtures/gradle/kotlin2",
+    strictProvider: "scip-java",
+    strictAuthority: "semantic-index",
+    strictTool: "scip-java",
+    requiredCapabilities: ["universe", "diskDigests"],
+    semanticEdges: ["references"],
+    crossFileEdge: "references",
+    // scip-java publishes its own version and the Java runtime that launches
+    // it, but exposes no Kotlin compiler revision. Naming Java here would be
+    // false provenance, so the empty field is allowed only with this statement.
+    compilerLimitation:
+      "scip-java 0.13.1 does not expose the Kotlin compiler revision driven by its Gradle plugin, so Kotlin strict provenance cannot name that compiler without guessing",
+    lifecycle: {
+      sourceFile: "src/main/kotlin/foo/Example.kt",
+      editSuffix: "\n// samchon-graph lifecycle edit\n",
+      createFile: "src/main/kotlin/foo/SamchonGraphExperiment.kt",
+      renamedFile:
+        "src/main/kotlin/foo/SamchonGraphExperimentRenamed.kt",
+      createText:
+        "package foo\n\nfun samchonGraphExperiment(): Example = Example\n",
+      createdSymbol: "samchonGraphExperiment",
+      createdEdge: {
+        kind: "references",
+        from: "samchonGraphExperiment",
+        to: "Example",
+        crossFile: true,
+      },
+      buildFile: "build.gradle",
+      failureFile: "build.gradle",
+      failureSuffix: "\n}\n",
+      failurePolicy: "reject",
+    },
     minNodes: 1,
-    minEdges: 1,
+    minEdges: 0,
   },
   {
     language: "swift",
@@ -322,25 +380,65 @@ export const LANGUAGE_EXPERIMENTS = [
   },
   {
     language: "ruby",
-    repository: "https://github.com/sinatra/sinatra.git",
-    commit: "cb22afd7902b566b6eaba6c4ea89739494a65d12",
-    maxFiles: 120,
+    // scip-ruby is Sorbet-based; its own pinned configuration fixture is the
+    // smallest real project that proves source transitions and the producer's
+    // fail-closed config parser. Sinatra remains the timing corpus.
+    repository: "https://github.com/sourcegraph/scip-ruby.git",
+    commit: "319524058d87cfe5992cfb9eec12ec70fc91213d",
+    projectRoot: "test/cli/config-file",
+    strictProvider: "scip-ruby",
+    strictAuthority: "semantic-index",
+    strictTool: "scip-ruby",
+    requiredCapabilities: ["universe", "diskDigests"],
+    semanticEdges: [],
+    semanticLimitation:
+      "scip-ruby 0.4.7 emits no occurrence enclosing_range, SymbolInformation.enclosing_symbol, or type-definition relationship, so its semantic declarations carry no provable graph edge family",
+    lifecycle: {
+      sourceFile: "config-file.rb",
+      editSuffix: "\n# samchon-graph lifecycle edit\n",
+      createFile: "samchon_graph_experiment.rb",
+      renamedFile: "samchon_graph_experiment_renamed.rb",
+      createText: "class SamchonGraphExperiment\nend\n",
+      createdSymbol: "SamchonGraphExperiment",
+      buildFile: "sorbet/config",
+      failureFile: "sorbet/config",
+      failureSuffix: "\n--definitely-not-a-sorbet-option\n",
+      failurePolicy: "reject",
+    },
     minNodes: 1,
     minEdges: 0,
-    // ruby-lsp composes a bundle from the project's Gemfile; the dependencies
-    // must be installed or the server exits at launch. Vendor the bundle —
-    // an unprivileged install into the system gem path is denied.
-    prepare: "bundle config set --local path vendor/bundle && bundle install",
   },
   {
     language: "php",
-    // The benchmark fork carries scip-php as the dev dependency it is meant to
-    // be and freezes both package metadata and source at the upstream
-    // `cwd/vendor` fix missing from v0.0.2. The tool resolves symbols through
-    // the project's own autoloader.
-    repository: "https://github.com/samchon/graph-benchmark-slim.git",
-    commit: "44c0dabf36c0e971ae9bf17c7bc229fdb6a8b240",
-    maxFiles: 120,
+    // The pinned upstream project carries its lockfile and the exact cwd/vendor
+    // fix used by the benchmark fixture. Composer does not expose a root
+    // package's own binary in vendor/bin, so preparation links that tracked
+    // binary at the project-local location the provider contract resolves.
+    repository: "https://github.com/davidrjenni/scip-php.git",
+    commit: "71a5b117ec4c5dd2af302e363410e604e5df309e",
+    projectRoot: ".",
+    prepare:
+      "composer install --no-interaction --no-progress && ln -sf ../../bin/scip-php vendor/bin/scip-php",
+    strictProvider: "scip-php",
+    strictAuthority: "semantic-index",
+    strictTool: "scip-php",
+    requiredCapabilities: ["universe", "diskDigests"],
+    semanticEdges: [],
+    semanticLimitation:
+      "scip-php at 71a5b117 emits no occurrence enclosing_range, SymbolInformation.enclosing_symbol, or type-definition relationship, so its semantic declarations carry no provable graph edge family",
+    lifecycle: {
+      sourceFile: "src/Indexer.php",
+      editSuffix: "\n// samchon-graph lifecycle edit\n",
+      createFile: "src/SamchonGraphExperiment.php",
+      renamedFile: "src/SamchonGraphExperimentRenamed.php",
+      createText:
+        "<?php\n\ndeclare(strict_types=1);\n\nnamespace ScipPhp;\n\nfinal class SamchonGraphExperiment {}\n",
+      createdSymbol: "SamchonGraphExperiment",
+      buildFile: "composer.json",
+      failureFile: "composer.json",
+      failureSuffix: "\n{ not json",
+      failurePolicy: "reject",
+    },
     minNodes: 1,
     minEdges: 0,
   },
@@ -396,9 +494,32 @@ export const LANGUAGE_EXPERIMENTS = [
   },
   {
     language: "dart",
-    repository: "https://github.com/dart-lang/http.git",
-    commit: "49ddf11a1879e5eca84cef6ee0d7df07f6af2302",
-    maxFiles: 120,
+    // scip_dart's own Dart-3 snapshot is a real resolved package small enough
+    // for repeated whole-project analysis. dart-lang/http remains the timing
+    // corpus whose generic per-symbol lane exposed #151.
+    repository: "https://github.com/Workiva/scip-dart.git",
+    commit: "44d7f8af1f6b2e40e21cea5438d0651080994f8d",
+    projectRoot: "snapshots/input/dart3-features",
+    prepare: "dart pub get",
+    strictProvider: "scip-dart",
+    strictAuthority: "semantic-index",
+    strictTool: "scip-dart",
+    requiredCapabilities: ["universe", "diskDigests"],
+    semanticEdges: [],
+    semanticLimitation:
+      "scip_dart 1.6.2 emits no occurrence enclosing_range, SymbolInformation.enclosing_symbol, or type-definition relationship, so its semantic declarations carry no provable graph edge family",
+    lifecycle: {
+      sourceFile: "lib/main.dart",
+      editSuffix: "\n// samchon-graph lifecycle edit\n",
+      createFile: "lib/samchon_graph_experiment.dart",
+      renamedFile: "lib/samchon_graph_experiment_renamed.dart",
+      createText: "class SamchonGraphExperiment {}\n",
+      createdSymbol: "SamchonGraphExperiment",
+      buildFile: "pubspec.yaml",
+      failureFile: "pubspec.yaml",
+      failureSuffix: "\ninvalid: [\n",
+      failurePolicy: "reject",
+    },
     minNodes: 1,
     minEdges: 0,
   },

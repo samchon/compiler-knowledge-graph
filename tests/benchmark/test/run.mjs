@@ -7,6 +7,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { CORPUS, PROJECTS, projectDir } from "../graph/corpus.mjs";
+import currentIndex from "../graph/current-index.cjs";
 import {
   analyzePreflightDump,
   pubspecRequiresFlutter,
@@ -30,6 +31,7 @@ import {
 } from "./two-columns.mjs";
 
 const { compareNaturalOrdinal } = ordinal;
+const { selectCurrentAgentCells } = currentIndex;
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const benchmarkDir = path.resolve(here, "..");
@@ -66,6 +68,7 @@ const FIXTURE_AGENT_CELL = Object.freeze({
 });
 
 testCorpusAndPromptProvenance();
+testCurrentMeasurementSelection();
 testManifestGenerationIsDeterministic();
 testNaturalOrdinalUsesArbitraryPrecision();
 testCodexTraceAuditor();
@@ -1183,6 +1186,26 @@ function testCorpusAndPromptProvenance() {
       assert.equal(sha256(text), prompt.questionSha256);
     }
   }
+}
+
+function testCurrentMeasurementSelection() {
+  const first = REFERENCE_MANIFEST.prompts[0];
+  const duplicateFamily = {
+    ...first,
+    id: `${first.id}-variant`,
+    questionSha256: "0".repeat(64),
+  };
+  assert.throws(
+    () =>
+      selectCurrentAgentCells([], {
+        ...REFERENCE_MANIFEST,
+        prompts: [...REFERENCE_MANIFEST.prompts, duplicateFamily],
+      }),
+    new RegExp(
+      `duplicates repository/family ${escapeRegExp(first.repo)}/${escapeRegExp(first.family)}`,
+    ),
+    "two valid prompt variants must not be cross-joined in one family chart",
+  );
 }
 
 function testManifestGenerationIsDeterministic() {

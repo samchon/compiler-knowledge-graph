@@ -115,6 +115,7 @@ function manifestSelection(manifest) {
   }
   const fixtures = Object.create(null);
   const prompts = new Map();
+  const promptFamilies = new Set();
   for (const [index, prompt] of manifest.prompts.entries()) {
     const label = `benchmark question manifest.prompts[${String(index)}]`;
     if (
@@ -143,6 +144,13 @@ function manifestSelection(manifest) {
     if (prompts.has(prompt.id)) {
       throw new TypeError(`${label} duplicates prompt id ${prompt.id}`);
     }
+    const promptFamily = JSON.stringify([prompt.repo, prompt.family]);
+    if (promptFamilies.has(promptFamily)) {
+      throw new TypeError(
+        `${label} duplicates repository/family ${prompt.repo}/${prompt.family}`,
+      );
+    }
+    promptFamilies.add(promptFamily);
     prompts.set(prompt.id, {
       repo: prompt.repo,
       family: prompt.family,

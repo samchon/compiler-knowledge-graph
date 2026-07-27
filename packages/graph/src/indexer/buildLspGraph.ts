@@ -152,6 +152,14 @@ async function buildLspGraphAttempt(
       resolvedDependencies.providers,
     );
     appendAll(warnings, selection.warnings);
+    // Said before the work starts, not after it finishes.
+    //
+    // Everything else this build reports — the provenance line, every warning —
+    // is written once the dump is complete, so a run that never completes
+    // reports nothing at all. Two benchmark lanes spent an hour each and left an
+    // empty log three times over: no provider named, no reason recorded, and no
+    // way to tell a slow strict indexer from a slow fallback.
+    announceProviderSelection(selection.candidates);
     for (const candidate of selection.candidates) {
       try {
         const { refresh, session } =
@@ -951,4 +959,30 @@ function resolveCommand(command: string, root: string): string | undefined {
     .filter((line) => line !== "");
   const executable = lines.filter((line) => /\.(exe|cmd|bat)$/i.test(line));
   return [...executable, ...lines][0];
+}
+
+/**
+ * Name the providers about to run, on stderr, before any of them does.
+ *
+ * A build that finishes explains itself; a build that is killed explains
+ * nothing, and the expensive cases are exactly the ones that get killed. One
+ * line up front costs nothing and turns "this lane timed out" into "this lane
+ * timed out running scip-ruby".
+ *
+ * stderr because stdout is the payload, and unconditional because a build with
+ * no strict candidate is the case most worth being able to see.
+ */
+function announceProviderSelection(
+  candidates: readonly { provider: { name: string }; languages: readonly GraphLanguage[] }[],
+): void {
+  const named =
+    candidates.length === 0
+      ? "no strict provider selected"
+      : candidates
+          .map(
+            (candidate) =>
+              `${candidate.provider.name}(${candidate.languages.join(",")})`,
+          )
+          .join(" ");
+  process.stderr.write(`@samchon/graph: indexing with ${named}\n`);
 }

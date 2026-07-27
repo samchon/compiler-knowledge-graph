@@ -69,4 +69,12 @@ function assertTheDumpSaysWhatProducedIt(root: string): void {
     "and reports the reasons nothing better served",
     summary.length > 1,
   );
+  // Announced before the build, because everything else here is written after
+  // it. Two benchmark lanes spent an hour each and were killed, and their logs
+  // were empty — the run that most needs to say what it was doing is the one
+  // that never reaches the end.
+  TestValidator.predicate(
+    "and says what it is about to run before it runs it",
+    summary.some((line) => line.includes("indexing with")),
+  );
 }

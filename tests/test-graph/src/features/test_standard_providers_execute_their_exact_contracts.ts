@@ -212,6 +212,35 @@ export const test_standard_providers_execute_their_exact_contracts =
           );
         }
         await session.close();
+        if (provider.name === "scip-clang") {
+          const cppOnly = provider.open({
+            root,
+            command,
+            languages: ["cpp"],
+            options: { cwd: root },
+          });
+          try {
+            const initial = await cppOnly.refresh();
+            fs.appendFileSync(path.join(root, "src", "interface.h"), "\n");
+            const lowercaseHeaderChanged = await cppOnly.refresh();
+            fs.appendFileSync(path.join(root, "src", "uppercase.C"), "\n");
+            const uppercaseSourceChanged = await cppOnly.refresh();
+            fs.appendFileSync(path.join(root, "src", "interface.H"), "\n");
+            const uppercaseHeaderChanged = await cppOnly.refresh();
+            TestValidator.predicate(
+              "a C++-only scip-clang session watches ambiguous and case-sensitive C++ identities",
+              initial.generation === 1 &&
+                lowercaseHeaderChanged.changed &&
+                lowercaseHeaderChanged.generation === 2 &&
+                uppercaseSourceChanged.changed &&
+                uppercaseSourceChanged.generation === 3 &&
+                uppercaseHeaderChanged.changed &&
+                uppercaseHeaderChanged.generation === 4,
+            );
+          } finally {
+            await cppOnly.close();
+          }
+        }
         if (provider.name === "scip-java") {
           const javaOnly = provider.open({
             root,
@@ -446,6 +475,9 @@ function writeProject(root: string): void {
     "src/implementation.tpp": "inline int tpp_value() { return 1; }\n",
     "src/implementation.tcc": "inline int tcc_value() { return 1; }\n",
     "src/implementation.inl": "inline int inl_value() { return 1; }\n",
+    "src/interface.h": "int lowercase_header_value(void);\n",
+    "src/interface.H": "int uppercase_header_value();\n",
+    "src/uppercase.C": "int uppercase_source_value() { return 1; }\n",
     "src/Main.java": "// mentionedInComment must remain prose\nclass Main { static void caller() { callee(); } static void callee() {} }\n",
     "src/Main.kt": "// mentionedInComment must remain prose\nfun caller() { callee() }\nfun callee() {}\n",
     "src/Main.scala": "// mentionedInComment must remain prose\nobject Main { def caller(): Unit = callee(); def callee(): Unit = () }\n",

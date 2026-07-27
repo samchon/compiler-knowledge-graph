@@ -46,6 +46,10 @@ import {
   preparedFixtureCompanion,
   serverArgsForPreparedFixture,
 } from "./language.mjs";
+import {
+  assertIndexReport,
+  assertWebsitePublication,
+} from "./publication-document.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, "../../..");
@@ -73,11 +77,13 @@ const SOURCE_EXTENSIONS = {
     ".cpp",
     ".cxx",
     ".c++",
+    ".C",
     ".h",
     ".hh",
     ".hpp",
     ".hxx",
     ".h++",
+    ".H",
     ".ipp",
     ".tpp",
     ".tcc",
@@ -464,7 +470,7 @@ function measureScale(project, spec, repoDir) {
   const files = (listed.stdout ?? "")
     .split("\0")
     .filter(Boolean)
-    .filter((file) => extensions.some((ext) => file.toLowerCase().endsWith(ext)))
+    .filter((file) => matchesSourceExtension(file, extensions))
     .filter((file) => !/\.d\.(ts|mts|cts)$/.test(file));
   let lines = 0;
   for (const file of files) {
@@ -476,6 +482,15 @@ function measureScale(project, spec, repoDir) {
     lines += newlines + (text.length > 0 && !text.endsWith("\n") ? 1 : 0);
   }
   return { files: files.length, lines };
+}
+
+function matchesSourceExtension(file, extensions) {
+  const exact = path.extname(file);
+  if (exact === ".C" || exact === ".H") {
+    return extensions.includes(exact);
+  }
+  const folded = file.toLowerCase();
+  return extensions.some((extension) => folded.endsWith(extension));
 }
 
 /**
@@ -609,113 +624,6 @@ function publishWebsiteIndex(currentReport) {
   };
   fs.mkdirSync(path.dirname(websiteJson), { recursive: true });
   fs.writeFileSync(websiteJson, `${JSON.stringify(out)}\n`);
-}
-
-function assertIndexReport(value, label) {
-  assertRecord(value, label);
-  assertRecord(value.host, `${label}.host`);
-  assertScale(value.scale, `${label}.scale`);
-  assertIndexCells(value.cells, `${label}.cells`);
-}
-
-function assertWebsitePublication(value) {
-  assertRecord(value, "existing benchmark publication");
-  if (
-    value.schemaVersion !== undefined &&
-    value.schemaVersion !== 1
-  ) {
-    throw new TypeError(
-      "existing benchmark publication.schemaVersion must be omitted or 1",
-    );
-  }
-  if (value.agent !== undefined && value.agent !== null) {
-    assertRecord(value.agent, "existing benchmark publication.agent");
-    if (!Array.isArray(value.agent.cells)) {
-      throw new TypeError(
-        "existing benchmark publication.agent.cells must be an array",
-      );
-    }
-  }
-  if (value.index !== undefined && value.index !== null) {
-    assertIndexReport(value.index, "existing benchmark publication.index");
-  }
-}
-
-function assertScale(value, label) {
-  assertRecord(value, label);
-  for (const [project, scale] of Object.entries(value)) {
-    assertRecord(scale, `${label}.${project}`);
-    for (const field of ["files", "lines"]) {
-      if (
-        !Number.isSafeInteger(scale[field]) ||
-        scale[field] < 0
-      ) {
-        throw new TypeError(
-          `${label}.${project}.${field} must be a nonnegative safe integer`,
-        );
-      }
-    }
-  }
-}
-
-function assertIndexCells(value, label) {
-  if (!Array.isArray(value)) {
-    throw new TypeError(`${label} must be an array`);
-  }
-  for (const [index, cell] of value.entries()) {
-    const cellLabel = `${label}[${String(index)}]`;
-    assertRecord(cell, cellLabel);
-    for (const field of ["project", "tool"]) {
-      if (typeof cell[field] !== "string" || cell[field].trim() === "") {
-        throw new TypeError(`${cellLabel}.${field} must be a nonempty string`);
-      }
-    }
-    for (const field of ["buildMs", "timedOutMs"]) {
-      if (
-        cell[field] !== undefined &&
-        cell[field] !== null &&
-        (typeof cell[field] !== "number" ||
-          !Number.isFinite(cell[field]) ||
-          cell[field] < 0)
-      ) {
-        throw new TypeError(
-          `${cellLabel}.${field} must be null or a nonnegative finite number`,
-        );
-      }
-    }
-    for (const field of ["hasBuildStep", "strict"]) {
-      if (cell[field] !== undefined && typeof cell[field] !== "boolean") {
-        throw new TypeError(`${cellLabel}.${field} must be a boolean`);
-      }
-    }
-    const outcomes = [
-      typeof cell.buildMs === "number",
-      typeof cell.timedOutMs === "number",
-      cell.hasBuildStep === false,
-    ].filter(Boolean).length;
-    if (outcomes !== 1) {
-      throw new TypeError(
-        `${cellLabel} must carry exactly one build duration, timeout duration, or no-build marker`,
-      );
-    }
-    assertRecord(cell.host, `${cellLabel}.host`);
-    if (typeof cell.host.cpu !== "string" || cell.host.cpu.trim() === "") {
-      throw new TypeError(`${cellLabel}.host.cpu must be a nonempty string`);
-    }
-    if (cell.quietWait !== undefined && cell.quietWait !== null) {
-      assertRecord(cell.quietWait, `${cellLabel}.quietWait`);
-    }
-  }
-}
-
-function assertRecord(value, label) {
-  if (
-    typeof value !== "object" ||
-    value === null ||
-    Array.isArray(value)
-  ) {
-    throw new TypeError(`${label} must be an object`);
-  }
 }
 
 /** One place, so the limit reported always matches the limit enforced. */

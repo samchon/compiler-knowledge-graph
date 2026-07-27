@@ -167,6 +167,11 @@ export namespace adaptLuaExport {
     warnings: string[];
   }
 
+  export interface IArtifact extends IReport {
+    /** Effective Lua dialect reported by the analyzer that produced the body. */
+    compilerVersion: string;
+  }
+
   export interface IResult {
     nodes: ISamchonGraphNode[];
     edges: ISamchonGraphEdge[];
@@ -183,12 +188,12 @@ export namespace adaptLuaExport {
    * whose arrays happen to be empty — which would publish "this project has no
    * symbols" as a fact.
    */
-  export function parse(value: unknown, provider: string): IReport {
-    const report = value as Partial<IReport> | null;
+  export function parse(value: unknown, provider: string): IArtifact {
+    const report = value as Partial<IArtifact> | null;
     if (report === null || typeof report !== "object") {
       throw new Error(`${provider}: the export artifact is not an object`);
     }
-    if (report.schemaVersion !== 1) {
+    if (report.schemaVersion !== 2) {
       throw new Error(
         `${provider}: unsupported export schemaVersion ${String(report.schemaVersion)}`,
       );
@@ -208,8 +213,17 @@ export namespace adaptLuaExport {
         throw new Error(`${provider}: a file entry is not a path`);
     for (const entry of report.nodes as INode[]) assertNode(entry, provider);
     for (const entry of report.edges as IEdge[]) assertEdge(entry, provider);
+    if (
+      typeof report.compilerVersion !== "string" ||
+      report.compilerVersion === ""
+    ) {
+      throw new Error(
+        `${provider}: the export artifact has no effective Lua runtime version`,
+      );
+    }
     return {
-      schemaVersion: 1,
+      schemaVersion: 2,
+      compilerVersion: report.compilerVersion,
       files: report.files as string[],
       nodes: report.nodes as INode[],
       edges: report.edges as IEdge[],

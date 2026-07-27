@@ -24,6 +24,31 @@ export const test_language_registry_lists_advertised_targets = () => {
     );
   }
   TestValidator.equals(
+    "uppercase .C remains a case-sensitive C++ identity",
+    languageOf("src/implementation.C"),
+    "cpp",
+  );
+  TestValidator.equals(
+    "uppercase .H remains a case-sensitive C++ identity",
+    languageOf("include/interface.H"),
+    "cpp",
+  );
+  TestValidator.equals(
+    "ordinary C++ suffixes remain case-insensitive",
+    languageOf("src/implementation.CPP"),
+    "cpp",
+  );
+  TestValidator.equals(
+    "lowercase .c remains a C identity",
+    languageOf("src/implementation.c"),
+    "c",
+  );
+  TestValidator.equals(
+    "lowercase .h remains a C identity",
+    languageOf("include/interface.h"),
+    "c",
+  );
+  TestValidator.equals(
     "typescript default server",
     LANGUAGE_SPECS.find((spec) => spec.language === "typescript")?.lsp,
     { command: "ttscserver", args: ["--stdio"] },

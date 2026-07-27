@@ -81,6 +81,19 @@ export const test_experiment_corpora_are_commit_pinned = () => {
       lifecycle.includes('status: "published-with-limitation"') &&
       lifecycle.includes("publicationChanges("),
   );
+  TestValidator.predicate(
+    "a malformed compilation database proves strict decline and warned fallback",
+    [cpp, c].every(
+      (row) =>
+        row.includes('failurePolicy: "fallback"') &&
+        /failureLimitation:\s*"?[^",]/.test(row),
+    ) &&
+      lifecycle.includes('fixture.failurePolicy === "fallback"') &&
+      lifecycle.includes('status: "fallback-with-limitation"') &&
+      lifecycle.includes("row.provider === experiment.strictProvider") &&
+      lifecycle.includes("warning.includes(experiment.strictProvider)") &&
+      lifecycle.includes('? ["initial", ...CHANGED_MODES]'),
+  );
 
   TestValidator.predicate(
     "the clone helper fetches and detaches the pinned revision",

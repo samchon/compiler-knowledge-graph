@@ -134,11 +134,12 @@ export const LANGUAGE_EXPERIMENTS = [
       compilationDatabase: "build/compile_commands.json",
       failureFile: "build/compile_commands.json",
       failureSuffix: "\n[ not json",
-      // A compilation database that will not parse leaves scip-clang with no
-      // translation units to index, so it cannot publish. Stated as the
-      // boundary it appears to be; a run that shows recovery makes this row
-      // wrong and it must then record what actually happens.
-      failurePolicy: "reject",
+      // A compilation database that will not parse makes scip-clang decline
+      // before publication. The resident records that reason and serves its
+      // documented fallback until the database is repaired.
+      failurePolicy: "fallback",
+      failureLimitation:
+        "a malformed compilation database makes scip-clang decline without provenance, so the resident publishes an explicitly warned generic/static fallback until the project input is repaired",
     },
     minNodes: 1,
     minEdges: 0,
@@ -177,11 +178,10 @@ export const LANGUAGE_EXPERIMENTS = [
       compilationDatabase: "build/compile_commands.json",
       failureFile: "build/compile_commands.json",
       failureSuffix: "\n[ not json",
-      // A compilation database that will not parse leaves scip-clang with no
-      // translation units to index, so it cannot publish. Stated as the
-      // boundary it appears to be; a run that shows recovery makes this row
-      // wrong and it must then record what actually happens.
-      failurePolicy: "reject",
+      // The C and C++ slices share the same strict selection boundary.
+      failurePolicy: "fallback",
+      failureLimitation:
+        "a malformed compilation database makes scip-clang decline without provenance, so the resident publishes an explicitly warned generic/static fallback until the project input is repaired",
     },
     minNodes: 1,
     minEdges: 0,

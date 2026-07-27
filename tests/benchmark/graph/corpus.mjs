@@ -32,7 +32,7 @@ export const CORPUS = [
     name: "excalidraw",
     language: "typescript",
     url: "https://github.com/samchon/ttsc-benchmark-excalidraw.git",
-    commit: "98a2730b197873d43fddbe3fad6f0812df84b451",
+    commit: "e576ee0ecbdec2b3de3b7378f2cc08038026531b",
     preflight: preflightMinimums(1_000, 5_000, 3_000, 4),
   },
   {

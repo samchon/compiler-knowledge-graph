@@ -181,6 +181,59 @@ export const runStrictLifecycle = async (experiment, pinnedRoot) => {
         elapsedMs: Math.round(performance.now() - failedAt),
         error: failure.message,
       });
+    } else if (fixture.failurePolicy === "fallback") {
+      if (
+        typeof fixture.failureLimitation !== "string" ||
+        fixture.failureLimitation === ""
+      ) {
+        throw new Error(
+          `${experiment.language}: a fallback failure must state the limitation it accepts`,
+        );
+      }
+      let fallback;
+      try {
+        fallback = await resident.load();
+      } catch (error) {
+        throw new Error(
+          `${experiment.language}: the catalog records a strict-provider decline with fallback, but the resident rejected it: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+      if (
+        fallback.provenance?.some(
+          (row) => row.provider === experiment.strictProvider,
+        )
+      ) {
+        throw new Error(
+          `${experiment.language}: the declined strict provider still published provenance`,
+        );
+      }
+      const mode = resident.modes().get(experiment.strictProvider);
+      if (mode !== undefined) {
+        throw new Error(
+          `${experiment.language}: the declined strict provider still reported mode ${String(mode)}`,
+        );
+      }
+      const providerWarnings = (fallback.warnings ?? []).filter((warning) =>
+        warning.includes(experiment.strictProvider),
+      );
+      if (providerWarnings.length === 0) {
+        throw new Error(
+          `${experiment.language}: strict-provider fallback did not name ${experiment.strictProvider}`,
+        );
+      }
+      dump = fallback;
+      rows.push({
+        name: "failure",
+        status: "fallback-with-limitation",
+        mode,
+        elapsedMs: Math.round(performance.now() - failedAt),
+        outputBytes: Buffer.byteLength(JSON.stringify(fallback), "utf8"),
+        nodeCount: fallback.nodes.length,
+        edgeCount: fallback.edges.length,
+        diagnosticCount: fallback.diagnostics?.length ?? 0,
+        warnings: providerWarnings,
+        limitation: fixture.failureLimitation,
+      });
     } else if (fixture.failurePolicy === "tolerated") {
       // Some producers genuinely do not fail on this input class. Asserting a
       // rejection they never make would prove only that the harness agrees with
@@ -406,7 +459,12 @@ export const runStrictLifecycle = async (experiment, pinnedRoot) => {
     fs.writeFileSync(failureFile, failureText);
     fs.writeFileSync(sourceFile, sourceText);
     fs.writeFileSync(buildFile, buildText);
-    const retried = await load("retry", CHANGED_MODES);
+    const retried = await load(
+      "retry",
+      fixture.failurePolicy === "fallback"
+        ? ["initial", ...CHANGED_MODES]
+        : CHANGED_MODES,
+    );
     if (retried.nodes.some((node) => node.name === fixture.createdSymbol)) {
       throw new Error(
         `${experiment.language}: retry retained a removed lifecycle declaration`,

@@ -196,8 +196,9 @@ export class BatchGraphSession implements IBulkGraphSession {
           signal,
         );
       } catch (error) {
-        producerFailure =
-          error instanceof Error ? error : new Error(String(error));
+        // `run` crosses the only unknown-rejection boundary through `enqueue`,
+        // which normalizes it before this promise can reject.
+        producerFailure = error as Error;
       }
       // Some producers cannot be told where to write. `scip-php` declares only
       // `--help` and `--memory-limit`, takes `getcwd()` as the project root, and

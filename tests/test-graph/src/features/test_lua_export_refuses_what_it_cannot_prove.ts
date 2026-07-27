@@ -124,23 +124,23 @@ function assertAMalformedArtifactIsRefused(): void {
     ],
     [
       "a missing nodes array",
-      { schemaVersion: 1, files: [], edges: [], warnings: [] },
+      { schemaVersion: 2, files: [], edges: [], warnings: [] },
       "has no nodes",
     ],
     [
       "a file entry that is not a string",
-      { schemaVersion: 1, files: [42], nodes: [], edges: [], warnings: [] },
+      { schemaVersion: 2, files: [42], nodes: [], edges: [], warnings: [] },
       "not a path",
     ],
     [
       "a file entry that is not a path",
-      { schemaVersion: 1, files: [""], nodes: [], edges: [], warnings: [] },
+      { schemaVersion: 2, files: [""], nodes: [], edges: [], warnings: [] },
       "not a path",
     ],
     [
       "a declaration with no name",
       {
-        schemaVersion: 1,
+        schemaVersion: 2,
         files: ["a.lua"],
         nodes: [{ kind: "local", sourceType: "local", location: span() }],
         edges: [],
@@ -151,7 +151,7 @@ function assertAMalformedArtifactIsRefused(): void {
     [
       "a declaration with no kind",
       {
-        schemaVersion: 1,
+        schemaVersion: 2,
         files: ["a.lua"],
         nodes: [{ name: "x", sourceType: "local", location: span() }],
         edges: [],
@@ -162,7 +162,7 @@ function assertAMalformedArtifactIsRefused(): void {
     [
       "a declaration with no file",
       {
-        schemaVersion: 1,
+        schemaVersion: 2,
         files: ["a.lua"],
         nodes: [
           {
@@ -180,7 +180,7 @@ function assertAMalformedArtifactIsRefused(): void {
     [
       "a declaration with a negative coordinate",
       {
-        schemaVersion: 1,
+        schemaVersion: 2,
         files: ["a.lua"],
         nodes: [
           {
@@ -198,7 +198,7 @@ function assertAMalformedArtifactIsRefused(): void {
     [
       "a declaration with an inverted span",
       {
-        schemaVersion: 1,
+        schemaVersion: 2,
         files: ["a.lua"],
         nodes: [
           {
@@ -216,7 +216,7 @@ function assertAMalformedArtifactIsRefused(): void {
     [
       "a declaration body in another file",
       {
-        schemaVersion: 1,
+        schemaVersion: 2,
         files: ["a.lua", "b.lua"],
         nodes: [
           {
@@ -235,7 +235,7 @@ function assertAMalformedArtifactIsRefused(): void {
     [
       "a declaration body that excludes its name",
       {
-        schemaVersion: 1,
+        schemaVersion: 2,
         files: ["a.lua"],
         nodes: [
           {
@@ -258,13 +258,30 @@ function assertAMalformedArtifactIsRefused(): void {
     [
       "an edge with no origin",
       {
-        schemaVersion: 1,
+        schemaVersion: 2,
         files: ["a.lua"],
         nodes: [],
         edges: [{ from: 0, kind: "references", sourceType: "x", location: span() }],
         warnings: [],
       },
       "no origin declaration",
+    ],
+    [
+      "an artifact with no effective runtime",
+      { schemaVersion: 2, files: [], nodes: [], edges: [], warnings: [] },
+      "runtime version",
+    ],
+    [
+      "an artifact with an empty effective runtime",
+      {
+        schemaVersion: 2,
+        compilerVersion: "",
+        files: [],
+        nodes: [],
+        edges: [],
+        warnings: [],
+      },
+      "runtime version",
     ],
   ];
   for (const [reason, artifact, expected] of refusals) {
@@ -289,7 +306,8 @@ function assertAMalformedArtifactIsRefused(): void {
     "a nonsensical skip counter reads as zero",
     adaptLuaExport.parse(
       {
-        schemaVersion: 1,
+        schemaVersion: 2,
+        compilerVersion: "Lua 5.4",
         files: [],
         nodes: [],
         edges: [],
@@ -303,7 +321,14 @@ function assertAMalformedArtifactIsRefused(): void {
   TestValidator.equals(
     "absent skip counters read as zero",
     adaptLuaExport.parse(
-      { schemaVersion: 1, files: [], nodes: [], edges: [], warnings: [] },
+      {
+        schemaVersion: 2,
+        compilerVersion: "Lua 5.4",
+        files: [],
+        nodes: [],
+        edges: [],
+        warnings: [],
+      },
       "samchon-graph-lua",
     ).skipped,
     { unnamed: 0, outsideRoot: 0, refsFailed: 0 },

@@ -69,7 +69,8 @@ async function assertTheServerVersionIsPublished(): Promise<void> {
   const root = GraphPaths.createTempDirectory("samchon-graph-lua-version-");
   fs.writeFileSync(path.join(root, "main.lua"), "return 1\n");
   const artifact = JSON.stringify({
-    schemaVersion: 1,
+    schemaVersion: 2,
+    compilerVersion: "LuaJIT",
     files: ["main.lua"],
     nodes: [],
     edges: [],
@@ -104,8 +105,11 @@ async function assertTheServerVersionIsPublished(): Promise<void> {
       const refreshed = await session.refresh();
       TestValidator.equals(
         `Lua provenance maps ${row} to its publishable server version`,
-        refreshed.snapshot.provenance.toolVersion,
-        expected,
+        [
+          refreshed.snapshot.provenance.toolVersion,
+          refreshed.snapshot.provenance.compilerVersion,
+        ],
+        [expected, "LuaJIT"],
       );
     } finally {
       await session.close();
@@ -152,7 +156,8 @@ async function assertAnUnreadableSourceIsNotPublishedAround(): Promise<void> {
         "-e",
         `require("node:fs").writeFileSync(process.argv[1], ${JSON.stringify(
           JSON.stringify({
-            schemaVersion: 1,
+            schemaVersion: 2,
+            compilerVersion: "Lua 5.4",
             files: ["absent.lua"],
             nodes: [],
             edges: [],
@@ -234,7 +239,8 @@ async function refreshLuaArtifact(
         "-e",
         `require("node:fs").writeFileSync(process.argv[1], ${JSON.stringify(
           JSON.stringify({
-            schemaVersion: 1,
+            schemaVersion: 2,
+            compilerVersion: "Lua 5.4",
             files: [declared],
             nodes: [],
             edges: [],

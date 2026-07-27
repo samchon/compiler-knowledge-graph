@@ -46,8 +46,16 @@ export function walkSourceFiles(root: string, options: IWalkOptions): string[] {
       }
       /* c8 ignore next */
       if (!entry.isFile()) continue;
+      const extension = path.extname(entry.name);
+      // GCC and Clang assign uppercase `.C` and `.H` to C++, while lowercase
+      // `.c` and `.h` are C identities. All other registered suffixes remain
+      // case-insensitive for discovery, as they were before.
+      const extensionKey =
+        extension === ".C" || extension === ".H"
+          ? extension
+          : extension.toLowerCase();
       if (
-        options.extensions.has(path.extname(entry.name).toLowerCase()) &&
+        options.extensions.has(extensionKey) &&
         !(insideCompilerOutput && isTypeScriptCompilerOutput(entry.name))
       ) {
         out.push(abs);

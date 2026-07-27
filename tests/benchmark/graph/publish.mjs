@@ -25,11 +25,11 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
-  agentPublicationDocument,
   sanitizeWebsiteSamples,
   websiteCellKey,
 } from "./website-cell.mjs";
 import { assertPublicationCandidates } from "./publication-gate.mjs";
+import { agentPublicationDocument } from "./publication-document.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, "..", "..", "..");

@@ -36,9 +36,10 @@ const clangScipProvider = createScipProvider({
     "Makefile",
     "meson.build",
   ],
-  // `.inc` and extensionless include documents are accepted from the SCIP
-  // artifact, so resident freshness has to watch the same identities.
-  buildExtensions: [".cmake", ".inc", ""],
+  // `.h`, `.inc`, and extensionless include documents can be accepted from a
+  // C++-only SCIP artifact, so resident freshness has to watch the same
+  // identities even when the C registry is not part of the selected slice.
+  buildExtensions: [".cmake", ".h", ".inc", ""],
   // scip-clang 0.4.0 writes `CPP` into every SCIP document, with an upstream
   // FIXME to detect the language. Trusting it makes a C-only session discard
   // every `.c` document as foreign C++ even though the path identifies it.
@@ -295,7 +296,7 @@ interface IStandardScipProvider {
   name: string;
 
   /** Fact families this indexer provably does not emit. */
-  omitFacts?: readonly GraphEdgeKind[];
+  omitFacts: readonly GraphEdgeKind[];
   languages: readonly GraphLanguage[];
   command: string;
   override: string;
@@ -396,7 +397,7 @@ function createScipProvider(
     name: props.name,
     languages: props.languages,
     authority: "semantic-index",
-    ...(props.omitFacts === undefined ? {} : { omitFacts: props.omitFacts }),
+    omitFacts: props.omitFacts,
     ...(props.preferFileLanguage === undefined
       ? {}
       : { preferFileLanguage: props.preferFileLanguage }),

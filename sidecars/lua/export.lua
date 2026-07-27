@@ -27,6 +27,7 @@
 -- with `__index = _G`, so `require` reaches the rest of the server.
 
 local original = export.serializeAndExport
+local config = require 'config.config'
 local files = require 'files'
 local furi = require 'file-uri'
 local pathSeparator = package.config:sub(1, 1)
@@ -144,11 +145,12 @@ end
 function export.serializeAndExport(docs, outputDir)
     local root = furi.decode(ws.rootUri)
     local report = {
-        schemaVersion = 1,
+        schemaVersion = 2,
+        compilerVersion = config.get(ws.rootUri, 'Lua.runtime.version'),
         tool = {
             name = 'lua-language-server',
             exporter = 'samchon-graph-lua-export',
-            exporterVersion = 1,
+            exporterVersion = 2,
         },
         files = {},
         nodes = {},

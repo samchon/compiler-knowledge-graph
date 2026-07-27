@@ -153,7 +153,7 @@ export class LuaGraphSession implements IBulkGraphSession {
           props.configuration,
           "lua-language-server",
         ),
-        compilerVersion: "",
+        compilerVersion: report.compilerVersion,
         protocolVersion: 1,
         universe: props.universe,
         // `universe` because the snapshot carries one and the contract requires

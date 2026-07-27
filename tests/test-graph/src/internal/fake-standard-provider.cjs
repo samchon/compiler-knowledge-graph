@@ -305,7 +305,8 @@ if (producer === "lua-language-server") {
     }
   }
   write(path.join(outDir, "samchon-graph-lua.json"), {
-    schemaVersion: 1,
+    schemaVersion: 2,
+    compilerVersion: "Lua 5.4",
     files: [file],
     nodes,
     edges,

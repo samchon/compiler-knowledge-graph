@@ -29,11 +29,11 @@ import {
   resolveWorkDir,
 } from "./corpus.mjs";
 import {
-  agentPublicationDocument,
   isSuccessfulMeasuredSample,
   sanitizeWebsiteSamples,
   websiteCellKey,
 } from "./website-cell.mjs";
+import { agentPublicationDocument } from "./publication-document.mjs";
 import { assertPublicationCandidates } from "./publication-gate.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));

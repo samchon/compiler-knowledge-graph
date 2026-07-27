@@ -13,8 +13,8 @@ import {
   assertPinnedCheckout,
 } from "../graph/language.mjs";
 import { assertPublicationCandidates } from "../graph/publication-gate.mjs";
+import { agentPublicationDocument } from "../graph/publication-document.mjs";
 import {
-  agentPublicationDocument,
   invalidWebsiteCellReason,
   sanitizeWebsiteSamples,
 } from "../graph/website-cell.mjs";
@@ -33,6 +33,23 @@ const benchmarkDir = path.resolve(here, "..");
 const repoRoot = path.resolve(benchmarkDir, "..", "..");
 const graphDir = path.join(benchmarkDir, "graph");
 const manifestPath = path.join(graphDir, "questions", "manifest.json");
+const FIXTURE_HOST = Object.freeze({
+  os: "fixture",
+  cpu: "fixture",
+  cores: 4,
+  ramGB: 16,
+});
+const FIXTURE_AGENT_CELL = Object.freeze({
+  harness: "codex",
+  tool: "samchon-graph",
+  repo: "fixture",
+  model: "codex-fixture",
+  runs: 1,
+  samples: {
+    baseline: [{ tokens: 1 }],
+    graph: [],
+  },
+});
 
 testCorpusAndPromptProvenance();
 testManifestGenerationIsDeterministic();
@@ -123,21 +140,21 @@ function testPublishedIndexCellsNameTheirMachine() {
 
 function testAgentPublicationPreservesIndexResults() {
   const index = {
-    host: { cpu: "fixture" },
+    host: FIXTURE_HOST,
     scale: { fixture: { files: 1, lines: 1 } },
     cells: [
       {
         project: "fixture",
         tool: "samchon-graph",
         buildMs: 1,
-        host: { cpu: "fixture" },
+        host: FIXTURE_HOST,
       },
     ],
   };
   const merged = agentPublicationDocument({
     schemaVersion: 1,
     structural: { retained: true },
-    agent: { cells: [{ retained: true }] },
+    agent: { cells: [FIXTURE_AGENT_CELL] },
     index,
   });
   assert.equal(
@@ -150,6 +167,53 @@ function testAgentPublicationPreservesIndexResults() {
     false,
     "an absent indexing axis must remain absent",
   );
+  for (const [label, invalidPrior] of [
+    [
+      "unsupported schema",
+      {
+        schemaVersion: 2,
+        structural: { retained: true },
+        agent: { cells: [FIXTURE_AGENT_CELL] },
+      },
+    ],
+    [
+      "malformed agent block",
+      {
+        schemaVersion: 1,
+        structural: { retained: true },
+        agent: "not an agent result",
+      },
+    ],
+    [
+      "malformed index block",
+      {
+        schemaVersion: 1,
+        structural: { retained: true },
+        agent: { cells: [FIXTURE_AGENT_CELL] },
+        index: { ...index, host: {} },
+      },
+    ],
+    [
+      "malformed stored agent cell",
+      {
+        schemaVersion: 1,
+        structural: { retained: true },
+        agent: { cells: [{ repo: "fixture" }] },
+      },
+    ],
+  ]) {
+    const before = JSON.stringify(invalidPrior);
+    assert.throws(
+      () => agentPublicationDocument(invalidPrior),
+      TypeError,
+      `an agent-result writer must reject an ${label}`,
+    );
+    assert.equal(
+      JSON.stringify(invalidPrior),
+      before,
+      `rejecting an ${label} must not mutate it`,
+    );
+  }
 }
 
 /**
@@ -168,17 +232,17 @@ function testIndexPublicationRefusesMalformedJson() {
   const validPublication = JSON.stringify({
     schemaVersion: 1,
     structural: { retained: true },
-    agent: { cells: [{ retained: true }] },
+    agent: { cells: [FIXTURE_AGENT_CELL] },
   });
   const validReport = JSON.stringify({
-    host: { cpu: "fixture" },
+    host: FIXTURE_HOST,
     scale: { fixture: { files: 1, lines: 1 } },
     cells: [
       {
         project: "fixture",
         tool: "samchon-graph",
         buildMs: 1,
-        host: { cpu: "fixture" },
+        host: FIXTURE_HOST,
       },
     ],
   });
@@ -247,7 +311,7 @@ function testIndexPublicationRefusesMalformedJson() {
   const unsupportedPriorSchema = JSON.stringify({
     schemaVersion: 2,
     structural: { retained: true },
-    agent: { cells: [{ retained: true }] },
+    agent: { cells: [FIXTURE_AGENT_CELL] },
   });
   fs.writeFileSync(publication, unsupportedPriorSchema);
   fs.writeFileSync(report, validReport);
@@ -290,13 +354,43 @@ function testIndexPublicationRefusesMalformedJson() {
     "a shape-invalid incoming report must not change the publication",
   );
 
+  fs.writeFileSync(publication, validPublication);
+  const hostlessIncomingReport = JSON.stringify({
+    host: { cpu: "fixture" },
+    scale: { fixture: { files: 1, lines: 1 } },
+    cells: [
+      {
+        project: "fixture",
+        tool: "samchon-graph",
+        buildMs: 1,
+        host: FIXTURE_HOST,
+      },
+    ],
+  });
+  fs.writeFileSync(report, hostlessIncomingReport);
+  const hostlessIncoming = cp.spawnSync(
+    process.execPath,
+    [runner, `--publish=${report}`],
+    {
+      encoding: "utf8",
+      env: { ...process.env, SAMCHON_BENCH_INDEX_JSON: publication },
+      windowsHide: true,
+    },
+  );
+  assert.notEqual(hostlessIncoming.status, 0);
+  assert.equal(
+    fs.readFileSync(publication, "utf8"),
+    validPublication,
+    "an incomplete incoming panel host must not change the publication",
+  );
+
   for (const [label, invalidCell] of [
     [
       "unmeasurable",
       {
         project: "fixture",
         tool: "samchon-graph",
-        host: { cpu: "fixture" },
+        host: FIXTURE_HOST,
       },
     ],
     [
@@ -306,7 +400,7 @@ function testIndexPublicationRefusesMalformedJson() {
         tool: "samchon-graph",
         buildMs: 1,
         timedOutMs: 2,
-        host: { cpu: "fixture" },
+        host: FIXTURE_HOST,
       },
     ],
     [
@@ -317,10 +411,19 @@ function testIndexPublicationRefusesMalformedJson() {
         buildMs: 1,
       },
     ],
+    [
+      "incomplete-host",
+      {
+        project: "fixture",
+        tool: "samchon-graph",
+        buildMs: 1,
+        host: { cpu: "fixture" },
+      },
+    ],
   ]) {
     fs.writeFileSync(publication, validPublication);
     const invalidOutcomeReport = JSON.stringify({
-      host: { cpu: "fixture" },
+      host: FIXTURE_HOST,
       scale: { fixture: { files: 1, lines: 1 } },
       cells: [invalidCell],
     });

@@ -1,0 +1,153 @@
+import { invalidWebsiteCellReason } from "./website-cell.mjs";
+
+/**
+ * Start an agent-result merge without dropping a benchmark axis it does not own.
+ */
+export function agentPublicationDocument(prior) {
+  if (prior !== null && prior !== undefined) {
+    assertWebsitePublication(prior);
+  }
+  return {
+    schemaVersion: 1,
+    generatedAt: new Date().toISOString(),
+    structural: prior?.structural ?? null,
+    agent: { cells: [...(prior?.agent?.cells ?? [])] },
+    ...(prior?.index !== undefined ? { index: prior.index } : {}),
+  };
+}
+
+export function assertIndexReport(value, label) {
+  assertRecord(value, label);
+  assertHost(value.host, `${label}.host`);
+  assertScale(value.scale, `${label}.scale`);
+  assertIndexCells(value.cells, `${label}.cells`);
+}
+
+export function assertWebsitePublication(value) {
+  assertRecord(value, "existing benchmark publication");
+  if (
+    value.schemaVersion !== undefined &&
+    value.schemaVersion !== 1
+  ) {
+    throw new TypeError(
+      "existing benchmark publication.schemaVersion must be omitted or 1",
+    );
+  }
+  if (value.agent !== undefined && value.agent !== null) {
+    assertRecord(value.agent, "existing benchmark publication.agent");
+    if (!Array.isArray(value.agent.cells)) {
+      throw new TypeError(
+        "existing benchmark publication.agent.cells must be an array",
+      );
+    }
+    for (const [index, cell] of value.agent.cells.entries()) {
+      const label = `existing benchmark publication.agent.cells[${String(index)}]`;
+      assertRecord(cell, label);
+      for (const field of ["harness", "tool", "repo", "model"]) {
+        if (typeof cell[field] !== "string" || cell[field].trim() === "") {
+          throw new TypeError(`${label}.${field} must be a nonempty string`);
+        }
+      }
+      if (!Number.isSafeInteger(cell.runs) || cell.runs < 1) {
+        throw new TypeError(`${label}.runs must be a positive safe integer`);
+      }
+      const invalidReason = invalidWebsiteCellReason(cell);
+      if (invalidReason !== null) {
+        throw new TypeError(`${label} is invalid: ${invalidReason}`);
+      }
+    }
+  }
+  if (value.structural !== undefined && value.structural !== null) {
+    assertRecord(value.structural, "existing benchmark publication.structural");
+  }
+  if (value.index !== undefined && value.index !== null) {
+    assertIndexReport(value.index, "existing benchmark publication.index");
+  }
+}
+
+function assertScale(value, label) {
+  assertRecord(value, label);
+  for (const [project, scale] of Object.entries(value)) {
+    assertRecord(scale, `${label}.${project}`);
+    for (const field of ["files", "lines"]) {
+      if (!Number.isSafeInteger(scale[field]) || scale[field] < 0) {
+        throw new TypeError(
+          `${label}.${project}.${field} must be a nonnegative safe integer`,
+        );
+      }
+    }
+  }
+}
+
+function assertIndexCells(value, label) {
+  if (!Array.isArray(value)) {
+    throw new TypeError(`${label} must be an array`);
+  }
+  for (const [index, cell] of value.entries()) {
+    const cellLabel = `${label}[${String(index)}]`;
+    assertRecord(cell, cellLabel);
+    for (const field of ["project", "tool"]) {
+      if (typeof cell[field] !== "string" || cell[field].trim() === "") {
+        throw new TypeError(`${cellLabel}.${field} must be a nonempty string`);
+      }
+    }
+    for (const field of ["buildMs", "timedOutMs"]) {
+      if (
+        cell[field] !== undefined &&
+        cell[field] !== null &&
+        (typeof cell[field] !== "number" ||
+          !Number.isFinite(cell[field]) ||
+          cell[field] < 0)
+      ) {
+        throw new TypeError(
+          `${cellLabel}.${field} must be null or a nonnegative finite number`,
+        );
+      }
+    }
+    for (const field of ["hasBuildStep", "strict"]) {
+      if (cell[field] !== undefined && typeof cell[field] !== "boolean") {
+        throw new TypeError(`${cellLabel}.${field} must be a boolean`);
+      }
+    }
+    const outcomes = [
+      typeof cell.buildMs === "number",
+      typeof cell.timedOutMs === "number",
+      cell.hasBuildStep === false,
+    ].filter(Boolean).length;
+    if (outcomes !== 1) {
+      throw new TypeError(
+        `${cellLabel} must carry exactly one build duration, timeout duration, or no-build marker`,
+      );
+    }
+    assertHost(cell.host, `${cellLabel}.host`);
+    if (cell.quietWait !== undefined && cell.quietWait !== null) {
+      assertRecord(cell.quietWait, `${cellLabel}.quietWait`);
+    }
+  }
+}
+
+function assertHost(value, label) {
+  assertRecord(value, label);
+  for (const field of ["cpu", "os"]) {
+    if (typeof value[field] !== "string" || value[field].trim() === "") {
+      throw new TypeError(`${label}.${field} must be a nonempty string`);
+    }
+  }
+  for (const field of ["cores", "ramGB"]) {
+    if (!Number.isSafeInteger(value[field]) || value[field] < 1) {
+      throw new TypeError(
+        `${label}.${field} must be a positive safe integer`,
+      );
+    }
+  }
+}
+
+function assertRecord(value, label) {
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    Array.isArray(value)
+  ) {
+    throw new TypeError(`${label} must be an object`);
+  }
+}

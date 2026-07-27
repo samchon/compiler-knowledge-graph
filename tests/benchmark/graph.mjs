@@ -32,10 +32,10 @@ import {
 } from "./graph/language.mjs";
 import { assertPublicationCandidates } from "./graph/publication-gate.mjs";
 import {
-  agentPublicationDocument,
   sanitizeWebsiteSamples,
   websiteCellKey,
 } from "./graph/website-cell.mjs";
+import { agentPublicationDocument } from "./graph/publication-document.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, "../..");

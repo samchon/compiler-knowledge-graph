@@ -73,6 +73,23 @@ func TestBuildSnapshotProvesWorkspaceSemantics(t *testing.T) {
 	if initializers != 2 {
 		t.Errorf("expected both package initializers, found %d", initializers)
 	}
+	// A testdata package is reachable by import and invisible to a package
+	// pattern, so scip-go never indexes one. Claiming its declarations would owe
+	// a corroboration the artifact cannot give — which is what refused gin — so
+	// the boundary excludes it on both sides rather than the rule bending.
+	if findNode(first, "Describe") != nil || findNode(first, "Payload") != nil {
+		t.Error("a testdata package entered the graph as project source")
+	}
+	for _, declaration := range first.Nodes {
+		if strings.Contains(declaration.File, "testdata/") {
+			t.Errorf("node %s came from a testdata directory", declaration.ID)
+		}
+	}
+	// The caller is still ordinary project code and must survive intact; the
+	// exclusion is of what testdata declares, not of what reaches into it.
+	if findNode(first, "ReadProto") == nil {
+		t.Error("a function calling into testdata was dropped with it")
+	}
 	for _, kind := range []string{
 		"contains", "exports", "imports", "calls", "accesses", "instantiates",
 		"type_ref", "implements", "dispatches", "tests", "references",

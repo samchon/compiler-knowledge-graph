@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"example.com/api"
+	"example.com/impl/testdata/proto"
 )
 
 type Base struct{}
@@ -53,6 +54,13 @@ func Resolve() string {
 
 func ReadLeft(value api.Left) string {
 	return value.Value
+}
+
+// Reaches into a testdata package by explicit import, the way gin's tests do.
+// The call is real and must still resolve; what must not happen is this index
+// claiming to describe proto.go, which scip-go is documented never to see.
+func ReadProto(payload proto.Payload) string {
+	return proto.Describe(payload)
 }
 
 func Run() string {

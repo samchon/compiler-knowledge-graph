@@ -59,7 +59,12 @@ jobs:
     # a slow answer into no answer. How long a project waits before its first
     # question is the entire subject here, so the budget has to be able to
     # contain an unflattering result.
-    timeout-minutes: 90
+    # Two columns now, so two measured runs per lane. Each is capped at an hour
+    # by SAMCHON_GRAPH_BENCH_TIMEOUT_MS, and a lane that hits the cap twice needs
+    # room for both caps plus provisioning — at 90 the second column of a slow
+    # language was unreachable, and its absence would have read as a language
+    # that was never compared rather than one the job ran out of time for.
+    timeout-minutes: 150
     strategy:
       fail-fast: false
       matrix:

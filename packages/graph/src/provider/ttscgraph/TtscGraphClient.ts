@@ -319,9 +319,7 @@ export class TtscGraphClient implements IBulkGraphSession {
       // stderr from a child that spoke. `close` is the event that means every
       // stream is finished, and it is the only one worth waiting on before
       // claiming a child died silently.
-      closed: new Promise<void>((resolve) => {
-        spawned.once("close", () => resolve());
-      }),
+      closed: closedPromise(spawned),
     };
     this.child = child;
     this.childHasSnapshot = false;
@@ -607,12 +605,7 @@ function offendingLine(line: string): string {
  * enough that a child which merely closed its stdin does not hold the report.
  */
 function drained(child: NativeChild): Promise<void> {
-  return Promise.race([
-    child.closed,
-    new Promise<void>((resolve) => {
-      setTimeout(resolve, DRAIN_GRACE_MS).unref();
-    }),
-  ]);
+  return Promise.race([child.closed, after(DRAIN_GRACE_MS)]);
 }
 
 const DRAIN_GRACE_MS = 250;
@@ -656,4 +649,20 @@ function assertCapabilitiesMatch(
       "ttscgraph: response capabilities disagree with the snapshot provenance",
     );
   }
+}
+
+/** Resolves when the child's streams are finished, not when it merely left. */
+function closedPromise(spawned: ChildProcessWithoutNullStreams): Promise<void> {
+  return new Promise((resolve) => {
+    spawned.once("close", () => {
+      resolve();
+    });
+  });
+}
+
+/** A bare delay, unref'd so it never keeps a process alive on its own. */
+function after(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms).unref();
+  });
 }

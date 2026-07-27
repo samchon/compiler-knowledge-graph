@@ -123,6 +123,45 @@ for (const row of rows) {
   }
 }
 
+// What the strict provider was worth, per project.
+//
+// The point of the whole table, and until both cells were measured in one run
+// it could only be guessed at across runs on different machines. A ratio is
+// printed only where both cells finished: a timeout bounds a duration from
+// below, so dividing by one would understate the very gap it is meant to show.
+const paired = rows
+  .map((row) => {
+    const of = (tool) => (row.tools.find(([name]) => name === tool) ?? [])[1];
+    return {
+      row,
+      strict: of("samchon-graph"),
+      fallback: of("samchon-graph-fallback"),
+    };
+  })
+  .filter(
+    ({ strict, fallback }) =>
+      typeof strict?.buildMs === "number" &&
+      typeof fallback?.buildMs === "number",
+  );
+
+if (paired.length > 0) {
+  process.stdout.write("\nstrict provider vs the same project with none:\n\n");
+  for (const { row, strict, fallback } of paired) {
+    const served =
+      typeof strict.servedBy === "string" &&
+      !/no strict provider/.test(strict.servedBy);
+    const verdict = served
+      ? `${(fallback.buildMs / strict.buildMs).toFixed(1)}x`
+      : "no strict provider served, so both cells measured the same lane";
+    const strictTime = `${(strict.buildMs / 1000).toFixed(1)} s`;
+    const fallbackTime = `${(fallback.buildMs / 1000).toFixed(1)} s`;
+    process.stdout.write(
+      `  ${pad(row.project, 12)} ${pad(row.language, 11)} ` +
+        `${pad(strictTime, 10)} ${pad(fallbackTime, 10)} ${verdict}\n`,
+    );
+  }
+}
+
 const unmeasured = rows.filter((row) => row.tools.length === 0);
 process.stdout.write(
   `\n${String(rows.length - unmeasured.length)} of ${String(rows.length)} corpus projects measured.\n`,

@@ -30,7 +30,9 @@ if (producer === "scip") {
 
 const descriptions = {
   "scip-clang": [
-    { language: "C", file: "src/main.c" },
+    // Upstream v0.4.0 hard-codes CPP on every document. The product must recover
+    // the C slice from the file rather than teaching this oracle a nicer value.
+    { language: "C++", file: "src/main.c" },
     { language: "C++", file: "src/main.cpp" },
   ],
   "scip-java": [
@@ -177,7 +179,12 @@ if (scip !== undefined) {
         path.join(process.cwd(), document.file),
         "utf8",
       );
-      const semantic = scipCorpus(index, text);
+      const semantic = scipCorpus(index, text, {
+        // scip-dotnet 0.2.14 publishes declaration occurrences but no
+        // enclosing_range. The common adapter therefore has no grounded origin
+        // from which to publish its reference occurrence as an edge.
+        groundReferences: producer !== "scip-dotnet",
+      });
       return {
         language: document.language,
         relativePath: document.file,
@@ -351,13 +358,14 @@ throw new Error(`fake standard provider: unknown producer ${producer}`);
 /**
  * The common strict-fixture corpus.
  *
- * Its positive reference and comment-only negative twin are deliberately
- * simple enough for every registered standard provider to state.  The
- * `heuristic` form is still schema-valid: it models the exact bad provider the
- * conformance gate exists to reject, one that turns a prose mention into a
- * declaration and reference.
+ * Its declarations and comment-only negative twin are deliberately simple
+ * enough for every registered standard provider to state. Providers that
+ * claim references also ground the positive occurrence. The `heuristic` form
+ * is still schema-valid: it models the exact bad provider the conformance gate
+ * exists to reject, one that turns a prose mention into a declaration and,
+ * where supported, a reference.
  */
-function scipCorpus(scope, text) {
+function scipCorpus(scope, text, { groundReferences }) {
   const packageName = `pkg${scope}`;
   const caller = `scip-fake fake example v1 \`${packageName}\`/caller().`;
   const callee = `scip-fake fake example v1 \`${packageName}\`/callee().`;
@@ -388,7 +396,7 @@ function scipCorpus(scope, text) {
   const occurrences = [
     {
       range: callerRange,
-      enclosingRange: callerScope,
+      ...(groundReferences ? { enclosingRange: callerScope } : {}),
       symbol: caller,
       symbolRoles: 1,
     },

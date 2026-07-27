@@ -69,4 +69,95 @@ export const test_batch_graph_session_removes_project_artifacts_after_failure =
       fs.existsSync(produced),
       false,
     );
+
+    const existing = JSON.stringify({ owner: "user" });
+    const marker = path.join(root, "producer-ran");
+    fs.writeFileSync(produced, existing);
+    const guarded = new BatchGraphSession({
+      root,
+      languages: ["php"],
+      provider: "existing-artifact-fixture",
+      command: {
+        command: process.execPath,
+        args: [
+          "-e",
+          "require('node:fs').writeFileSync('producer-ran', 'yes')",
+        ],
+      },
+      artifactName: "index.json",
+      indexArgs: () => [],
+      artifactFrom: () => produced,
+      inputs: () => [],
+      load: () => {
+        throw new Error("a producer with a colliding artifact must not run");
+      },
+    });
+    message = "";
+    try {
+      await guarded.refresh();
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    } finally {
+      await guarded.close();
+    }
+    TestValidator.predicate(
+      "a pre-existing fixed artifact is refused explicitly",
+      message.includes("refusing to overwrite"),
+    );
+    TestValidator.equals(
+      "the pre-existing artifact keeps its bytes",
+      fs.readFileSync(produced, "utf8"),
+      existing,
+    );
+    TestValidator.equals(
+      "the producer is not launched against a colliding artifact",
+      fs.existsSync(marker),
+      false,
+    );
+
+    const blocked = path.join(root, "unremovable-artifact");
+    const cleanupFailure = new BatchGraphSession({
+      root,
+      languages: ["php"],
+      provider: "failed-cleanup-fixture",
+      command: {
+        command: process.execPath,
+        args: [
+          "-e",
+          [
+            "require('node:fs').mkdirSync(",
+            "  'unremovable-artifact',",
+            ");",
+            "process.exit(29);",
+          ].join(""),
+        ],
+      },
+      artifactName: "index.json",
+      indexArgs: () => [],
+      artifactFrom: () => blocked,
+      inputs: () => [],
+      load: () => {
+        throw new Error("an unremovable failed artifact must never be loaded");
+      },
+    });
+    message = "";
+    try {
+      await cleanupFailure.refresh();
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    } finally {
+      await cleanupFailure.close();
+    }
+    TestValidator.predicate(
+      "producer and cleanup failures are both reported",
+      message.includes(
+        "the producer failed and its project artifact could not be removed",
+      ),
+    );
+    TestValidator.equals(
+      "a failed cleanup does not disguise the remaining artifact",
+      fs.statSync(blocked).isDirectory(),
+      true,
+    );
+    fs.rmSync(blocked, { recursive: true, force: true });
   };

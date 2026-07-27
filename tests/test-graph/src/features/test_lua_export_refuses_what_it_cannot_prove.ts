@@ -196,6 +196,66 @@ function assertAMalformedArtifactIsRefused(): void {
       "has no startLine",
     ],
     [
+      "a declaration with an inverted span",
+      {
+        schemaVersion: 1,
+        files: ["a.lua"],
+        nodes: [
+          {
+            name: "x",
+            kind: "local",
+            sourceType: "local",
+            location: { ...span(), startColumn: 2, endColumn: 1 },
+          },
+        ],
+        edges: [],
+        warnings: [],
+      },
+      "inverted span",
+    ],
+    [
+      "a declaration body in another file",
+      {
+        schemaVersion: 1,
+        files: ["a.lua", "b.lua"],
+        nodes: [
+          {
+            name: "x",
+            kind: "function",
+            sourceType: "function",
+            location: span(),
+            body: { ...span(), file: "b.lua" },
+          },
+        ],
+        edges: [],
+        warnings: [],
+      },
+      "body is in another file",
+    ],
+    [
+      "a declaration body that excludes its name",
+      {
+        schemaVersion: 1,
+        files: ["a.lua"],
+        nodes: [
+          {
+            name: "x",
+            kind: "function",
+            sourceType: "function",
+            location: span(),
+            body: {
+              ...span(),
+              startLine: 1,
+              endLine: 1,
+            },
+          },
+        ],
+        edges: [],
+        warnings: [],
+      },
+      "body does not contain",
+    ],
+    [
       "an edge with no origin",
       {
         schemaVersion: 1,

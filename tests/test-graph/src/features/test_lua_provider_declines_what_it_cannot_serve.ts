@@ -18,10 +18,11 @@ export const test_lua_provider_declines_what_it_cannot_serve =
   async (): Promise<void> => {
     assertBoundedOptionsAreRefusedByName();
     assertPrepareWritesAConfigOutsideTheProject();
-  assertASessionNeedsNoConfiguration();
-  assertTheProviderWatchesLuaBuildInputs();
+    assertASessionNeedsNoConfiguration();
+    assertTheProviderWatchesLuaBuildInputs();
     assertTheProviderResolvesTheServerItDrives();
     assertAnInstallationWithoutItsExporterDeclines();
+    await assertTheServerVersionIsPublished();
     await assertAnUnreadableSourceIsNotPublishedAround();
     await assertAnOutsideSourceIsNotReadBack();
   };
@@ -62,6 +63,54 @@ function assertBoundedOptionsAreRefusedByName(): void {
       many.includes("lspReferenceLimit") &&
       many.includes("those options"),
   );
+}
+
+async function assertTheServerVersionIsPublished(): Promise<void> {
+  const root = GraphPaths.createTempDirectory("samchon-graph-lua-version-");
+  fs.writeFileSync(path.join(root, "main.lua"), "return 1\n");
+  const artifact = JSON.stringify({
+    schemaVersion: 1,
+    files: ["main.lua"],
+    nodes: [],
+    edges: [],
+    skipped: { unnamed: 0, outsideRoot: 0, refsFailed: 0 },
+    warnings: [],
+  });
+  for (const [row, expected] of [
+    ["lua-language-server=3.16.1", "3.16.1"],
+    ["lua-language-server=unavailable", ""],
+    ["lua-language-server=unreported", ""],
+    ["lua-language-server=unasked", ""],
+    ["another-tool=1.0.0", ""],
+  ] as const) {
+    const session = new LuaGraphSession({
+      root,
+      languages: ["lua"],
+      provider: "samchon-graph-lua",
+      command: {
+        command: process.execPath,
+        args: [
+          "-e",
+          `require("node:fs").writeFileSync(process.argv[1], ${JSON.stringify(
+            artifact,
+          )})`,
+        ],
+      },
+      indexArgs: (produced) => [produced],
+      inputs: () => ["main.lua"],
+      configuration: () => [row],
+    });
+    try {
+      const refreshed = await session.refresh();
+      TestValidator.equals(
+        `Lua provenance maps ${row} to its publishable server version`,
+        refreshed.snapshot.provenance.toolVersion,
+        expected,
+      );
+    } finally {
+      await session.close();
+    }
+  }
 }
 
 /**

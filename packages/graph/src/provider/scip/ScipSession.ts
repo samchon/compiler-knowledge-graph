@@ -149,6 +149,9 @@ export class ScipSession implements IBulkGraphSession {
       provider: this.options.provider,
       languages: this.languages,
       languageOf: this.options.languageOf,
+      ...(this.options.preferFileLanguage === undefined
+        ? {}
+        : { preferFileLanguage: this.options.preferFileLanguage }),
     });
     const enriched = ScipEnrichment.apply({
       enrichment: this.options.enrichment,
@@ -329,6 +332,7 @@ export namespace ScipSession {
     sourceText?: boolean;
     projectRootFromInvocation?: boolean;
     languageOf: (file: string) => GraphLanguage;
+    preferFileLanguage?: boolean;
     enrichment?: ScipEnrichment.IContract;
     maxStdoutBytes?: number;
     maxArtifactBytes?: number;

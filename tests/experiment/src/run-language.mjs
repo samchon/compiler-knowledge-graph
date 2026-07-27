@@ -37,13 +37,37 @@ if (strict) {
     "strictTool",
     "requiredCapabilities",
     "semanticEdges",
-    "crossFileEdge",
   ]) {
     if (experiment[field] === undefined) {
       throw new Error(
         `${experiment.language}: a strict row must state its expected ${field}`,
       );
     }
+  }
+  if (
+    experiment.semanticEdges.length > 0 &&
+    experiment.crossFileEdge === undefined
+  ) {
+    throw new Error(
+      `${experiment.language}: a strict row with semantic edges must state its expected crossFileEdge`,
+    );
+  }
+  if (
+    experiment.semanticEdges.length === 0 &&
+    experiment.crossFileEdge !== undefined
+  ) {
+    throw new Error(
+      `${experiment.language}: an edge-free strict row cannot expect a cross-file edge`,
+    );
+  }
+  if (
+    experiment.semanticEdges.length === 0 &&
+    (typeof experiment.semanticLimitation !== "string" ||
+      experiment.semanticLimitation.trim() === "")
+  ) {
+    throw new Error(
+      `${experiment.language}: an edge-free strict row must publish its semantic limitation`,
+    );
   }
 }
 let dump;
@@ -149,7 +173,7 @@ if (provenance !== undefined) {
   }
 }
 const nodeFiles = new Map(dump.nodes.map((node) => [node.id, node.file]));
-const crossFileEdge = experiment.crossFileEdge ?? "calls";
+const crossFileEdge = experiment.crossFileEdge;
 const crossFileCalls = dump.edges.filter(
   (edge) =>
     edge.kind === "calls" &&
@@ -159,6 +183,7 @@ const crossFileCalls = dump.edges.filter(
 ).length;
 const crossFileRelationships = dump.edges.filter(
   (edge) =>
+    crossFileEdge !== undefined &&
     edge.kind === crossFileEdge &&
     nodeFiles.get(edge.from) !== undefined &&
     nodeFiles.get(edge.to) !== undefined &&
@@ -167,12 +192,16 @@ const crossFileRelationships = dump.edges.filter(
 // Naming a family the provider is not registered to prove would make this row
 // unsatisfiable for a correct provider, which is the failure that produced the
 // `calls` default it replaces.
-if (provenance !== undefined && !provenance.facts.includes(crossFileEdge)) {
+if (
+  provenance !== undefined &&
+  crossFileEdge !== undefined &&
+  !provenance.facts.includes(crossFileEdge)
+) {
   throw new Error(
     `${experiment.language}: the row expects cross-file ${crossFileEdge} relationships although ${provenance.provider} is registered to prove only ${provenance.facts.join(", ")}`,
   );
 }
-if (strict && crossFileRelationships === 0) {
+if (strict && crossFileEdge !== undefined && crossFileRelationships === 0) {
   throw new Error(
     `${experiment.language}: strict corpus produced no cross-file ${crossFileEdge} relationship`,
   );

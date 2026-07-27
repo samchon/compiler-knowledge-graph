@@ -112,6 +112,7 @@ Usage:
   samchon-graph view [same options] [--port N] [--no-open] [--max-nodes N]
 
 Options:
+  --no-strict               Stand strict providers down for comparison.
   --server CMD              Override the language server command.
   --server-arg ARG          Add one language server argument.
   --lsp-concurrency N       Concurrent reference requests.

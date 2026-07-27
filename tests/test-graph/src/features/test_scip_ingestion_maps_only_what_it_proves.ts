@@ -26,6 +26,7 @@ export const test_scip_ingestion_maps_only_what_it_proves = async () => {
   assertDisagreeingUnitsAreNamed();
   assertDisagreeingTextIsRefused();
   assertMapping();
+  assertAnUnreliableProducerLanguageCanYieldToTheFile();
   assertForwardDefinitionOrdering();
 };
 
@@ -1079,6 +1080,71 @@ function assertLongLineScopeSelection(): void {
           edge.from === id("outer") &&
           edge.to === id("target"),
       ),
+  );
+}
+
+function assertAnUnreliableProducerLanguageCanYieldToTheFile(): void {
+  const symbol = "scip-clang . example . `api`/run().";
+  const adapt = (
+    relativePath: string,
+    languages: readonly ("c" | "cpp")[],
+    statedLanguage: string | undefined,
+  ) =>
+    adaptScipIndex({
+      index: parseScipIndex({
+        metadata: { projectRoot: "file:///r" },
+        documents: [
+          {
+            // scip-clang 0.4.0 writes this value for every C and C++ document.
+            ...(statedLanguage === undefined
+              ? {}
+              : { language: statedLanguage }),
+            relativePath,
+            symbols: [{ symbol, displayName: "run", kind: "Function" }],
+            occurrences: [
+              { range: [0, 0, 3], symbol, symbolRoles: 0x1 },
+            ],
+          },
+        ],
+      }),
+      root: "/r",
+      provider: "scip-clang",
+      languages,
+      languageOf: (file) =>
+        file.endsWith(".c") || file.endsWith(".h") ? "c" : "unknown",
+      preferFileLanguage: true,
+    });
+
+  const source = adapt("src/main.c", ["c"], "C++");
+  TestValidator.equals(
+    "a hard-coded C++ document remains an owned C source",
+    [source.nodes[0]?.language, source.warnings],
+    ["c", []],
+  );
+  TestValidator.equals(
+    "an ambiguous header follows the only C dialect the session owns",
+    adapt("include/api.h", ["c"], "C++").nodes[0]?.language,
+    "c",
+  );
+  TestValidator.equals(
+    "the same ambiguous header follows a C++-only session",
+    adapt("include/api.h", ["cpp"], "C++").nodes[0]?.language,
+    "cpp",
+  );
+  TestValidator.equals(
+    "an extensionless C include follows the only dialect the session owns",
+    adapt("include/generated.inc", ["c"], "C++").nodes[0]?.language,
+    "c",
+  );
+  TestValidator.equals(
+    "an ambiguous header retains the producer language when both dialects are owned",
+    adapt("include/api.h", ["c", "cpp"], "C++").nodes[0]?.language,
+    "cpp",
+  );
+  TestValidator.equals(
+    "an ambiguous header falls back to the file when the producer omits a language",
+    adapt("include/api.h", ["c", "cpp"], undefined).nodes[0]?.language,
+    "c",
   );
 }
 

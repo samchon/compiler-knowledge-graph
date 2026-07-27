@@ -49,13 +49,9 @@ import {
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, "../../..");
 const workDir = resolveWorkDir(repoRoot);
-const websiteJson = path.join(
-  repoRoot,
-  "tests",
-  "benchmark",
-  "results",
-  "graph.json",
-);
+const websiteJson =
+  process.env.SAMCHON_BENCH_INDEX_JSON ??
+  path.join(repoRoot, "tests", "benchmark", "results", "graph.json");
 
 // Above every top-level statement that can reach it, deliberately. The project
 // loop below calls `measureScale`, which reads this table, and a `const`
@@ -222,40 +218,76 @@ for (const project of selected) {
   writeJson(reportPath, report);
 
   for (const tool of tools) {
-    let cell;
-    try {
-      cell = runIndexCell({ project, spec, repoDir, tool });
-    } catch (error) {
-      // Only a timeout becomes a cell. Anything else is still a broken run and
-      // has to stop the lane, or a genuine defect would publish as a number.
-      if (typeof error?.timedOutMs !== "number") throw error;
-      cell = {
-        project,
-        tool,
-        buildMs: null,
-        timedOutMs: error.timedOutMs,
-        strict: tool !== TOOL_SAMCHON_FALLBACK,
-        // The process was killed before it could write its provenance line, so
-        // this cannot say what produced the graph — there is none. It can say
-        // what was being attempted, because that is announced before the first
-        // candidate runs, and "timed out running scip-ruby" is a finding where
-        // "timed out" alone is a mystery.
-        servedBy: servedBy(error.logStem ?? ""),
-      };
-    }
-    assertPinnedCheckout(spec, repoDir);
-    // The machine and its quietness travel with the cell, not with the
-    // publication. One host panel is only truthful when one sweep measured
-    // everything, and `index-time.yml` deliberately gives each language its own
-    // runner — thirteen VMs with thirteen CPU models, because two lanes sharing
-    // a machine would corrupt each other's wall clock. Folding those under a
-    // single panel would attribute twelve cells to a machine they never ran on,
-    // and the workflow's own header says cells from different hosts are not one
-    // comparison. A cold build is one sample; what it ran on is part of it.
-    report.cells.push({ ...cell, host: report.host, quietWait });
-    writeJson(reportPath, report);
-    printCellSummary(project, cell);
-    publishWebsiteIndex(report);
+    let cellRepoDir;
+    let cellCache;
+    runWithCleanup(
+      () => {
+        cellRepoDir = prepareCellFixture(project, spec, repoDir, tool);
+        cellCache = prepareCellCache(project, spec, tool);
+        let cell;
+        try {
+          cell = runIndexCell({
+            project,
+            spec,
+            repoDir: cellRepoDir,
+            tool,
+            env: cellCache.env,
+          });
+        } catch (error) {
+          // Only a timeout becomes a cell. Anything else is still a broken run
+          // and has to stop the lane, or a genuine defect would publish as a
+          // number.
+          if (typeof error?.timedOutMs !== "number") throw error;
+          cell = {
+            project,
+            tool,
+            buildMs: null,
+            timedOutMs: error.timedOutMs,
+            strict: tool !== TOOL_SAMCHON_FALLBACK,
+            // The process was killed before it could write its provenance line,
+            // so this cannot say what produced the graph — there is none. It can
+            // say what was being attempted, because that is announced before
+            // the first candidate runs, and "timed out running scip-ruby" is a
+            // finding where "timed out" alone is a mystery.
+            servedBy: servedBy(error.logStem ?? ""),
+          };
+        }
+        assertPinnedCheckout(spec, cellRepoDir);
+        // The machine and its quietness travel with the cell, not with the
+        // publication. One host panel is only truthful when one sweep measured
+        // everything, and `index-time.yml` deliberately gives each language its
+        // own runner — thirteen VMs with thirteen CPU models, because two lanes
+        // sharing a machine would corrupt each other's wall clock. Folding those
+        // under a single panel would attribute twelve cells to a machine they
+        // never ran on, and the workflow's own header says cells from different
+        // hosts are not one comparison. A cold build is one sample; what it ran
+        // on is part of it.
+        report.cells.push({
+          ...cell,
+          cacheIsolation: cellCache.kind,
+          host: report.host,
+          quietWait,
+        });
+        writeJson(reportPath, report);
+        printCellSummary(project, cell);
+        publishWebsiteIndex(report);
+      },
+      [
+        {
+          label: `remove isolated fixture ${project}/${tool}`,
+          run: () => {
+            if (cellRepoDir !== undefined) cleanupCellFixture(cellRepoDir);
+          },
+        },
+        {
+          label: `remove isolated cache ${project}/${tool}`,
+          run: () => {
+            if (cellCache !== undefined) cleanupCellCache(cellCache.root);
+          },
+        },
+      ],
+      `benchmark cell ${project}/${tool}`,
+    );
   }
 }
 
@@ -269,7 +301,7 @@ if (!parsed.flags.has("--no-website")) {
   );
 }
 
-function runIndexCell({ project, spec, repoDir, tool }) {
+function runIndexCell({ project, spec, repoDir, tool, env }) {
   if (tool === TOOL_SERENA) {
     // serena does ship a build step -- `serena project index`, which its own
     // docs recommend for larger projects -- and the harness had never run it.
@@ -288,12 +320,14 @@ function runIndexCell({ project, spec, repoDir, tool }) {
         label: `serena project create ${project}`,
         logBase: path.join(outDir, `serena-create-${project}`),
         cwd: repoDir,
+        env,
         input: SERENA_DECLINE_ALL,
       });
       const ms = timeChecked(...serenaCommand(["project", "index"]), {
         label: `serena project index ${project}`,
         logBase: path.join(outDir, `serena-index-${project}`),
         cwd: repoDir,
+        env,
         input: SERENA_DECLINE_ALL,
       });
       return { project, tool, buildMs: ms };
@@ -332,6 +366,7 @@ function runIndexCell({ project, spec, repoDir, tool }) {
       {
         label: `${tool} dump ${project}`,
         logBase: logStem,
+        env,
         // The dump JSON reaches hundreds of MB on vscode; the payload is the
         // wire benchmark's concern, not this one's, so stdout is discarded.
         discardStdout: true,
@@ -363,6 +398,7 @@ function runIndexCell({ project, spec, repoDir, tool }) {
       const ms = timeChecked(...codegraphCommand(["init", indexDir(spec, repoDir)]), {
         label: `codegraph init ${project}`,
         logBase: path.join(outDir, `codegraph-index-${project}`),
+        env,
       });
       return { project, tool, buildMs: ms };
     } finally {
@@ -398,6 +434,7 @@ function runIndexCell({ project, spec, repoDir, tool }) {
           label: `codebase-memory index ${project}`,
           logBase: path.join(outDir, `codebase-memory-index-${project}`),
           env: {
+            ...env,
             CBM_CACHE_DIR: cacheDir,
             CBM_LOG_LEVEL: process.env.CBM_LOG_LEVEL ?? "warn",
           },
@@ -733,6 +770,207 @@ function cleanupInsideFixture(repoDir, name) {
   fs.rmSync(target, { recursive: true, force: true });
 }
 
+/**
+ * Give one measured tool one project state.
+ *
+ * Strict producers run real builds. Reusing their checkout for the fallback
+ * column lets the second cell inherit `target/`, `build/`, `bin/`, or `obj/`
+ * from the first and turns a provider comparison into a cache-order
+ * comparison. A local clone preserves the exact source commit and host while
+ * keeping those project outputs private to one timer.
+ */
+function prepareCellFixture(project, spec, source, tool) {
+  const root = path.join(outDir, "fixtures");
+  const target = path.join(
+    root,
+    `${filenamePart(project)}-${filenamePart(tool)}`,
+  );
+  fs.mkdirSync(root, { recursive: true });
+  cleanupCellFixture(target);
+  try {
+    if (parsed.flags.has("--no-setup")) {
+      fs.cpSync(source, target, {
+        recursive: true,
+        verbatimSymlinks: true,
+      });
+      assertPreparedFixture(spec, target);
+      return target;
+    }
+    runChecked(
+      "git",
+      ["clone", "--quiet", "--local", "--no-hardlinks", source, target],
+      {
+        label: `clone isolated fixture ${project}/${tool}`,
+        logBase: path.join(
+          outDir,
+          `setup-${filenamePart(project)}-${filenamePart(tool)}-clone`,
+        ),
+      },
+    );
+    prepareFixture(spec, target, {
+      noInstall: parsed.flags.has("--no-install"),
+    });
+    return target;
+  } catch (error) {
+    // The caller only receives a path after preparation succeeds. Own partial
+    // copies here so a failed clone or dependency setup cannot strand a full
+    // fixture outside the caller's finally block.
+    rethrowWithCleanup(
+      error,
+      [
+        {
+          label: `remove partial fixture ${project}/${tool}`,
+          run: () => cleanupCellFixture(target),
+        },
+      ],
+      `prepare isolated fixture ${project}/${tool}`,
+    );
+  }
+}
+
+function cleanupCellFixture(target) {
+  const root = path.resolve(outDir, "fixtures");
+  const resolved = path.resolve(target);
+  const relative = path.relative(root, resolved);
+  if (
+    relative === "" ||
+    relative.startsWith("..") ||
+    path.isAbsolute(relative)
+  ) {
+    throw new Error(`refusing to remove cell fixture outside output: ${target}`);
+  }
+  fs.rmSync(resolved, { recursive: true, force: true });
+}
+
+/**
+ * Isolate ecosystem caches whose build tools otherwise make the second column
+ * warm merely because it ran second.
+ *
+ * Only caches used by a corpus language are redirected. In particular Dart's
+ * installed `scip_dart` executable lives in the provisioned pub cache, so
+ * moving `PUB_CACHE` would remove the tool being measured rather than isolate
+ * its project dependencies.
+ */
+function prepareCellCache(project, spec, tool) {
+  const root = path.join(
+    outDir,
+    "cell-caches",
+    filenamePart(project),
+    filenamePart(tool),
+  );
+  cleanupCellCache(root);
+  try {
+    fs.mkdirSync(root, { recursive: true });
+    const env = {};
+    if (spec.language === "java" || spec.language === "kotlin") {
+      env.GRADLE_USER_HOME = path.join(root, "gradle");
+      const localRepository = path.join(root, "maven").replaceAll("\\", "/");
+      env.MAVEN_OPTS = [
+        process.env.MAVEN_OPTS,
+        `-Dmaven.repo.local="${localRepository}"`,
+      ]
+        .filter(Boolean)
+        .join(" ");
+    } else if (spec.language === "csharp") {
+      env.NUGET_PACKAGES = path.join(root, "nuget");
+    } else if (spec.language === "go") {
+      env.GOCACHE = path.join(root, "go-build");
+      env.GOMODCACHE = path.join(root, "go-mod");
+    } else if (spec.language === "rust") {
+      env.CARGO_HOME = path.join(root, "cargo");
+    }
+    return {
+      root,
+      env,
+      kind:
+        Object.keys(env).length === 0 ? "project" : "project-and-ecosystem",
+    };
+  } catch (error) {
+    rethrowWithCleanup(
+      error,
+      [
+        {
+          label: `remove partial cache ${project}/${tool}`,
+          run: () => cleanupCellCache(root),
+        },
+      ],
+      `prepare isolated cache ${project}/${tool}`,
+    );
+  }
+}
+
+function cleanupCellCache(target) {
+  const root = path.resolve(outDir, "cell-caches");
+  const resolved = path.resolve(target);
+  const relative = path.relative(root, resolved);
+  if (
+    relative === "" ||
+    relative.startsWith("..") ||
+    path.isAbsolute(relative)
+  ) {
+    throw new Error(`refusing to remove cell cache outside output: ${target}`);
+  }
+  fs.rmSync(resolved, { recursive: true, force: true });
+}
+
+/**
+ * Run one operation and every cleanup without letting a later cleanup erase an
+ * earlier failure.
+ */
+function runWithCleanup(operation, cleanups, label) {
+  let failed = false;
+  let failure;
+  let result;
+  try {
+    result = operation();
+  } catch (error) {
+    failed = true;
+    failure = error;
+  }
+  const cleanup = cleanupFailures(cleanups);
+  if (cleanup.length > 0) {
+    throw new AggregateError(
+      [...(failed ? [failure] : []), ...cleanup],
+      failed
+        ? `${label} failed, and its cleanup also failed`
+        : `${label} cleanup failed`,
+    );
+  }
+  if (failed) throw failure;
+  return result;
+}
+
+/** Rethrow one known failure after attempting all of its cleanup. */
+function rethrowWithCleanup(failure, cleanups, label) {
+  const cleanup = cleanupFailures(cleanups);
+  if (cleanup.length > 0) {
+    throw new AggregateError(
+      [failure, ...cleanup],
+      `${label} failed, and its cleanup also failed`,
+    );
+  }
+  throw failure;
+}
+
+function cleanupFailures(cleanups) {
+  const failures = [];
+  for (const cleanup of cleanups) {
+    try {
+      cleanup.run();
+    } catch (error) {
+      failures.push(
+        new Error(
+          `${cleanup.label}: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+          { cause: error },
+        ),
+      );
+    }
+  }
+  return failures;
+}
+
 function ensureFixtures(projects) {
   for (const project of projects) {
     const spec = PROJECTS[project];
@@ -754,9 +992,6 @@ function ensureFixtures(projects) {
       assertPinnedCheckout(spec, repoDir);
       process.stdout.write(`[index-time] reusing fixture ${project}\n`);
     }
-    prepareFixture(spec, repoDir, {
-      noInstall: parsed.flags.has("--no-install"),
-    });
   }
 }
 
@@ -833,11 +1068,7 @@ function filenamePart(value) {
 }
 
 function loadJson(file) {
-  try {
-    return JSON.parse(fs.readFileSync(file, "utf8"));
-  } catch {
-    return null;
-  }
+  return JSON.parse(fs.readFileSync(file, "utf8"));
 }
 
 function timestamp() {

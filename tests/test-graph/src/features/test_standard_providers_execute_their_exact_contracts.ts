@@ -136,7 +136,7 @@ export const test_standard_providers_execute_their_exact_contracts =
             Conformance.failures(
               Conformance.check(
                 refreshed.snapshot,
-                expectationsOf(root, provider.languages),
+                expectationsForProvider(root, provider),
               ),
               Conformance.structure(
                 refreshed.snapshot,
@@ -151,6 +151,19 @@ export const test_standard_providers_execute_their_exact_contracts =
               ),
             ).length === 0,
         );
+        if (provider.name === "scip-clang") {
+          fs.appendFileSync(
+            path.join(root, "build", "compile_commands.json"),
+            "\n",
+          );
+          const buildConfigurationChanged = await session.refresh();
+          TestValidator.predicate(
+            "scip-clang rebuilds when its generated compilation database changes",
+            buildConfigurationChanged.changed &&
+              buildConfigurationChanged.mode === "rebuild" &&
+              buildConfigurationChanged.generation === 2,
+          );
+        }
         await session.close();
         await assertHeuristicTwinFails(provider, command, root);
       }
@@ -326,7 +339,7 @@ function writeProject(root: string): void {
     // appear: `arguments` is an already-split vector and `command` is one shell
     // string, and the second names a different driver so the provider cannot
     // pass by finding one.
-    "compile_commands.json": JSON.stringify(
+    "build/compile_commands.json": JSON.stringify(
       [
         {
           directory: root,
@@ -399,7 +412,7 @@ async function assertHeuristicTwinFails(
     const refreshed = await session.refresh();
     const failures = Conformance.check(
       refreshed.snapshot,
-      expectationsOf(root, provider.languages),
+      expectationsForProvider(root, provider),
     ).failures;
     TestValidator.predicate(
       `${provider.name} rejects only the common comment-only semantic negative twin`,
@@ -482,6 +495,17 @@ function expectationsOf(
       },
     ];
   });
+}
+
+function expectationsForProvider(
+  root: string,
+  provider: IGraphProvider,
+): readonly Conformance.IExpectation[] {
+  return expectationsOf(root, provider.languages).filter(
+    (expectation) =>
+      !("edge" in expectation) ||
+      provider.facts.includes(expectation.edge.kind),
+  );
 }
 
 /**

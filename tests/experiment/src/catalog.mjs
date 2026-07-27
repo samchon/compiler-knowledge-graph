@@ -211,13 +211,14 @@ export const LANGUAGE_EXPERIMENTS = [
     strictAuthority: "semantic-index",
     strictTool: "scip-dotnet",
     requiredCapabilities: ["universe", "diskDigests"],
-    // `references` only, and deliberately not `contains`. Whether scip-dotnet
-    // populates SCIP's `enclosing_symbol` — the one field the common adapter
-    // derives containment from — has not been established by reading it, and a
-    // row that claims a family on the assumption it is there would go green
-    // against an index that proves nothing of the kind.
-    semanticEdges: ["references"],
-    crossFileEdge: "references",
+    // Declarations, but no edge family. scip-dotnet 0.2.14 writes occurrence
+    // ranges without enclosing_range, SymbolInformation without
+    // enclosing_symbol, and no type-definition relationship. The common
+    // adapter can therefore publish compiler-resolved declarations but cannot
+    // ground a reference origin or either of its other common SCIP families.
+    semanticEdges: [],
+    semanticLimitation:
+      "scip-dotnet 0.2.14 emits no occurrence enclosing_range, SymbolInformation.enclosing_symbol, or type-definition relationship, so its semantic declarations carry no provable graph edge family",
     lifecycle: {
       sourceFile: "src/Serilog/Log.cs",
       editSuffix: "\n// samchon-graph lifecycle edit\n",

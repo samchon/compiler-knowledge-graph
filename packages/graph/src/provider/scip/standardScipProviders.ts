@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -31,6 +32,16 @@ const clangScipProvider = createScipProvider({
     "meson.build",
   ],
   buildExtensions: [".cmake"],
+  // scip-clang 0.4.0 writes `CPP` into every SCIP document, with an upstream
+  // FIXME to detect the language. Trusting it makes a C-only session discard
+  // every `.c` document as foreign C++ even though the path identifies it.
+  preferFileLanguage: true,
+  // Build output directories stay out of the ordinary source walk, but this is
+  // the exact generated file scip-clang consumes. Without declaring it
+  // separately, editing build/compile_commands.json leaves a resident session
+  // on the old universe even though the next producer run would read the new
+  // database.
+  derivedInputs: compilationDatabaseInputs,
   resolveArgs: (root) => {
     const compdb = compilationDatabase(root);
     return compdb === undefined ? undefined : [`--compdb-path=${compdb}`];
@@ -67,6 +78,12 @@ const jvmScipProvider = createScipProvider({
 
 const dotnetScipProvider = createScipProvider({
   name: "scip-dotnet",
+  // scip-dotnet 0.2.14 emits semantic declarations, but its occurrences carry
+  // no enclosing_range and its SymbolInformation carries neither
+  // enclosing_symbol nor type-definition relationships. The common adapter
+  // therefore cannot ground an origin for references or derive the other two
+  // families without guessing from C# syntax.
+  omitFacts: ["contains", "references", "type_ref"],
   toolchain: {
     label: "dotnet",
     aliases: ["dotnet"],
@@ -255,6 +272,7 @@ interface IStandardScipProvider {
    * packages it used to have.
    */
   derivedInputs?: (root: string) => readonly string[];
+  preferFileLanguage?: boolean;
   resolveArgs?: (root: string) => readonly string[] | undefined;
   indexArgs: (artifact: string) => string[];
 
@@ -327,6 +345,10 @@ function createScipProvider(
     name: props.name,
     languages: props.languages,
     authority: "semantic-index",
+    ...(props.omitFacts === undefined ? {} : { omitFacts: props.omitFacts }),
+    ...(props.preferFileLanguage === undefined
+      ? {}
+      : { preferFileLanguage: props.preferFileLanguage }),
     buildInputs: (root) =>
       withDerived(
         providerInputFiles(root, [], props.buildFiles, props.buildExtensions),
@@ -544,20 +566,19 @@ function lastSegment(named: string): string {
  * index carries. Both documented shapes are read: `command` is one shell string
  * and `arguments` is an already-split vector.
  *
- * Memoized against the file's own identity, which for a *file* is sound in a
- * way it is not for a program's version: the parsed content is a function of
- * the bytes, and size plus modification time is the ordinary proxy for those.
- * The memo matters because this is derived on every resident load for a
- * candidate that did not serve, and a real `compile_commands.json` is routinely
- * tens of megabytes.
+ * Memoized against the bytes actually parsed. Size plus modification time is
+ * not content identity: a build can preserve a timestamp while replacing one
+ * same-length driver name with another, and the surrounding generation fence
+ * would then rebuild with stale compiler provenance. The memo still avoids
+ * repeated JSON parsing, which is the expensive part for a database routinely
+ * tens of megabytes long.
  */
 function compilationDatabaseCompilers(root: string): string[] {
   const database = compilationDatabase(root);
   if (database === undefined) return [];
-  let key: string;
+  let contents: Buffer;
   try {
-    const stat = fs.statSync(database);
-    key = `${database}${SEPARATOR}${String(stat.size)}:${String(stat.mtimeMs)}`;
+    contents = fs.readFileSync(database);
     /* c8 ignore start -- the database was stat'd moments ago by
      * `compilationDatabase`; a removal in between leaves nothing to parse and
      * the read below reports it. */
@@ -565,17 +586,20 @@ function compilationDatabaseCompilers(root: string): string[] {
     return [];
   }
   /* c8 ignore stop */
+  const key = `${database}${SEPARATOR}${createHash("sha256")
+    .update(contents)
+    .digest("hex")}`;
   const memoized = compilationDatabases.get(key);
   if (memoized !== undefined) return [...memoized];
-  const drivers = readCompilationDatabaseCompilers(database);
+  const drivers = readCompilationDatabaseCompilers(contents);
   compilationDatabases.set(key, drivers);
   return [...drivers];
 }
 
-function readCompilationDatabaseCompilers(database: string): string[] {
+function readCompilationDatabaseCompilers(contents: Buffer): string[] {
   let entries: unknown;
   try {
-    entries = JSON.parse(fs.readFileSync(database, "utf8"));
+    entries = JSON.parse(contents.toString("utf8"));
   } catch {
     return [];
   }
@@ -719,6 +743,10 @@ const COMPILER_LAUNCHERS = new Set([
 
 /** A separator no path can contain. */
 const SEPARATOR = String.fromCharCode(0);
+const COMPILATION_DATABASE_INPUTS: readonly string[] = [
+  "compile_commands.json",
+  "build/compile_commands.json",
+];
 
 const compilationDatabases = new BoundedMap<string[]>(64);
 
@@ -749,10 +777,8 @@ function toolVersion(
 }
 
 function compilationDatabase(root: string): string | undefined {
-  for (const candidate of [
-    path.join(root, "compile_commands.json"),
-    path.join(root, "build", "compile_commands.json"),
-  ]) {
+  for (const relative of COMPILATION_DATABASE_INPUTS) {
+    const candidate = path.join(root, relative);
     try {
       if (fs.statSync(candidate).isFile()) return candidate;
     } catch {
@@ -760,4 +786,11 @@ function compilationDatabase(root: string): string | undefined {
     }
   }
   return undefined;
+}
+
+function compilationDatabaseInputs(_root: string): string[] {
+  // Missing is an input state. A resident fallback must notice the database
+  // being created, and a session using build/compile_commands.json must notice
+  // a newly created root database taking precedence on the next refresh.
+  return [...COMPILATION_DATABASE_INPUTS];
 }

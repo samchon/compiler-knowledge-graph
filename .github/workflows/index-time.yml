@@ -43,9 +43,10 @@ on:
 # this workflow were cancelled without one of them finishing, so the numbers
 # stopped moving while the code that produces them changed underneath.
 #
-# Serialized instead. Pushes queue behind the running measurement rather than
-# killing it, so each one completes and the newest queued run picks up the
-# newest code when its turn comes.
+# Serialized instead. The running measurement is never killed. GitHub keeps at
+# most one pending member of a concurrency group, so a new push replaces an
+# older pending run and leaves the latest head waiting behind the measurement
+# already underway.
 concurrency:
   group: index-time-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: false

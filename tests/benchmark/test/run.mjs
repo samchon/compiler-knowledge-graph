@@ -47,6 +47,7 @@ assertWorkflowOptionForms(
   path.join(repoRoot, ".github", "workflows", "index-time.yml"),
 );
 testPublishedIndexCellsNameTheirMachine();
+testIndexPublicationRefusesMalformedJson();
 console.log("benchmark system tests: ok");
 
 /**
@@ -115,6 +116,76 @@ function testPublishedIndexCellsNameTheirMachine() {
       "a published cell must say whether it was measured with strict providers",
     );
   }
+}
+
+/**
+ * Publication is a preserving merge, never recovery by replacement.
+ *
+ * `graph.json` also carries structural and agent measurements. If either the
+ * incoming report or that existing publication is malformed, the only safe
+ * action is to leave the destination byte-for-byte alone and fail.
+ */
+function testIndexPublicationRefusesMalformedJson() {
+  const root = fs.mkdtempSync(
+    path.join(os.tmpdir(), "samchon-graph-index-publish-"),
+  );
+  const publication = path.join(root, "graph.json");
+  const report = path.join(root, "report.json");
+  const validPublication = JSON.stringify({
+    schemaVersion: 1,
+    structural: { retained: true },
+    agent: { cells: [{ retained: true }] },
+  });
+  const validReport = JSON.stringify({
+    host: { cpu: "fixture" },
+    scale: { fixture: { files: 1, lines: 1 } },
+    cells: [
+      {
+        project: "fixture",
+        tool: "samchon-graph",
+        buildMs: 1,
+        host: { cpu: "fixture" },
+      },
+    ],
+  });
+  const runner = path.join(graphDir, "index-time.mjs");
+
+  fs.writeFileSync(publication, "{malformed publication");
+  fs.writeFileSync(report, validReport);
+  const malformedPrior = cp.spawnSync(
+    process.execPath,
+    [runner, `--publish=${report}`],
+    {
+      encoding: "utf8",
+      env: { ...process.env, SAMCHON_BENCH_INDEX_JSON: publication },
+      windowsHide: true,
+    },
+  );
+  assert.notEqual(malformedPrior.status, 0);
+  assert.equal(
+    fs.readFileSync(publication, "utf8"),
+    "{malformed publication",
+    "a malformed prior publication must not be replaced",
+  );
+
+  fs.writeFileSync(publication, validPublication);
+  fs.writeFileSync(report, "{malformed report");
+  const malformedIncoming = cp.spawnSync(
+    process.execPath,
+    [runner, `--publish=${report}`],
+    {
+      encoding: "utf8",
+      env: { ...process.env, SAMCHON_BENCH_INDEX_JSON: publication },
+      windowsHide: true,
+    },
+  );
+  assert.notEqual(malformedIncoming.status, 0);
+  assert.equal(
+    fs.readFileSync(publication, "utf8"),
+    validPublication,
+    "a malformed incoming report must not change the publication",
+  );
+  fs.rmSync(root, { recursive: true, force: true });
 }
 
 function testCorpusAndPromptProvenance() {

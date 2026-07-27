@@ -82,6 +82,22 @@ async function assertStrictBuildCanonicalizesMultiProviderState(): Promise<void>
 }
 
 async function assertSelection(): Promise<void> {
+  const python = GRAPH_PROVIDERS.find(
+    (provider) => provider.name === "scip-python",
+  );
+  TestValidator.predicate(
+    "the registered Python provider does not claim unsupported containment",
+    python !== undefined && !python.facts.includes("contains"),
+  );
+  const dotnet = GRAPH_PROVIDERS.find(
+    (provider) => provider.name === "scip-dotnet",
+  );
+  TestValidator.equals(
+    "the registered C# provider claims no ungrounded edge family",
+    dotnet?.facts,
+    [],
+  );
+
   const typescript = ProviderFixtures.provider({
     name: "fake-ts",
     languages: ["typescript"],

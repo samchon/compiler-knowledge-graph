@@ -149,7 +149,10 @@ export class LuaGraphSession implements IBulkGraphSession {
         facts: [...LuaGraphSession.FACTS],
         schemaVersion: report.schemaVersion,
         tool: "lua-language-server",
-        toolVersion: "",
+        toolVersion: configuredVersion(
+          props.configuration,
+          "lua-language-server",
+        ),
         compilerVersion: "",
         protocolVersion: 1,
         universe: props.universe,
@@ -162,6 +165,21 @@ export class LuaGraphSession implements IBulkGraphSession {
       warnings: adapted.warnings,
     });
   }
+}
+
+function configuredVersion(
+  rows: readonly string[],
+  label: string,
+): string {
+  const prefix = `${label}=`;
+  const row = rows.find((entry) => entry.startsWith(prefix));
+  if (row === undefined) return "";
+  const value = row.slice(prefix.length);
+  return value === "unavailable" ||
+    value === "unreported" ||
+    value === "unasked"
+    ? ""
+    : value;
 }
 
 export namespace LuaGraphSession {

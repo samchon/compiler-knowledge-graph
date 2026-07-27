@@ -25,6 +25,7 @@ export const test_experiment_corpora_are_commit_pinned = () => {
     [...catalog.matchAll(/lifecycle:\s*\{/g)].length,
   );
   const python = region(catalog, 'language: "python"', 'language: "ruby"');
+  const csharp = region(catalog, 'language: "csharp"', 'language: "kotlin"');
   const lua = region(catalog, 'language: "lua"', 'language: "dart"');
   TestValidator.predicate(
     "the dynamic SCIP smoke proves a versioned Python lifecycle, not an edge count",
@@ -41,6 +42,15 @@ export const test_experiment_corpora_are_commit_pinned = () => {
     /semanticLimitation:\s*"?[^",]/.test(python) &&
       python.includes("enclosing_symbol") &&
       runner.includes("semanticLimitation: experiment.semanticLimitation"),
+  );
+  TestValidator.predicate(
+    "a producer with no grounded edge family states that limitation explicitly",
+    csharp.includes("semanticEdges: []") &&
+      !csharp.includes("crossFileEdge:") &&
+      /semanticLimitation:\s*"?[^",]/.test(csharp) &&
+      runner.includes("experiment.semanticEdges.length === 0") &&
+      runner.includes("crossFileEdge !== undefined") &&
+      runner.includes("semanticLimitation.trim() ==="),
   );
   // scip-python 0.6.6 recovers from a malformed `pyproject.toml` and emits no
   // SCIP diagnostics, so a row claiming either boundary would assert behaviour
@@ -98,7 +108,6 @@ export const test_experiment_corpora_are_commit_pinned = () => {
       "strictTool",
       "requiredCapabilities",
       "semanticEdges",
-      "crossFileEdge",
     ].every((field) => runner.includes(`"${field}",`)) &&
       runner.includes("a strict row must state its expected") &&
       !runner.includes('experiment.strictAuthority ?? "compiler"') &&

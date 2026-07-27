@@ -61,6 +61,31 @@ export function assertBothIndexColumnsAreMeasured() {
     /"--no-strict"/,
     "the fallback column no longer stands the strict providers down",
   );
+  assert.match(
+    runner,
+    /cellRepoDir = prepareCellFixture[\s\S]*runIndexCell\(\{[\s\S]*repoDir: cellRepoDir[\s\S]*cleanupCellFixture\(cellRepoDir\)/,
+    "each measured column must use and clean up its own prepared checkout",
+  );
+  assert.match(
+    runner,
+    /\["clone", "--quiet", "--local", "--no-hardlinks", source, target\]/,
+    "cell checkouts must not share writable file inodes with the source fixture",
+  );
+  assert.match(
+    runner,
+    /function prepareCellFixture[\s\S]*catch \(error\) \{[\s\S]*rethrowWithCleanup\([\s\S]*cleanupCellFixture\(target\)/,
+    "a failed cell preparation must clean its partial checkout before throwing",
+  );
+  assert.match(
+    runner,
+    /function runWithCleanup[\s\S]*cleanupFailures\(cleanups\)[\s\S]*new AggregateError\([\s\S]*\[\.\.\.\(failed \? \[failure\] : \[\]\), \.\.\.cleanup\]/,
+    "cell cleanup failures must preserve the operation failure they followed",
+  );
+  assert.match(
+    runner,
+    /function prepareCellCache[\s\S]*catch \(error\) \{[\s\S]*rethrowWithCleanup\([\s\S]*cleanupCellCache\(root\)/,
+    "a failed cache preparation must clean its partial cache before throwing",
+  );
 }
 
 /**

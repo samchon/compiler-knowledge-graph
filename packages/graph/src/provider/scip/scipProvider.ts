@@ -17,11 +17,12 @@ import { ScipEnrichment } from "./ScipEnrichment";
  * language provider is a description rather than a class — and the fourteen of
  * them cannot drift apart in the parts that are supposed to be identical.
  *
- * Every entry built this way inherits {@link adaptScipIndex.EDGE_KINDS} as its
- * provable facts, which is the point: a bare SCIP index cannot prove a call, a
- * construction, or a decorator, and a provider that claimed one
- * would be rejected by its own snapshot contract. A language that can prove
- * more does it through typed enrichment, not by widening this list.
+ * Every entry built this way starts from {@link adaptScipIndex.EDGE_KINDS} as
+ * its provable facts. A producer that omits one of those common SCIP fields
+ * narrows the list through `omitFacts`; a language that can prove more widens
+ * it only through typed enrichment. A bare SCIP index cannot prove a call,
+ * construction, or decorator, and a provider that claimed one would be
+ * rejected by its own snapshot contract.
  */
 export function scipProvider(props: scipProvider.IProps): IGraphProvider {
   const name = props.name;
@@ -39,6 +40,7 @@ export function scipProvider(props: scipProvider.IProps): IGraphProvider {
   const omitFacts = props.omitFacts;
   const projectRootFromInvocation = props.projectRootFromInvocation;
   const languageOf = props.languageOf;
+  const preferFileLanguage = props.preferFileLanguage;
   const languages = Object.freeze([...props.languages]);
   const enrichment =
     props.enrichment === undefined
@@ -121,6 +123,9 @@ export function scipProvider(props: scipProvider.IProps): IGraphProvider {
           ? {}
           : { sourceText }),
         ...(omitFacts === undefined ? {} : { omitFacts }),
+        ...(preferFileLanguage === undefined
+          ? {}
+          : { preferFileLanguage }),
         ...(projectRootFromInvocation === undefined
           ? {}
           : {
@@ -199,5 +204,8 @@ export namespace scipProvider {
     enrichment?: ScipEnrichment.IContract;
 
     languageOf: (file: string) => GraphLanguage;
+
+    /** Prefer file extensions over a producer's unreliable document language. */
+    preferFileLanguage?: boolean;
   }
 }

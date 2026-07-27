@@ -182,6 +182,12 @@ export class BatchGraphSession implements IBulkGraphSession {
     );
     try {
       const artifact = path.join(output, this.options.artifactName);
+      const produced = this.options.artifactFrom?.(this.root);
+      if (produced !== undefined && fs.existsSync(produced)) {
+        throw new Error(
+          `${this.options.provider}: refusing to overwrite the existing project artifact ${produced}`,
+        );
+      }
       let producerFailure: Error | undefined;
       try {
         await this.run(
@@ -200,7 +206,6 @@ export class BatchGraphSession implements IBulkGraphSession {
       // artifact out before anything reads it, which keeps the tool honest
       // rather than wrapping it in a shim a user would also have to install.
       //
-      const produced = this.options.artifactFrom?.(this.root);
       if (producerFailure !== undefined) {
         if (produced !== undefined && fs.existsSync(produced)) {
           try {

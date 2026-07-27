@@ -63,6 +63,16 @@ interface IAdaptScipIndexProps {
 
   /** Which file a document path belongs to, in the product's own vocabulary. */
   languageOf: (file: string) => GraphLanguage;
+
+  /**
+   * Prefer the file identity when this producer's document language is known
+   * to be unreliable.
+   *
+   * SCIP normally wins because it is an explicit producer fact. A producer
+   * that hard-codes one language for a multi-language indexer needs the inverse
+   * boundary or an owned C document can be discarded as foreign C++.
+   */
+  preferFileLanguage?: boolean;
 }
 
 /**
@@ -95,8 +105,7 @@ export function adaptScipIndex(
   const definitions = new Map<string, IDefinition>();
   for (const document of props.index.documents) {
     const file = normalizeFile(document.relativePath);
-    const language =
-      languageFromScip(document.language) ?? props.languageOf(file);
+    const language = documentLanguage(props, document.language, file);
     if (!owned.has(language)) {
       warnings.push(
         `${props.provider}: ignoring ${file}, whose ${language} facts this provider does not own`,
@@ -268,8 +277,7 @@ export function adaptScipIndex(
   for (const document of props.index.documents) {
     const file = normalizeFile(document.relativePath);
     if (!ownedDocuments.has(document)) continue;
-    const language =
-      languageFromScip(document.language) ?? props.languageOf(file);
+    const language = documentLanguage(props, document.language, file);
     const occurrences = document.occurrences ?? [];
 
     // A definition occurrence carries the span the declaration occupies, and
@@ -454,6 +462,32 @@ export function adaptScipIndex(
     warnings,
     files,
   };
+}
+
+function documentLanguage(
+  props: IAdaptScipIndexProps,
+  stated: string | undefined,
+  file: string,
+): GraphLanguage {
+  const fromIndex = languageFromScip(stated);
+  if (props.preferFileLanguage !== true) {
+    return fromIndex ?? props.languageOf(file);
+  }
+  const fromFile = props.languageOf(file);
+  if (
+    fromFile !== "unknown" &&
+    path.extname(file).toLowerCase() !== ".h"
+  ) {
+    return fromFile;
+  }
+  // `.h`, `.inc`, and extensionless includes do not distinguish C from C++.
+  // When this session owns only one dialect, the ownership boundary settles
+  // them. When it owns both, retain the producer's statement because the path
+  // alone cannot improve on it.
+  const owned = props.languages.filter(
+    (language) => language === "c" || language === "cpp",
+  );
+  return owned.length === 1 ? owned[0]! : (fromIndex ?? fromFile);
 }
 
 function languageFromScip(

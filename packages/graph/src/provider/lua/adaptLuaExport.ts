@@ -228,6 +228,17 @@ function assertNode(entry: adaptLuaExport.INode, provider: string): void {
   if (typeof entry.kind !== "string" || entry.kind === "")
     throw new Error(`${provider}: ${entry.name} has no kind`);
   assertLocation(entry.location, `${provider}: ${entry.name}`);
+  if (entry.body !== undefined) {
+    assertLocation(entry.body, `${provider}: ${entry.name} body`);
+    if (entry.body.file !== entry.location.file) {
+      throw new Error(`${provider}: ${entry.name} body is in another file`);
+    }
+    if (!containsSpan(entry.body, entry.location)) {
+      throw new Error(
+        `${provider}: ${entry.name} body does not contain its declaration`,
+      );
+    }
+  }
 }
 
 function assertEdge(entry: adaptLuaExport.IEdge, provider: string): void {
@@ -254,6 +265,16 @@ function assertLocation(
     // rather than a position in a file.
     if (!Number.isSafeInteger(value) || value < 0)
       throw new Error(`${subject} has no ${axis}`);
+  }
+  if (
+    before(
+      location.endLine,
+      location.endColumn,
+      location.startLine,
+      location.startColumn,
+    )
+  ) {
+    throw new Error(`${subject} has an inverted span`);
   }
 }
 
@@ -327,6 +348,26 @@ function contains(
   return (
     !before(at.startLine, at.startColumn, span.startLine, span.startColumn) &&
     !before(span.endLine, span.endColumn, at.startLine, at.startColumn)
+  );
+}
+
+function containsSpan(
+  outer: adaptLuaExport.ILocation,
+  inner: adaptLuaExport.ILocation,
+): boolean {
+  return (
+    !before(
+      inner.startLine,
+      inner.startColumn,
+      outer.startLine,
+      outer.startColumn,
+    ) &&
+    !before(
+      outer.endLine,
+      outer.endColumn,
+      inner.endLine,
+      inner.endColumn,
+    )
   );
 }
 

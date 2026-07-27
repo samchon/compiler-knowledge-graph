@@ -31,6 +31,8 @@ export const test_compile_database_names_the_compiler_that_built_it =
     assertAQuotedOrEscapedDriverSurvives();
     assertADriverWithAPathIsTakenLiterally();
     assertAnUnusableDatabaseNamesNoCompiler();
+    assertSameSizeSameTimestampRewriteInvalidatesMemo();
+    assertBuildDirectoryDatabaseIsWatched();
     assertTheMemoCannotGrowWithoutBound();
   };
 
@@ -206,6 +208,75 @@ function assertAnUnusableDatabaseNamesNoCompiler(): void {
       undefined,
     );
   }
+}
+
+function assertSameSizeSameTimestampRewriteInvalidatesMemo(): void {
+  const root = GraphPaths.createTempDirectory("graph-compdb-content-memo-");
+  const database = path.join(root, "compile_commands.json");
+  const timestamp = new Date("2020-01-02T03:04:05.000Z");
+  const contents = (driver: string): string =>
+    JSON.stringify([
+      { directory: root, file: "a.c", arguments: [driver, "-c", "a.c"] },
+    ]);
+  writeShims(root, ["gcc", "gxx"]);
+  fs.writeFileSync(database, contents("gcc"));
+  fs.utimesSync(database, timestamp, timestamp);
+  const before = fs.statSync(database);
+  TestValidator.equals("the first same-metadata parse names gcc", drivers(root), [
+    "gcc=gcc v1.0.0",
+  ]);
+
+  fs.writeFileSync(database, contents("gxx"));
+  fs.utimesSync(database, timestamp, timestamp);
+  const after = fs.statSync(database);
+  TestValidator.equals(
+    "the rewrite preserves the old metadata cache key",
+    [after.size, after.mtimeMs],
+    [before.size, before.mtimeMs],
+  );
+  TestValidator.equals(
+    "the memo follows changed bytes rather than unchanged metadata",
+    drivers(root),
+    ["gxx=gxx v1.0.0"],
+  );
+}
+
+function assertBuildDirectoryDatabaseIsWatched(): void {
+  const empty = GraphPaths.createTempDirectory("graph-compdb-no-build-input-");
+  const emptyBuildInputs =
+    typeof clang.buildInputs === "function"
+      ? clang.buildInputs(empty)
+      : (clang.buildInputs ?? []);
+  TestValidator.equals(
+    "database absence is watched so later creation can select scip-clang",
+    emptyBuildInputs,
+    ["build/compile_commands.json", "compile_commands.json"],
+  );
+
+  const root = GraphPaths.createTempDirectory("graph-compdb-build-input-");
+  const build = path.join(root, "build");
+  fs.mkdirSync(build);
+  fs.writeFileSync(path.join(root, "a.c"), "int main(void) { return 0; }\n");
+  fs.writeFileSync(
+    path.join(build, "compile_commands.json"),
+    JSON.stringify([
+      {
+        directory: root,
+        file: "a.c",
+        arguments: ["gcc", "-c", "a.c"],
+      },
+    ]),
+  );
+
+  const buildInputs =
+    typeof clang.buildInputs === "function"
+      ? clang.buildInputs(root)
+      : (clang.buildInputs ?? []);
+  TestValidator.predicate(
+    "the coordinator watches the generated database scip-clang consumes",
+    buildInputs.includes("build/compile_commands.json") &&
+      buildInputs.includes("compile_commands.json"),
+  );
 }
 
 function assertTheMemoCannotGrowWithoutBound(): void {

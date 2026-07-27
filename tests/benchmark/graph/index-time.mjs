@@ -234,10 +234,13 @@ for (const project of selected) {
         tool,
         buildMs: null,
         timedOutMs: error.timedOutMs,
-        // The process was killed, so it never wrote its provenance line. Saying
-        // unknown is the honest reading: what would have built this is exactly
-        // what the run failed to establish.
-        servedBy: "unknown",
+        strict: tool !== TOOL_SAMCHON_FALLBACK,
+        // The process was killed before it could write its provenance line, so
+        // this cannot say what produced the graph — there is none. It can say
+        // what was being attempted, because that is announced before the first
+        // candidate runs, and "timed out running scip-ruby" is a finding where
+        // "timed out" alone is a mystery.
+        servedBy: servedBy(error.logStem ?? ""),
       };
     }
     assertPinnedCheckout(spec, repoDir);
@@ -629,6 +632,10 @@ function runChecked(
           `see ${path.relative(repoRoot, `${logBase}.err.log`)}`,
       );
       timedOut.timedOutMs = limitMs;
+      // Where the killed run's own account of itself is. The caller turns this
+      // into a cell and would otherwise have no way back to the log it just
+      // wrote, so a timed-out cell could only ever say "unknown".
+      timedOut.logStem = logBase;
       throw timedOut;
     }
     throw result.error;
@@ -650,13 +657,26 @@ function runChecked(
  * served" and "this dump predates the line" are different facts.
  */
 function servedBy(logStem) {
-  const marker = "@samchon/graph: indexer=";
+  const served = "@samchon/graph: indexer=";
+  // What it set out to run, written before the first candidate starts. A build
+  // that finishes says what produced it; a build that is killed says nothing at
+  // all, and the killed ones are the expensive ones. Reading the intent turns a
+  // timed-out cell from "unknown" into "was running scip-ruby when the hour
+  // ran out", which is the difference between a mystery and a finding.
+  const attempting = "@samchon/graph: indexing with ";
   try {
-    const line = fs
+    const lines = fs
       .readFileSync(`${logStem}.err.log`, "utf8")
-      .split(/\r?\n/)
-      .find((candidate) => candidate.startsWith(marker));
-    return line === undefined ? "unknown" : line.slice(marker.length).trim();
+      .split(/\r?\n/);
+    const outcome = lines.find((line) => line.startsWith(served));
+    if (outcome !== undefined) return outcome.slice(served.length).trim();
+    const intent = lines.find((line) => line.startsWith(attempting));
+    // Marked as an attempt rather than presented as a result: it says what was
+    // selected, not what published, and those differ exactly when a provider
+    // was chosen and then failed.
+    return intent === undefined
+      ? "unknown"
+      : `attempted ${intent.slice(attempting.length).trim()}`;
   } catch {
     return "unknown";
   }

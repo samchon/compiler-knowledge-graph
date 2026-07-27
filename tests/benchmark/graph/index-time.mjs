@@ -10,6 +10,10 @@
  * - `samchon-graph`: `samchon-graph dump --cwd <fixture> --language <language>`
  *   — the MCP launcher builds the same LSP graph at startup, so the agent's
  *   first question waits on it. The dump is stateless, so every run is cold.
+ * - `samchon-graph-fallback`: the same command with `--no-strict`, so the
+ *   project is indexed by the generic language-server lane alone. Two cells
+ *   from one run on one host is the only way to state what a strict provider
+ *   is worth; comparing separate runs compares machines as much as providers.
  * - `codegraph`: `codegraph init <fixture>` after removing `.codegraph/`.
  * - `codebase-memory`: `codebase-memory-mcp cli index_repository` into an
  *   isolated `CBM_CACHE_DIR` after removing `.codebase-memory/`.
@@ -746,12 +750,12 @@ function selectTools(value) {
   const allowed = new Set(ALL_TOOLS);
   if (expanded.length === 0)
     throw new Error(
-      "--tools must contain samchon-graph, codegraph, codebase-memory, serena, or all",
+      `--tools must name one of ${ALL_TOOLS.join(", ")} or all`,
     );
   for (const name of expanded) {
     if (!allowed.has(name))
       throw new Error(
-        "--tools must contain samchon-graph, codegraph, codebase-memory, serena, or all",
+        `--tools must name one of ${ALL_TOOLS.join(", ")} or all`,
       );
   }
   return [...new Set(expanded)];

@@ -183,7 +183,7 @@ export class BatchGraphSession implements IBulkGraphSession {
     try {
       const artifact = path.join(output, this.options.artifactName);
       const produced = this.options.artifactFrom?.(this.root);
-      if (produced !== undefined && fs.existsSync(produced)) {
+      if (produced !== undefined && pathEntryExists(produced)) {
         throw new Error(
           `${this.options.provider}: refusing to overwrite the existing project artifact ${produced}`,
         );
@@ -207,7 +207,7 @@ export class BatchGraphSession implements IBulkGraphSession {
       // rather than wrapping it in a shim a user would also have to install.
       //
       if (producerFailure !== undefined) {
-        if (produced !== undefined && fs.existsSync(produced)) {
+        if (produced !== undefined && pathEntryExists(produced)) {
           try {
             fs.rmSync(produced, { force: true });
           } catch (cleanupFailure) {
@@ -219,7 +219,7 @@ export class BatchGraphSession implements IBulkGraphSession {
         }
         throw producerFailure;
       }
-      if (produced !== undefined && fs.existsSync(produced)) {
+      if (produced !== undefined && pathEntryExists(produced)) {
         relocateArtifact(produced, artifact);
       }
       if (!fs.existsSync(artifact)) {
@@ -477,6 +477,11 @@ export class BatchGraphSession implements IBulkGraphSession {
       throw new Error(`${this.options.provider}: session is closed`);
     }
   }
+}
+
+/** Directory-entry existence without following a fixed artifact symlink. */
+function pathEntryExists(file: string): boolean {
+  return fs.lstatSync(file, { throwIfNoEntry: false }) !== undefined;
 }
 
 /**

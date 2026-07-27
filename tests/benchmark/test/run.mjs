@@ -48,6 +48,7 @@ assertWorkflowOptionForms(
 );
 testPublishedIndexCellsNameTheirMachine();
 testIndexPublicationRefusesMalformedJson();
+testIndexCellIsolationContract();
 console.log("benchmark system tests: ok");
 
 /**
@@ -185,7 +186,90 @@ function testIndexPublicationRefusesMalformedJson() {
     validPublication,
     "a malformed incoming report must not change the publication",
   );
+
+  const invalidPriorShape = JSON.stringify({
+    schemaVersion: 1,
+    structural: { retained: true },
+    agent: "not an agent result",
+    index: { host: {}, scale: {}, cells: [] },
+  });
+  fs.writeFileSync(publication, invalidPriorShape);
+  fs.writeFileSync(report, validReport);
+  const shapeInvalidPrior = cp.spawnSync(
+    process.execPath,
+    [runner, `--publish=${report}`],
+    {
+      encoding: "utf8",
+      env: { ...process.env, SAMCHON_BENCH_INDEX_JSON: publication },
+      windowsHide: true,
+    },
+  );
+  assert.notEqual(shapeInvalidPrior.status, 0);
+  assert.equal(
+    fs.readFileSync(publication, "utf8"),
+    invalidPriorShape,
+    "a shape-invalid prior publication must not be replaced",
+  );
+
+  fs.writeFileSync(publication, validPublication);
+  const invalidIncomingShape = JSON.stringify({
+    host: {},
+    scale: {},
+    cells: "not an index cell array",
+  });
+  fs.writeFileSync(report, invalidIncomingShape);
+  const shapeInvalidIncoming = cp.spawnSync(
+    process.execPath,
+    [runner, `--publish=${report}`],
+    {
+      encoding: "utf8",
+      env: { ...process.env, SAMCHON_BENCH_INDEX_JSON: publication },
+      windowsHide: true,
+    },
+  );
+  assert.notEqual(shapeInvalidIncoming.status, 0);
+  assert.equal(
+    fs.readFileSync(publication, "utf8"),
+    validPublication,
+    "a shape-invalid incoming report must not change the publication",
+  );
   fs.rmSync(root, { recursive: true, force: true });
+}
+
+function testIndexCellIsolationContract() {
+  const source = fs.readFileSync(
+    path.join(graphDir, "index-time.mjs"),
+    "utf8",
+  );
+  const prepared = source.indexOf(
+    "cellRepoDir = prepareCellFixture(project, spec, repoDir, tool)",
+  );
+  const quiet = source.indexOf(
+    "const quietWait = await quietHostForCell(project, tool)",
+  );
+  const timed = source.indexOf("cell = runIndexCell({", quiet);
+  assert.ok(
+    prepared >= 0 && quiet > prepared && timed > quiet,
+    "each index-time cell must settle the host after preparation and immediately before timing",
+  );
+  for (const variable of [
+    "NUGET_PACKAGES",
+    "NUGET_HTTP_CACHE_PATH",
+    "NUGET_SCRATCH",
+    "NUGET_PLUGINS_CACHE_PATH",
+    "DOTNET_CLI_HOME",
+  ]) {
+    assert.ok(
+      source.includes(`env.${variable} = path.join(root,`),
+      `C# cell isolation must redirect ${variable}`,
+    );
+  }
+  assert.ok(
+    source.includes("copyPreparedFixtureCompanion(spec, source, target)") &&
+      source.includes("const cellRoot = path.dirname(path.resolve(target))") &&
+      source.includes("fs.rmSync(cellRoot, { recursive: true, force: true })"),
+    "a disposable cell must copy and remove its external prepared companion",
+  );
 }
 
 function testCorpusAndPromptProvenance() {

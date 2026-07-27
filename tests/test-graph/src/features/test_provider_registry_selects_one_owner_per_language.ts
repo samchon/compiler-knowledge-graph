@@ -82,20 +82,30 @@ async function assertStrictBuildCanonicalizesMultiProviderState(): Promise<void>
 }
 
 async function assertSelection(): Promise<void> {
-  const python = GRAPH_PROVIDERS.find(
-    (provider) => provider.name === "scip-python",
-  );
-  TestValidator.predicate(
-    "the registered Python provider does not claim unsupported containment",
-    python !== undefined && !python.facts.includes("contains"),
-  );
-  const dotnet = GRAPH_PROVIDERS.find(
-    (provider) => provider.name === "scip-dotnet",
-  );
   TestValidator.equals(
-    "the registered C# provider claims no ungrounded edge family",
-    dotnet?.facts,
-    [],
+    "every standard SCIP provider claims only its producer-backed families",
+    Object.fromEntries(
+      GRAPH_PROVIDERS.filter((provider) =>
+        [
+          "scip-clang",
+          "scip-java",
+          "scip-dotnet",
+          "scip-python",
+          "scip-ruby",
+          "scip-dart",
+          "scip-php",
+        ].includes(provider.name),
+      ).map((provider) => [provider.name, provider.facts]),
+    ),
+    {
+      "scip-clang": [],
+      "scip-java": ["contains", "references"],
+      "scip-dotnet": [],
+      "scip-python": ["references"],
+      "scip-ruby": [],
+      "scip-dart": [],
+      "scip-php": [],
+    },
   );
 
   const typescript = ProviderFixtures.provider({
@@ -354,7 +364,7 @@ async function assertSelection(): Promise<void> {
   TestValidator.equals(
     "only languages without a truthful strict producer remain unowned",
     publicLanguages.filter((language) => !owners.has(language)),
-    ["swift", "zig"],
+    ["swift", "scala", "zig"],
   );
   TestValidator.equals(
     "C and C++ share one compilation-universe provider",
@@ -362,12 +372,12 @@ async function assertSelection(): Promise<void> {
     owners.get("cpp"),
   );
   TestValidator.equals(
-    "the JVM languages share one build-universe provider",
+    "only the JVM languages scip-java actually indexes share its universe",
     [owners.get("java"), owners.get("kotlin"), owners.get("scala")],
     [
       ["scip-java"],
       ["scip-java"],
-      ["scip-java"],
+      undefined,
     ],
   );
 }

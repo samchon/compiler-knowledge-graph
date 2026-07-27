@@ -60,6 +60,20 @@ export class TtscGraphClient implements IBulkGraphSession {
   private childHasSnapshot = false;
   private version = 0;
 
+  /**
+   * How a native child left, kept public so every silent-exit diagnosis is
+   * independently testable even where the host pipe cannot produce EPIPE.
+   */
+  public static exitSuffix(
+    process: Pick<ChildProcessWithoutNullStreams, "signalCode" | "exitCode">,
+  ): string {
+    const signal = process.signalCode;
+    if (signal !== null) return ` (killed by ${signal})`;
+    const code = process.exitCode;
+    if (code !== null) return ` (child exited ${String(code)})`;
+    return "";
+  }
+
   public constructor(options: TtscGraphClient.IOptions) {
     const requestTimeoutMs =
       options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
@@ -569,20 +583,6 @@ export namespace TtscGraphClient {
   export interface IRefreshOptions {
     /** Cancel this refresh and retire the native child generation it owns. */
     signal?: AbortSignal;
-  }
-
-  /**
-   * How a native child left, kept here so every silent-exit diagnosis is
-   * independently testable even where the host pipe cannot produce EPIPE.
-   */
-  export function exitSuffix(
-    process: Pick<ChildProcessWithoutNullStreams, "signalCode" | "exitCode">,
-  ): string {
-    const signal = process.signalCode;
-    if (signal !== null) return ` (killed by ${signal})`;
-    const code = process.exitCode;
-    if (code !== null) return ` (child exited ${String(code)})`;
-    return "";
   }
 }
 

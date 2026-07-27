@@ -474,9 +474,19 @@ function documentLanguage(
     return fromIndex ?? props.languageOf(file);
   }
   const fromFile = props.languageOf(file);
+  const extension = path.extname(file).toLowerCase();
   if (
     fromFile !== "unknown" &&
-    path.extname(file).toLowerCase() !== ".h"
+    extension !== ".h"
+  ) {
+    return fromFile;
+  }
+  // A hard-coded `CPP` value cannot turn every unrecognised document into C++.
+  // Only the three include identities whose paths genuinely cannot settle the
+  // C/C++ dialect are allowed to borrow the session's ownership boundary.
+  if (
+    fromFile === "unknown" &&
+    !AMBIGUOUS_C_FAMILY_EXTENSIONS.has(extension)
   ) {
     return fromFile;
   }
@@ -489,6 +499,8 @@ function documentLanguage(
   );
   return owned.length === 1 ? owned[0]! : (fromIndex ?? fromFile);
 }
+
+const AMBIGUOUS_C_FAMILY_EXTENSIONS = new Set(["", ".h", ".inc"]);
 
 function languageFromScip(
   language: string | undefined,

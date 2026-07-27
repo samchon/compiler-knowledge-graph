@@ -18,6 +18,13 @@ if (forwarded.includes("--version")) {
   process.stdout.write(`${producer} v1.0.0\n`);
   process.exit(0);
 }
+if (
+  (producer === "rustc" && forwarded.includes("-vV")) ||
+  (producer === "cargo" && forwarded.includes("-V"))
+) {
+  process.stdout.write(`${producer} v1.0.0\n`);
+  process.exit(0);
+}
 
 if (producer === "scip") {
   const artifact = forwarded[forwarded.length - 1];
@@ -38,7 +45,6 @@ const descriptions = {
   "scip-java": [
     { language: "Java", file: "src/Main.java" },
     { language: "Kotlin", file: "src/Main.kt" },
-    { language: "Scala", file: "src/Main.scala" },
   ],
   "scip-dotnet": [{ language: "C#", file: "src/Main.cs" }],
   "scip-python": [{ language: "Python", file: "src/main.py" }],
@@ -180,10 +186,14 @@ if (scip !== undefined) {
         "utf8",
       );
       const semantic = scipCorpus(index, text, {
-        // scip-dotnet 0.2.14 publishes declaration occurrences but no
-        // enclosing_range. The common adapter therefore has no grounded origin
-        // from which to publish its reference occurrence as an edge.
-        groundReferences: producer !== "scip-dotnet",
+        // These are the pinned producers that actually populate
+        // occurrence.enclosing_range, which is the common adapter's only
+        // grounded origin for a reference occurrence.
+        groundReferences: [
+          "scip-java",
+          "scip-python",
+          "rust-analyzer",
+        ].includes(producer),
       });
       return {
         language: document.language,

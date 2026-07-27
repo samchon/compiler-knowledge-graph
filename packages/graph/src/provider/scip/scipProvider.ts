@@ -34,6 +34,7 @@ export function scipProvider(props: scipProvider.IProps): IGraphProvider {
   const indexArgs = props.indexArgs;
   const artifactFrom = props.artifactFrom;
   const inputs = props.inputs;
+  const validateConfiguration = props.validateConfiguration;
   const configuration = props.configuration;
   const compilerVersion = props.compilerVersion;
   const sourceText = props.sourceText;
@@ -110,8 +111,15 @@ export function scipProvider(props: scipProvider.IProps): IGraphProvider {
         ...(configuration === undefined
           ? {}
           : {
-              configuration: () =>
-                configuration(open.root, open.languages),
+              configuration: () => {
+                const current = configuration(open.root, open.languages);
+                validateConfiguration?.(
+                  open.root,
+                  open.languages,
+                  current,
+                );
+                return current;
+              },
             }),
         ...(compilerVersion === undefined
           ? {}
@@ -178,6 +186,13 @@ export namespace scipProvider {
       languages: readonly GraphLanguage[],
       env?: NodeJS.ProcessEnv,
     ) => readonly string[];
+
+    /** Refuse configuration rows that no longer meet provider selection. */
+    validateConfiguration?: (
+      root: string,
+      languages: readonly GraphLanguage[],
+      configuration: readonly string[],
+    ) => void;
 
     /** The compiler/toolchain revision that the indexer's analysis targets. */
     /**

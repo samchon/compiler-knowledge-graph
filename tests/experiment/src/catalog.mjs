@@ -112,11 +112,13 @@ export const LANGUAGE_EXPERIMENTS = [
     strictAuthority: "semantic-index",
     strictTool: "scip-clang",
     requiredCapabilities: ["universe", "diskDigests"],
-    // References only. Whether scip-clang populates SCIP enclosing_symbol has
-    // not been established by reading it, and containment is derived from
-    // exactly that field.
-    semanticEdges: ["references"],
-    crossFileEdge: "references",
+    // Declarations only. scip-clang 0.4.0 writes range/symbol/roles on
+    // occurrences, no enclosing_range or enclosing_symbol, and no
+    // is_type_definition relationship. The common SCIP adapter therefore has
+    // no grounded origin or typed relationship for an edge.
+    semanticEdges: [],
+    semanticLimitation:
+      "scip-clang 0.4.0 emits no occurrence enclosing_range, SymbolInformation.enclosing_symbol, or type-definition relationship, so its semantic declarations carry no provable graph edge family",
     lifecycle: {
       sourceFile: "src/format.cc",
       editSuffix: "\n// samchon-graph lifecycle edit\n",
@@ -139,7 +141,7 @@ export const LANGUAGE_EXPERIMENTS = [
       failurePolicy: "reject",
     },
     minNodes: 1,
-    minEdges: 1,
+    minEdges: 0,
   },
   {
     language: "c",
@@ -155,11 +157,11 @@ export const LANGUAGE_EXPERIMENTS = [
     strictAuthority: "semantic-index",
     strictTool: "scip-clang",
     requiredCapabilities: ["universe", "diskDigests"],
-    // References only. Whether scip-clang populates SCIP enclosing_symbol has
-    // not been established by reading it, and containment is derived from
-    // exactly that field.
-    semanticEdges: ["references"],
-    crossFileEdge: "references",
+    // The same pinned producer contract as the C++ row: semantic declarations
+    // are real, but none of the common adapter's edge-grounding fields exists.
+    semanticEdges: [],
+    semanticLimitation:
+      "scip-clang 0.4.0 emits no occurrence enclosing_range, SymbolInformation.enclosing_symbol, or type-definition relationship, so its semantic declarations carry no provable graph edge family",
     lifecycle: {
       sourceFile: "src/uv-common.c",
       editSuffix: "\n// samchon-graph lifecycle edit\n",
@@ -182,7 +184,7 @@ export const LANGUAGE_EXPERIMENTS = [
       failurePolicy: "reject",
     },
     minNodes: 1,
-    minEdges: 1,
+    minEdges: 0,
   },
   {
     language: "java",

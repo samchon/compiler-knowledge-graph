@@ -392,6 +392,19 @@ export function serverArgsForPreparedFixture(spec, repoDir) {
   return ["--solution", solutionPath];
 }
 
+/**
+ * The external preparation state that belongs to one checkout, if any.
+ *
+ * Exposed as a path rather than copied or deleted here so a benchmark can keep
+ * its own destructive-path boundary. Serilog's reduced solution must stay
+ * outside the pinned Git tree, but it still belongs to exactly that fixture.
+ */
+export function preparedFixtureCompanion(spec, repoDir) {
+  return spec.dotnetSolution
+    ? path.dirname(externalSolutionPath(spec, repoDir))
+    : undefined;
+}
+
 function externalSolutionPath(spec, repoDir) {
   return path.join(
     path.dirname(repoDir),

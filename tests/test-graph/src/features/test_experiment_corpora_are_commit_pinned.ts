@@ -26,6 +26,8 @@ export const test_experiment_corpora_are_commit_pinned = () => {
   );
   const python = region(catalog, 'language: "python"', 'language: "ruby"');
   const csharp = region(catalog, 'language: "csharp"', 'language: "kotlin"');
+  const cpp = region(catalog, 'language: "cpp"', 'language: "c"');
+  const c = region(catalog, 'language: "c"', 'language: "java"');
   const lua = region(catalog, 'language: "lua"', 'language: "dart"');
   TestValidator.predicate(
     "the dynamic SCIP smoke proves a versioned Python lifecycle, not an edge count",
@@ -44,10 +46,13 @@ export const test_experiment_corpora_are_commit_pinned = () => {
       runner.includes("semanticLimitation: experiment.semanticLimitation"),
   );
   TestValidator.predicate(
-    "a producer with no grounded edge family states that limitation explicitly",
-    csharp.includes("semanticEdges: []") &&
-      !csharp.includes("crossFileEdge:") &&
-      /semanticLimitation:\s*"?[^",]/.test(csharp) &&
+    "every producer with no grounded edge family states that limitation explicitly",
+    [csharp, cpp, c].every(
+      (row) =>
+        row.includes("semanticEdges: []") &&
+        !row.includes("crossFileEdge:") &&
+        /semanticLimitation:\s*"?[^",]/.test(row),
+    ) &&
       runner.includes("experiment.semanticEdges.length === 0") &&
       runner.includes("crossFileEdge !== undefined") &&
       runner.includes("semanticLimitation.trim() ==="),

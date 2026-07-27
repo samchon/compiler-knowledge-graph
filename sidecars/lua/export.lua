@@ -106,7 +106,15 @@ local function bodyOf(source)
     local value = source.value
     if type(value) == 'table' and value.type == 'function'
         and value.start ~= nil and value.finish ~= nil then
-        return value
+        -- A function statement's value normally covers its holder too, but a
+        -- function expression does not: in `local blend = function() ... end`
+        -- LuaLS starts the value at `function`, after the name. The graph's
+        -- body span owns both the declaration and the work it runs, so publish
+        -- their union rather than a range the adapter must reject.
+        return {
+            start = math.min(source.start, value.start),
+            finish = math.max(source.finish, value.finish),
+        }
     end
     return source
 end

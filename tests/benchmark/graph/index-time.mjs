@@ -43,6 +43,7 @@ import {
   ensureLocalIgnored,
   graphLauncher,
   prepareFixture,
+  preparedFixtureCompanion,
   serverArgsForPreparedFixture,
 } from "./language.mjs";
 
@@ -107,6 +108,7 @@ const outDir = path.resolve(
   parsed.values.out ?? path.join(workDir, "graph-index", timestamp()),
 );
 const reportPath = path.join(outDir, "report.json");
+const awaitQuietSeconds = Number(parsed.values["await-quiet"] ?? 0);
 
 if (parsed.flags.has("--list")) {
   for (const project of Object.keys(PROJECTS)) {
@@ -136,49 +138,6 @@ if (selected.length === 0) {
   throw new Error("index-time benchmark requires --project <name> or --all");
 }
 
-// Quiet-host gate, mirrored from performance.mjs: a cold build is one sample
-// with no median to hide behind, so a noisy host corrupts the cell outright.
-// Warns by default, aborts under SAMCHON_BENCH_REQUIRE_QUIET=1 (set it for every
-// publication run), and is silenced by SAMCHON_BENCH_SKIP_LOAD_CHECK=1. Note
-// os.loadavg() reports zeros on Windows, so the gate only bites on POSIX
-// hosts; on Windows quietness stays the operator's responsibility.
-// `--await-quiet=<seconds>` waits for the host to settle before that gate reads
-// it, rather than reading a machine still hot from whatever prepared it. A
-// checkout, a dependency install, and a language-server download leave a
-// one-minute load average that has nothing to do with the measurement and every
-// bit of a cold build's wall clock. Waiting makes the quiet claim true;
-// disabling the gate would only stop it being checked.
-//
-// The wait is bounded and its outcome is recorded. A host that never settles
-// falls through to the gate below and is refused, which is the honest end for a
-// machine that cannot take this measurement.
-const awaitQuietSeconds = Number(parsed.values["await-quiet"] ?? 0);
-let quietWait = null;
-if (Number.isFinite(awaitQuietSeconds) && awaitQuietSeconds > 0) {
-  quietWait = await awaitQuietHost(awaitQuietSeconds);
-  process.stdout.write(
-    `[index-time] host settled to ratio ${quietWait.ratio.toFixed(2)} after ` +
-      `${String(quietWait.waitedSeconds)}s (limit ${String(awaitQuietSeconds)}s)\n`,
-  );
-}
-
-if (process.env.SAMCHON_BENCH_SKIP_LOAD_CHECK !== "1") {
-  const cpuCount = Math.max(os.cpus().length, 1);
-  const load1 = os.loadavg()[0];
-  const ratio = load1 / cpuCount;
-  if (ratio > 0.5) {
-    const msg =
-      `host load is high (1-min loadavg ${load1.toFixed(2)} on ` +
-      `${cpuCount} CPUs, ratio ${ratio.toFixed(2)}); a one-shot cold build ` +
-      `may drift far from a quiet baseline. ` +
-      `Set SAMCHON_BENCH_SKIP_LOAD_CHECK=1 to ignore.`;
-    if (process.env.SAMCHON_BENCH_REQUIRE_QUIET === "1") {
-      throw new Error(`index-time: ${msg}`);
-    }
-    process.stderr.write(`[index-time] warning: ${msg}\n`);
-  }
-}
-
 fs.mkdirSync(outDir, { recursive: true });
 
 if (!parsed.flags.has("--no-setup")) {
@@ -196,10 +155,6 @@ const report = {
   tools,
   projects: selected,
   host: hostSpec(),
-  // What the machine looked like when it was allowed to take the measurement.
-  // A cold build is one sample, so how quiet the host was is part of the result
-  // rather than a detail of how it was produced.
-  quietWait,
   scale: {},
   cells: [],
 };
@@ -220,10 +175,14 @@ for (const project of selected) {
   for (const tool of tools) {
     let cellRepoDir;
     let cellCache;
-    runWithCleanup(
-      () => {
+    await runWithCleanup(
+      async () => {
         cellRepoDir = prepareCellFixture(project, spec, repoDir, tool);
         cellCache = prepareCellCache(project, spec, tool);
+        // Preparation can clone dependencies, generate a compilation database,
+        // or run a full build. The quiet observation belongs here, immediately
+        // before the timer, rather than before the work that heats the host.
+        const quietWait = await quietHostForCell(project, tool);
         let cell;
         try {
           cell = runIndexCell({
@@ -276,7 +235,9 @@ for (const project of selected) {
         {
           label: `remove isolated fixture ${project}/${tool}`,
           run: () => {
-            if (cellRepoDir !== undefined) cleanupCellFixture(cellRepoDir);
+            if (cellRepoDir !== undefined) {
+              cleanupCellFixture(cellRepoDir);
+            }
           },
         },
         {
@@ -504,6 +465,43 @@ function measureScale(project, spec, repoDir) {
 }
 
 /**
+ * Settle and gate the host after this cell's setup, immediately before timing.
+ *
+ * A cold build is one sample with no median to hide behind. Warn by default,
+ * abort under SAMCHON_BENCH_REQUIRE_QUIET=1, and only skip the gate when the
+ * operator explicitly sets SAMCHON_BENCH_SKIP_LOAD_CHECK=1. Windows reports
+ * zero load averages, so its quietness remains the operator's responsibility.
+ */
+async function quietHostForCell(project, tool) {
+  const limit =
+    Number.isFinite(awaitQuietSeconds) && awaitQuietSeconds > 0
+      ? awaitQuietSeconds
+      : 0;
+  const observation = await awaitQuietHost(limit);
+  process.stdout.write(
+    `[index-time] ${project}/${tool} host ratio ` +
+      `${observation.ratio.toFixed(2)} after ` +
+      `${String(observation.waitedSeconds)}s quiet wait\n`,
+  );
+  if (
+    process.env.SAMCHON_BENCH_SKIP_LOAD_CHECK !== "1" &&
+    observation.ratio > 0.5
+  ) {
+    const load1 = observation.ratio * observation.cores;
+    const msg =
+      `host load is high (1-min loadavg ${load1.toFixed(2)} on ` +
+      `${observation.cores} CPUs, ratio ${observation.ratio.toFixed(2)}); ` +
+      `a one-shot cold build may drift far from a quiet baseline. ` +
+      `Set SAMCHON_BENCH_SKIP_LOAD_CHECK=1 to ignore.`;
+    if (process.env.SAMCHON_BENCH_REQUIRE_QUIET === "1") {
+      throw new Error(`index-time: ${msg}`);
+    }
+    process.stderr.write(`[index-time] warning: ${msg}\n`);
+  }
+  return observation;
+}
+
+/**
  * Wait until the one-minute load average falls under the gate's own threshold.
  *
  * The same ratio the gate uses, deliberately: two thresholds would drift, and
@@ -565,7 +563,11 @@ function hostSpec() {
 
 function publishWebsiteIndex(currentReport) {
   if (parsed.flags.has("--no-website")) return;
+  assertIndexReport(currentReport, "incoming index-time result");
   const prior = fs.existsSync(websiteJson) ? loadJson(websiteJson) : null;
+  if (prior !== null) {
+    assertWebsitePublication(prior);
+  }
   const keepPrior = !parsed.flags.has("--reset-index");
   const priorIndex = keepPrior ? (prior?.index ?? null) : null;
   const scale = { ...(priorIndex?.scale ?? {}), ...currentReport.scale };
@@ -593,6 +595,102 @@ function publishWebsiteIndex(currentReport) {
   };
   fs.mkdirSync(path.dirname(websiteJson), { recursive: true });
   fs.writeFileSync(websiteJson, `${JSON.stringify(out)}\n`);
+}
+
+function assertIndexReport(value, label) {
+  assertRecord(value, label);
+  assertRecord(value.host, `${label}.host`);
+  assertScale(value.scale, `${label}.scale`);
+  assertIndexCells(value.cells, `${label}.cells`);
+}
+
+function assertWebsitePublication(value) {
+  assertRecord(value, "existing benchmark publication");
+  if (
+    value.schemaVersion !== undefined &&
+    (!Number.isSafeInteger(value.schemaVersion) || value.schemaVersion < 1)
+  ) {
+    throw new TypeError(
+      "existing benchmark publication.schemaVersion must be a positive safe integer",
+    );
+  }
+  if (value.agent !== undefined && value.agent !== null) {
+    assertRecord(value.agent, "existing benchmark publication.agent");
+    if (!Array.isArray(value.agent.cells)) {
+      throw new TypeError(
+        "existing benchmark publication.agent.cells must be an array",
+      );
+    }
+  }
+  if (value.index !== undefined && value.index !== null) {
+    assertIndexReport(value.index, "existing benchmark publication.index");
+  }
+}
+
+function assertScale(value, label) {
+  assertRecord(value, label);
+  for (const [project, scale] of Object.entries(value)) {
+    assertRecord(scale, `${label}.${project}`);
+    for (const field of ["files", "lines"]) {
+      if (
+        !Number.isSafeInteger(scale[field]) ||
+        scale[field] < 0
+      ) {
+        throw new TypeError(
+          `${label}.${project}.${field} must be a nonnegative safe integer`,
+        );
+      }
+    }
+  }
+}
+
+function assertIndexCells(value, label) {
+  if (!Array.isArray(value)) {
+    throw new TypeError(`${label} must be an array`);
+  }
+  for (const [index, cell] of value.entries()) {
+    const cellLabel = `${label}[${String(index)}]`;
+    assertRecord(cell, cellLabel);
+    for (const field of ["project", "tool"]) {
+      if (typeof cell[field] !== "string" || cell[field].trim() === "") {
+        throw new TypeError(`${cellLabel}.${field} must be a nonempty string`);
+      }
+    }
+    for (const field of ["buildMs", "timedOutMs"]) {
+      if (
+        cell[field] !== undefined &&
+        cell[field] !== null &&
+        (typeof cell[field] !== "number" ||
+          !Number.isFinite(cell[field]) ||
+          cell[field] < 0)
+      ) {
+        throw new TypeError(
+          `${cellLabel}.${field} must be null or a nonnegative finite number`,
+        );
+      }
+    }
+    for (const field of ["hasBuildStep", "strict"]) {
+      if (cell[field] !== undefined && typeof cell[field] !== "boolean") {
+        throw new TypeError(`${cellLabel}.${field} must be a boolean`);
+      }
+    }
+    if (cell.host !== undefined) {
+      assertRecord(cell.host, `${cellLabel}.host`);
+    }
+    if (cell.quietWait !== undefined && cell.quietWait !== null) {
+      assertRecord(cell.quietWait, `${cellLabel}.quietWait`);
+    }
+  }
+}
+
+function assertRecord(value, label) {
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    Array.isArray(value)
+  ) {
+    throw new TypeError(`${label} must be an object`);
+  }
 }
 
 /** One place, so the limit reported always matches the limit enforced. */
@@ -781,18 +879,25 @@ function cleanupInsideFixture(repoDir, name) {
  */
 function prepareCellFixture(project, spec, source, tool) {
   const root = path.join(outDir, "fixtures");
-  const target = path.join(
+  const cellRoot = path.join(
     root,
     `${filenamePart(project)}-${filenamePart(tool)}`,
   );
+  // Preserve the checkout basename inside a per-cell container. External
+  // prepared companions use relative project paths, so copying the same
+  // basename and directory geometry keeps those paths valid without rerunning
+  // setup under --no-setup.
+  const target = path.join(cellRoot, path.basename(source));
   fs.mkdirSync(root, { recursive: true });
   cleanupCellFixture(target);
+  fs.mkdirSync(cellRoot, { recursive: true });
   try {
     if (parsed.flags.has("--no-setup")) {
       fs.cpSync(source, target, {
         recursive: true,
         verbatimSymlinks: true,
       });
+      copyPreparedFixtureCompanion(spec, source, target);
       assertPreparedFixture(spec, target);
       return target;
     }
@@ -830,16 +935,29 @@ function prepareCellFixture(project, spec, source, tool) {
 
 function cleanupCellFixture(target) {
   const root = path.resolve(outDir, "fixtures");
-  const resolved = path.resolve(target);
-  const relative = path.relative(root, resolved);
+  const cellRoot = path.dirname(path.resolve(target));
+  const relative = path.relative(root, cellRoot);
   if (
     relative === "" ||
     relative.startsWith("..") ||
     path.isAbsolute(relative)
   ) {
-    throw new Error(`refusing to remove cell fixture outside output: ${target}`);
+    throw new Error(
+      `refusing to remove cell fixture outside output: ${cellRoot}`,
+    );
   }
-  fs.rmSync(resolved, { recursive: true, force: true });
+  fs.rmSync(cellRoot, { recursive: true, force: true });
+}
+
+function copyPreparedFixtureCompanion(spec, source, target) {
+  const from = preparedFixtureCompanion(spec, source);
+  const to = preparedFixtureCompanion(spec, target);
+  if (from === undefined || to === undefined) return;
+  if (!fs.existsSync(from)) {
+    throw new Error(`${spec.name} is missing prepared companion ${from}`);
+  }
+  fs.mkdirSync(path.dirname(to), { recursive: true });
+  fs.cpSync(from, to, { recursive: true, verbatimSymlinks: true });
 }
 
 /**
@@ -873,6 +991,10 @@ function prepareCellCache(project, spec, tool) {
         .join(" ");
     } else if (spec.language === "csharp") {
       env.NUGET_PACKAGES = path.join(root, "nuget");
+      env.NUGET_HTTP_CACHE_PATH = path.join(root, "nuget-http");
+      env.NUGET_SCRATCH = path.join(root, "nuget-scratch");
+      env.NUGET_PLUGINS_CACHE_PATH = path.join(root, "nuget-plugins");
+      env.DOTNET_CLI_HOME = path.join(root, "dotnet-home");
     } else if (spec.language === "go") {
       env.GOCACHE = path.join(root, "go-build");
       env.GOMODCACHE = path.join(root, "go-mod");
@@ -917,12 +1039,12 @@ function cleanupCellCache(target) {
  * Run one operation and every cleanup without letting a later cleanup erase an
  * earlier failure.
  */
-function runWithCleanup(operation, cleanups, label) {
+async function runWithCleanup(operation, cleanups, label) {
   let failed = false;
   let failure;
   let result;
   try {
-    result = operation();
+    result = await operation();
   } catch (error) {
     failed = true;
     failure = error;

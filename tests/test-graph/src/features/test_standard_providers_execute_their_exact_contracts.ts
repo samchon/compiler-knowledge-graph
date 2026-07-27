@@ -56,6 +56,9 @@ export const test_standard_providers_execute_their_exact_contracts =
         "dotnet",
         "python3",
         "ruby",
+        "rust-analyzer",
+        "rustc",
+        "cargo",
         "scip_dart",
         "dart",
         "scip-php",
@@ -77,6 +80,9 @@ export const test_standard_providers_execute_their_exact_contracts =
         SAMCHON_GRAPH_DOTNET_TOOLCHAIN: platformExecutable(bin, "dotnet"),
         SAMCHON_GRAPH_PYTHON_TOOLCHAIN: platformExecutable(bin, "python3"),
         SAMCHON_GRAPH_RUBY_TOOLCHAIN: platformExecutable(bin, "ruby"),
+        SAMCHON_GRAPH_RUST_ANALYZER: platformExecutable(bin, "rust-analyzer"),
+        SAMCHON_GRAPH_RUSTC: platformExecutable(bin, "rustc"),
+        SAMCHON_GRAPH_CARGO: platformExecutable(bin, "cargo"),
         SAMCHON_GRAPH_SCIP_DART: platformExecutable(bin, "scip_dart"),
         SAMCHON_GRAPH_DART_TOOLCHAIN: platformExecutable(bin, "dart"),
         SAMCHON_GRAPH_SCIP_PHP: platformExecutable(bin, "scip-php"),
@@ -125,7 +131,7 @@ export const test_standard_providers_execute_their_exact_contracts =
         TestValidator.predicate(
           `${provider.name} publishes the toolchain its facts describe`,
           refreshed.snapshot.provenance.compilerVersion ===
-            toolchainRowsOf(provider.name).join("; "),
+            expectedCompilerVersion(provider),
         );
         TestValidator.predicate(
           `${provider.name} publishes the shared strict-fixture corpus`,
@@ -152,6 +158,12 @@ export const test_standard_providers_execute_their_exact_contracts =
             ).length === 0,
         );
         if (provider.name === "scip-clang") {
+          TestValidator.predicate(
+            "scip-clang watches every ambiguous include identity it accepts",
+            ["src/shared.inc", "src/extensionless"].every((file) =>
+              buildInputs(provider, root).includes(file),
+            ),
+          );
           fs.appendFileSync(
             path.join(root, "build", "compile_commands.json"),
             "\n",
@@ -163,8 +175,53 @@ export const test_standard_providers_execute_their_exact_contracts =
               buildConfigurationChanged.mode === "rebuild" &&
               buildConfigurationChanged.generation === 2,
           );
+          fs.appendFileSync(path.join(root, "src", "shared.inc"), "\n");
+          const ambiguousIncludeChanged = await session.refresh();
+          TestValidator.predicate(
+            "scip-clang rebuilds when an accepted .inc document changes",
+            ambiguousIncludeChanged.changed &&
+              ambiguousIncludeChanged.mode === "rebuild" &&
+              ambiguousIncludeChanged.generation === 3,
+          );
+          const database = path.join(root, "build", "compile_commands.json");
+          const validDatabase = fs.readFileSync(database, "utf8");
+          let rejected: Error | undefined;
+          try {
+            fs.appendFileSync(database, "\n[ not json");
+            await session.refresh();
+          } catch (error) {
+            rejected =
+              error instanceof Error ? error : new Error(String(error));
+          } finally {
+            fs.writeFileSync(database, validDatabase);
+          }
+          TestValidator.predicate(
+            "an open scip-clang session revalidates its compilation database",
+            rejected?.message.includes("no available compiler command") ===
+              true &&
+              session.generation === 3 &&
+              session.current === ambiguousIncludeChanged.snapshot,
+          );
         }
         await session.close();
+        if (provider.name === "scip-java") {
+          const javaOnly = provider.open({
+            root,
+            command,
+            languages: ["java"],
+            options: { cwd: root },
+          });
+          try {
+            const javaSnapshot = await javaOnly.refresh();
+            TestValidator.equals(
+              "a Java-only scip-java slice publishes Java as its compiler",
+              javaSnapshot.snapshot.provenance.compilerVersion,
+              "java=java v1.0.0",
+            );
+          } finally {
+            await javaOnly.close();
+          }
+        }
         await assertHeuristicTwinFails(provider, command, root);
       }
 
@@ -375,6 +432,8 @@ function writeProject(root: string): void {
     "src/main.go": "// mentionedInComment must remain prose\npackage main\nfunc caller() { callee() }\nfunc callee() {}\n",
     "src/main.c": "/* mentionedInComment must remain prose */\nint callee(void);\nint caller(void) { return callee(); }\nint callee(void) { return 1; }\n",
     "src/main.cpp": "// mentionedInComment must remain prose\nint callee();\nint caller() { return callee(); }\nint callee() { return 1; }\n",
+    "src/shared.inc": "#define FIXTURE_VALUE 1\n",
+    "src/extensionless": "#define EXTENSIONLESS_FIXTURE 1\n",
     "src/Main.java": "// mentionedInComment must remain prose\nclass Main { static void caller() { callee(); } static void callee() {} }\n",
     "src/Main.kt": "// mentionedInComment must remain prose\nfun caller() { callee() }\nfun callee() {}\n",
     "src/Main.scala": "// mentionedInComment must remain prose\nobject Main { def caller(): Unit = callee(); def callee(): Unit = () }\n",
@@ -624,6 +683,13 @@ async function assertRegisteredFixture(
     const refreshed = await session.refresh();
     const unchanged = await session.refresh();
     const independent = await indexOnce(provider, command, root);
+    if (provider.name === "rust-analyzer-scip") {
+      TestValidator.equals(
+        "the Rust fixture publishes only its fixed compiler and Cargo oracles",
+        refreshed.snapshot.provenance.compilerVersion,
+        "rustc=rustc v1.0.0; cargo=cargo v1.0.0",
+      );
+    }
     // Compared rather than reduced to a predicate: a conformance report names
     // exactly which invariant a provider broke, and folding it into a boolean
     // throws that away at the one moment it is worth having.
@@ -837,6 +903,13 @@ function toolchainRowsOf(provider: string): string[] {
     throw new Error(`${provider}: fixture declares no toolchain`);
   }
   return toolchain.map((tool) => `${tool}=${tool} v1.0.0`);
+}
+
+function expectedCompilerVersion(provider: IGraphProvider): string {
+  return provider.name === "scip-java" &&
+    provider.languages.includes("kotlin")
+    ? ""
+    : toolchainRowsOf(provider.name).join("; ");
 }
 
 function sameArray(

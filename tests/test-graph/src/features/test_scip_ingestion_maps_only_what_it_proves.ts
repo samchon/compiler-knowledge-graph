@@ -1132,9 +1132,22 @@ function assertAnUnreliableProducerLanguageCanYieldToTheFile(): void {
     "cpp",
   );
   TestValidator.equals(
-    "an extensionless C include follows the only dialect the session owns",
+    "a .inc include follows the only dialect the session owns",
     adapt("include/generated.inc", ["c"], "C++").nodes[0]?.language,
     "c",
+  );
+  TestValidator.equals(
+    "an extensionless include follows the only dialect the session owns",
+    adapt("include/generated", ["c"], "C++").nodes[0]?.language,
+    "c",
+  );
+  const foreign = adapt("src/kernel.cu", ["c"], "C++");
+  TestValidator.predicate(
+    "an unrelated unknown extension cannot borrow C ownership",
+    foreign.nodes.length === 0 &&
+      foreign.warnings.some((warning) =>
+        warning.includes("whose unknown facts this provider does not own"),
+      ),
   );
   TestValidator.equals(
     "an ambiguous header retains the producer language when both dialects are owned",

@@ -73,8 +73,9 @@ jobs:
           LUA
           cat > lua-probe-project/main.lua <<'LUA'
           local util = require 'util'
+          local blend = function(left, right) return left .. right end
           function caller() callee() end
-          function callee() return util.greet('world') end
+          function callee() return blend(util.greet('world'), '!') end
           LUA
 
       # Exercise the checked-in exporter rather than a TypeScript translation
@@ -135,6 +136,30 @@ jobs:
             --doc="$root" \
             --doc_out_path="$GITHUB_WORKSPACE/lua-probe-out" \
             --configpath="$GITHUB_WORKSPACE/lua-export-config.json"
+
+      - name: Validate function-valued local ranges
+        run: |
+          node <<'NODE'
+          const fs = require("node:fs");
+          const report = JSON.parse(
+            fs.readFileSync("lua-probe-out/samchon-graph-lua.json", "utf8"),
+          );
+          const blend = report.nodes.find((node) => node.name === "blend");
+          if (
+            blend === undefined ||
+            blend.body?.file !== blend.location?.file ||
+            blend.body.startLine > blend.location.startLine ||
+            (blend.body.startLine === blend.location.startLine &&
+              blend.body.startColumn > blend.location.startColumn) ||
+            blend.body.endLine < blend.location.endLine ||
+            (blend.body.endLine === blend.location.endLine &&
+              blend.body.endColumn < blend.location.endColumn)
+          ) {
+            throw new Error(
+              "the real Lua exporter did not publish a blend body containing its declaration",
+            );
+          }
+          NODE
 
       - name: Show the exported graph
         if: ${{ always() }}

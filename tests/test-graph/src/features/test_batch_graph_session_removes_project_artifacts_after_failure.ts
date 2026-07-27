@@ -114,6 +114,58 @@ export const test_batch_graph_session_removes_project_artifacts_after_failure =
       fs.existsSync(marker),
       false,
     );
+    fs.rmSync(produced);
+
+    const linkedTarget = path.join(root, "outside-user-index");
+    const linkedMarker = path.join(root, "linked-producer-ran");
+    fs.symlinkSync(
+      linkedTarget,
+      produced,
+      process.platform === "win32" ? "junction" : "file",
+    );
+    const linked = new BatchGraphSession({
+      root,
+      languages: ["php"],
+      provider: "linked-artifact-fixture",
+      command: {
+        command: process.execPath,
+        args: [
+          "-e",
+          [
+            "require('node:fs').writeFileSync(",
+            "  'linked-producer-ran',",
+            "  'yes',",
+            ");",
+          ].join(""),
+        ],
+      },
+      artifactName: "index.json",
+      indexArgs: () => [],
+      artifactFrom: () => produced,
+      inputs: () => [],
+      load: () => {
+        throw new Error("a producer with a dangling artifact link must not run");
+      },
+    });
+    message = "";
+    try {
+      await linked.refresh();
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    } finally {
+      await linked.close();
+    }
+    TestValidator.predicate(
+      "a dangling fixed-artifact symlink is an existing project entry",
+      message.includes("refusing to overwrite") &&
+        fs.lstatSync(produced).isSymbolicLink(),
+    );
+    TestValidator.equals(
+      "the producer cannot write through the dangling artifact link",
+      [fs.existsSync(linkedTarget), fs.existsSync(linkedMarker)],
+      [false, false],
+    );
+    fs.rmSync(produced, { force: true });
 
     const blocked = path.join(root, "unremovable-artifact");
     const cleanupFailure = new BatchGraphSession({

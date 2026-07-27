@@ -15,6 +15,11 @@ import { scipProvider } from "./scipProvider";
 
 const clangScipProvider = createScipProvider({
   name: "scip-clang",
+  // scip-clang 0.4.0 writes occurrence range/symbol/roles only. Its
+  // SymbolInformation never sets enclosing_symbol, and its relationships set
+  // implementation/reference flags but never is_type_definition. None of
+  // those fields can ground the common adapter's three edge families.
+  omitFacts: ["contains", "references", "type_ref"],
   // Not `clang`. scip-clang carries its own Clang and needs an external driver
   // only for CUDA; requiring one declined every project built with GCC or MSVC
   // even though its compilation database was exactly what the indexer consumes.
@@ -31,7 +36,9 @@ const clangScipProvider = createScipProvider({
     "Makefile",
     "meson.build",
   ],
-  buildExtensions: [".cmake"],
+  // `.inc` and extensionless include documents are accepted from the SCIP
+  // artifact, so resident freshness has to watch the same identities.
+  buildExtensions: [".cmake", ".inc", ""],
   // scip-clang 0.4.0 writes `CPP` into every SCIP document, with an upstream
   // FIXME to detect the language. Trusting it makes a C-only session discard
   // every `.c` document as foreign C++ even though the path identifies it.
@@ -42,6 +49,13 @@ const clangScipProvider = createScipProvider({
   // on the old universe even though the next producer run would read the new
   // database.
   derivedInputs: compilationDatabaseInputs,
+  validateConfiguration: (_root, configuration) => {
+    if (configuration.includes("cc=unavailable")) {
+      throw new Error(
+        "scip-clang: the current compilation database is invalid or names no available compiler command",
+      );
+    }
+  },
   resolveArgs: (root) => {
     const compdb = compilationDatabase(root);
     return compdb === undefined ? undefined : [`--compdb-path=${compdb}`];
@@ -54,12 +68,19 @@ const clangScipProvider = createScipProvider({
 
 const jvmScipProvider = createScipProvider({
   name: "scip-java",
+  // scip-java 0.13.1 sets enclosing ranges in both the javac and kotlinc
+  // producers and enclosing_symbol for javac locals, but no producer sets a
+  // type-definition relationship.
+  omitFacts: ["type_ref"],
   toolchain: {
     label: "java",
     aliases: ["java"],
     override: "SAMCHON_GRAPH_JAVA_TOOLCHAIN",
   },
-  languages: ["java", "kotlin", "scala"],
+  // Upstream calls this a Java and Kotlin indexer and ships only javac and
+  // kotlinc producers. Claiming Scala made an installed scip-java displace the
+  // Scala language-server lane with a tool that cannot index the language.
+  languages: ["java", "kotlin"],
   command: "scip-java",
   override: "SAMCHON_GRAPH_SCIP_JAVA",
   buildFiles: [
@@ -74,6 +95,14 @@ const jvmScipProvider = createScipProvider({
     "build.sc",
   ],
   indexArgs: (artifact) => ["index", "--output", artifact],
+  // Java is both the runtime that launches scip-java and the compiler for a
+  // Java-only slice. It is not Kotlin's compiler. Until the producer exposes
+  // the Kotlin compiler revision it drove, a Kotlin-containing slice leaves
+  // the compiler field empty instead of misnaming the JVM.
+  compilerVersion: (languages, configuration) =>
+    languages.includes("kotlin")
+      ? ""
+      : standardCompilerVersion("scip-java", configuration),
 });
 
 const dotnetScipProvider = createScipProvider({
@@ -113,7 +142,9 @@ const pythonScipProvider = createScipProvider({
   // field, so claiming the family told a consumer containment was proven and
   // left it to read the absence as a project with no structure rather than an
   // indexer that cannot describe one.
-  omitFacts: ["contains"],
+  // The same bundle's only relationships are implementation relationships;
+  // it never sets Relationship.is_type_definition.
+  omitFacts: ["contains", "type_ref"],
   // `python3` is not the command a Windows Python answers to. The python.org
   // installer creates `python.exe` and `py.exe`; only the Microsoft Store build
   // creates `python3.exe`, so requiring the one spelling declined the strict
@@ -148,6 +179,9 @@ const pythonScipProvider = createScipProvider({
 
 const rubyScipProvider = createScipProvider({
   name: "scip-ruby",
+  // scip-ruby 0.4.7 sets range/symbol/roles on occurrences, but no enclosing
+  // range, enclosing symbol, or type-definition relationship.
+  omitFacts: ["contains", "references", "type_ref"],
   toolchain: {
     label: "ruby",
     aliases: ["ruby"],
@@ -184,6 +218,9 @@ const rubyScipProvider = createScipProvider({
  */
 const dartScipProvider = createScipProvider({
   name: "scip-dart",
+  // scip-dart 1.6.2 constructs occurrences without enclosing ranges and emits
+  // only implementation/reference relationships on symbols.
+  omitFacts: ["contains", "references", "type_ref"],
   toolchain: {
     label: "dart",
     aliases: ["dart"],
@@ -222,6 +259,9 @@ const dartScipProvider = createScipProvider({
  */
 const phpScipProvider = createScipProvider({
   name: "scip-php",
+  // scip-php 0.0.2 writes only range/symbol/roles for occurrences and symbol
+  // metadata without any of the common adapter's grounding fields.
+  omitFacts: ["contains", "references", "type_ref"],
   toolchain: {
     label: "php",
     aliases: ["php"],
@@ -272,9 +312,19 @@ interface IStandardScipProvider {
    * packages it used to have.
    */
   derivedInputs?: (root: string) => readonly string[];
+  validateConfiguration?: (
+    root: string,
+    configuration: readonly string[],
+  ) => void;
   preferFileLanguage?: boolean;
   resolveArgs?: (root: string) => readonly string[] | undefined;
   indexArgs: (artifact: string) => string[];
+
+  /** Select the compiler row this language slice can honestly publish. */
+  compilerVersion?: (
+    languages: readonly GraphLanguage[],
+    configuration: readonly string[],
+  ) => string;
 
   /** Where a producer that takes no output flag writes, relative to the root. */
   artifactFrom?: (root: string) => string;
@@ -341,6 +391,7 @@ function compareInputPath(left: string, right: string): number {
 function createScipProvider(
   props: IStandardScipProvider,
 ): IGraphProvider {
+  const validateConfiguration = props.validateConfiguration;
   return scipProvider({
     name: props.name,
     languages: props.languages,
@@ -413,6 +464,15 @@ function createScipProvider(
         ),
         props.derivedInputs?.(root),
       ),
+    ...(validateConfiguration === undefined
+      ? {}
+      : {
+          validateConfiguration: (
+            root,
+            _languages,
+            configuration,
+          ) => validateConfiguration(root, configuration),
+        }),
     configuration: (root, _languages, env = process.env) => [
       toolVersion(root, env, props.command, props.override),
       toolVersion(root, env, "scip", "SAMCHON_GRAPH_SCIP"),
@@ -422,16 +482,24 @@ function createScipProvider(
     // published compiler is the one this universe was computed from. Labelled
     // rather than positional: the indexer and the decoder are named exactly,
     // and whatever remains is the toolchain.
-    compilerVersion: (_root, _languages, configuration) =>
-      configuration
-        .filter((row) => {
-          const label = row.slice(0, Math.max(0, row.indexOf("=")));
-          return label !== props.command && label !== "scip";
-        })
-        .join("; "),
+    compilerVersion: (_root, selectedLanguages, configuration) =>
+      props.compilerVersion?.(selectedLanguages, configuration) ??
+      standardCompilerVersion(props.command, configuration),
     sourceText: true,
     languageOf,
   });
+}
+
+function standardCompilerVersion(
+  indexer: string,
+  configuration: readonly string[],
+): string {
+  return configuration
+    .filter((row) => {
+      const label = row.slice(0, Math.max(0, row.indexOf("=")));
+      return label !== indexer && label !== "scip";
+    })
+    .join("; ");
 }
 
 /**

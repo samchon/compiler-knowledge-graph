@@ -35,6 +35,7 @@ export class LspClient {
     cwd?: string,
     maxMessageBytes = DEFAULT_MAX_MESSAGE_BYTES,
     windowsVerbatimArguments?: boolean,
+    private readonly requestObserver?: LspClient.IRequestObserver,
   ) {
     if (!Number.isSafeInteger(maxMessageBytes) || maxMessageBytes < 1) {
       throw new TypeError(
@@ -95,6 +96,8 @@ export class LspClient {
     // forever without changing the normal unlimited request contract.
     const id = this.nextId++;
     const payload = { jsonrpc: "2.0", id, method, params };
+    const started = process.hrtime.bigint();
+    this.observeRequest({ phase: "start", id, method });
     const promise = new Promise<T>((resolve, reject) => {
       const effectiveTimeoutMs = timeoutMs ?? this.timeoutMs;
       const pending: IRequest = {
@@ -119,7 +122,26 @@ export class LspClient {
       }
     });
     this.write(payload);
-    return promise;
+    try {
+      const result = await promise;
+      this.observeRequest({
+        phase: "end",
+        id,
+        method,
+        status: "success",
+        durationMs: Number(process.hrtime.bigint() - started) / 1e6,
+      });
+      return result;
+    } catch (error) {
+      this.observeRequest({
+        phase: "end",
+        id,
+        method,
+        status: "error",
+        durationMs: Number(process.hrtime.bigint() - started) / 1e6,
+      });
+      throw error;
+    }
   }
 
   public notify(method: string, params: unknown): void {
@@ -136,6 +158,14 @@ export class LspClient {
   public close(): Promise<void> {
     this.closing ??= this.closeOnce();
     return this.closing;
+  }
+
+  private observeRequest(event: LspClient.IRequestTrace): void {
+    try {
+      this.requestObserver?.(event);
+    } catch {
+      // Diagnostics must never change transport behavior.
+    }
   }
 
   private async closeOnce(): Promise<void> {
@@ -344,6 +374,24 @@ export class LspClient {
       request.signal!.removeEventListener("abort", request.abort);
     }
   }
+}
+
+export namespace LspClient {
+  export type IRequestObserver = (event: IRequestTrace) => void;
+
+  export type IRequestTrace =
+    | {
+        phase: "start";
+        id: number;
+        method: string;
+      }
+    | {
+        phase: "end";
+        id: number;
+        method: string;
+        status: "success" | "error";
+        durationMs: number;
+      };
 }
 
 function abortedError(method: string): Error {

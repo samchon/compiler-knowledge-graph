@@ -545,6 +545,18 @@ function assertIndexValidation(): void {
       withSymbol({ symbol: "s", kind: 83 }),
     ],
     [
+      "an unknown named symbol kind",
+      withSymbol({ symbol: "s", kind: "FutureSymbolKind" }),
+    ],
+    [
+      "a numeric-looking named syntax kind",
+      withOccurrence({
+        range: [0, 0, 1],
+        symbol: "s",
+        syntaxKind: "16",
+      }),
+    ],
+    [
       "non-array external symbols",
       { metadata: { projectRoot: "file:///r" }, documents: [], externalSymbols: {} },
     ],

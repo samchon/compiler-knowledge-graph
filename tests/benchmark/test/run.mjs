@@ -503,6 +503,16 @@ function testIndexPublicationRefusesMalformedJson() {
       { ...validReportDocument, scale: {} },
     ],
     [
+      "out-of-scope scale",
+      {
+        ...validReportDocument,
+        scale: {
+          ...validReportDocument.scale,
+          unrelated: { files: 2, lines: 2 },
+        },
+      },
+    ],
+    [
       "out-of-scope cell",
       {
         ...validReportDocument,
@@ -651,10 +661,23 @@ function testIndexCellIsolationContract() {
   const prepared = source.indexOf(
     "cellRepoDir = prepareCellFixture(project, spec, repoDir, tool)",
   );
+  const scaled = source.indexOf("report.scale[project] = measureScale(");
+  const scopedReport = source.indexOf("writeJson(reportPath, report);", scaled);
+  const measuredProjects = source.indexOf(
+    "for (const project of selected)",
+    scopedReport,
+  );
   const quiet = source.indexOf(
     "const quietWait = await quietHostForCell(project, tool)",
   );
   const timed = source.indexOf("cell = runIndexCell({", quiet);
+  assert.ok(
+    scaled >= 0 &&
+      scopedReport > scaled &&
+      measuredProjects > scopedReport &&
+      prepared > measuredProjects,
+    "every selected project must have scale metadata before the first scoped cell can publish",
+  );
   assert.ok(
     prepared >= 0 && quiet > prepared && timed > quiet,
     "each index-time cell must settle the host after preparation and immediately before timing",
@@ -679,6 +702,10 @@ function testIndexCellIsolationContract() {
       ) &&
       !source.includes("env.MAVEN_OPTS = ["),
     "Maven-launched JVMs and direct JDTLS must share one quoted, caller-preserving local-repository property",
+  );
+  assert.ok(
+    source.includes('SAMCHON_GRAPH_LSP_REQUEST_TRACE: "1"'),
+    "graph index cells must retain per-request timing evidence for lanes that reach the outer timeout",
   );
   assert.ok(
     source.includes("copyPreparedFixtureCompanion(spec, source, target)") &&

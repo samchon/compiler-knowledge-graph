@@ -658,7 +658,12 @@ function enumNameOf(
   label: string,
   names: Readonly<Record<number, string>>,
 ): string {
-  if (typeof value === "string") return value;
+  if (
+    typeof value === "string" &&
+    Object.values(names).includes(value)
+  ) {
+    return value;
+  }
   if (
     typeof value !== "number" ||
     !Number.isSafeInteger(value) ||

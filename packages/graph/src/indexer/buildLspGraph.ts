@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { IDiagnostic, LspClient } from "../lsp";
+import { lspRequestTrace } from "../lsp/lspRequestTrace";
 import { SamchonGraphSourceReader } from "../SamchonGraphSourceReader";
 import {
   ISamchonGraphDiagnostic,
@@ -697,6 +698,7 @@ async function openLanguageSession(
     root,
     options.lspMaxMessageBytes,
     windowsVerbatimArguments,
+    lspRequestTrace(),
   );
   const diagnostics = new Map<string, ISamchonGraphDiagnostic[]>();
   let lastProgressAt = 0;

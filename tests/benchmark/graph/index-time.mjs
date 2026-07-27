@@ -187,6 +187,10 @@ const report = {
   cells: [],
 };
 
+// Complete the declared scope before the first expensive cell starts. The
+// report owns `projects × tools`, including authoritative absence after a
+// later failure, so every scoped project's scale must already be present when
+// the first successful cell is published.
 for (const project of selected) {
   const spec = PROJECTS[project];
   const repoDir = projectDir(workDir, spec);
@@ -195,11 +199,19 @@ for (const project of selected) {
   // Project scale, so a build time can be read against the work it had to do:
   // forty seconds on VS Code and one second on a small backend are the same
   // tool, not two. Tracked TypeScript/TSX sources (git ls-files) naturally
-  // exclude node_modules, build output, and anything else the fixture
-  // ignores; `.d.ts` is excluded because it is shipped output, not source.
-  report.scale[project] = measureScale(project, spec, indexDir(spec, repoDir));
-  writeJson(reportPath, report);
+  // exclude node_modules, build output, and anything else the fixture ignores;
+  // `.d.ts` is excluded because it is shipped output, not source.
+  report.scale[project] = measureScale(
+    project,
+    spec,
+    indexDir(spec, repoDir),
+  );
+}
+writeJson(reportPath, report);
 
+for (const project of selected) {
+  const spec = PROJECTS[project];
+  const repoDir = projectDir(workDir, spec);
   for (const tool of tools) {
     let cellRepoDir;
     let cellCache;
@@ -356,7 +368,10 @@ function runIndexCell({ project, spec, repoDir, tool, env }) {
       {
         label: `${tool} dump ${project}`,
         logBase: logStem,
-        env,
+        env: {
+          ...env,
+          SAMCHON_GRAPH_LSP_REQUEST_TRACE: "1",
+        },
         // The dump JSON reaches hundreds of MB on vscode; the payload is the
         // wire benchmark's concern, not this one's, so stdout is discarded.
         discardStdout: true,
@@ -666,9 +681,16 @@ function assertIncomingReportScope(incoming) {
   const projects = new Set(incoming.projects);
   const tools = new Set(incoming.tools);
   for (const project of projects) {
-    if (incoming.scale[project] === undefined) {
+    if (!Object.hasOwn(incoming.scale, project)) {
       throw new TypeError(
         `incoming index-time result.scale must describe scoped project ${project}`,
+      );
+    }
+  }
+  for (const project of Object.keys(incoming.scale)) {
+    if (!projects.has(project)) {
+      throw new TypeError(
+        `incoming index-time result.scale describes out-of-scope project ${project}`,
       );
     }
   }

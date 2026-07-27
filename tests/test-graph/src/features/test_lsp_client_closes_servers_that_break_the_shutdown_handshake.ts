@@ -27,6 +27,20 @@ interface ILspClientInternals {
   };
 }
 
+type LspRequestTrace =
+  | {
+      phase: "start";
+      id: number;
+      method: string;
+    }
+  | {
+      phase: "end";
+      id: number;
+      method: string;
+      status: "success" | "error";
+      durationMs: number;
+    };
+
 interface IOwnedProcess {
   command(
     command: string,
@@ -60,6 +74,8 @@ type LspClientConstructor = new (
   timeoutMs?: number,
   cwd?: string,
   maxMessageBytes?: number,
+  windowsVerbatimArguments?: boolean,
+  requestObserver?: (event: LspRequestTrace) => void,
 ) => ILspClient;
 
 /** `LspClient` is internal transport, reached through the shipped artifact. */
@@ -139,6 +155,8 @@ export const test_lsp_client_closes_servers_that_break_the_shutdown_handshake =
     await assertPerRequestDeadlineCleansUpTheTransport(LspClient);
     await assertOversizedFrameTerminatesTransport(LspClient);
     await assertOversizedHeadersTerminateTransport(LspClient);
+    await assertRequestTracing(LspClient);
+    await assertRequestTraceFormatting();
 
     // An already-cancelled request never enters the wire or waits for the
     // otherwise-unlimited default deadline. The client still owns its child and
@@ -160,6 +178,106 @@ export const test_lsp_client_closes_servers_that_break_the_shutdown_handshake =
     );
     await cancelled.close();
   };
+
+const assertRequestTracing = async (
+  LspClient: LspClientConstructor,
+): Promise<void> => {
+  const events: LspRequestTrace[] = [];
+  const client = new LspClient(
+    process.execPath,
+    [GraphPaths.fakeLspServer],
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    (event) => events.push(event),
+  );
+  await client.request("initialize", {});
+  await client.close();
+  const initialize = events.filter(
+    (event) => event.method === "initialize",
+  );
+  TestValidator.equals(
+    "request tracing pairs the exact request identity and outcome",
+    initialize.map((event) => [
+      event.phase,
+      event.id,
+      event.phase === "end" ? event.status : undefined,
+    ]),
+    [
+      ["start", 1, undefined],
+      ["end", 1, "success"],
+    ],
+  );
+  TestValidator.predicate(
+    "a completed request trace carries a finite non-negative duration",
+    initialize[1]?.phase === "end" &&
+      Number.isFinite(initialize[1].durationMs) &&
+      initialize[1].durationMs >= 0,
+  );
+
+  const throwingObserver = new LspClient(
+    process.execPath,
+    [GraphPaths.fakeLspServer],
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    () => {
+      throw new Error("diagnostic observer failed");
+    },
+  );
+  await throwingObserver.request("initialize", {});
+  await throwingObserver.close();
+};
+
+const assertRequestTraceFormatting = async (): Promise<void> => {
+  const { LSP_REQUEST_TRACE_ENV, lspRequestTrace } = await importLib<{
+    LSP_REQUEST_TRACE_ENV: string;
+    lspRequestTrace(
+      env?: NodeJS.ProcessEnv,
+      write?: (line: string) => unknown,
+    ): ((event: LspRequestTrace) => void) | undefined;
+  }>("lsp/lspRequestTrace.js");
+  const previous = process.env[LSP_REQUEST_TRACE_ENV];
+  delete process.env[LSP_REQUEST_TRACE_ENV];
+  try {
+    TestValidator.equals(
+      "request timing is silent unless explicitly enabled",
+      lspRequestTrace(),
+      undefined,
+    );
+  } finally {
+    if (previous === undefined) delete process.env[LSP_REQUEST_TRACE_ENV];
+    else process.env[LSP_REQUEST_TRACE_ENV] = previous;
+  }
+
+  const lines: string[] = [];
+  const trace = lspRequestTrace(
+    { [LSP_REQUEST_TRACE_ENV]: "1" },
+    (line) => lines.push(line),
+  );
+  trace?.({
+    phase: "start",
+    id: 7,
+    method: "textDocument/references",
+  });
+  trace?.({
+    phase: "end",
+    id: 7,
+    method: "textDocument/references",
+    status: "success",
+    durationMs: 12.3456,
+  });
+  TestValidator.equals(
+    "request timing names no parameters or paths",
+    lines,
+    [
+      '@samchon/graph: lsp-request id=7 method="textDocument/references" phase=start\n',
+      '@samchon/graph: lsp-request id=7 method="textDocument/references" phase=end status=success durationMs=12.346\n',
+    ],
+  );
+};
 
 const assertWindowsOwnershipPreservesTheOriginalCommandLine =
   async (): Promise<void> => {

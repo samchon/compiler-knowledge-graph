@@ -184,8 +184,13 @@ export const LANGUAGE_EXPERIMENTS = [
   },
   {
     language: "java",
-    repository: "https://github.com/google/gson.git",
-    commit: "165ca7d78ad99416b0b06495183c238ab7bb77bf",
+    // The benchmark fork, which carries a  selecting
+    // gson's own  profile. Upstream, scip-java drives the
+    // real Maven build and javac rejects gson's Error Prone arguments
+    // outright, so no indexer reaches this project at all — a row asked here
+    // would only ever record that.
+    repository: "https://github.com/samchon/graph-benchmark-gson.git",
+    commit: "0395e46886d032843f87a7ed73207cf5ba23007e",
     maxFiles: 120,
     minNodes: 1,
     minEdges: 0,
@@ -322,8 +327,12 @@ export const LANGUAGE_EXPERIMENTS = [
   },
   {
     language: "php",
-    repository: "https://github.com/slimphp/Slim.git",
-    commit: "80900fb39cafce3ae53b18a2c4f642a122f03095",
+    // The benchmark fork, which carries scip-php as the dev dependency it is
+    // meant to be. The tool resolves symbols through the project's own
+    // autoloader and computes its vendor directory from its package root, so
+    // a copy installed anywhere but inside the project refuses to start.
+    repository: "https://github.com/samchon/graph-benchmark-slim.git",
+    commit: "101e24a694c395d7bd403cca51cbc53dfe78aa8b",
     maxFiles: 120,
     minNodes: 1,
     minEdges: 0,

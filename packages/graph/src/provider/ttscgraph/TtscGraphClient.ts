@@ -360,10 +360,18 @@ export class TtscGraphClient implements IBulkGraphSession {
       try {
         value = JSON.parse(line);
       } catch (error) {
+        // The line itself, because "invalid NDJSON" describes the parser's
+        // disappointment and not the problem. A producer that printed a
+        // stack trace, a deprecation notice, or a shell error onto its protocol
+        // stream is diagnosed by reading what it printed, and dropping it leaves
+        // a message that is true of every possible cause.
+        //
+        // Bounded, since this stream is the artifact channel and a partial
+        // snapshot is not something to put in an error.
         this.failChild(
           child,
           new Error(
-            `ttscgraph: invalid NDJSON response: ${asError(error).message}`,
+            `ttscgraph: invalid NDJSON response: ${asError(error).message}: ${offendingLine(line)}`,
           ),
         );
         return;
@@ -551,6 +559,12 @@ function abortDetail(signal?: AbortSignal): string {
   } catch {
     return "";
   }
+}
+
+/** The head of an unparseable line, which is where a stray message starts. */
+function offendingLine(line: string): string {
+  const limit = 400;
+  return line.length <= limit ? line : `${line.slice(0, limit)}…`;
 }
 
 function stderrSuffix(child: NativeChild): string {

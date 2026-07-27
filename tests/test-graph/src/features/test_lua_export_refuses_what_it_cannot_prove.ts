@@ -283,6 +283,18 @@ function assertAMalformedArtifactIsRefused(): void {
       },
       "runtime version",
     ],
+    [
+      "an artifact with a whitespace-only effective runtime",
+      {
+        schemaVersion: 2,
+        compilerVersion: " \t ",
+        files: [],
+        nodes: [],
+        edges: [],
+        warnings: [],
+      },
+      "runtime version",
+    ],
   ];
   for (const [reason, artifact, expected] of refusals) {
     let message = "";

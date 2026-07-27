@@ -95,7 +95,13 @@ const jvmScipProvider = createScipProvider({
     "build.sbt",
     "build.sc",
   ],
-  indexArgs: (artifact) => ["index", "--output", artifact],
+  // scip-java's injected Gradle tasks are not compatible with a project's
+  // configuration cache in the released producer. The build command after
+  // `--` replaces its defaults, so retain those exact tasks while disabling
+  // only the cache for this isolated indexing build. Maven must keep its own
+  // default command; choosing by the root is therefore part of the provider
+  // contract rather than a fixture-specific Gradle property change.
+  indexArgs: jvmScipIndexArgs,
   // Java is both the runtime that launches scip-java and the compiler for a
   // Java-only slice. It is not Kotlin's compiler. Until the producer exposes
   // the Kotlin compiler revision it drove, a Kotlin-containing slice leaves
@@ -105,6 +111,28 @@ const jvmScipProvider = createScipProvider({
       ? ""
       : standardCompilerVersion("scip-java", configuration),
 });
+
+function jvmScipIndexArgs(artifact: string, root: string): string[] {
+  const output = ["index", "--output", artifact];
+  const gradle = [
+    "settings.gradle",
+    "gradlew",
+    "build.gradle",
+    "build.gradle.kts",
+  ].some((file) =>
+    fs.statSync(path.join(root, file), { throwIfNoEntry: false })?.isFile(),
+  );
+  return gradle
+    ? [
+        ...output,
+        "--",
+        "--no-configuration-cache",
+        "clean",
+        "scipPrintDependencies",
+        "scipCompileAll",
+      ]
+    : output;
+}
 
 const dotnetScipProvider = createScipProvider({
   name: "scip-dotnet",
@@ -246,13 +274,12 @@ const dartScipProvider = createScipProvider({
  * why this needed a mechanism rather than a registry line, and why it arrived
  * after dart despite both having had a real indexer all along.
  *
- * Composer, and inside the project rather than beside it. The note here used to
- * argue the opposite — that `include $_composer_autoload_path ?? …` lets a
- * global install bring its own autoloader — and a measurement refuted it:
- * `Composer.php` computes its vendor directory as the package root plus
- * `vendor`, which a global install flattens away, so the tool exits with
- * `Invalid scip-php vendor directory` before doing anything. Its own
- * instructions are `composer require --dev` followed by `vendor/bin/scip-php`.
+ * Composer, and inside the project rather than beside it. Its instructions are
+ * `composer require --dev` followed by `vendor/bin/scip-php`, and current main
+ * explicitly falls back to the analyzed project's `cwd/vendor` when Composer
+ * has flattened the package dependencies there. The latest v0.0.2 tag predates
+ * that upstream fix, so a fixture using the documented arrangement has to pin
+ * a revision that contains it.
  *
  * That is why `resolveProviderCommand` looks in `vendor/bin`: for this
  * ecosystem, an indexer installed into the project is the expected arrangement
@@ -319,7 +346,7 @@ interface IStandardScipProvider {
   ) => void;
   preferFileLanguage?: boolean;
   resolveArgs?: (root: string) => readonly string[] | undefined;
-  indexArgs: (artifact: string) => string[];
+  indexArgs: (artifact: string, root: string) => string[];
 
   /** Select the compiler row this language slice can honestly publish. */
   compilerVersion?: (

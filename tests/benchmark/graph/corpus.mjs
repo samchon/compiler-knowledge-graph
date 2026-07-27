@@ -74,7 +74,7 @@ export const CORPUS = [
     // Maven compiler plugin's public user property. Maven reads both choices
     // from `.mvn/maven.config` unprompted, so no indexer learns a
     // project-specific flag.
-    commit: "9ce132cb4f302d4ffa4fa4b0d93918da72188e90",
+    commit: "a32fbc7fce43841e859b14184984dacd382115e9",
     preflight: preflightMinimums(1_000, 5_000, 3_000, 4),
   },
   {
@@ -137,21 +137,22 @@ export const CORPUS = [
     name: "slim",
     language: "php",
     url: "https://github.com/samchon/graph-benchmark-slim.git",
-    commit: "101e24a694c395d7bd403cca51cbc53dfe78aa8b",
+    commit: "44c0dabf36c0e971ae9bf17c7bc229fdb6a8b240",
     preflight: preflightMinimums(1_000, 3_000, 1_500, 3),
     // scip-php goes inside the project it indexes — `composer require --dev`
     // then `vendor/bin/scip-php` — because it resolves symbols through the
-    // project's own autoloader. A global copy computes its vendor directory
-    // somewhere the tool does not look and refuses to start.
+    // project's own autoloader. The latest v0.0.2 tag breaks that documented
+    // layout; the pinned fixture defines immutable package metadata and source
+    // for the exact upstream revision containing its merged `cwd/vendor` fix.
     //
     // The dependency is therefore carried by the pinned fork rather than added
     // here: composer.json is tracked, so adding it at measurement time would
     // dirty the very tree this harness asserts. What remains is installing it,
     // which writes only `vendor/` — already ignored by this project.
     //
-    // Optional because scip-php pins nikic/php-parser ^4 while some of slim's
-    // own dev tooling reaches for ^5; if composer cannot satisfy both, the lane
-    // measures what it measures today instead of not measuring.
+    // Optional because this remains a third-party dependency solve: if
+    // Composer cannot satisfy the pinned indexer together with Slim's own dev
+    // tooling, the lane measures what it can instead of skipping the corpus.
     prepare: "composer install --no-interaction",
     prepareIgnores: ["vendor/"],
     prepareOptional: true,

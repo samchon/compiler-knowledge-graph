@@ -633,16 +633,13 @@ switch (experiment.language) {
       digest: "unpinned",
     });
     // Composer, but not scip-php: the indexer is a dependency of the project it
-    // indexes, not a tool beside it. `composer global require` was tried and the
-    // measurement refuted it — the tool computes its vendor directory as its own
-    // package root plus `vendor`, which a global install flattens away, and it
-    // exits with `Invalid scip-php vendor directory`. Its own instructions are
-    // `composer require --dev` followed by `vendor/bin/scip-php`, and it reads
-    // the project's autoloader to resolve symbols.
+    // indexes, not a tool beside it. Its instructions are `composer require
+    // --dev` followed by `vendor/bin/scip-php`, and the post-v0.0.2 dependency
+    // install fix reads the analyzed project's flattened vendor and autoloader.
     //
-    // So the corpus fixture carries the dependency and this only supplies the
-    // runtime and composer to install it with. `resolveProviderCommand` looks in
-    // `vendor/bin` for the same reason it looks in `node_modules/.bin`.
+    // The corpus fixture pins that upstream fix and this only supplies the
+    // runtime and Composer to install it with. `resolveProviderCommand` looks
+    // in `vendor/bin` for the same reason it looks in `node_modules/.bin`.
     apt(["php-cli", "php-xml", "php-mbstring", "composer"]);
     record({
       tool: "composer",

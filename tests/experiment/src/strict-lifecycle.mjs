@@ -227,7 +227,6 @@ export const runStrictLifecycle = async (experiment, pinnedRoot) => {
         status: "fallback-with-limitation",
         mode,
         elapsedMs: Math.round(performance.now() - failedAt),
-        outputBytes: Buffer.byteLength(JSON.stringify(fallback), "utf8"),
         nodeCount: fallback.nodes.length,
         edgeCount: fallback.edges.length,
         diagnosticCount: fallback.diagnostics?.length ?? 0,

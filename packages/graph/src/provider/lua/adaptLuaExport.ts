@@ -215,7 +215,7 @@ export namespace adaptLuaExport {
     for (const entry of report.edges as IEdge[]) assertEdge(entry, provider);
     if (
       typeof report.compilerVersion !== "string" ||
-      report.compilerVersion === ""
+      report.compilerVersion.trim() === ""
     ) {
       throw new Error(
         `${provider}: the export artifact has no effective Lua runtime version`,

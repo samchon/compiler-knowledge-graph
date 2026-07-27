@@ -1131,6 +1131,19 @@ function assertAnUnreliableProducerLanguageCanYieldToTheFile(): void {
     adapt("include/api.h", ["cpp"], "C++").nodes[0]?.language,
     "cpp",
   );
+  const exactCppHeaderInC = adapt("include/api.H", ["c"], "C++");
+  TestValidator.predicate(
+    "an exact C++ header cannot enter a C-only snapshot",
+    exactCppHeaderInC.nodes.length === 0 &&
+      exactCppHeaderInC.warnings.some((warning) =>
+        warning.includes("whose cpp facts this provider does not own"),
+      ),
+  );
+  TestValidator.equals(
+    "an exact C++ header remains in a C++-only snapshot",
+    adapt("include/api.H", ["cpp"], "C++").nodes[0]?.language,
+    "cpp",
+  );
   TestValidator.equals(
     "a .inc include follows the only dialect the session owns",
     adapt("include/generated.inc", ["c"], "C++").nodes[0]?.language,

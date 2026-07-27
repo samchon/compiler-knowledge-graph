@@ -474,10 +474,11 @@ function documentLanguage(
     return fromIndex ?? props.languageOf(file);
   }
   const fromFile = props.languageOf(file);
-  const extension = path.extname(file).toLowerCase();
+  const exactExtension = path.extname(file);
+  const extension = exactExtension.toLowerCase();
   if (
     fromFile !== "unknown" &&
-    extension !== ".h"
+    exactExtension !== ".h"
   ) {
     return fromFile;
   }

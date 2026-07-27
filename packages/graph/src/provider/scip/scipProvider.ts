@@ -105,7 +105,7 @@ export function scipProvider(props: scipProvider.IProps): IGraphProvider {
         authority,
         command: open.command,
         decode: decode(open.root),
-        indexArgs,
+        indexArgs: (artifact) => indexArgs(artifact, open.root),
         ...(artifactFrom === undefined ? {} : { artifactFrom }),
         inputs: () => inputs(open.root, open.languages),
         ...(configuration === undefined
@@ -174,7 +174,7 @@ export namespace scipProvider {
     decode: (root: string) => { command: string; args: readonly string[] };
 
     /** Arguments that direct the indexer's output to one isolated artifact. */
-    indexArgs: (artifact: string) => string[];
+    indexArgs: (artifact: string, root: string) => string[];
     artifactFrom?: (root: string) => string;
 
     /** Every project-relative input whose change invalidates the artifact. */

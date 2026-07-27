@@ -1,4 +1,7 @@
-import { invalidWebsiteCellReason } from "./website-cell.mjs";
+import {
+  invalidWebsiteCellReason,
+  websiteCellKey,
+} from "./website-cell.mjs";
 
 /**
  * Start an agent-result merge without dropping a benchmark axis it does not own.
@@ -40,6 +43,7 @@ export function assertWebsitePublication(value) {
         "existing benchmark publication.agent.cells must be an array",
       );
     }
+    const identities = new Set();
     for (const [index, cell] of value.agent.cells.entries()) {
       const label = `existing benchmark publication.agent.cells[${String(index)}]`;
       assertRecord(cell, label);
@@ -55,6 +59,11 @@ export function assertWebsitePublication(value) {
       if (invalidReason !== null) {
         throw new TypeError(`${label} is invalid: ${invalidReason}`);
       }
+      const identity = websiteCellKey(cell);
+      if (identities.has(identity)) {
+        throw new TypeError(`${label} duplicates an earlier agent cell identity`);
+      }
+      identities.add(identity);
     }
   }
   if (value.structural !== undefined && value.structural !== null) {
@@ -83,6 +92,7 @@ function assertIndexCells(value, label) {
   if (!Array.isArray(value)) {
     throw new TypeError(`${label} must be an array`);
   }
+  const identities = new Set();
   for (const [index, cell] of value.entries()) {
     const cellLabel = `${label}[${String(index)}]`;
     assertRecord(cell, cellLabel);
@@ -123,6 +133,11 @@ function assertIndexCells(value, label) {
     if (cell.quietWait !== undefined && cell.quietWait !== null) {
       assertRecord(cell.quietWait, `${cellLabel}.quietWait`);
     }
+    const identity = JSON.stringify([cell.project, cell.tool]);
+    if (identities.has(identity)) {
+      throw new TypeError(`${cellLabel} duplicates an earlier index cell identity`);
+    }
+    identities.add(identity);
   }
 }
 

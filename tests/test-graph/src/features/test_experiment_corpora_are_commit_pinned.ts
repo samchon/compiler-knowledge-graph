@@ -92,6 +92,7 @@ export const test_experiment_corpora_are_commit_pinned = () => {
       lifecycle.includes('status: "fallback-with-limitation"') &&
       lifecycle.includes("row.provider === experiment.strictProvider") &&
       lifecycle.includes("warning.includes(experiment.strictProvider)") &&
+      !lifecycle.includes("JSON.stringify(fallback)") &&
       lifecycle.includes('? ["initial", ...CHANGED_MODES]'),
   );
 

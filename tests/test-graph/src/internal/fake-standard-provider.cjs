@@ -76,12 +76,33 @@ const contracts = {
     requires: ["--compdb-path=", "--temporary-output-dir="],
     output: valueOf(args, "--index-output-path="),
   }),
-  // `scip-java index --output <path>`
-  "scip-java": (args) => ({
-    leading: ["index"],
-    requires: [],
-    output: valueAfter(args, "--output"),
-  }),
+  // `scip-java index --output <path> [-- <build command>]`. The released
+  // producer's injected tasks cannot be configuration-cached, while Maven
+  // needs to retain its own default command instead of receiving Gradle tasks.
+  "scip-java": (args) => {
+    const gradle = [
+      "settings.gradle",
+      "gradlew",
+      "build.gradle",
+      "build.gradle.kts",
+    ].some((file) => fs.statSync(path.join(process.cwd(), file), {
+      throwIfNoEntry: false,
+    })?.isFile());
+    const gradleCommand = [
+      "--",
+      "--no-configuration-cache",
+      "clean",
+      "scipPrintDependencies",
+      "scipCompileAll",
+    ];
+    return {
+      leading: ["index"],
+      requires: gradle ? gradleCommand : [],
+      valueless: gradleCommand,
+      forbids: gradle ? [] : gradleCommand,
+      output: valueAfter(args, "--output"),
+    };
+  },
   // `scip-dotnet index --output <path>`
   "scip-dotnet": (args) => ({
     leading: ["index"],
@@ -166,6 +187,13 @@ if (scip !== undefined) {
     if (!satisfied) {
       throw new Error(
         `fake standard provider: ${producer} was invoked without a usable ${required}`,
+      );
+    }
+  }
+  for (const forbidden of contract.forbids ?? []) {
+    if (forwarded.includes(forbidden)) {
+      throw new Error(
+        `fake standard provider: ${producer} was invoked with forbidden ${forbidden}`,
       );
     }
   }

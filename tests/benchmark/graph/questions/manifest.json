@@ -78,7 +78,7 @@
       "repo": "gson",
       "family": "dedicated",
       "file": "gson.md",
-      "fixtureCommit": "9ce132cb4f302d4ffa4fa4b0d93918da72188e90",
+      "fixtureCommit": "a32fbc7fce43841e859b14184984dacd382115e9",
       "language": "java",
       "questionSha256": "808a7b9d8d684cdd2b01cc8391f94893b330d4495a70b0894f9b8a16dab3d2c5"
     },
@@ -87,7 +87,7 @@
       "repo": "gson",
       "family": "common",
       "file": "common.md",
-      "fixtureCommit": "9ce132cb4f302d4ffa4fa4b0d93918da72188e90",
+      "fixtureCommit": "a32fbc7fce43841e859b14184984dacd382115e9",
       "language": "java",
       "questionSha256": "efe22b2b8f0d37d2e74fc2391ba689b5c455e16a1f261fd821f209bd7ad20517"
     },
@@ -150,7 +150,7 @@
       "repo": "slim",
       "family": "dedicated",
       "file": "slim.md",
-      "fixtureCommit": "101e24a694c395d7bd403cca51cbc53dfe78aa8b",
+      "fixtureCommit": "44c0dabf36c0e971ae9bf17c7bc229fdb6a8b240",
       "language": "php",
       "questionSha256": "5b8775bb84f2629a2413bf4bb522281d344c7781020660b739814c751c5cc0f5"
     },
@@ -159,7 +159,7 @@
       "repo": "slim",
       "family": "common",
       "file": "common.md",
-      "fixtureCommit": "101e24a694c395d7bd403cca51cbc53dfe78aa8b",
+      "fixtureCommit": "44c0dabf36c0e971ae9bf17c7bc229fdb6a8b240",
       "language": "php",
       "questionSha256": "efe22b2b8f0d37d2e74fc2391ba689b5c455e16a1f261fd821f209bd7ad20517"
     },

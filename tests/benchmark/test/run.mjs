@@ -201,6 +201,26 @@ function testAgentPublicationPreservesIndexResults() {
         agent: { cells: [{ repo: "fixture" }] },
       },
     ],
+    [
+      "duplicate stored agent cell",
+      {
+        schemaVersion: 1,
+        structural: { retained: true },
+        agent: { cells: [FIXTURE_AGENT_CELL, { ...FIXTURE_AGENT_CELL }] },
+      },
+    ],
+    [
+      "duplicate stored index cell",
+      {
+        schemaVersion: 1,
+        structural: { retained: true },
+        agent: { cells: [FIXTURE_AGENT_CELL] },
+        index: {
+          ...index,
+          cells: [index.cells[0], { ...index.cells[0] }],
+        },
+      },
+    ],
   ]) {
     const before = JSON.stringify(invalidPrior);
     assert.throws(
@@ -478,7 +498,9 @@ function testIndexCellIsolationContract() {
   assert.ok(
     source.includes("copyPreparedFixtureCompanion(spec, source, target)") &&
       source.includes("const cellRoot = path.dirname(path.resolve(target))") &&
-      source.includes("fs.rmSync(cellRoot, { recursive: true, force: true })"),
+      source.includes("removeTree(cellRoot)") &&
+      source.includes("maxRetries: 5") &&
+      source.includes("retryDelay: 100"),
     "a disposable cell must copy and remove its external prepared companion",
   );
 }

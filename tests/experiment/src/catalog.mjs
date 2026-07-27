@@ -195,7 +195,7 @@ export const LANGUAGE_EXPERIMENTS = [
     // rejects either gson's Error Prone arguments or SemanticDB's warnings, so
     // no indexer reaches this project at all.
     repository: "https://github.com/samchon/graph-benchmark-gson.git",
-    commit: "9ce132cb4f302d4ffa4fa4b0d93918da72188e90",
+    commit: "a32fbc7fce43841e859b14184984dacd382115e9",
     maxFiles: 120,
     minNodes: 1,
     minEdges: 0,
@@ -334,12 +334,12 @@ export const LANGUAGE_EXPERIMENTS = [
   },
   {
     language: "php",
-    // The benchmark fork, which carries scip-php as the dev dependency it is
-    // meant to be. The tool resolves symbols through the project's own
-    // autoloader and computes its vendor directory from its package root, so
-    // a copy installed anywhere but inside the project refuses to start.
+    // The benchmark fork carries scip-php as the dev dependency it is meant to
+    // be and freezes both package metadata and source at the upstream
+    // `cwd/vendor` fix missing from v0.0.2. The tool resolves symbols through
+    // the project's own autoloader.
     repository: "https://github.com/samchon/graph-benchmark-slim.git",
-    commit: "101e24a694c395d7bd403cca51cbc53dfe78aa8b",
+    commit: "44c0dabf36c0e971ae9bf17c7bc229fdb6a8b240",
     maxFiles: 120,
     minNodes: 1,
     minEdges: 0,

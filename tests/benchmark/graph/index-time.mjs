@@ -394,7 +394,7 @@ function runIndexCell({ project, spec, repoDir, tool, env }) {
       "codebase-memory-cache",
       filenamePart(project),
     );
-    fs.rmSync(cacheDir, { recursive: true, force: true });
+    removeTree(cacheDir);
     fs.mkdirSync(cacheDir, { recursive: true });
     try {
       const ms = timeChecked(
@@ -431,7 +431,7 @@ function runIndexCell({ project, spec, repoDir, tool, env }) {
       };
     } finally {
       cleanupInsideFixture(repoDir, ".codebase-memory");
-      fs.rmSync(cacheDir, { recursive: true, force: true });
+      removeTree(cacheDir);
     }
   }
   throw new Error(`unknown tool ${tool}`);
@@ -798,7 +798,7 @@ function cleanupInsideFixture(repoDir, name) {
   ) {
     throw new Error(`refusing to remove path outside fixture: ${target}`);
   }
-  fs.rmSync(target, { recursive: true, force: true });
+  removeTree(target);
 }
 
 /**
@@ -879,7 +879,7 @@ function cleanupCellFixture(target) {
       `refusing to remove cell fixture outside output: ${cellRoot}`,
     );
   }
-  fs.rmSync(cellRoot, { recursive: true, force: true });
+  removeTree(cellRoot);
 }
 
 function copyPreparedFixtureCompanion(spec, source, target) {
@@ -965,7 +965,23 @@ function cleanupCellCache(target) {
   ) {
     throw new Error(`refusing to remove cell cache outside output: ${target}`);
   }
-  fs.rmSync(resolved, { recursive: true, force: true });
+  removeTree(resolved);
+}
+
+/**
+ * Remove a disposable measurement tree despite short-lived filesystem races.
+ *
+ * A completed Go cell left its module cache behind and stopped the lane before
+ * the fallback column because one recursive removal hit a transient
+ * `ENOTEMPTY`. Node retries only when `maxRetries` is explicitly non-zero.
+ */
+function removeTree(target) {
+  fs.rmSync(target, {
+    recursive: true,
+    force: true,
+    maxRetries: 5,
+    retryDelay: 100,
+  });
 }
 
 /**

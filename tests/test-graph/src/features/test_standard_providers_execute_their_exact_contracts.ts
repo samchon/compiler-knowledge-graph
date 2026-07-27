@@ -258,6 +258,40 @@ export const test_standard_providers_execute_their_exact_contracts =
           } finally {
             await javaOnly.close();
           }
+          const gradleRoot = path.join(root, "gradle-jvm");
+          writeProject(gradleRoot);
+          fs.rmSync(path.join(gradleRoot, "pom.xml"));
+          fs.writeFileSync(
+            path.join(gradleRoot, "build.gradle.kts"),
+            "plugins { java }\n",
+          );
+          const gradleCommand = provider.resolve(
+            gradleRoot,
+            process.env,
+          );
+          TestValidator.predicate(
+            "scip-java resolves a Gradle-only workspace",
+            gradleCommand !== undefined,
+          );
+          if (gradleCommand === undefined) {
+            throw new Error("scip-java: Gradle fixture command did not resolve");
+          }
+          const gradleSession = provider.open({
+            root: gradleRoot,
+            command: gradleCommand,
+            languages: provider.languages,
+            options: { cwd: gradleRoot },
+          });
+          try {
+            const gradleSnapshot = await gradleSession.refresh();
+            TestValidator.predicate(
+              "scip-java disables only Gradle's configuration cache while preserving its indexing tasks",
+              gradleSnapshot.mode === "initial" &&
+                gradleSnapshot.snapshot.provenance.provider === "scip-java",
+            );
+          } finally {
+            await gradleSession.close();
+          }
         }
         await assertHeuristicTwinFails(provider, command, root);
       }

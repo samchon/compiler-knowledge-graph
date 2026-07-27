@@ -32,6 +32,17 @@ util = {
 
 local nativeRequire = require
 function require(name)
+    if name == 'config.config' then
+        return {
+            get = function(_, key)
+                assert(
+                    key == 'Lua.runtime.version',
+                    'the exporter requested an unexpected configuration key'
+                )
+                return 'Lua 5.4'
+            end,
+        }
+    end
     if name == 'files' then
         return {
             getAllUris = function()
@@ -58,6 +69,10 @@ assert(loadfile(exporterPath))()
 export.serializeAndExport({}, '/unused')
 
 assert(type(report) == 'table', 'the exporter wrote no report')
+assert(
+    report.compilerVersion == 'Lua 5.4',
+    'the exporter lost the effective Lua runtime version'
+)
 assert(#report.files == 1, 'an outside sibling entered the exported file set')
 assert(report.files[1] == 'main.lua', 'the in-root file changed identity')
 assert(

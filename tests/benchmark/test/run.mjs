@@ -1542,6 +1542,81 @@ function testReferenceRenderer() {
     "the renderer removes revisionless PNG index-time evidence",
   );
 
+  const staleAgentReport = sampleReport();
+  for (const cell of staleAgentReport.agent.cells) {
+    if (cell.repo === "excalidraw") cell.fixtureBranch = "0".repeat(40);
+  }
+  const staleAgentOut = path.join(root, "stale-agent-out");
+  fs.mkdirSync(path.join(staleAgentOut, "svg"), { recursive: true });
+  fs.mkdirSync(path.join(staleAgentOut, "png"), { recursive: true });
+  for (const extension of ["svg", "png"]) {
+    fs.writeFileSync(
+      path.join(
+        staleAgentOut,
+        extension,
+        `graph-excalidraw-common-codex-gpt-5.6-terra.${extension}`,
+      ),
+      "stale",
+    );
+  }
+  fs.writeFileSync(input, JSON.stringify(staleAgentReport));
+  run(
+    process.execPath,
+    [path.join(benchmarkDir, "build", "graph-benchmark-svg.cjs")],
+    {
+      ...env,
+      SAMCHON_GRAPH_BENCH_RENDER_OUT: staleAgentOut,
+    },
+  );
+  const staleAgentFiles = [...snapshot(staleAgentOut).keys()];
+  assert.deepEqual(
+    staleAgentFiles,
+    [
+      "svg/graph-common-codex-gpt-5.6-terra.svg",
+      "svg/graph-gin-common-codex-gpt-5.6-terra.svg",
+      "svg/graph-time-to-answer.svg",
+    ],
+    "stale agent cells and their prior SVG/PNG artifacts are omitted",
+  );
+  for (const name of [
+    "graph-common-codex-gpt-5.6-terra.svg",
+    "graph-time-to-answer.svg",
+  ]) {
+    const svg = fs.readFileSync(path.join(staleAgentOut, "svg", name), "utf8");
+    assert.doesNotMatch(svg, /Excalidraw|20,000 lines/);
+    assert.match(svg, /Gin|12,000 lines/);
+  }
+
+  const revisionlessAgentReport = sampleReport();
+  for (const cell of revisionlessAgentReport.agent.cells) {
+    delete cell.fixtureBranch;
+  }
+  const revisionlessAgentOut = path.join(root, "revisionless-agent-out");
+  fs.mkdirSync(path.join(revisionlessAgentOut, "svg"), { recursive: true });
+  fs.mkdirSync(path.join(revisionlessAgentOut, "png"), { recursive: true });
+  fs.writeFileSync(
+    path.join(revisionlessAgentOut, "svg", "graph-time-to-answer.svg"),
+    "stale",
+  );
+  fs.writeFileSync(
+    path.join(revisionlessAgentOut, "png", "graph-time-to-answer.png"),
+    "stale",
+  );
+  fs.writeFileSync(input, JSON.stringify(revisionlessAgentReport));
+  run(
+    process.execPath,
+    [path.join(benchmarkDir, "build", "graph-benchmark-svg.cjs")],
+    {
+      ...env,
+      SAMCHON_GRAPH_BENCH_RENDER_OUT: revisionlessAgentOut,
+    },
+  );
+  assert.deepEqual(
+    [...snapshot(revisionlessAgentOut).keys()],
+    [],
+    "revisionless agent evidence cannot leave a token or time chart behind",
+  );
+
   for (const [relative] of first) {
     if (!relative.endsWith(".svg")) continue;
     const svg = fs.readFileSync(path.join(out, relative), "utf8");
@@ -1568,6 +1643,7 @@ function sampleReport() {
     const base = {
       harness: "codex",
       repo,
+      fixtureBranch: PROJECTS[repo].commit,
       model: "terra",
       modelVersion: "gpt-5.6-terra",
       promptFamily: "common",

@@ -111,11 +111,17 @@ const manifest = JSON.parse(
     "utf8",
   ),
 );
+const selectedFixtures = fixtureRevisionsFromManifest(manifest);
 const { index: currentIndex } = selectCurrentIndex(
   report.index,
-  fixtureRevisionsFromManifest(manifest),
+  selectedFixtures,
 );
-const allCells = report.agent?.cells ?? [];
+// The cold index and the answer must describe the same checkout. This also
+// keeps the standalone token charts from relabelling an old agent result after
+// the corpus advances.
+const allCells = (report.agent?.cells ?? []).filter(
+  (cell) => cell.fixtureBranch === selectedFixtures[cell.repo],
+);
 
 const combos = new Map();
 for (const cell of allCells) {
@@ -133,6 +139,7 @@ for (const cell of allCells) {
 fs.mkdirSync(SVG_DIR, { recursive: true });
 fs.mkdirSync(PNG_DIR, { recursive: true });
 let written = 0;
+const expectedSvgs = new Set();
 // --png only re-renders charts whose SVG content changed (or whose PNG is
 // missing).
 const pngQueue = [];
@@ -172,18 +179,19 @@ for (const combo of combos.values()) {
 }
 // The index axis: what readiness costs before a tool can answer anything. It
 // is not a token chart, so it renders on its own scale (wall clock).
-if (currentIndex.cells.length > 0) {
-  writeSvg("graph-time-to-answer.svg", renderTime(currentIndex, allCells));
-} else {
-  removeSvg("graph-time-to-answer.svg");
-}
+const timeSvg =
+  currentIndex.cells.length > 0 ? renderTime(currentIndex, allCells) : null;
+if (timeSvg !== null) writeSvg("graph-time-to-answer.svg", timeSvg);
 
 const pngs = writePngs();
+const removed = pruneStaleCharts();
 console.log(
-  `[build:graph-svg] wrote ${written} chart(s)${EXPORT_PNG ? ` and ${pngs} png(s)` : ""} to ${path.relative(ROOT, OUT_DIR)}`,
+  `[build:graph-svg] wrote ${written} chart(s)${EXPORT_PNG ? ` and ${pngs} png(s)` : ""}` +
+    `${removed > 0 ? `; removed ${removed} stale artifact(s)` : ""} to ${path.relative(ROOT, OUT_DIR)}`,
 );
 
 function writeSvg(name, svg) {
+  expectedSvgs.add(name);
   const file = path.join(SVG_DIR, name);
   const content = `${svg}\n`;
   const changed =
@@ -194,11 +202,30 @@ function writeSvg(name, svg) {
   written += 1;
 }
 
-function removeSvg(name) {
-  fs.rmSync(path.join(SVG_DIR, name), { force: true });
-  fs.rmSync(path.join(PNG_DIR, name.replace(/\.svg$/, ".png")), {
-    force: true,
-  });
+function pruneStaleCharts() {
+  let removed = 0;
+  for (const [dir, extension] of [
+    [SVG_DIR, ".svg"],
+    [PNG_DIR, ".png"],
+  ]) {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (
+        !entry.isFile() ||
+        !entry.name.startsWith("graph-") ||
+        !entry.name.endsWith(extension)
+      ) {
+        continue;
+      }
+      const svgName =
+        extension === ".svg"
+          ? entry.name
+          : entry.name.replace(/\.png$/, ".svg");
+      if (expectedSvgs.has(svgName)) continue;
+      fs.rmSync(path.join(dir, entry.name));
+      removed += 1;
+    }
+  }
+  return removed;
 }
 
 function writePngs() {
@@ -626,6 +653,7 @@ function renderTime(index, cells) {
     }))
     .filter((row) => row.values.length > 0)
     .sort((a, b) => compareOrdinal(a.label, b.label));
+  if (rows.length === 0) return null;
 
   // Banded blocks like the grouped chart: repo header + one row per tool, the
   // two-tone bar (faded index build + solid LLM answer) inside a full-width

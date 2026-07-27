@@ -3,6 +3,10 @@ const path = require("path");
 
 const { renderPng } = require("./svg-to-png.cjs");
 const { compareOrdinal } = require("../graph/ordinal.cjs");
+const {
+  fixtureRevisionsFromManifest,
+  selectCurrentIndex,
+} = require("../graph/current-index.cjs");
 
 const ROOT = path.resolve(__dirname, "..");
 const INPUT = path.resolve(
@@ -101,6 +105,16 @@ const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
 //   single:  graph-<repo>-<family>-<harness>-<modelVersion>.<ext>
 const EXPORT_PNG = process.argv.includes("--png");
 const report = JSON.parse(fs.readFileSync(INPUT, "utf8"));
+const manifest = JSON.parse(
+  fs.readFileSync(
+    path.join(ROOT, "graph", "questions", "manifest.json"),
+    "utf8",
+  ),
+);
+const { index: currentIndex } = selectCurrentIndex(
+  report.index,
+  fixtureRevisionsFromManifest(manifest),
+);
 const allCells = report.agent?.cells ?? [];
 
 const combos = new Map();
@@ -158,8 +172,10 @@ for (const combo of combos.values()) {
 }
 // The index axis: what readiness costs before a tool can answer anything. It
 // is not a token chart, so it renders on its own scale (wall clock).
-if (report.index && (report.index.cells ?? []).length > 0) {
-  writeSvg("graph-time-to-answer.svg", renderTime(report.index, allCells));
+if (currentIndex.cells.length > 0) {
+  writeSvg("graph-time-to-answer.svg", renderTime(currentIndex, allCells));
+} else {
+  removeSvg("graph-time-to-answer.svg");
 }
 
 const pngs = writePngs();
@@ -176,6 +192,13 @@ function writeSvg(name, svg) {
   const pngFile = path.join(PNG_DIR, name.replace(/\.svg$/, ".png"));
   if (changed || !fs.existsSync(pngFile)) pngQueue.push(file);
   written += 1;
+}
+
+function removeSvg(name) {
+  fs.rmSync(path.join(SVG_DIR, name), { force: true });
+  fs.rmSync(path.join(PNG_DIR, name.replace(/\.svg$/, ".png")), {
+    force: true,
+  });
 }
 
 function writePngs() {

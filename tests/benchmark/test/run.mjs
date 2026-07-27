@@ -1485,6 +1485,63 @@ function testReferenceRenderer() {
   assert.match(time, /faded = index build, solid = LLM answering/);
   assert.match(time, /20,000 lines/);
 
+  const staleReport = sampleReport();
+  staleReport.index.fixtures.excalidraw = "0".repeat(40);
+  for (const cell of staleReport.index.cells) {
+    if (cell.project === "excalidraw") cell.fixtureCommit = "0".repeat(40);
+  }
+  const staleOut = path.join(root, "stale-out");
+  fs.writeFileSync(input, JSON.stringify(staleReport));
+  run(
+    process.execPath,
+    [path.join(benchmarkDir, "build", "graph-benchmark-svg.cjs")],
+    {
+      ...env,
+      SAMCHON_GRAPH_BENCH_RENDER_OUT: staleOut,
+    },
+  );
+  const staleTime = fs.readFileSync(
+    path.join(staleOut, "svg", "graph-time-to-answer.svg"),
+    "utf8",
+  );
+  assert.doesNotMatch(staleTime, /Excalidraw|20,000 lines/);
+  assert.match(staleTime, /Gin|12,000 lines/);
+
+  const legacyReport = sampleReport();
+  delete legacyReport.index.schemaVersion;
+  delete legacyReport.index.fixtures;
+  for (const cell of legacyReport.index.cells) delete cell.fixtureCommit;
+  const legacyOut = path.join(root, "legacy-out");
+  fs.mkdirSync(path.join(legacyOut, "svg"), { recursive: true });
+  fs.mkdirSync(path.join(legacyOut, "png"), { recursive: true });
+  fs.writeFileSync(
+    path.join(legacyOut, "svg", "graph-time-to-answer.svg"),
+    "stale",
+  );
+  fs.writeFileSync(
+    path.join(legacyOut, "png", "graph-time-to-answer.png"),
+    "stale",
+  );
+  fs.writeFileSync(input, JSON.stringify(legacyReport));
+  run(
+    process.execPath,
+    [path.join(benchmarkDir, "build", "graph-benchmark-svg.cjs")],
+    {
+      ...env,
+      SAMCHON_GRAPH_BENCH_RENDER_OUT: legacyOut,
+    },
+  );
+  assert.equal(
+    fs.existsSync(path.join(legacyOut, "svg", "graph-time-to-answer.svg")),
+    false,
+    "the renderer removes revisionless SVG index-time evidence",
+  );
+  assert.equal(
+    fs.existsSync(path.join(legacyOut, "png", "graph-time-to-answer.png")),
+    false,
+    "the renderer removes revisionless PNG index-time evidence",
+  );
+
   for (const [relative] of first) {
     if (!relative.endsWith(".svg")) continue;
     const svg = fs.readFileSync(path.join(out, relative), "utf8");
@@ -1536,7 +1593,12 @@ function sampleReport() {
     schemaVersion: 1,
     agent: { cells },
     index: {
+      schemaVersion: 2,
       host: { cpu: "test", cores: 8, ramGB: 32, os: "test" },
+      fixtures: {
+        excalidraw: PROJECTS.excalidraw.commit,
+        gin: PROJECTS.gin.commit,
+      },
       scale: {
         excalidraw: { files: 100, lines: 20_000 },
         gin: { files: 80, lines: 12_000 },
@@ -1546,6 +1608,7 @@ function sampleReport() {
           (tool, toolIndex) => ({
             project,
             tool,
+            fixtureCommit: PROJECTS[project].commit,
             buildMs: 1_000 + projectIndex * 500 + toolIndex * 200,
           }),
         ),

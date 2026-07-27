@@ -19,8 +19,13 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { PROJECTS } from "./corpus.mjs";
+import currentIndex from "./current-index.cjs";
 import { assertWebsitePublication } from "./publication-document.mjs";
 
+const { selectCurrentIndex } = currentIndex;
+const SELECTED_FIXTURES = Object.fromEntries(
+  Object.entries(PROJECTS).map(([project, spec]) => [project, spec.commit]),
+);
 const here = path.dirname(fileURLToPath(import.meta.url));
 // The publication by default, and a named one when asked. The headline number
 // this prints — what a strict provider was worth — is computed here and was
@@ -41,20 +46,12 @@ if (index === null) {
   process.exit(0);
 }
 
-const cells = Array.isArray(index.cells) ? index.cells : [];
+const { index: currentIndexReport, staleCellCount } = selectCurrentIndex(
+  index,
+  SELECTED_FIXTURES,
+);
 const measured = new Map();
-let staleCellCount = 0;
-for (const cell of cells) {
-  if (typeof cell?.project !== "string") continue;
-  const selectedCommit = PROJECTS[cell.project]?.commit;
-  if (
-    index.schemaVersion !== 2 ||
-    index.fixtures?.[cell.project] !== selectedCommit ||
-    cell.fixtureCommit !== selectedCommit
-  ) {
-    staleCellCount += 1;
-    continue;
-  }
+for (const cell of currentIndexReport.cells) {
   const perTool = measured.get(cell.project) ?? new Map();
   perTool.set(cell.tool, cell);
   measured.set(cell.project, perTool);
@@ -62,10 +59,7 @@ for (const cell of cells) {
 
 const rows = Object.keys(PROJECTS).map((project) => {
   const spec = PROJECTS[project];
-  const revisionBound =
-    index.schemaVersion === 2 &&
-    index.fixtures?.[project] === spec.commit;
-  const scale = revisionBound ? index.scale?.[project] : undefined;
+  const scale = currentIndexReport.scale?.[project];
   const perTool = measured.get(project);
   return {
     project,

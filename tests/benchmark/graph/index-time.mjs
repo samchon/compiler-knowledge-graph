@@ -37,6 +37,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { PROJECTS, projectDir, resolveWorkDir } from "./corpus.mjs";
+import currentIndex from "./current-index.cjs";
 import {
   assertPinnedCheckout,
   assertPreparedFixture,
@@ -53,6 +54,10 @@ import {
 import { javaSystemProperty } from "./java-tool-options.mjs";
 import { removeTree } from "./remove-tree.mjs";
 
+const { selectCurrentIndex } = currentIndex;
+const SELECTED_FIXTURES = Object.fromEntries(
+  Object.entries(PROJECTS).map(([project, spec]) => [project, spec.commit]),
+);
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, "../../..");
 const workDir = resolveWorkDir(repoRoot);
@@ -638,36 +643,19 @@ function publishWebsiteIndex(currentReport) {
   const priorIndex = keepPrior ? (prior?.index ?? null) : null;
   // A schema-1 cell has no fixture revision and a schema-2 cell can name a
   // revision that the current corpus no longer selects. Neither may survive a
-  // preserving fold: retaining its duration while joining it to today's
-  // registry is exactly how an old Koin result was labelled as a measurement
-  // of a fixture it had never seen.
-  const currentPriorProjects = new Set(
-    Object.entries(priorIndex?.fixtures ?? {})
-      .filter(
-        ([project, commit]) =>
-          priorIndex?.schemaVersion === 2 &&
-          PROJECTS[project]?.commit === commit,
-      )
-      .map(([project]) => project),
+  // preserving fold or another public consumer.
+  const { index: currentPriorIndex } = selectCurrentIndex(
+    priorIndex,
+    SELECTED_FIXTURES,
   );
-  const priorScale = Object.fromEntries(
-    Object.entries(priorIndex?.scale ?? {}).filter(([project]) =>
-      currentPriorProjects.has(project),
-    ),
-  );
-  const priorFixtures = Object.fromEntries(
-    Object.entries(priorIndex?.fixtures ?? {}).filter(([project]) =>
-      currentPriorProjects.has(project),
-    ),
-  );
+  const priorScale = currentPriorIndex.scale;
+  const priorFixtures = currentPriorIndex.fixtures;
   const scale = { ...priorScale, ...currentReport.scale };
   const fixtures = { ...priorFixtures, ...currentReport.fixtures };
   const projects = new Set(currentReport.projects);
   const tools = new Set(currentReport.tools);
-  const cells = (priorIndex?.cells ?? []).filter(
+  const cells = currentPriorIndex.cells.filter(
     (cell) =>
-      currentPriorProjects.has(cell.project) &&
-      cell.fixtureCommit === PROJECTS[cell.project]?.commit &&
       (!projects.has(cell.project) || !tools.has(cell.tool)),
   );
   for (const cell of currentReport.cells) {

@@ -54,7 +54,7 @@ A publishable sweep has all requested cells, non-empty raw samples, exact model
 versions, the pinned question hash and commit, traces that pass the audit, no
 unexplained source-file fallback in the graph arm, and cold-index cells measured
 sequentially on one documented quiet host. Each cold-index report and cell binds
-the full fixture commit; the fold and summary reject or omit revisionless and
-stale measurements instead of joining them to the current corpus. After
-publication, run the reference SVG generator with `--png`; its tests assert
-deterministic SVG/PNG bytes and exact 2x raster dimensions.
+the full fixture commit; the fold, summary, and SVG/PNG renderer reject or omit
+revisionless and stale measurements instead of joining them to the current
+corpus. After publication, run the reference SVG generator with `--png`; its
+tests assert deterministic SVG/PNG bytes and exact 2x raster dimensions.

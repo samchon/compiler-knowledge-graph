@@ -77,7 +77,7 @@ export const CORPUS = [
     // The build's own outputs are covered by redis's .gitignore; the database it
     // produces is not, so it is declared here rather than assumed.
     prepare: "bear -- make -j$(nproc)",
-    prepareIgnores: ["compile_commands.json"],
+    prepareIgnores: ["compile_commands.json", ".cache/"],
     prepareOptional: true,
   },
   {
@@ -98,7 +98,7 @@ export const CORPUS = [
     // Optional: without it the lane measures what it measures today rather than
     // not measuring at all.
     prepare: "cmake -S . -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
-    prepareIgnores: ["build/"],
+    prepareIgnores: ["build/", ".cache/"],
     prepareOptional: true,
   },
   {

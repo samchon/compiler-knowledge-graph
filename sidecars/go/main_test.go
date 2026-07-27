@@ -77,12 +77,21 @@ func TestBuildSnapshotProvesWorkspaceSemantics(t *testing.T) {
 	// pattern, so scip-go never indexes one. Claiming its declarations would owe
 	// a corroboration the artifact cannot give — which is what refused gin — so
 	// the boundary excludes it on both sides rather than the rule bending.
-	if findNode(first, "Describe") != nil || findNode(first, "Payload") != nil {
-		t.Error("a testdata package entered the graph as project source")
+	// The manifest is what corroboration is owed for, so that is what must not
+	// contain it.
+	for _, input := range first.Sources {
+		if strings.Contains(filepath.ToSlash(input.File), "testdata/") {
+			t.Errorf("testdata source %s entered the manifest", input.File)
+		}
 	}
+	// It does still appear as an external symbol, and that is correct rather
+	// than a leak: a package reached only by import is a dependency, and
+	// dependencies are never corroborated. What must not happen is claiming one
+	// as project source.
 	for _, declaration := range first.Nodes {
-		if strings.Contains(declaration.File, "testdata/") {
-			t.Errorf("node %s came from a testdata directory", declaration.ID)
+		if !declaration.External &&
+			strings.Contains(filepath.ToSlash(declaration.File), "testdata/") {
+			t.Errorf("node %s claims a testdata file as project source", declaration.ID)
 		}
 	}
 	// The caller is still ordinary project code and must survive intact; the

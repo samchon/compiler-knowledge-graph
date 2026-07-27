@@ -166,6 +166,13 @@ function resolveOnPath(
 function localCandidates(root: string, command: string): string[] {
   const privateBin = path.join(root, ".samchon-graph", "bin");
   const packageBin = path.join(root, "node_modules", ".bin");
+  // Composer's `node_modules/.bin`. Looking only in npm's directory made this
+  // function project-local for one ecosystem and PATH-only for another, and a
+  // PHP indexer is installed into the project by design — scip-php's own
+  // instructions are `composer require --dev` followed by `vendor/bin/scip-php`,
+  // and it reads the project's autoloader, so a global copy is the unusual
+  // arrangement rather than the expected one.
+  const composerBin = path.join(root, "vendor", "bin");
   // One exit, deliberately. A platform arm that returns early leaves the rest
   // of the function — including its closing brace — unreachable on the other
   // platforms, and an ignore that stops before the brace does not cover it.
@@ -178,7 +185,7 @@ function localCandidates(root: string, command: string): string[] {
         : [`${command}.exe`, `${command}.cmd`, `${command}.bat`];
   /* c8 ignore stop */
   const candidates: string[] = [];
-  for (const bin of [privateBin, packageBin]) {
+  for (const bin of [privateBin, packageBin, composerBin]) {
     for (const spelling of spellings) candidates.push(path.join(bin, spelling));
   }
   return candidates;

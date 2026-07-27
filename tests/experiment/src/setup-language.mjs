@@ -632,38 +632,27 @@ switch (experiment.language) {
       source: "npm install -g intelephense",
       digest: "unpinned",
     });
-    // Globally, not as a dependency of the project being indexed. `bin/scip-php`
-    // opens with `include $_composer_autoload_path ?? …`, so a global install
-    // brings its own autoloader and the target's `composer.json` stays
-    // untouched — which the benchmark's pinned checkout requires and a user's
-    // repository deserves.
+    // Composer, but not scip-php: the indexer is a dependency of the project it
+    // indexes, not a tool beside it. `composer global require` was tried and the
+    // measurement refuted it — the tool computes its vendor directory as its own
+    // package root plus `vendor`, which a global install flattens away, and it
+    // exits with `Invalid scip-php vendor directory`. Its own instructions are
+    // `composer require --dev` followed by `vendor/bin/scip-php`, and it reads
+    // the project's autoloader to resolve symbols.
+    //
+    // So the corpus fixture carries the dependency and this only supplies the
+    // runtime and composer to install it with. `resolveProviderCommand` looks in
+    // `vendor/bin` for the same reason it looks in `node_modules/.bin`.
     apt(["php-cli", "php-xml", "php-mbstring", "composer"]);
-    shell("composer global require davidrjenni/scip-php");
-    // Ask composer where it put the binary rather than assuming. The global
-    // home moves with COMPOSER_HOME and differs between images — `~/.composer`
-    // on some, `~/.config/composer` on others — and the benchmark's php lane
-    // reported `scip-php ... was not found for this project` while the install
-    // step above had reported success, which is exactly what a guessed path
-    // looks like from the outside.
-    const composerBin = shell("composer global config bin-dir --absolute", {
-      stdio: ["ignore", "pipe", "inherit"],
-    })
-      .stdout.toString()
-      .trim();
-    if (composerBin === "" || !fs.existsSync(composerBin)) {
-      throw new Error(
-        `composer reported no usable global bin directory: ${composerBin || "(empty)"}`,
-      );
-    }
-    appendGithubPath(composerBin);
     record({
-      tool: "scip-php",
+      tool: "composer",
       version: "unpinned",
-      source: "composer global require davidrjenni/scip-php",
+      source: "apt composer",
       digest: "unpinned",
     });
     await installScip();
     break;
+
   case "lua": {
     const url = await latestAsset("LuaLS/lua-language-server", /linux-x64\.tar\.gz$/);
     const archive = path.join(toolsRoot, "lua-language-server.tar.gz");

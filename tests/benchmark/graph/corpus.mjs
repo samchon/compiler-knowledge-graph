@@ -122,8 +122,24 @@ export const CORPUS = [
     name: "slim",
     language: "php",
     url: "https://github.com/samchon/graph-benchmark-slim.git",
-    commit: "0da7dd2fc66956730b6633f6a056b35e59126583",
+    commit: "101e24a694c395d7bd403cca51cbc53dfe78aa8b",
     preflight: preflightMinimums(1_000, 3_000, 1_500, 3),
+    // scip-php goes inside the project it indexes — `composer require --dev`
+    // then `vendor/bin/scip-php` — because it resolves symbols through the
+    // project's own autoloader. A global copy computes its vendor directory
+    // somewhere the tool does not look and refuses to start.
+    //
+    // The dependency is therefore carried by the pinned fork rather than added
+    // here: composer.json is tracked, so adding it at measurement time would
+    // dirty the very tree this harness asserts. What remains is installing it,
+    // which writes only `vendor/` — already ignored by this project.
+    //
+    // Optional because scip-php pins nikic/php-parser ^4 while some of slim's
+    // own dev tooling reaches for ^5; if composer cannot satisfy both, the lane
+    // measures what it measures today instead of not measuring.
+    prepare: "composer install --no-interaction",
+    prepareIgnores: ["vendor/"],
+    prepareOptional: true,
   },
   {
     name: "serilog",

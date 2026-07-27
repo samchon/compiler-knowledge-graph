@@ -150,7 +150,7 @@
       "repo": "slim",
       "family": "dedicated",
       "file": "slim.md",
-      "fixtureCommit": "0da7dd2fc66956730b6633f6a056b35e59126583",
+      "fixtureCommit": "101e24a694c395d7bd403cca51cbc53dfe78aa8b",
       "language": "php",
       "questionSha256": "5b8775bb84f2629a2413bf4bb522281d344c7781020660b739814c751c5cc0f5"
     },
@@ -159,7 +159,7 @@
       "repo": "slim",
       "family": "common",
       "file": "common.md",
-      "fixtureCommit": "0da7dd2fc66956730b6633f6a056b35e59126583",
+      "fixtureCommit": "101e24a694c395d7bd403cca51cbc53dfe78aa8b",
       "language": "php",
       "questionSha256": "efe22b2b8f0d37d2e74fc2391ba689b5c455e16a1f261fd821f209bd7ad20517"
     },

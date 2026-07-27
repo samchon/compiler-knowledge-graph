@@ -68,10 +68,13 @@ export const CORPUS = [
     //
     // Nothing was removed to fix it: that profile is gson's, activated on JDK
     // below 21, and the benchmark provisions 21 so it never fired. Selecting it
-    // explicitly asks for a configuration the project already supports, and
-    // Maven reads `.mvn/maven.config` unprompted so no indexer learns a
+    // explicitly asks for a configuration the project already supports.
+    // SemanticDB then introduces warnings under the project's independent
+    // fail-on-warning setting, so the fork disables that failure through the
+    // Maven compiler plugin's public user property. Maven reads both choices
+    // from `.mvn/maven.config` unprompted, so no indexer learns a
     // project-specific flag.
-    commit: "0395e46886d032843f87a7ed73207cf5ba23007e",
+    commit: "9ce132cb4f302d4ffa4fa4b0d93918da72188e90",
     preflight: preflightMinimums(1_000, 5_000, 3_000, 4),
   },
   {

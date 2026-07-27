@@ -3,6 +3,7 @@ import path from "node:path";
 
 import { createResidentGraphSource } from "@samchon/graph";
 
+import { compilationDatabaseLifecycle } from "./compilation-database-lifecycle.mjs";
 import { isolateCorpus, shell } from "./process.mjs";
 
 /** Measure one strict provider without ever editing the pinned corpus clone. */
@@ -22,6 +23,10 @@ export const runStrictLifecycle = async (experiment, pinnedRoot) => {
   const createFile = path.join(lifecycleRoot, fixture.createFile);
   const renamedFile = path.join(lifecycleRoot, fixture.renamedFile);
   const buildFile = path.join(lifecycleRoot, fixture.buildFile);
+  const compilationDatabase =
+    fixture.compilationDatabase === undefined
+      ? undefined
+      : path.join(lifecycleRoot, fixture.compilationDatabase);
   const failureFile = path.join(
     lifecycleRoot,
     fixture.failureFile ?? fixture.sourceFile,
@@ -108,6 +113,13 @@ export const runStrictLifecycle = async (experiment, pinnedRoot) => {
     await load("edit", CHANGED_MODES);
 
     fs.writeFileSync(createFile, fixture.createText);
+    if (compilationDatabase !== undefined) {
+      compilationDatabaseLifecycle.add(
+        compilationDatabase,
+        sourceFile,
+        createFile,
+      );
+    }
     const created = await load("create", CHANGED_MODES);
     assertCreatedSymbol(
       created,
@@ -118,6 +130,13 @@ export const runStrictLifecycle = async (experiment, pinnedRoot) => {
     assertCreatedEdge(created, fixture, experiment.language);
 
     fs.renameSync(createFile, renamedFile);
+    if (compilationDatabase !== undefined) {
+      compilationDatabaseLifecycle.move(
+        compilationDatabase,
+        createFile,
+        renamedFile,
+      );
+    }
     const renamed = await load("rename", CHANGED_MODES);
     assertCreatedSymbol(
       renamed,
@@ -128,6 +147,9 @@ export const runStrictLifecycle = async (experiment, pinnedRoot) => {
     assertCreatedEdge(renamed, fixture, experiment.language);
 
     fs.rmSync(renamedFile);
+    if (compilationDatabase !== undefined) {
+      compilationDatabaseLifecycle.remove(compilationDatabase, renamedFile);
+    }
     const deleted = await load("delete", CHANGED_MODES);
     if (deleted.nodes.some((node) => node.name === fixture.createdSymbol)) {
       throw new Error(
@@ -254,6 +276,71 @@ export const runStrictLifecycle = async (experiment, pinnedRoot) => {
         diagnosticCount,
         limitation: fixture.failureLimitation,
       });
+    } else if (fixture.failurePolicy === "published") {
+      if (
+        typeof fixture.failureLimitation !== "string" ||
+        fixture.failureLimitation === ""
+      ) {
+        throw new Error(
+          `${experiment.language}: a published failure must state the limitation it accepts`,
+        );
+      }
+      const prior = previousProvenance;
+      const priorDump = dump;
+      let published;
+      try {
+        published = await resident.load();
+      } catch (error) {
+        throw new Error(
+          `${experiment.language}: the catalog records this input as published with a limitation, but the provider rejected it: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+      const provenance = strictProvenance(published, experiment);
+      const mode = resident.modes().get(experiment.strictProvider);
+      if (!CHANGED_MODES.includes(mode)) {
+        throw new Error(
+          `${experiment.language}: published failure reported ${String(mode)}`,
+        );
+      }
+      if (provenance.universe === prior.universe) {
+        throw new Error(
+          `${experiment.language}: the malformed input did not move the build universe, so this step compared a generation to itself`,
+        );
+      }
+      const changed = publicationChanges(
+        prior,
+        provenance,
+        priorDump,
+        published,
+        experiment.strictProvider,
+      );
+      if (changed.length === 0) {
+        throw new Error(
+          `${experiment.language}: the catalog records a degraded publication, but only the declared build input changed`,
+        );
+      }
+      dump = published;
+      previousIdentity = [
+        provenance.manifest,
+        provenance.content,
+        provenance.universe,
+      ].join(":");
+      previousProvenance = provenance;
+      previousDiagnostics = published.diagnostics?.length ?? 0;
+      rows.push({
+        name: "failure",
+        status: "published-with-limitation",
+        mode,
+        elapsedMs: Math.round(performance.now() - failedAt),
+        manifest: provenance.manifest,
+        content: provenance.content,
+        universe: provenance.universe,
+        nodeCount: published.nodes.length,
+        edgeCount: published.edges.length,
+        diagnosticCount: previousDiagnostics,
+        changed,
+        limitation: fixture.failureLimitation,
+      });
     } else if (
       fixture.failurePolicy === "diagnostic" ||
       fixture.failurePolicy === "reject-or-diagnostic"
@@ -372,6 +459,37 @@ function assertCreatedEdge(dump, fixture, language) {
       `${language}: lifecycle lost ${fixture.createdEdge.kind} ${fixture.createdEdge.from} -> ${fixture.createdEdge.to}`,
     );
   }
+}
+
+function publicationChanges(
+  prior,
+  next,
+  priorDump,
+  nextDump,
+  provider,
+) {
+  const changed = [];
+  if (prior.manifest !== next.manifest) changed.push("manifest");
+  if (prior.content !== next.content) changed.push("content");
+  if (
+    [...prior.capabilities].sort().join(",") !==
+    [...next.capabilities].sort().join(",")
+  ) {
+    changed.push("capabilities");
+  }
+  const spoken = (report) =>
+    (report.warnings ?? [])
+      .filter((warning) => warning.startsWith(`${provider}:`))
+      .sort()
+      .join(SEPARATOR);
+  if (spoken(priorDump) !== spoken(nextDump)) changed.push("warnings");
+  if (
+    (priorDump.diagnostics?.length ?? 0) !==
+    (nextDump.diagnostics?.length ?? 0)
+  ) {
+    changed.push("diagnostics");
+  }
+  return changed;
 }
 
 /** A separator no warning can contain, so two lists cannot collide. */

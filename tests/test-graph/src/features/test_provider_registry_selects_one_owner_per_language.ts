@@ -4,7 +4,6 @@ import {
   LANGUAGE_SPECS,
   assertGraphSnapshotContract,
   buildLspGraph,
-  compareOrdinal,
   dumpProvenanceOf,
   graphSnapshotDigests,
   selectGraphProviders,
@@ -331,12 +330,15 @@ async function assertSelection(): Promise<void> {
       owners.set(language, [...(owners.get(language) ?? []), provider.name]);
     }
   }
+  const publicLanguages = LANGUAGE_SPECS.map((spec) => spec.language);
+  TestValidator.predicate(
+    "every strict owner names a public language",
+    [...owners.keys()].every((language) => publicLanguages.includes(language)),
+  );
   TestValidator.equals(
-    "the shipped registry assigns exactly one strict owner to every public language",
-    [...owners.entries()].sort(([x], [y]) => compareOrdinal(x, y)),
-    LANGUAGE_SPECS.map((spec) => spec.language)
-      .sort(compareOrdinal)
-      .map((language) => [language, [owners.get(language)?.[0]]]),
+    "only languages without a truthful strict producer remain unowned",
+    publicLanguages.filter((language) => !owners.has(language)),
+    ["swift", "zig"],
   );
   TestValidator.equals(
     "C and C++ share one compilation-universe provider",

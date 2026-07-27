@@ -25,6 +25,7 @@ export const test_experiment_corpora_are_commit_pinned = () => {
     [...catalog.matchAll(/lifecycle:\s*\{/g)].length,
   );
   const python = region(catalog, 'language: "python"', 'language: "ruby"');
+  const lua = region(catalog, 'language: "lua"', 'language: "dart"');
   TestValidator.predicate(
     "the dynamic SCIP smoke proves a versioned Python lifecycle, not an edge count",
     python.includes('strictProvider: "scip-python"') &&
@@ -56,6 +57,14 @@ export const test_experiment_corpora_are_commit_pinned = () => {
       lifecycle.includes("provenance.universe === prior.universe") &&
       lifecycle.includes("provenance.content !== prior.content") &&
       lifecycle.includes("diagnosticCount !== previousDiagnostics"),
+  );
+  TestValidator.predicate(
+    "a degraded publication is distinct from an input the producer ignored",
+    lua.includes('failurePolicy: "published"') &&
+      /failureLimitation:\s*"?[^",]/.test(lua) &&
+      lifecycle.includes('fixture.failurePolicy === "published"') &&
+      lifecycle.includes('status: "published-with-limitation"') &&
+      lifecycle.includes("publicationChanges("),
   );
 
   TestValidator.predicate(

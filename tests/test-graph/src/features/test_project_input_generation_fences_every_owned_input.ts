@@ -189,6 +189,55 @@ export const test_project_input_generation_fences_every_owned_input =
       [2, true, false],
     );
 
+    const bomRoot = GraphPaths.createTempDirectory(
+      "samchon-graph-bom-input-commit-",
+    );
+    const bomSource = path.join(bomRoot, "Program.cs");
+    const bomBody = "internal static class Program {}\n";
+    fs.writeFileSync(bomSource, `\uFEFF${bomBody}`);
+    let bomAttempts = 0;
+    await commitProjectInputGeneration(
+      { cwd: bomRoot, languages: ["csharp"] },
+      [],
+      () => {
+        bomAttempts += 1;
+        return {
+          ...resultOf(bomRoot),
+          sources: new Map([[bomSource, bomBody]]),
+        };
+      },
+    );
+    TestValidator.equals(
+      "the coordinator's leading-BOM transport transform commits once",
+      bomAttempts,
+      1,
+    );
+
+    const addedBomRoot = GraphPaths.createTempDirectory(
+      "samchon-graph-added-bom-input-commit-",
+    );
+    const addedBomSource = path.join(addedBomRoot, "Program.cs");
+    fs.writeFileSync(addedBomSource, bomBody);
+    let addedBomAttempts = 0;
+    await commitProjectInputGeneration(
+      { cwd: addedBomRoot, languages: ["csharp"] },
+      [],
+      () => {
+        addedBomAttempts += 1;
+        if (addedBomAttempts === 1)
+          fs.writeFileSync(addedBomSource, `\uFEFF${bomBody}`);
+        return {
+          ...resultOf(addedBomRoot),
+          sources: new Map([[addedBomSource, bomBody]]),
+        };
+      },
+    );
+    TestValidator.equals(
+      "a BOM added during consumption still moves the raw input generation",
+      addedBomAttempts,
+      2,
+    );
+
     const manifest = projectInputManifest(
       root,
       { languages: ["typescript", "go"] },
@@ -690,20 +739,20 @@ function resultOf(root: string): IIndexerResult {
  *
  * The guard used to report only that a file had moved, and a C# corpus lane
  * failed it three bounded attempts running, twice over, with no way to tell a
- * real edit from text the producer had normalized. The first clears on a retry
- * and the other two never do, so the distinction is the difference between
- * retrying and stopping.
+ * real edit from text the producer had normalized. The coordinator's own BOM
+ * transform is accepted above; every other mismatch remains diagnostic.
  */
 function assertMovementSaysHowTheTextsDiffer(root: string): void {
   const file = path.join(root, "moved-detail.ts");
   const body = "export const value = 1;\r\nexport const other = 2;\r\n";
 
   fs.writeFileSync(file, `\uFEFF${body.replace(/\r\n/g, "\n")}`);
-  TestValidator.predicate(
-    "a stripped byte order mark is named as the only difference",
+  TestValidator.equals(
+    "the coordinator's stripped leading byte order mark is equivalent",
     movedConsumedSource(
       new Map([[file, body.replace(/\r\n/g, "\n")]]),
-    )?.detail.includes("only by a leading byte order mark") === true,
+    ),
+    undefined,
   );
 
   fs.writeFileSync(file, `\uFEFF${body.replace(/\r\n/g, "\n")}extra\n`);

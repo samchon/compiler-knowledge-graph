@@ -129,6 +129,7 @@ export const LANGUAGE_EXPERIMENTS = [
       // CMakeLists would leave an already-generated database untouched and test
       // nothing.
       buildFile: "build/compile_commands.json",
+      compilationDatabase: "build/compile_commands.json",
       failureFile: "build/compile_commands.json",
       failureSuffix: "\n[ not json",
       // A compilation database that will not parse leaves scip-clang with no
@@ -171,6 +172,7 @@ export const LANGUAGE_EXPERIMENTS = [
       // CMakeLists would leave an already-generated database untouched and test
       // nothing.
       buildFile: "build/compile_commands.json",
+      compilationDatabase: "build/compile_commands.json",
       failureFile: "build/compile_commands.json",
       failureSuffix: "\n[ not json",
       // A compilation database that will not parse leaves scip-clang with no
@@ -184,13 +186,14 @@ export const LANGUAGE_EXPERIMENTS = [
   },
   {
     language: "java",
-    // The benchmark fork, which carries a `.mvn/maven.config` selecting gson's
-    // own `disable-error-prone` profile. Upstream, scip-java drives the real
-    // Maven build and javac rejects gson's Error Prone arguments outright, so no
-    // indexer reaches this project at all — a row asked here would only ever
-    // record that.
+    // The benchmark fork, whose `.mvn/maven.config` selects gson's own
+    // `disable-error-prone` profile and disables the compiler plugin's
+    // independent fail-on-warning setting. scip-java drives the real Maven
+    // build with SemanticDB attached; without both fixture-owned choices javac
+    // rejects either gson's Error Prone arguments or SemanticDB's warnings, so
+    // no indexer reaches this project at all.
     repository: "https://github.com/samchon/graph-benchmark-gson.git",
-    commit: "0395e46886d032843f87a7ed73207cf5ba23007e",
+    commit: "9ce132cb4f302d4ffa4fa4b0d93918da72188e90",
     maxFiles: 120,
     minNodes: 1,
     minEdges: 0,
@@ -226,11 +229,12 @@ export const LANGUAGE_EXPERIMENTS = [
       buildFile: "src/Serilog/Serilog.csproj",
       failureFile: "src/Serilog/Serilog.csproj",
       failureSuffix: "\n<NotClosed>",
-      // MSBuild refuses to evaluate a malformed project file, so the build
-      // scip-dotnet drives cannot start and no index is written. Stated as the
-      // fail-closed boundary it looks like; if the run shows the producer
-      // recovering, this row is wrong and must say what it actually does.
-      failurePolicy: "reject",
+      // scip-dotnet 0.2.14 writes the index before it reads and logs
+      // MSBuildWorkspace failures, then returns zero. The malformed project is
+      // therefore not a fail-closed boundary for this producer.
+      failurePolicy: "published",
+      failureLimitation:
+        "scip-dotnet 0.2.14 logs MSBuildWorkspace failures only after writing the index and exits successfully, so a malformed C# project file publishes a degraded generation instead of rejecting it",
     },
     minNodes: 1,
     minEdges: 0,
@@ -377,12 +381,12 @@ export const LANGUAGE_EXPERIMENTS = [
       failureSuffix: "\n{ not json",
       // lua-language-server reads a malformed `.luarc.json`, logs it, and
       // carries on with defaults rather than refusing to start — so the export
-      // still lands and the provider still publishes. `tolerated` is what that
-      // is; claiming `reject` would pin this harness to a boundary the producer
-      // does not have.
-      failurePolicy: "tolerated",
+      // still lands and the provider still publishes. This corpus selects
+      // LuaJIT and a workspace library, so the default settings change the
+      // published generation rather than leaving it untouched.
+      failurePolicy: "published",
       failureLimitation:
-        "lua-language-server recovers from a malformed .luarc.json and serves with default settings, so a broken Lua workspace configuration is not a fail-closed boundary for this producer",
+        "lua-language-server recovers from a malformed .luarc.json with default settings and publishes a changed generation, so a broken Lua workspace configuration is not a fail-closed boundary for this producer",
     },
     minNodes: 1,
     minEdges: 0,

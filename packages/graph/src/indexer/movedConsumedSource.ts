@@ -2,7 +2,8 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 
 /**
- * First source whose current text differs from the exact text consumed, and how.
+ * First source whose current text differs from what the consumer received, and
+ * how.
  *
  * The "how" is not decoration. A C# corpus fixture failed this check three
  * bounded attempts running, twice in a row, and the message it produced —
@@ -10,15 +11,17 @@ import fs from "node:fs";
  * quite different situations:
  *
  *   * the file genuinely changed on disk while the build was running,
- *   * the server reported text it had normalized, a stripped BOM or line
- *     endings folded to `\n`, while the bytes on disk still carry it,
+ *   * the coordinator stripped the leading BOM before opening the source,
+ *   * the server reported text it had normalized, such as line endings folded
+ *     to `\n`, while the bytes on disk still carry it,
  *   * the file was read back through a different encoding than the producer
  *     used.
  *
- * Only the first is the hazard this guard exists for. The other two are false
- * positives that no amount of retrying can clear, which is exactly what was
- * observed. The comparison already holds both strings, so saying which of them
- * it is costs nothing and turns an unactionable failure into a diagnosis.
+ * Only the first is the hazard this guard exists for. A stripped leading BOM is
+ * the coordinator's own documented transport transform, and the surrounding
+ * raw-byte manifest comparison still detects a BOM added or removed during the
+ * build. Other differences remain failures; naming them turns an unactionable
+ * retry loop into a diagnosis.
  */
 export function movedConsumedSource(
   sources: ReadonlyMap<string, string>,
@@ -32,7 +35,8 @@ export function movedConsumedSource(
       return { file, detail: "it could not be read back" };
     }
     const text = current.toString("utf8");
-    if (text !== consumed) return { file, detail: describe(text, consumed) };
+    if (!sameConsumedText(text, consumed))
+      return { file, detail: describe(text, consumed) };
     if (
       manifest !== undefined &&
       manifest.get(file) !==
@@ -45,6 +49,18 @@ export function movedConsumedSource(
     }
   }
   return undefined;
+}
+
+/**
+ * `readText` removes one leading UTF-8 BOM before a generic source is opened.
+ * Accept exactly that transport representation here; the caller separately
+ * fences the raw project-input manifest before and after the build.
+ */
+function sameConsumedText(current: string, consumed: string): boolean {
+  return (
+    current === consumed ||
+    (current.startsWith(BOM) && current.slice(BOM.length) === consumed)
+  );
 }
 
 export namespace movedConsumedSource {
@@ -66,10 +82,6 @@ export namespace movedConsumedSource {
  * stop retrying.
  */
 function describe(current: string, consumed: string): string {
-  // Escaped, not literal. A byte order mark written into the source is an
-  // invisible character in the file that describes byte order marks, which the
-  // lint rule refuses and a reader would never see.
-  const BOM = "\uFEFF";
   if (current.startsWith(BOM) && !consumed.startsWith(BOM)) {
     return current.slice(BOM.length) === consumed
       ? "they differ only by a leading byte order mark the consumer stripped"
@@ -84,6 +96,11 @@ function describe(current: string, consumed: string): string {
     `${String(consumed.length)}, first difference at offset ${String(at)}`
   );
 }
+
+// Escaped, not literal. A byte order mark written into the source is an
+// invisible character in the file that describes byte order marks, which the
+// lint rule refuses and a reader would never see.
+const BOM = "\uFEFF";
 
 function firstDifference(left: string, right: string): number {
   const shortest = Math.min(left.length, right.length);

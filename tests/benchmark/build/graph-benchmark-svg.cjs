@@ -5,6 +5,7 @@ const { renderPng } = require("./svg-to-png.cjs");
 const { compareOrdinal } = require("../graph/ordinal.cjs");
 const {
   fixtureRevisionsFromManifest,
+  selectCurrentAgentCells,
   selectCurrentIndex,
 } = require("../graph/current-index.cjs");
 
@@ -119,10 +120,9 @@ const { index: currentIndex } = selectCurrentIndex(
 // The cold index and the answer must describe the same checkout. This also
 // keeps the standalone token charts from relabelling an old agent result after
 // the corpus advances.
-const allCells = (report.agent?.cells ?? []).filter(
-  (cell) =>
-    Object.hasOwn(selectedFixtures, cell.repo) &&
-    cell.fixtureBranch === selectedFixtures[cell.repo],
+const allCells = selectCurrentAgentCells(
+  report.agent?.cells,
+  manifest,
 );
 
 const combos = new Map();

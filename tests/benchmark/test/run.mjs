@@ -36,6 +36,13 @@ const benchmarkDir = path.resolve(here, "..");
 const repoRoot = path.resolve(benchmarkDir, "..", "..");
 const graphDir = path.join(benchmarkDir, "graph");
 const manifestPath = path.join(graphDir, "questions", "manifest.json");
+const REFERENCE_MANIFEST = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+const REFERENCE_PROMPTS = new Map(
+  REFERENCE_MANIFEST.prompts.map((prompt) => [
+    `${prompt.repo}|${prompt.family}`,
+    prompt,
+  ]),
+);
 const FIXTURE_HOST = Object.freeze({
   os: "fixture",
   cpu: "fixture",
@@ -1591,6 +1598,40 @@ function testReferenceRenderer() {
     assert.match(svg, /Gin|12,000 lines/);
   }
 
+  const staleQuestionReport = sampleReport();
+  for (const cell of staleQuestionReport.agent.cells) {
+    if (cell.repo === "excalidraw") {
+      cell.questionSha256 = "0".repeat(64);
+    }
+  }
+  const staleQuestionOut = path.join(root, "stale-question-out");
+  fs.writeFileSync(input, JSON.stringify(staleQuestionReport));
+  run(
+    process.execPath,
+    [path.join(benchmarkDir, "build", "graph-benchmark-svg.cjs")],
+    {
+      ...env,
+      SAMCHON_GRAPH_BENCH_RENDER_OUT: staleQuestionOut,
+    },
+  );
+  const staleQuestionTime = fs.readFileSync(
+    path.join(staleQuestionOut, "svg", "graph-time-to-answer.svg"),
+    "utf8",
+  );
+  assert.doesNotMatch(staleQuestionTime, /Excalidraw|20,000 lines/);
+  assert.match(staleQuestionTime, /Gin|12,000 lines/);
+  assert.equal(
+    fs.existsSync(
+      path.join(
+        staleQuestionOut,
+        "svg",
+        "graph-excalidraw-common-codex-gpt-5.6-terra.svg",
+      ),
+    ),
+    false,
+    "an old question hash cannot produce a current token chart",
+  );
+
   const outcomeReport = sampleReport();
   outcomeReport.agent.cells = outcomeReport.agent.cells.filter(
     (cell) => cell.repo === "gin",
@@ -1688,13 +1729,17 @@ function sampleReport() {
     ["excalidraw", 10_000, 3_000],
     ["gin", 8_000, 2_800],
   ]) {
+    const prompt = REFERENCE_PROMPTS.get(`${repo}|common`);
+    assert.ok(prompt, `${repo}/common reference prompt exists`);
     const base = {
       harness: "codex",
       repo,
       fixtureBranch: PROJECTS[repo].commit,
       model: "terra",
       modelVersion: "gpt-5.6-terra",
-      promptFamily: "common",
+      promptId: prompt.id,
+      promptFamily: prompt.family,
+      questionSha256: prompt.questionSha256,
     };
     cells.push({
       ...base,

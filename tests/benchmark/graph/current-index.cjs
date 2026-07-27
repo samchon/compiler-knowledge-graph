@@ -1,6 +1,7 @@
 "use strict";
 
 const COMMIT = /^[0-9a-f]{40}$/;
+const SHA256 = /^[0-9a-f]{64}$/;
 
 /**
  * Keep only index-time evidence measured against the selected fixture revision.
@@ -75,24 +76,61 @@ function selectCurrentIndex(index, selectedFixtures) {
  * agreement with corpus.mjs; this boundary refuses contradictory input too.
  */
 function fixtureRevisionsFromManifest(manifest) {
+  return manifestSelection(manifest).fixtures;
+}
+
+/**
+ * Keep only agent measurements made for the exact current manifest prompt.
+ *
+ * The fixture can stay pinned while the question changes. Repository and
+ * prompt family are checked too so a valid hash from one manifest entry cannot
+ * be attached to another chart identity.
+ */
+function selectCurrentAgentCells(cells, manifest) {
+  const { prompts } = manifestSelection(manifest);
+  if (!Array.isArray(cells)) return [];
+  return cells.filter((cell) => {
+    const selected = prompts.get(cell?.promptId);
+    return (
+      selected !== undefined &&
+      cell.repo === selected.repo &&
+      cell.promptFamily === selected.family &&
+      cell.fixtureBranch === selected.fixtureCommit &&
+      cell.questionSha256 === selected.questionSha256
+    );
+  });
+}
+
+function manifestSelection(manifest) {
   if (
     typeof manifest !== "object" ||
     manifest === null ||
-    !Array.isArray(manifest.prompts)
+    manifest.schemaVersion !== 1 ||
+    !Array.isArray(manifest.prompts) ||
+    manifest.prompts.length === 0
   ) {
-    throw new TypeError("benchmark question manifest must contain prompts");
+    throw new TypeError(
+      "benchmark question manifest must use schemaVersion 1 and contain prompts",
+    );
   }
-  const fixtures = {};
+  const fixtures = Object.create(null);
+  const prompts = new Map();
   for (const [index, prompt] of manifest.prompts.entries()) {
     const label = `benchmark question manifest.prompts[${String(index)}]`;
     if (
+      typeof prompt?.id !== "string" ||
+      prompt.id.trim() === "" ||
       typeof prompt?.repo !== "string" ||
       prompt.repo.trim() === "" ||
+      typeof prompt.family !== "string" ||
+      prompt.family.trim() === "" ||
       typeof prompt.fixtureCommit !== "string" ||
-      !COMMIT.test(prompt.fixtureCommit)
+      !COMMIT.test(prompt.fixtureCommit) ||
+      typeof prompt.questionSha256 !== "string" ||
+      !SHA256.test(prompt.questionSha256)
     ) {
       throw new TypeError(
-        `${label} must name a repository and full lowercase fixture commit`,
+        `${label} must name an id, repository, family, full fixture commit, and question SHA-256`,
       );
     }
     const prior = fixtures[prompt.repo];
@@ -102,8 +140,21 @@ function fixtureRevisionsFromManifest(manifest) {
       );
     }
     fixtures[prompt.repo] = prompt.fixtureCommit;
+    if (prompts.has(prompt.id)) {
+      throw new TypeError(`${label} duplicates prompt id ${prompt.id}`);
+    }
+    prompts.set(prompt.id, {
+      repo: prompt.repo,
+      family: prompt.family,
+      fixtureCommit: prompt.fixtureCommit,
+      questionSha256: prompt.questionSha256,
+    });
   }
-  return fixtures;
+  return { fixtures, prompts };
 }
 
-module.exports = { fixtureRevisionsFromManifest, selectCurrentIndex };
+module.exports = {
+  fixtureRevisionsFromManifest,
+  selectCurrentAgentCells,
+  selectCurrentIndex,
+};

@@ -68,7 +68,21 @@ const SOURCE_EXTENSIONS = {
   rust: [".rs"],
   java: [".java"],
   c: [".c", ".h"],
-  cpp: [".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx"],
+  cpp: [
+    ".cc",
+    ".cpp",
+    ".cxx",
+    ".c++",
+    ".h",
+    ".hh",
+    ".hpp",
+    ".hxx",
+    ".h++",
+    ".ipp",
+    ".tpp",
+    ".tcc",
+    ".inl",
+  ],
   ruby: [".rb"],
   php: [".php"],
   csharp: [".cs"],
@@ -608,10 +622,10 @@ function assertWebsitePublication(value) {
   assertRecord(value, "existing benchmark publication");
   if (
     value.schemaVersion !== undefined &&
-    (!Number.isSafeInteger(value.schemaVersion) || value.schemaVersion < 1)
+    value.schemaVersion !== 1
   ) {
     throw new TypeError(
-      "existing benchmark publication.schemaVersion must be a positive safe integer",
+      "existing benchmark publication.schemaVersion must be omitted or 1",
     );
   }
   if (value.agent !== undefined && value.agent !== null) {
@@ -674,8 +688,19 @@ function assertIndexCells(value, label) {
         throw new TypeError(`${cellLabel}.${field} must be a boolean`);
       }
     }
-    if (cell.host !== undefined) {
-      assertRecord(cell.host, `${cellLabel}.host`);
+    const outcomes = [
+      typeof cell.buildMs === "number",
+      typeof cell.timedOutMs === "number",
+      cell.hasBuildStep === false,
+    ].filter(Boolean).length;
+    if (outcomes !== 1) {
+      throw new TypeError(
+        `${cellLabel} must carry exactly one build duration, timeout duration, or no-build marker`,
+      );
+    }
+    assertRecord(cell.host, `${cellLabel}.host`);
+    if (typeof cell.host.cpu !== "string" || cell.host.cpu.trim() === "") {
+      throw new TypeError(`${cellLabel}.host.cpu must be a nonempty string`);
     }
     if (cell.quietWait !== undefined && cell.quietWait !== null) {
       assertRecord(cell.quietWait, `${cellLabel}.quietWait`);

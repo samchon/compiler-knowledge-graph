@@ -183,6 +183,14 @@ export const test_standard_providers_execute_their_exact_contracts =
               ambiguousIncludeChanged.mode === "rebuild" &&
               ambiguousIncludeChanged.generation === 3,
           );
+          fs.appendFileSync(path.join(root, "src", "implementation.tpp"), "\n");
+          const implementationHeaderChanged = await session.refresh();
+          TestValidator.predicate(
+            "scip-clang rebuilds when a C++ implementation header changes",
+            implementationHeaderChanged.changed &&
+              implementationHeaderChanged.mode === "rebuild" &&
+              implementationHeaderChanged.generation === 4,
+          );
           const database = path.join(root, "build", "compile_commands.json");
           const validDatabase = fs.readFileSync(database, "utf8");
           let rejected: Error | undefined;
@@ -199,8 +207,8 @@ export const test_standard_providers_execute_their_exact_contracts =
             "an open scip-clang session revalidates its compilation database",
             rejected?.message.includes("no available compiler command") ===
               true &&
-              session.generation === 3 &&
-              session.current === ambiguousIncludeChanged.snapshot,
+              session.generation === 4 &&
+              session.current === implementationHeaderChanged.snapshot,
           );
         }
         await session.close();
@@ -434,6 +442,10 @@ function writeProject(root: string): void {
     "src/main.cpp": "// mentionedInComment must remain prose\nint callee();\nint caller() { return callee(); }\nint callee() { return 1; }\n",
     "src/shared.inc": "#define FIXTURE_VALUE 1\n",
     "src/extensionless": "#define EXTENSIONLESS_FIXTURE 1\n",
+    "src/implementation.ipp": "inline int ipp_value() { return 1; }\n",
+    "src/implementation.tpp": "inline int tpp_value() { return 1; }\n",
+    "src/implementation.tcc": "inline int tcc_value() { return 1; }\n",
+    "src/implementation.inl": "inline int inl_value() { return 1; }\n",
     "src/Main.java": "// mentionedInComment must remain prose\nclass Main { static void caller() { callee(); } static void callee() {} }\n",
     "src/Main.kt": "// mentionedInComment must remain prose\nfun caller() { callee() }\nfun callee() {}\n",
     "src/Main.scala": "// mentionedInComment must remain prose\nobject Main { def caller(): Unit = callee(); def callee(): Unit = () }\n",

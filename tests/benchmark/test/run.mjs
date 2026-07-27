@@ -14,6 +14,7 @@ import {
 } from "../graph/language.mjs";
 import { assertPublicationCandidates } from "../graph/publication-gate.mjs";
 import {
+  agentPublicationDocument,
   invalidWebsiteCellReason,
   sanitizeWebsiteSamples,
 } from "../graph/website-cell.mjs";
@@ -47,6 +48,7 @@ assertWorkflowOptionForms(
   path.join(repoRoot, ".github", "workflows", "index-time.yml"),
 );
 testPublishedIndexCellsNameTheirMachine();
+testAgentPublicationPreservesIndexResults();
 testIndexPublicationRefusesMalformedJson();
 testIndexCellIsolationContract();
 console.log("benchmark system tests: ok");
@@ -117,6 +119,37 @@ function testPublishedIndexCellsNameTheirMachine() {
       "a published cell must say whether it was measured with strict providers",
     );
   }
+}
+
+function testAgentPublicationPreservesIndexResults() {
+  const index = {
+    host: { cpu: "fixture" },
+    scale: { fixture: { files: 1, lines: 1 } },
+    cells: [
+      {
+        project: "fixture",
+        tool: "samchon-graph",
+        buildMs: 1,
+        host: { cpu: "fixture" },
+      },
+    ],
+  };
+  const merged = agentPublicationDocument({
+    schemaVersion: 1,
+    structural: { retained: true },
+    agent: { cells: [{ retained: true }] },
+    index,
+  });
+  assert.equal(
+    merged.index,
+    index,
+    "an agent-result writer must preserve the indexing axis it does not own",
+  );
+  assert.equal(
+    Object.hasOwn(agentPublicationDocument(null), "index"),
+    false,
+    "an absent indexing axis must remain absent",
+  );
 }
 
 /**
@@ -211,6 +244,29 @@ function testIndexPublicationRefusesMalformedJson() {
     "a shape-invalid prior publication must not be replaced",
   );
 
+  const unsupportedPriorSchema = JSON.stringify({
+    schemaVersion: 2,
+    structural: { retained: true },
+    agent: { cells: [{ retained: true }] },
+  });
+  fs.writeFileSync(publication, unsupportedPriorSchema);
+  fs.writeFileSync(report, validReport);
+  const unsupportedPrior = cp.spawnSync(
+    process.execPath,
+    [runner, `--publish=${report}`],
+    {
+      encoding: "utf8",
+      env: { ...process.env, SAMCHON_BENCH_INDEX_JSON: publication },
+      windowsHide: true,
+    },
+  );
+  assert.notEqual(unsupportedPrior.status, 0);
+  assert.equal(
+    fs.readFileSync(publication, "utf8"),
+    unsupportedPriorSchema,
+    "an unsupported publication schema must not be rewritten as if it were understood",
+  );
+
   fs.writeFileSync(publication, validPublication);
   const invalidIncomingShape = JSON.stringify({
     host: {},
@@ -233,6 +289,58 @@ function testIndexPublicationRefusesMalformedJson() {
     validPublication,
     "a shape-invalid incoming report must not change the publication",
   );
+
+  for (const [label, invalidCell] of [
+    [
+      "unmeasurable",
+      {
+        project: "fixture",
+        tool: "samchon-graph",
+        host: { cpu: "fixture" },
+      },
+    ],
+    [
+      "contradictory",
+      {
+        project: "fixture",
+        tool: "samchon-graph",
+        buildMs: 1,
+        timedOutMs: 2,
+        host: { cpu: "fixture" },
+      },
+    ],
+    [
+      "hostless",
+      {
+        project: "fixture",
+        tool: "samchon-graph",
+        buildMs: 1,
+      },
+    ],
+  ]) {
+    fs.writeFileSync(publication, validPublication);
+    const invalidOutcomeReport = JSON.stringify({
+      host: { cpu: "fixture" },
+      scale: { fixture: { files: 1, lines: 1 } },
+      cells: [invalidCell],
+    });
+    fs.writeFileSync(report, invalidOutcomeReport);
+    const invalidOutcome = cp.spawnSync(
+      process.execPath,
+      [runner, `--publish=${report}`],
+      {
+        encoding: "utf8",
+        env: { ...process.env, SAMCHON_BENCH_INDEX_JSON: publication },
+        windowsHide: true,
+      },
+    );
+    assert.notEqual(invalidOutcome.status, 0);
+    assert.equal(
+      fs.readFileSync(publication, "utf8"),
+      validPublication,
+      `a ${label} incoming cell must not change the publication`,
+    );
+  }
   fs.rmSync(root, { recursive: true, force: true });
 }
 

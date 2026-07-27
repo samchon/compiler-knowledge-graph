@@ -16,6 +16,13 @@ export const test_language_registry_lists_advertised_targets = () => {
       fixture.language,
     );
   }
+  for (const extension of [".ipp", ".tpp", ".tcc", ".inl"]) {
+    TestValidator.equals(
+      `${extension} implementation header maps to C++`,
+      languageOf(`include/implementation${extension}`),
+      "cpp",
+    );
+  }
   TestValidator.equals(
     "typescript default server",
     LANGUAGE_SPECS.find((spec) => spec.language === "typescript")?.lsp,

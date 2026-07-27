@@ -32,6 +32,7 @@ import {
 } from "./graph/language.mjs";
 import { assertPublicationCandidates } from "./graph/publication-gate.mjs";
 import {
+  agentPublicationDocument,
   sanitizeWebsiteSamples,
   websiteCellKey,
 } from "./graph/website-cell.mjs";
@@ -387,12 +388,7 @@ function publishWebsiteCells(candidates, { audited = false } = {}) {
   const prior =
     !resetWebsite && fs.existsSync(websiteJson) ? loadJson(websiteJson) : null;
   resetWebsite = false;
-  const out = {
-    schemaVersion: 1,
-    generatedAt: new Date().toISOString(),
-    structural: prior?.structural ?? null,
-    agent: { cells: [...(prior?.agent?.cells ?? [])] },
-  };
+  const out = agentPublicationDocument(prior);
   for (const cell of cells) {
     if (
       !cell ||

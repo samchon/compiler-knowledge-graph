@@ -25,6 +25,19 @@ export function websiteCellKey(cell) {
   ]);
 }
 
+/**
+ * Start an agent-result merge without dropping a benchmark axis it does not own.
+ */
+export function agentPublicationDocument(prior) {
+  return {
+    schemaVersion: 1,
+    generatedAt: new Date().toISOString(),
+    structural: prior?.structural ?? null,
+    agent: { cells: [...(prior?.agent?.cells ?? [])] },
+    ...(prior?.index !== undefined ? { index: prior.index } : {}),
+  };
+}
+
 const PUBLISHED_SAMPLE_KEYS = [
   "ok",
   "tokens",

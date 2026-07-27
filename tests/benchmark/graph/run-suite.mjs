@@ -29,6 +29,7 @@ import {
   resolveWorkDir,
 } from "./corpus.mjs";
 import {
+  agentPublicationDocument,
   isSuccessfulMeasuredSample,
   sanitizeWebsiteSamples,
   websiteCellKey,
@@ -401,12 +402,7 @@ function publishWebsiteReports(reports) {
   const prior = fs.existsSync(websiteJson)
     ? JSON.parse(fs.readFileSync(websiteJson, "utf8"))
     : null;
-  const out = {
-    schemaVersion: 1,
-    generatedAt: new Date().toISOString(),
-    structural: prior?.structural ?? null,
-    agent: { cells: [...(prior?.agent?.cells ?? [])] },
-  };
+  const out = agentPublicationDocument(prior);
   for (const cell of cells) {
     const key = websiteCellKey(cell);
     const at = out.agent.cells.findIndex((old) => websiteCellKey(old) === key);

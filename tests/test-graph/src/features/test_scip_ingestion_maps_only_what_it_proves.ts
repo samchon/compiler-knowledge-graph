@@ -1,6 +1,7 @@
 import { TestValidator } from "@nestia/e2e";
 import {
   adaptScipIndex,
+  languageOf,
   parseScipIndex,
   scipSymbol,
 } from "@samchon/graph";
@@ -1110,8 +1111,7 @@ function assertAnUnreliableProducerLanguageCanYieldToTheFile(): void {
       root: "/r",
       provider: "scip-clang",
       languages,
-      languageOf: (file) =>
-        file.endsWith(".c") || file.endsWith(".h") ? "c" : "unknown",
+      languageOf,
       preferFileLanguage: true,
     });
 
@@ -1141,6 +1141,13 @@ function assertAnUnreliableProducerLanguageCanYieldToTheFile(): void {
     adapt("include/generated", ["c"], "C++").nodes[0]?.language,
     "c",
   );
+  for (const extension of [".ipp", ".tpp", ".tcc", ".inl"]) {
+    TestValidator.equals(
+      `a ${extension} implementation header remains in the C++ universe`,
+      adapt(`include/api${extension}`, ["cpp"], "C++").nodes[0]?.language,
+      "cpp",
+    );
+  }
   const foreign = adapt("src/kernel.cu", ["c"], "C++");
   TestValidator.predicate(
     "an unrelated unknown extension cannot borrow C ownership",

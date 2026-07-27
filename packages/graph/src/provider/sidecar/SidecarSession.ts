@@ -153,10 +153,13 @@ export class SidecarSession implements IBulkGraphSession {
       return JSON.parse(text) as unknown;
     } catch (error) {
       const head = text.trimStart().slice(0, 400);
+      // Native JSON.parse rejects with SyntaxError; there is no alternate
+      // thrown shape to branch on at this boundary.
+      const message = (error as SyntaxError).message;
       throw new Error(
-        `${this.options.provider}: the snapshot artifact is not JSON: ${
-          error instanceof Error ? error.message : String(error)
-        }${head === "" ? " (the file is empty)" : `: ${head}`}`,
+        `${this.options.provider}: the snapshot artifact is not JSON: ${message}${
+          head === "" ? " (the file is empty)" : `: ${head}`
+        }`,
       );
     }
   }

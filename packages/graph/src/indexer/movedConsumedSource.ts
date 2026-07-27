@@ -83,9 +83,9 @@ export namespace movedConsumedSource {
  */
 function describe(current: string, consumed: string): string {
   if (current.startsWith(BOM) && !consumed.startsWith(BOM)) {
-    return current.slice(BOM.length) === consumed
-      ? "they differ only by a leading byte order mark the consumer stripped"
-      : `it carries a byte order mark the consumer stripped, and differs further from offset ${String(firstDifference(current.slice(BOM.length), consumed))}`;
+    // The only-BOM case was already accepted by `sameConsumedText`; reaching
+    // the diagnostic means another difference necessarily remains.
+    return `it carries a byte order mark the consumer stripped, and differs further from offset ${String(firstDifference(current.slice(BOM.length), consumed))}`;
   }
   if (current.replace(/\r\n/g, "\n") === consumed.replace(/\r\n/g, "\n")) {
     return "they differ only by line endings";

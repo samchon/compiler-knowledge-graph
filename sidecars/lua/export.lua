@@ -29,12 +29,14 @@
 local original = export.serializeAndExport
 local files = require 'files'
 local furi = require 'file-uri'
+local pathSeparator = package.config:sub(1, 1)
 
 ---Return a portable path only when `absolute` is actually below `root`.
 ---
 ---A raw prefix is not containment: `/work/project-copy/a.lua` starts with
----`/work/project` but belongs to its sibling. Decoded file URIs use either
----slash spelling depending on the host, so the boundary accepts both.
+---`/work/project` but belongs to its sibling. Backslash is a separator only on
+---Windows; on POSIX it is an ordinary filename character and accepting it
+---would alias an outside sibling into the project.
 local function relativeToRoot(absolute, root)
     if type(absolute) ~= 'string' or type(root) ~= 'string'
         or absolute:sub(1, #root) ~= root then
@@ -46,11 +48,13 @@ local function relativeToRoot(absolute, root)
     end
     local rootEnd = root:sub(-1)
     local suffixStart = suffix:sub(1, 1)
-    if rootEnd ~= '/' and rootEnd ~= '\\'
-        and suffixStart ~= '/' and suffixStart ~= '\\' then
+    if rootEnd ~= pathSeparator and suffixStart ~= pathSeparator then
         return nil
     end
-    return suffix:gsub('^[/\\]+', ''):gsub('\\', '/')
+    if pathSeparator == '\\' then
+        return suffix:gsub('^[/\\]+', ''):gsub('\\', '/')
+    end
+    return suffix:gsub('^/+', '')
 end
 
 -- Declaration kinds this exporter claims. Deliberately a list rather than

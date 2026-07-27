@@ -22,6 +22,7 @@ export const test_scip_ingestion_maps_only_what_it_proves = async () => {
   assertIndexValidation();
   assertDocumentOrderIsDecidedHere();
   assertTranslationUnitsFoldIntoOneDocument();
+  assertSparseTranslationUnitsPreserveOptionalEvidence();
   assertDisagreeingUnitsAreNamed();
   assertDisagreeingTextIsRefused();
   assertMapping();
@@ -1692,6 +1693,64 @@ function assertTranslationUnitsFoldIntoOneDocument(): void {
       (warning) =>
         warning.includes("xxhash.c") && warning.includes("2 translation units"),
     ),
+  );
+}
+
+/**
+ * Optional SCIP fields remain optional while translation units are merged.
+ *
+ * A producer may omit a symbol on an occurrence, omit whole occurrence and
+ * symbol lists, or report source text from only one unit. Those are wire-level
+ * distinctions, so the fold must neither invent empty records nor discard the
+ * one unit that carried evidence.
+ */
+function assertSparseTranslationUnitsPreserveOptionalEvidence(): void {
+  const index = parseScipIndex({
+    metadata: { projectRoot: "file:///r" },
+    documents: [
+      {
+        relative_path: "sparse.c",
+        occurrences: [{ range: [1, 0, 1] }],
+        symbols: [{ symbol: "shared" }],
+      },
+      {
+        relative_path: "sparse.c",
+        text: "x\n",
+        occurrences: [
+          { range: [1, 0, 1] },
+          { range: [2, 0, 1] },
+        ],
+        symbols: [{ symbol: "shared" }, { symbol: "right-only" }],
+      },
+      { relative_path: "sparse.c" },
+      { relative_path: "sparse.c", text: "x\n" },
+      { relative_path: "empty.c" },
+      { relative_path: "empty.c" },
+    ],
+  });
+  const sparse = index.documents.find(
+    (document) => document.relativePath === "sparse.c",
+  );
+  const empty = index.documents.find(
+    (document) => document.relativePath === "empty.c",
+  );
+  TestValidator.equals(
+    "one unit's text and sparse records survive the fold without duplication",
+    {
+      text: sparse?.text,
+      occurrences: sparse?.occurrences?.map((entry) => entry.symbol),
+      symbols: sparse?.symbols?.map((entry) => entry.symbol),
+    },
+    {
+      text: "x\n",
+      occurrences: [undefined, undefined],
+      symbols: ["shared", "right-only"],
+    },
+  );
+  TestValidator.equals(
+    "two absent record lists remain absent",
+    [empty?.occurrences, empty?.symbols],
+    [undefined, undefined],
   );
 }
 

@@ -886,6 +886,7 @@ function foldDocumentsByPath(
       ? -1
       : left.relativePath > right.relativePath
         ? 1
+        /* c8 ignore next -- `byPath` has one value per unique path. */
         : 0,
   );
 }

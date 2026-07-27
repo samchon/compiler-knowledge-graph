@@ -254,7 +254,7 @@ export class TtscGraphClient implements IBulkGraphSession {
           this.failChild(
             child,
             new Error(
-              `ttscgraph: could not request snapshot: ${error.message}${exitSuffix(child)}${stderrSuffix(child)}`,
+              `ttscgraph: could not request snapshot: ${error.message}${TtscGraphClient.exitSuffix(child.process)}${stderrSuffix(child)}`,
             ),
           );
         });
@@ -570,6 +570,20 @@ export namespace TtscGraphClient {
     /** Cancel this refresh and retire the native child generation it owns. */
     signal?: AbortSignal;
   }
+
+  /**
+   * How a native child left, kept here so every silent-exit diagnosis is
+   * independently testable even where the host pipe cannot produce EPIPE.
+   */
+  export function exitSuffix(
+    process: Pick<ChildProcessWithoutNullStreams, "signalCode" | "exitCode">,
+  ): string {
+    const signal = process.signalCode;
+    if (signal !== null) return ` (killed by ${signal})`;
+    const code = process.exitCode;
+    if (code !== null) return ` (child exited ${String(code)})`;
+    return "";
+  }
 }
 
 function cancelledError(signal?: AbortSignal, child?: NativeChild): Error {
@@ -609,22 +623,6 @@ function drained(child: NativeChild): Promise<void> {
 }
 
 const DRAIN_GRACE_MS = 250;
-
-/**
- * How the child left, when that is known and says something.
- *
- * A signal and a code are different diagnoses of a silent death: SIGKILL with
- * no output is the shape of an out-of-memory kill, while a code with no output
- * is a program that chose to stop. Neither can be told from the other by an
- * EPIPE alone, which is why both are named here.
- */
-function exitSuffix(child: NativeChild): string {
-  const signal = child.process.signalCode;
-  if (signal !== null && signal !== undefined) return ` (killed by ${signal})`;
-  const code = child.process.exitCode;
-  if (code !== null && code !== undefined) return ` (child exited ${String(code)})`;
-  return "";
-}
 
 function stderrSuffix(child: NativeChild): string {
   const stderr = child.stderr.trim();

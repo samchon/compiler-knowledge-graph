@@ -15,6 +15,7 @@
 -- still invoked afterwards so `--doc` behaves normally.
 
 local original = export.serializeAndExport
+local furi = require 'file-uri'
 
 ---Describe one value without assuming it is a table, a source, or alive.
 local function describe(value, depth)
@@ -132,6 +133,14 @@ function export.serializeAndExport(docs, outputDir)
         if urisOk and type(uris) == 'table' then
             report.uriCount = #uris
             report.uriSample = {}
+            report.boundaryFixtureLoaded = false
+            for _, uri in ipairs(uris) do
+                local absolute = furi.decode(uri)
+                if type(absolute) == 'string'
+                    and absolute:find('lua-probe-project\\outside', 1, true) then
+                    report.boundaryFixtureLoaded = true
+                end
+            end
             for index = 1, math.min(#uris, 5) do
                 report.uriSample[index] = uris[index]
             end

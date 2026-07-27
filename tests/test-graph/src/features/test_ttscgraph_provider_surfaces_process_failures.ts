@@ -16,6 +16,19 @@ import { GraphPaths } from "../internal/GraphPaths";
 export const test_ttscgraph_provider_surfaces_process_failures = async () => {
   const root = GraphPaths.createTempDirectory("samchon-graph-ttscgraph-fail-");
 
+  TestValidator.equals(
+    "silent native exits distinguish signals, codes, and a still-running child",
+    [
+      TtscGraphClient.exitSuffix({
+        signalCode: "SIGKILL",
+        exitCode: null,
+      }),
+      TtscGraphClient.exitSuffix({ signalCode: null, exitCode: 7 }),
+      TtscGraphClient.exitSuffix({ signalCode: null, exitCode: null }),
+    ],
+    [" (killed by SIGKILL)", " (child exited 7)", ""],
+  );
+
   // A command that cannot be spawned rejects the refresh instead of hanging or
   // returning an empty snapshot, and publishes no generation.
   const unspawnable = new TtscGraphClient({

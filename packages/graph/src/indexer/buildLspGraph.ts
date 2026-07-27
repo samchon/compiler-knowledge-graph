@@ -159,7 +159,7 @@ async function buildLspGraphAttempt(
     // reports nothing at all. Two benchmark lanes spent an hour each and left an
     // empty log three times over: no provider named, no reason recorded, and no
     // way to tell a slow strict indexer from a slow fallback.
-    announceProviderSelection(selection.candidates);
+    announceProviderSelection(selection.candidates, selection.warnings);
     for (const candidate of selection.candidates) {
       try {
         const { refresh, session } =
@@ -973,7 +973,11 @@ function resolveCommand(command: string, root: string): string | undefined {
  * no strict candidate is the case most worth being able to see.
  */
 function announceProviderSelection(
-  candidates: readonly { provider: { name: string }; languages: readonly GraphLanguage[] }[],
+  candidates: readonly {
+    provider: { name: string };
+    languages: readonly GraphLanguage[];
+  }[],
+  warnings: readonly string[],
 ): void {
   const named =
     candidates.length === 0
@@ -985,4 +989,11 @@ function announceProviderSelection(
           )
           .join(" ");
   process.stderr.write(`@samchon/graph: indexing with ${named}\n`);
+  // And why nothing better was chosen, in the same breath. Selection already
+  // records a sentence for every provider that declined — not installed, refused
+  // by an option, no build file it recognizes — and those sentences used to
+  // arrive only with the finished dump. A build killed before it finishes is
+  // precisely the one whose reader most needs them.
+  for (const warning of warnings)
+    process.stderr.write(`@samchon/graph: ${warning}\n`);
 }

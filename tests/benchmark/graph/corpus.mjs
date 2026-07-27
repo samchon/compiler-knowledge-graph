@@ -60,7 +60,18 @@ export const CORPUS = [
     name: "gson",
     language: "java",
     url: "https://github.com/samchon/graph-benchmark-gson.git",
-    commit: "c9f3fd55854a743b66f857ace3c7b268ea3e2ef7",
+    // Pinned past a `.mvn/maven.config` selecting gson's own
+    // `disable-error-prone` profile. scip-java runs the project's real Maven
+    // build with a SemanticDB plugin attached, and under it javac rejects
+    // gson's Error Prone compiler arguments outright — `invalid flag:
+    // -XepExcludedPaths:...` — so the lane never reached its strict provider.
+    //
+    // Nothing was removed to fix it: that profile is gson's, activated on JDK
+    // below 21, and the benchmark provisions 21 so it never fired. Selecting it
+    // explicitly asks for a configuration the project already supports, and
+    // Maven reads `.mvn/maven.config` unprompted so no indexer learns a
+    // project-specific flag.
+    commit: "0395e46886d032843f87a7ed73207cf5ba23007e",
     preflight: preflightMinimums(1_000, 5_000, 3_000, 4),
   },
   {

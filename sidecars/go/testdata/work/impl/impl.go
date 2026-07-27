@@ -16,6 +16,19 @@ type Base struct{}
 var _ api.Greeter = Base{}
 var _ api.Transformer = Base{}
 
+// Two package initializers, which Go permits and gin actually has. They share
+// one FullName because nothing may refer to either, so before they were
+// disambiguated by position the second one failed the build outright.
+var initialized string
+
+func init() {
+	initialized = Resolve()
+}
+
+func init() {
+	initialized += api.Resolve()
+}
+
 func (Base) Greet(name string) string {
 	return "hello " + name
 }

@@ -60,6 +60,19 @@ func TestBuildSnapshotProvesWorkspaceSemantics(t *testing.T) {
 	if findNode(first, "_") != nil {
 		t.Error("the blank identifier entered the graph as a declaration")
 	}
+	// Two package initializers, which the language permits and forbids naming.
+	// They share one FullName, so identity has to come from where each is
+	// written or the second one collapses onto the first — and collapsing is
+	// what fails the build, since their nodes differ.
+	initializers := 0
+	for _, declaration := range first.Nodes {
+		if declaration.Name == "init" && declaration.Kind == "function" {
+			initializers++
+		}
+	}
+	if initializers != 2 {
+		t.Errorf("expected both package initializers, found %d", initializers)
+	}
 	for _, kind := range []string{
 		"contains", "exports", "imports", "calls", "accesses", "instantiates",
 		"type_ref", "implements", "dispatches", "tests", "references",

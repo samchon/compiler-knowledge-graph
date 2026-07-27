@@ -447,6 +447,19 @@ func (c *collector) addObjectNode(
 	extraModifiers ...string,
 ) string {
 	symbol := objectSymbol(object, qualified)
+	// Go allows many `func init()` in one package and forbids referring to any
+	// of them, so every one shares a FullName and they all derive one identity.
+	// gin has several and the second one failed the build.
+	//
+	// Unlike the blank identifier this cannot be skipped: an init body runs and
+	// what it calls are edges worth having. So it is disambiguated by where it
+	// is written, the same way a closure is — position is the only thing that
+	// distinguishes two declarations the language deliberately left
+	// indistinguishable by name.
+	if isPackageInit(object, kind) {
+		position := current.pkg.Fset.PositionFor(positioned.Pos(), true)
+		symbol += "::" + current.fileName + "::" + strconv.Itoa(position.Offset)
+	}
 	id := semanticID(kind, symbol, qualified, "")
 	exported := object.Exported() && kind != "parameter" && !(kind == "type" && owner != nil)
 	modifiers := []string{}
@@ -942,6 +955,24 @@ func (c *collector) snapshotParts() ([]source, []node, []edge) {
 		edges = append(edges, value)
 	}
 	return sources, nodes, edges
+}
+
+// Whether this is a package initializer, which the language lets a package
+// declare more than once and lets nothing refer to.
+//
+// The kind check already excludes methods, and a method named `init` is an
+// ordinary referenceable method that must keep its name-based identity; the
+// receiver check says so directly rather than leaving it to that coincidence.
+func isPackageInit(object types.Object, kind string) bool {
+	if kind != "function" {
+		return false
+	}
+	function, ok := object.(*types.Func)
+	if !ok || function.Name() != "init" {
+		return false
+	}
+	signature, ok := function.Type().(*types.Signature)
+	return ok && signature.Recv() == nil
 }
 
 func objectSymbol(object types.Object, qualified string) string {

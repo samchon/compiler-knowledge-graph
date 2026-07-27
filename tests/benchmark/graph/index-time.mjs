@@ -207,7 +207,7 @@ for (const project of selected) {
   // tool, not two. Tracked TypeScript/TSX sources (git ls-files) naturally
   // exclude node_modules, build output, and anything else the fixture
   // ignores; `.d.ts` is excluded because it is shipped output, not source.
-  report.scale[project] = measureScale(project, spec, repoDir);
+  report.scale[project] = measureScale(project, spec, indexDir(spec, repoDir));
   writeJson(reportPath, report);
 
   for (const tool of tools) {
@@ -270,7 +270,7 @@ function runIndexCell({ project, spec, repoDir, tool }) {
     ensureLocalIgnored(repoDir, ".serena/");
     cleanupInsideFixture(repoDir, ".serena");
     try {
-      runChecked(...serenaCommand(["project", "create", repoDir]), {
+      runChecked(...serenaCommand(["project", "create", indexDir(spec, repoDir)]), {
         label: `serena project create ${project}`,
         logBase: path.join(outDir, `serena-create-${project}`),
         cwd: repoDir,
@@ -295,7 +295,7 @@ function runIndexCell({ project, spec, repoDir, tool }) {
         graphLauncher,
         "dump",
         "--cwd",
-        repoDir,
+        indexDir(spec, repoDir),
         "--language",
         spec.language,
         "--mode",
@@ -325,7 +325,7 @@ function runIndexCell({ project, spec, repoDir, tool }) {
     ensureLocalIgnored(repoDir, ".codegraph/");
     cleanupInsideFixture(repoDir, ".codegraph");
     try {
-      const ms = timeChecked(...codegraphCommand(["init", repoDir]), {
+      const ms = timeChecked(...codegraphCommand(["init", indexDir(spec, repoDir)]), {
         label: `codegraph init ${project}`,
         logBase: path.join(outDir, `codegraph-index-${project}`),
       });
@@ -350,7 +350,7 @@ function runIndexCell({ project, spec, repoDir, tool }) {
           "cli",
           "index_repository",
           JSON.stringify({
-            repo_path: repoDir,
+            repo_path: indexDir(spec, repoDir),
             // codebase-memory-mcp index mode: full (default) | moderate |
             // fast. `fast` is the only mode that can index large repos
             // (vscode) on a 64 GB host without the full mode's blowup.
@@ -382,6 +382,23 @@ function runIndexCell({ project, spec, repoDir, tool }) {
     }
   }
   throw new Error(`unknown tool ${tool}`);
+}
+
+/**
+ * The directory a tool should be pointed at, which is not always the checkout.
+ *
+ * A repository can keep its build somewhere other than its own root — koin puts
+ * every module under projects/ — and an indexer run at the checkout root finds
+ * no build file and declines. The clone is still the git root, so the pinned
+ * tree, the local ignores and the cleanup all stay there; only the question
+ * "what am I indexing" moves.
+ *
+ * Every tool gets the same answer, or the comparison stops being one.
+ */
+function indexDir(spec, repoDir) {
+  return spec.indexRoot === undefined
+    ? repoDir
+    : path.join(repoDir, spec.indexRoot);
 }
 
 function measureScale(project, spec, repoDir) {

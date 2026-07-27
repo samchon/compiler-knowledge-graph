@@ -181,6 +181,15 @@ export const CORPUS = [
     url: "https://github.com/samchon/graph-benchmark-koin.git",
     commit: "dc86ef8dd8fbe8564fb7453c03f5b738da3450bb",
     preflight: preflightMinimums(1_000, 3_000, 1_500, 3),
+    // koin keeps no build file at its checkout root — every module lives under
+    // `projects/`, which is where its own build and its contributors work. An
+    // indexer run at the root finds nothing to build and declines, which is
+    // exactly what scip-java reported: "No build tool detected in workspace".
+    //
+    // The clone stays the git root, so the pinned tree and the cleanup are
+    // unchanged; only the directory each tool is pointed at moves, and it moves
+    // for every tool so the comparison stays one.
+    indexRoot: "projects",
     // kotlin-language-server boots a JVM and imports the build via a Gradle
     // sync (kotlinLSPProjectDeps) before answering `initialize` at all; cold,
     // this took over ten minutes on a clean Gradle cache. With no timeout, that

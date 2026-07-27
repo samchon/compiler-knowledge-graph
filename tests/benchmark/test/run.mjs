@@ -42,6 +42,10 @@ const FIXTURE_HOST = Object.freeze({
   cores: 4,
   ramGB: 16,
 });
+const INDEX_PROJECT = "excalidraw";
+const FIXTURE_COMMIT = PROJECTS[INDEX_PROJECT].commit;
+const UNRELATED_PROJECT = "gin";
+const UNRELATED_COMMIT = PROJECTS[UNRELATED_PROJECT].commit;
 const FIXTURE_AGENT_CELL = Object.freeze({
   harness: "codex",
   tool: "samchon-graph",
@@ -62,6 +66,8 @@ testWebsiteCellValidityGate();
 testPublicationRequiresMatchingCodexTraceAudit();
 testFixtureAndPreflightIntegrity();
 testReferenceRenderer();
+assertBothIndexColumnsAreMeasured();
+assertStrictComparisonArithmetic();
 assertDeclarationsPrecedeExecution(graphDir, ["index-time.mjs"]);
 assertWorkflowOptionForms(
   path.join(graphDir, "index-time.mjs"),
@@ -121,6 +127,18 @@ function testPublishedIndexCellsNameTheirMachine() {
     [],
     "a published index cell carries a build time, a timeout, or says it has no build step",
   );
+  if (published.index.schemaVersion === 2) {
+    const stale = (published.index.cells ?? []).filter(
+      (cell) =>
+        cell?.fixtureCommit !== PROJECTS[cell?.project]?.commit ||
+        published.index.fixtures?.[cell?.project] !== cell?.fixtureCommit,
+    );
+    assert.deepEqual(
+      stale.map((cell) => `${String(cell.project)}/${String(cell.tool)}`),
+      [],
+      "a revision-bound index cell must name the exact currently selected fixture commit",
+    );
+  }
   // A fallback cell reports "no strict provider served" and so does a strict
   // cell whose provider failed. Only the recorded intent separates them, so a
   // publication that has both columns must say which is which or the comparison
@@ -146,13 +164,16 @@ function testPublishedIndexCellsNameTheirMachine() {
 
 function testAgentPublicationPreservesIndexResults() {
   const index = {
+    schemaVersion: 2,
     host: FIXTURE_HOST,
-    scale: { fixture: { files: 1, lines: 1 } },
+    fixtures: { [INDEX_PROJECT]: FIXTURE_COMMIT },
+    scale: { [INDEX_PROJECT]: { files: 1, lines: 1 } },
     cells: [
       {
-        project: "fixture",
+        project: INDEX_PROJECT,
         tool: "samchon-graph",
         buildMs: 1,
+        fixtureCommit: FIXTURE_COMMIT,
         measuredAt: "2026-07-28T00:00:00.000Z",
         host: FIXTURE_HOST,
       },
@@ -262,15 +283,18 @@ function testIndexPublicationRefusesMalformedJson() {
     agent: { cells: [FIXTURE_AGENT_CELL] },
   });
   const validReport = JSON.stringify({
+    schemaVersion: 2,
     host: FIXTURE_HOST,
-    projects: ["fixture"],
+    projects: [INDEX_PROJECT],
     tools: ["samchon-graph"],
-    scale: { fixture: { files: 1, lines: 1 } },
+    fixtures: { [INDEX_PROJECT]: FIXTURE_COMMIT },
+    scale: { [INDEX_PROJECT]: { files: 1, lines: 1 } },
     cells: [
       {
-        project: "fixture",
+        project: INDEX_PROJECT,
         tool: "samchon-graph",
         buildMs: 1,
+        fixtureCommit: FIXTURE_COMMIT,
         host: FIXTURE_HOST,
       },
     ],
@@ -385,15 +409,18 @@ function testIndexPublicationRefusesMalformedJson() {
 
   fs.writeFileSync(publication, validPublication);
   const hostlessIncomingReport = JSON.stringify({
+    schemaVersion: 2,
     host: { cpu: "fixture" },
-    projects: ["fixture"],
+    projects: [INDEX_PROJECT],
     tools: ["samchon-graph"],
-    scale: { fixture: { files: 1, lines: 1 } },
+    fixtures: { [INDEX_PROJECT]: FIXTURE_COMMIT },
+    scale: { [INDEX_PROJECT]: { files: 1, lines: 1 } },
     cells: [
       {
-        project: "fixture",
+        project: INDEX_PROJECT,
         tool: "samchon-graph",
         buildMs: 1,
+        fixtureCommit: FIXTURE_COMMIT,
         host: FIXTURE_HOST,
       },
     ],
@@ -419,7 +446,7 @@ function testIndexPublicationRefusesMalformedJson() {
     [
       "unmeasurable",
       {
-        project: "fixture",
+        project: INDEX_PROJECT,
         tool: "samchon-graph",
         host: FIXTURE_HOST,
       },
@@ -427,7 +454,7 @@ function testIndexPublicationRefusesMalformedJson() {
     [
       "contradictory",
       {
-        project: "fixture",
+        project: INDEX_PROJECT,
         tool: "samchon-graph",
         buildMs: 1,
         timedOutMs: 2,
@@ -437,7 +464,7 @@ function testIndexPublicationRefusesMalformedJson() {
     [
       "hostless",
       {
-        project: "fixture",
+        project: INDEX_PROJECT,
         tool: "samchon-graph",
         buildMs: 1,
       },
@@ -445,7 +472,7 @@ function testIndexPublicationRefusesMalformedJson() {
     [
       "incomplete-host",
       {
-        project: "fixture",
+        project: INDEX_PROJECT,
         tool: "samchon-graph",
         buildMs: 1,
         host: { cpu: "fixture" },
@@ -454,7 +481,7 @@ function testIndexPublicationRefusesMalformedJson() {
     [
       "invalid-measurement-date",
       {
-        project: "fixture",
+        project: INDEX_PROJECT,
         tool: "samchon-graph",
         buildMs: 1,
         measuredAt: "not a date",
@@ -464,11 +491,13 @@ function testIndexPublicationRefusesMalformedJson() {
   ]) {
     fs.writeFileSync(publication, validPublication);
     const invalidOutcomeReport = JSON.stringify({
+      schemaVersion: 2,
       host: FIXTURE_HOST,
-      projects: ["fixture"],
+      projects: [INDEX_PROJECT],
       tools: ["samchon-graph"],
-      scale: { fixture: { files: 1, lines: 1 } },
-      cells: [invalidCell],
+      fixtures: { [INDEX_PROJECT]: FIXTURE_COMMIT },
+      scale: { [INDEX_PROJECT]: { files: 1, lines: 1 } },
+      cells: [{ fixtureCommit: FIXTURE_COMMIT, ...invalidCell }],
     });
     fs.writeFileSync(report, invalidOutcomeReport);
     const invalidOutcome = cp.spawnSync(
@@ -505,12 +534,37 @@ function testIndexPublicationRefusesMalformedJson() {
       { ...validReportDocument, scale: {} },
     ],
     [
+      "missing fixture revisions",
+      { ...validReportDocument, fixtures: undefined },
+    ],
+    [
+      "wrong scoped fixture revision",
+      {
+        ...validReportDocument,
+        fixtures: { [INDEX_PROJECT]: "0".repeat(40) },
+      },
+    ],
+    [
       "out-of-scope scale",
       {
         ...validReportDocument,
         scale: {
           ...validReportDocument.scale,
-          unrelated: { files: 2, lines: 2 },
+          [UNRELATED_PROJECT]: { files: 2, lines: 2 },
+        },
+      },
+    ],
+    [
+      "out-of-scope fixture revision",
+      {
+        ...validReportDocument,
+        fixtures: {
+          ...validReportDocument.fixtures,
+          [UNRELATED_PROJECT]: UNRELATED_COMMIT,
+        },
+        scale: {
+          ...validReportDocument.scale,
+          [UNRELATED_PROJECT]: { files: 2, lines: 2 },
         },
       },
     ],
@@ -522,6 +576,18 @@ function testIndexPublicationRefusesMalformedJson() {
           {
             ...validReportDocument.cells[0],
             tool: "samchon-graph-fallback",
+          },
+        ],
+      },
+    ],
+    [
+      "cell fixture mismatch",
+      {
+        ...validReportDocument,
+        cells: [
+          {
+            ...validReportDocument.cells[0],
+            fixtureCommit: "0".repeat(40),
           },
         ],
       },
@@ -548,43 +614,54 @@ function testIndexPublicationRefusesMalformedJson() {
   const partialPrior = {
     ...JSON.parse(validPublication),
     index: {
+      schemaVersion: 2,
       host: FIXTURE_HOST,
+      fixtures: {
+        [INDEX_PROJECT]: FIXTURE_COMMIT,
+        [UNRELATED_PROJECT]: UNRELATED_COMMIT,
+      },
       scale: {
-        fixture: { files: 1, lines: 1 },
-        unrelated: { files: 2, lines: 2 },
+        [INDEX_PROJECT]: { files: 1, lines: 1 },
+        [UNRELATED_PROJECT]: { files: 2, lines: 2 },
       },
       cells: [
         {
-          project: "fixture",
+          project: INDEX_PROJECT,
           tool: "samchon-graph",
           buildMs: 1,
+          fixtureCommit: FIXTURE_COMMIT,
           host: FIXTURE_HOST,
         },
         {
-          project: "fixture",
+          project: INDEX_PROJECT,
           tool: "samchon-graph-fallback",
           buildMs: 2,
+          fixtureCommit: FIXTURE_COMMIT,
           host: FIXTURE_HOST,
         },
         {
-          project: "unrelated",
+          project: UNRELATED_PROJECT,
           tool: "samchon-graph",
           buildMs: 3,
+          fixtureCommit: UNRELATED_COMMIT,
           host: FIXTURE_HOST,
         },
       ],
     },
   };
   const incompletePairReport = {
+    schemaVersion: 2,
     host: FIXTURE_HOST,
-    projects: ["fixture"],
+    projects: [INDEX_PROJECT],
     tools: ["samchon-graph", "samchon-graph-fallback"],
-    scale: { fixture: { files: 4, lines: 4 } },
+    fixtures: { [INDEX_PROJECT]: FIXTURE_COMMIT },
+    scale: { [INDEX_PROJECT]: { files: 4, lines: 4 } },
     cells: [
       {
-        project: "fixture",
+        project: INDEX_PROJECT,
         tool: "samchon-graph",
         buildMs: 4,
+        fixtureCommit: FIXTURE_COMMIT,
         host: FIXTURE_HOST,
       },
     ],
@@ -609,8 +686,8 @@ function testIndexPublicationRefusesMalformedJson() {
       cell.buildMs,
     ]),
     [
-      ["unrelated", "samchon-graph", 3],
-      ["fixture", "samchon-graph", 4],
+      [UNRELATED_PROJECT, "samchon-graph", 3],
+      [INDEX_PROJECT, "samchon-graph", 4],
     ],
     "an incomplete partial report must remove every old cell in its declared project/tool scope",
   );
@@ -618,16 +695,67 @@ function testIndexPublicationRefusesMalformedJson() {
   assert.deepEqual(partialPublication.agent, {
     cells: [FIXTURE_AGENT_CELL],
   });
-  const stalePublication = {
+  const revisionlessPrior = {
     ...JSON.parse(validPublication),
     index: {
       host: FIXTURE_HOST,
-      scale: { stale: { files: 1, lines: 1 } },
+      scale: { [UNRELATED_PROJECT]: { files: 2, lines: 2 } },
       cells: [
         {
-          project: "stale",
+          project: UNRELATED_PROJECT,
+          tool: "samchon-graph",
+          buildMs: 3,
+          host: FIXTURE_HOST,
+        },
+      ],
+    },
+  };
+  fs.writeFileSync(publication, JSON.stringify(revisionlessPrior));
+  fs.writeFileSync(report, validReport);
+  const migrated = cp.spawnSync(
+    process.execPath,
+    [runner, `--publish=${report}`],
+    {
+      encoding: "utf8",
+      env: { ...process.env, SAMCHON_BENCH_INDEX_JSON: publication },
+      windowsHide: true,
+    },
+  );
+  assert.equal(migrated.status, 0, migrated.stderr);
+  const migratedPublication = JSON.parse(
+    fs.readFileSync(publication, "utf8"),
+  );
+  assert.deepEqual(
+    {
+      schemaVersion: migratedPublication.index.schemaVersion,
+      fixtures: migratedPublication.index.fixtures,
+      scale: migratedPublication.index.scale,
+      cells: migratedPublication.index.cells.map((cell) => [
+        cell.project,
+        cell.fixtureCommit,
+      ]),
+    },
+    {
+      schemaVersion: 2,
+      fixtures: { [INDEX_PROJECT]: FIXTURE_COMMIT },
+      scale: { [INDEX_PROJECT]: { files: 1, lines: 1 } },
+      cells: [[INDEX_PROJECT, FIXTURE_COMMIT]],
+    },
+    "a preserving fold must discard revisionless prior measurements instead of joining them to the current corpus",
+  );
+  const stalePublication = {
+    ...JSON.parse(validPublication),
+    index: {
+      schemaVersion: 2,
+      host: FIXTURE_HOST,
+      fixtures: { [UNRELATED_PROJECT]: UNRELATED_COMMIT },
+      scale: { [UNRELATED_PROJECT]: { files: 1, lines: 1 } },
+      cells: [
+        {
+          project: UNRELATED_PROJECT,
           tool: "samchon-graph",
           buildMs: 1,
+          fixtureCommit: UNRELATED_COMMIT,
           host: FIXTURE_HOST,
         },
       ],
@@ -749,11 +877,11 @@ function testLspRequestDiagnosisSummary() {
   const summary = summarizeLspRequestTrace(
     [
       "unrelated stderr",
-      '@samchon/graph: lsp-request id=2 method="textDocument/references" phase=start',
-      '@samchon/graph: lsp-request id=1 method="initialize" phase=start',
-      '@samchon/graph: lsp-request id=1 method="initialize" phase=end status=success durationMs=12.500',
-      '@samchon/graph: lsp-request id=3 method="textDocument/references" phase=start',
-      '@samchon/graph: lsp-request id=3 method="textDocument/references" phase=end status=error durationMs=4.250',
+      '@samchon/graph: lsp-request client=1 id=2 method="textDocument/references" phase=start',
+      '@samchon/graph: lsp-request client=1 id=1 method="initialize" phase=start',
+      '@samchon/graph: lsp-request client=1 id=1 method="initialize" phase=end status=success durationMs=12.500',
+      '@samchon/graph: lsp-request client=1 id=3 method="textDocument/references" phase=start',
+      '@samchon/graph: lsp-request client=1 id=3 method="textDocument/references" phase=end status=error durationMs=4.250',
     ].join("\n"),
   );
   assert.deepEqual(
@@ -763,7 +891,11 @@ function testLspRequestDiagnosisSummary() {
       completedCount: summary.completedCount,
       postCutoffEndCount: summary.postCutoffEndCount,
       postCutoffErrorCount: summary.postCutoffErrorCount,
+      cleanupRequestCount: summary.cleanupRequestCount,
+      cleanupCompletedCount: summary.cleanupCompletedCount,
+      cleanupErrorCount: summary.cleanupErrorCount,
       inFlight: summary.inFlight,
+      cleanupInFlight: summary.cleanupInFlight,
       methods: summary.methods,
     },
     {
@@ -772,7 +904,13 @@ function testLspRequestDiagnosisSummary() {
       completedCount: 2,
       postCutoffEndCount: 0,
       postCutoffErrorCount: 0,
-      inFlight: [{ id: 2, method: "textDocument/references" }],
+      cleanupRequestCount: 0,
+      cleanupCompletedCount: 0,
+      cleanupErrorCount: 0,
+      inFlight: [
+        { client: 1, id: 2, method: "textDocument/references" },
+      ],
+      cleanupInFlight: [],
       methods: {
         initialize: {
           started: 1,
@@ -783,6 +921,11 @@ function testLspRequestDiagnosisSummary() {
           postCutoffEnds: 0,
           postCutoffErrors: 0,
           postCutoffMaxDurationMs: 0,
+          cleanupStarted: 0,
+          cleanupCompleted: 0,
+          cleanupErrors: 0,
+          cleanupTotalDurationMs: 0,
+          cleanupMaxDurationMs: 0,
         },
         "textDocument/references": {
           started: 2,
@@ -793,6 +936,11 @@ function testLspRequestDiagnosisSummary() {
           postCutoffEnds: 0,
           postCutoffErrors: 0,
           postCutoffMaxDurationMs: 0,
+          cleanupStarted: 0,
+          cleanupCompleted: 0,
+          cleanupErrors: 0,
+          cleanupTotalDurationMs: 0,
+          cleanupMaxDurationMs: 0,
         },
       },
     },
@@ -801,13 +949,15 @@ function testLspRequestDiagnosisSummary() {
 
   const cutoff = summarizeLspRequestTrace(
     [
-      '@samchon/graph: lsp-request id=1 method="initialize" phase=start',
-      '@samchon/graph: lsp-request id=1 method="initialize" phase=end status=success durationMs=12.500',
-      '@samchon/graph: lsp-request id=2 method="textDocument/references" phase=start',
-      '@samchon/graph: lsp-request id=3 method="textDocument/references" phase=start',
+      '@samchon/graph: lsp-request client=1 id=1 method="initialize" phase=start',
+      '@samchon/graph: lsp-request client=1 id=1 method="initialize" phase=end status=success durationMs=12.500',
+      '@samchon/graph: lsp-request client=1 id=2 method="textDocument/references" phase=start',
+      '@samchon/graph: lsp-request client=2 id=1 method="textDocument/references" phase=start',
       "@samchon/graph: lsp-request phase=cutoff",
-      '@samchon/graph: lsp-request id=2 method="textDocument/references" phase=end status=error durationMs=300001.000',
-      '@samchon/graph: lsp-request id=3 method="textDocument/references" phase=end status=error durationMs=299999.000',
+      '@samchon/graph: lsp-request client=1 id=2 method="textDocument/references" phase=end status=error durationMs=300001.000',
+      '@samchon/graph: lsp-request client=2 id=1 method="textDocument/references" phase=end status=error durationMs=299999.000',
+      '@samchon/graph: lsp-request client=1 id=3 method="shutdown" phase=start',
+      '@samchon/graph: lsp-request client=1 id=3 method="shutdown" phase=end status=success durationMs=4.000',
     ].join("\n"),
   );
   assert.deepEqual(
@@ -818,10 +968,14 @@ function testLspRequestDiagnosisSummary() {
       completedCount: 1,
       postCutoffEndCount: 2,
       postCutoffErrorCount: 2,
+      cleanupRequestCount: 1,
+      cleanupCompletedCount: 1,
+      cleanupErrorCount: 0,
       inFlight: [
-        { id: 2, method: "textDocument/references" },
-        { id: 3, method: "textDocument/references" },
+        { client: 1, id: 2, method: "textDocument/references" },
+        { client: 2, id: 1, method: "textDocument/references" },
       ],
+      cleanupInFlight: [],
       methods: {
         initialize: {
           started: 1,
@@ -832,6 +986,26 @@ function testLspRequestDiagnosisSummary() {
           postCutoffEnds: 0,
           postCutoffErrors: 0,
           postCutoffMaxDurationMs: 0,
+          cleanupStarted: 0,
+          cleanupCompleted: 0,
+          cleanupErrors: 0,
+          cleanupTotalDurationMs: 0,
+          cleanupMaxDurationMs: 0,
+        },
+        shutdown: {
+          started: 0,
+          completed: 0,
+          errors: 0,
+          totalDurationMs: 0,
+          maxDurationMs: 0,
+          postCutoffEnds: 0,
+          postCutoffErrors: 0,
+          postCutoffMaxDurationMs: 0,
+          cleanupStarted: 1,
+          cleanupCompleted: 1,
+          cleanupErrors: 0,
+          cleanupTotalDurationMs: 4,
+          cleanupMaxDurationMs: 4,
         },
         "textDocument/references": {
           started: 2,
@@ -842,11 +1016,64 @@ function testLspRequestDiagnosisSummary() {
           postCutoffEnds: 2,
           postCutoffErrors: 2,
           postCutoffMaxDurationMs: 300001,
+          cleanupStarted: 0,
+          cleanupCompleted: 0,
+          cleanupErrors: 0,
+          cleanupTotalDurationMs: 0,
+          cleanupMaxDurationMs: 0,
         },
       },
     },
     "request diagnosis must freeze in-flight identities before abort cleanup emits terminal errors",
   );
+
+  for (const [label, lines, pattern] of [
+    [
+      "incomplete end",
+      [
+        '@samchon/graph: lsp-request client=1 id=1 method="initialize" phase=start',
+        '@samchon/graph: lsp-request client=1 id=1 method="initialize" phase=end',
+      ],
+      /malformed LSP request trace/,
+    ],
+    [
+      "duplicate start",
+      [
+        '@samchon/graph: lsp-request client=1 id=1 method="initialize" phase=start',
+        '@samchon/graph: lsp-request client=1 id=1 method="initialize" phase=start',
+      ],
+      /duplicate LSP request start/,
+    ],
+    [
+      "orphan end",
+      [
+        '@samchon/graph: lsp-request client=1 id=1 method="initialize" phase=end status=success durationMs=1.000',
+      ],
+      /orphan LSP request end/,
+    ],
+    [
+      "changed method",
+      [
+        '@samchon/graph: lsp-request client=1 id=1 method="initialize" phase=start',
+        '@samchon/graph: lsp-request client=1 id=1 method="shutdown" phase=end status=success durationMs=1.000',
+      ],
+      /changed method/,
+    ],
+    [
+      "duplicate cutoff",
+      [
+        "@samchon/graph: lsp-request phase=cutoff",
+        "@samchon/graph: lsp-request phase=cutoff",
+      ],
+      /duplicate LSP request cutoff/,
+    ],
+  ]) {
+    assert.throws(
+      () => summarizeLspRequestTrace(lines.join("\n")),
+      pattern,
+      `request diagnosis must reject a ${label}`,
+    );
+  }
 }
 
 function testJavaToolOptionEncoding() {

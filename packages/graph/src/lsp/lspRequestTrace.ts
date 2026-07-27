@@ -3,6 +3,7 @@ import type { LspClient } from "./LspClient";
 const LSP_REQUEST_TRACE_ENV =
   "SAMCHON_GRAPH_LSP_REQUEST_TRACE";
 const CUTOFF_SIGNALS = new WeakSet<AbortSignal>();
+let nextTraceClientId = 1;
 
 /**
  * Opt-in request timing for long-running benchmark diagnosis.
@@ -16,6 +17,7 @@ export function lspRequestTrace(
   signal?: AbortSignal,
 ): LspClient.IRequestObserver | undefined {
   if (env[LSP_REQUEST_TRACE_ENV] !== "1") return undefined;
+  const clientId = nextTraceClientId++;
   if (signal !== undefined && !CUTOFF_SIGNALS.has(signal)) {
     CUTOFF_SIGNALS.add(signal);
     const cutoff = (): void => {
@@ -30,7 +32,8 @@ export function lspRequestTrace(
   }
   return (event) => {
     const prefix =
-      `@samchon/graph: lsp-request id=${String(event.id)}` +
+      `@samchon/graph: lsp-request client=${String(clientId)}` +
+      ` id=${String(event.id)}` +
       ` method=${JSON.stringify(event.method)} phase=${event.phase}`;
     write(
       event.phase === "start"

@@ -5,6 +5,8 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { PROJECTS } from "../graph/corpus.mjs";
+
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, "../../..");
 
@@ -103,39 +105,52 @@ export function assertStrictComparisonArithmetic() {
     project,
     tool,
     host,
+    fixtureCommit: PROJECTS[project].commit,
     strict: tool === "samchon-graph",
     ...extra,
   });
+  const servedProject = "excalidraw";
+  const absentProject = "flask";
+  const timeoutProject = "gin";
+  const projects = [servedProject, absentProject, timeoutProject];
   const fixture = {
+    schemaVersion: 1,
     index: {
-      scale: {},
+      schemaVersion: 2,
+      host,
+      fixtures: Object.fromEntries(
+        projects.map((project) => [project, PROJECTS[project].commit]),
+      ),
+      scale: Object.fromEntries(
+        projects.map((project) => [project, { files: 1, lines: 1 }]),
+      ),
       cells: [
         // Served, both finished: a ratio.
-        cell("alpha", "samchon-graph", {
+        cell(servedProject, "samchon-graph", {
           buildMs: 10_000,
           servedBy: "lsp scip-fake(go)",
         }),
-        cell("alpha", "samchon-graph-fallback", {
+        cell(servedProject, "samchon-graph-fallback", {
           buildMs: 250_000,
           servedBy: "lsp no strict provider served",
         }),
         // Never served: both cells measured the same lane, so 1.0x would read
         // as a provider that bought nothing rather than one that never ran.
-        cell("beta", "samchon-graph", {
+        cell(absentProject, "samchon-graph", {
           buildMs: 20_000,
           servedBy: "lsp no strict provider served",
         }),
-        cell("beta", "samchon-graph-fallback", {
+        cell(absentProject, "samchon-graph-fallback", {
           buildMs: 21_000,
           servedBy: "lsp no strict provider served",
         }),
         // Fallback ran out of time: a timeout bounds a duration from below, so
         // dividing by it would understate the very gap it is meant to show.
-        cell("gamma", "samchon-graph", {
+        cell(timeoutProject, "samchon-graph", {
           buildMs: 5_000,
           servedBy: "lsp scip-fake(c)",
         }),
-        cell("gamma", "samchon-graph-fallback", {
+        cell(timeoutProject, "samchon-graph-fallback", {
           buildMs: null,
           timedOutMs: 3_600_000,
           servedBy: "attempted no strict provider selected",
@@ -163,17 +178,19 @@ export function assertStrictComparisonArithmetic() {
 
   assert.match(
     out,
-    /alpha[^\n]*25\.0x/,
+    new RegExp(`${servedProject}[^\\n]*25\\.0x`),
     "a served project reports how much the strict provider saved",
   );
   assert.match(
     out,
-    /beta[^\n]*both cells measured the same lane/,
+    new RegExp(
+      `${absentProject}[^\\n]*both cells measured the same lane`,
+    ),
     "a project whose provider never served must not report a ratio",
   );
   assert.doesNotMatch(
     out,
-    /gamma[^\n]*x$/m,
+    new RegExp(`${timeoutProject}[^\\n]*x$`, "m"),
     "a project with an unfinished cell must not be given a ratio",
   );
 }

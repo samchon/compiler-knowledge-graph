@@ -21,9 +21,36 @@ export function agentPublicationDocument(prior) {
 
 export function assertIndexReport(value, label) {
   assertRecord(value, label);
+  const schemaVersion = value.schemaVersion ?? 1;
+  if (schemaVersion !== 1 && schemaVersion !== 2) {
+    throw new TypeError(
+      `${label}.schemaVersion must be omitted, 1, or 2`,
+    );
+  }
   assertHost(value.host, `${label}.host`);
   assertScale(value.scale, `${label}.scale`);
-  assertIndexCells(value.cells, `${label}.cells`);
+  const fixtures =
+    schemaVersion === 2
+      ? assertFixtureRevisions(value.fixtures, `${label}.fixtures`)
+      : undefined;
+  assertIndexCells(value.cells, `${label}.cells`, fixtures);
+  if (fixtures !== undefined) {
+    const scaleProjects = new Set(Object.keys(value.scale));
+    for (const project of scaleProjects) {
+      if (!fixtures.has(project)) {
+        throw new TypeError(
+          `${label}.fixtures must bind scaled project ${project} to its measured revision`,
+        );
+      }
+    }
+    for (const project of fixtures.keys()) {
+      if (!scaleProjects.has(project)) {
+        throw new TypeError(
+          `${label}.fixtures binds unscaled project ${project}`,
+        );
+      }
+    }
+  }
 }
 
 export function assertWebsitePublication(value) {
@@ -88,7 +115,7 @@ function assertScale(value, label) {
   }
 }
 
-function assertIndexCells(value, label) {
+function assertIndexCells(value, label, fixtures) {
   if (!Array.isArray(value)) {
     throw new TypeError(`${label} must be an array`);
   }
@@ -100,6 +127,26 @@ function assertIndexCells(value, label) {
       if (typeof cell[field] !== "string" || cell[field].trim() === "") {
         throw new TypeError(`${cellLabel}.${field} must be a nonempty string`);
       }
+    }
+    if (fixtures !== undefined) {
+      const fixtureCommit = fixtures.get(cell.project);
+      if (fixtureCommit === undefined) {
+        throw new TypeError(
+          `${cellLabel}.project has no fixture revision in its index document`,
+        );
+      }
+      if (cell.fixtureCommit !== fixtureCommit) {
+        throw new TypeError(
+          `${cellLabel}.fixtureCommit must match the measured project revision`,
+        );
+      }
+    } else if (
+      cell.fixtureCommit !== undefined &&
+      !isCommit(cell.fixtureCommit)
+    ) {
+      throw new TypeError(
+        `${cellLabel}.fixtureCommit must be a full lowercase Git commit`,
+      );
     }
     for (const field of ["buildMs", "timedOutMs"]) {
       if (
@@ -148,6 +195,27 @@ function assertIndexCells(value, label) {
     }
     identities.add(identity);
   }
+}
+
+function assertFixtureRevisions(value, label) {
+  assertRecord(value, label);
+  const fixtures = new Map();
+  for (const [project, commit] of Object.entries(value)) {
+    if (project.trim() === "") {
+      throw new TypeError(`${label} must not contain an empty project name`);
+    }
+    if (!isCommit(commit)) {
+      throw new TypeError(
+        `${label}.${project} must be a full lowercase Git commit`,
+      );
+    }
+    fixtures.set(project, commit);
+  }
+  return fixtures;
+}
+
+function isCommit(value) {
+  return typeof value === "string" && /^[0-9a-f]{40}$/.test(value);
 }
 
 function assertHost(value, label) {

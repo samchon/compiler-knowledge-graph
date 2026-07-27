@@ -321,24 +321,52 @@ const assertRequestTraceFormatting = async (): Promise<void> => {
     durationMs: 12.3456,
   });
   cutoff.abort();
+  const traceClient = /client=(\d+)/.exec(lines[0] ?? "")?.[1];
+  TestValidator.predicate(
+    "request timing gives each client a trace identity",
+    traceClient !== undefined,
+  );
   TestValidator.equals(
     "request timing names no parameters or paths and marks the abort cutoff",
     lines,
     [
-      '@samchon/graph: lsp-request id=7 method="textDocument/references" phase=start\n',
-      '@samchon/graph: lsp-request id=7 method="textDocument/references" phase=end status=success durationMs=12.346\n',
+      `@samchon/graph: lsp-request client=${traceClient} id=7 method="textDocument/references" phase=start\n`,
+      `@samchon/graph: lsp-request client=${traceClient} id=7 method="textDocument/references" phase=end status=success durationMs=12.346\n`,
       "@samchon/graph: lsp-request phase=cutoff\n",
     ],
   );
-  lspRequestTrace(
+  const secondTrace = lspRequestTrace(
     { [LSP_REQUEST_TRACE_ENV]: "1" },
     (line) => lines.push(line),
     cutoff.signal,
   );
+  secondTrace?.({
+    phase: "start",
+    id: 7,
+    method: "shutdown",
+  });
+  secondTrace?.({
+    phase: "end",
+    id: 7,
+    method: "shutdown",
+    status: "success",
+    durationMs: 1,
+  });
+  const secondClient = /client=(\d+)/.exec(lines[3] ?? "")?.[1];
   TestValidator.equals(
-    "one abort signal emits one cutoff across clients",
-    [lines.length, lines.at(-1)],
-    [3, "@samchon/graph: lsp-request phase=cutoff\n"],
+    "one abort signal emits one cutoff while request identities stay unique across clients",
+    [
+      lines.filter(
+        (line) => line === "@samchon/graph: lsp-request phase=cutoff\n",
+      ).length,
+      traceClient !== secondClient,
+      lines.at(-1),
+    ],
+    [
+      1,
+      true,
+      `@samchon/graph: lsp-request client=${secondClient} id=7 method="shutdown" phase=end status=success durationMs=1.000\n`,
+    ],
   );
 
   const alreadyAborted = new AbortController();

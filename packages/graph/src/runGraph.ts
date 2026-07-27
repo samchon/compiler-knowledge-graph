@@ -57,9 +57,11 @@ async function runDump(argv: readonly string[]): Promise<void> {
   // or language server retires its owned process tree before the dump exits.
   // Without this handler the timed-out CLI died first and left that server
   // consuming the host while the next supposedly quiet cell was measured.
-  /* c8 ignore next -- exercised by the POSIX child-process integration; the
-   * Windows coverage host cannot deliver a catchable SIGTERM to Node. */
+  /* c8 ignore start -- exercised by the POSIX child-process integration; the
+   * Windows coverage host cannot deliver a catchable SIGTERM to Node, so the
+   * function identity itself is unreachable there as well as its body. */
   const abort = (): void => controller.abort();
+  /* c8 ignore stop */
   process.once("SIGINT", abort);
   process.once("SIGTERM", abort);
   try {

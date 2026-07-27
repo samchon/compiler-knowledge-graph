@@ -19,6 +19,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { PROJECTS } from "./corpus.mjs";
+import { assertWebsitePublication } from "./publication-document.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 // The publication by default, and a named one when asked. The headline number
@@ -31,6 +32,7 @@ const websiteJson =
   path.resolve(here, "..", "results", "graph.json");
 
 const published = readJson(websiteJson);
+if (published !== null) assertWebsitePublication(published);
 const index = published?.index ?? null;
 if (index === null) {
   process.stdout.write(
@@ -41,8 +43,18 @@ if (index === null) {
 
 const cells = Array.isArray(index.cells) ? index.cells : [];
 const measured = new Map();
+let staleCellCount = 0;
 for (const cell of cells) {
   if (typeof cell?.project !== "string") continue;
+  const selectedCommit = PROJECTS[cell.project]?.commit;
+  if (
+    index.schemaVersion !== 2 ||
+    index.fixtures?.[cell.project] !== selectedCommit ||
+    cell.fixtureCommit !== selectedCommit
+  ) {
+    staleCellCount += 1;
+    continue;
+  }
   const perTool = measured.get(cell.project) ?? new Map();
   perTool.set(cell.tool, cell);
   measured.set(cell.project, perTool);
@@ -50,7 +62,10 @@ for (const cell of cells) {
 
 const rows = Object.keys(PROJECTS).map((project) => {
   const spec = PROJECTS[project];
-  const scale = index.scale?.[project];
+  const revisionBound =
+    index.schemaVersion === 2 &&
+    index.fixtures?.[project] === spec.commit;
+  const scale = revisionBound ? index.scale?.[project] : undefined;
   const perTool = measured.get(project);
   return {
     project,
@@ -61,9 +76,14 @@ const rows = Object.keys(PROJECTS).map((project) => {
     tools: perTool === undefined ? [] : [...perTool.entries()],
   };
 });
+const currentCells = [...measured.values()].flatMap((perTool) => [
+  ...perTool.values(),
+]);
 
 if (process.argv.includes("--json")) {
-  process.stdout.write(`${JSON.stringify({ host: index.host, rows }, null, 2)}\n`);
+  process.stdout.write(
+    `${JSON.stringify({ host: index.host, staleCellCount, rows }, null, 2)}\n`,
+  );
   process.exit(0);
 }
 
@@ -74,9 +94,12 @@ if (process.argv.includes("--json")) {
 // disagree, each says what it ran on and the reader can see that two rows are
 // not one comparison.
 const hosts = new Set(
-  cells.map((cell) => cell.host?.cpu).filter((cpu) => typeof cpu === "string"),
+  currentCells
+    .map((cell) => cell.host?.cpu)
+    .filter((cpu) => typeof cpu === "string"),
 );
-const uniform = hosts.size === 1 ? (cells[0]?.host ?? index.host) : null;
+const uniform =
+  hosts.size === 1 ? (currentCells[0]?.host ?? index.host) : null;
 if (uniform)
   process.stdout.write(
     `host: ${uniform.cpu ?? "unknown"} — ${String(uniform.cores ?? "?")} cores, ` +
@@ -86,6 +109,12 @@ else
   process.stdout.write(
     `measured across ${String(hosts.size)} distinct hosts; each row names its own.\n\n`,
   );
+
+if (index.schemaVersion !== 2 || staleCellCount > 0) {
+  process.stdout.write(
+    `ignored ${String(staleCellCount)} cell(s) without the currently selected full fixture revision.\n\n`,
+  );
+}
 
 for (const row of rows) {
   const scale =

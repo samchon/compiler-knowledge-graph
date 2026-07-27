@@ -178,10 +178,14 @@ if (!parsed.flags.has("--no-setup")) {
 }
 
 const report = {
+  schemaVersion: 2,
   date: new Date().toISOString(),
   outDir,
   tools,
   projects: selected,
+  fixtures: Object.fromEntries(
+    selected.map((project) => [project, PROJECTS[project].commit]),
+  ),
   host: hostSpec(),
   scale: {},
   cells: [],
@@ -263,6 +267,7 @@ for (const project of selected) {
         // on is part of it.
         report.cells.push({
           ...cell,
+          fixtureCommit: spec.commit,
           measuredAt: new Date().toISOString(),
           cacheIsolation: cellCache.kind,
           host: report.host,
@@ -631,11 +636,39 @@ function publishWebsiteIndex(currentReport) {
   }
   const keepPrior = !parsed.flags.has("--reset-index");
   const priorIndex = keepPrior ? (prior?.index ?? null) : null;
-  const scale = { ...(priorIndex?.scale ?? {}), ...currentReport.scale };
+  // A schema-1 cell has no fixture revision and a schema-2 cell can name a
+  // revision that the current corpus no longer selects. Neither may survive a
+  // preserving fold: retaining its duration while joining it to today's
+  // registry is exactly how an old Koin result was labelled as a measurement
+  // of a fixture it had never seen.
+  const currentPriorProjects = new Set(
+    Object.entries(priorIndex?.fixtures ?? {})
+      .filter(
+        ([project, commit]) =>
+          priorIndex?.schemaVersion === 2 &&
+          PROJECTS[project]?.commit === commit,
+      )
+      .map(([project]) => project),
+  );
+  const priorScale = Object.fromEntries(
+    Object.entries(priorIndex?.scale ?? {}).filter(([project]) =>
+      currentPriorProjects.has(project),
+    ),
+  );
+  const priorFixtures = Object.fromEntries(
+    Object.entries(priorIndex?.fixtures ?? {}).filter(([project]) =>
+      currentPriorProjects.has(project),
+    ),
+  );
+  const scale = { ...priorScale, ...currentReport.scale };
+  const fixtures = { ...priorFixtures, ...currentReport.fixtures };
   const projects = new Set(currentReport.projects);
   const tools = new Set(currentReport.tools);
   const cells = (priorIndex?.cells ?? []).filter(
-    (cell) => !projects.has(cell.project) || !tools.has(cell.tool),
+    (cell) =>
+      currentPriorProjects.has(cell.project) &&
+      cell.fixtureCommit === PROJECTS[cell.project]?.commit &&
+      (!projects.has(cell.project) || !tools.has(cell.tool)),
   );
   for (const cell of currentReport.cells) {
     cells.push(cell);
@@ -652,7 +685,13 @@ function publishWebsiteIndex(currentReport) {
     // thirteen separate runners on purpose and a single panel would speak for
     // twelve machines it never saw. Read the cell; the panel is a summary of
     // whichever fold happened to land last.
-    index: { host: currentReport.host, scale, cells },
+    index: {
+      schemaVersion: 2,
+      host: currentReport.host,
+      fixtures,
+      scale,
+      cells,
+    },
   };
   fs.mkdirSync(path.dirname(websiteJson), { recursive: true });
   fs.writeFileSync(websiteJson, `${JSON.stringify(out)}\n`);
@@ -687,7 +726,23 @@ function assertIncomingReportScope(incoming) {
   }
   const projects = new Set(incoming.projects);
   const tools = new Set(incoming.tools);
+  if (
+    incoming.schemaVersion !== 2 ||
+    typeof incoming.fixtures !== "object" ||
+    incoming.fixtures === null ||
+    Array.isArray(incoming.fixtures)
+  ) {
+    throw new TypeError(
+      "incoming index-time result must use revision-bound schemaVersion 2",
+    );
+  }
   for (const project of projects) {
+    const selectedCommit = PROJECTS[project]?.commit;
+    if (incoming.fixtures[project] !== selectedCommit) {
+      throw new TypeError(
+        `incoming index-time result.fixtures must bind ${project} to the selected corpus revision`,
+      );
+    }
     if (!Object.hasOwn(incoming.scale, project)) {
       throw new TypeError(
         `incoming index-time result.scale must describe scoped project ${project}`,
@@ -701,10 +756,22 @@ function assertIncomingReportScope(incoming) {
       );
     }
   }
+  for (const project of Object.keys(incoming.fixtures)) {
+    if (!projects.has(project)) {
+      throw new TypeError(
+        `incoming index-time result.fixtures describes out-of-scope project ${project}`,
+      );
+    }
+  }
   for (const cell of incoming.cells) {
     if (!projects.has(cell.project) || !tools.has(cell.tool)) {
       throw new TypeError(
         `incoming index-time result cell ${cell.project}/${cell.tool} is outside its declared scope`,
+      );
+    }
+    if (cell.fixtureCommit !== incoming.fixtures[cell.project]) {
+      throw new TypeError(
+        `incoming index-time result cell ${cell.project}/${cell.tool} does not match its scoped fixture revision`,
       );
     }
   }

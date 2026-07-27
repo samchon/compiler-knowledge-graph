@@ -157,7 +157,11 @@ const summary = {
   completedCount: trace.completedCount,
   postCutoffEndCount: trace.postCutoffEndCount,
   postCutoffErrorCount: trace.postCutoffErrorCount,
+  cleanupRequestCount: trace.cleanupRequestCount,
+  cleanupCompletedCount: trace.cleanupCompletedCount,
+  cleanupErrorCount: trace.cleanupErrorCount,
   inFlight: trace.inFlight,
+  cleanupInFlight: trace.cleanupInFlight,
   methods: trace.methods,
 };
 fs.writeFileSync(

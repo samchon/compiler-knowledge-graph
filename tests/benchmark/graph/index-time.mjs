@@ -336,7 +336,18 @@ function runIndexCell({ project, spec, repoDir, tool }) {
     // orders of magnitude. The dump writes one provenance line to stderr, which
     // is captured even while stdout goes to /dev/null, so reading it back costs
     // nothing and happens after the clock has stopped.
-    return { project, tool, buildMs: ms, servedBy: servedBy(logStem) };
+    // `strict` alongside `servedBy`, because those two say different things
+    // that read identically. A fallback cell reports "no strict provider
+    // served" — and so does a strict cell whose provider failed. One was asked
+    // for and the other is a defect, and a table that cannot tell them apart
+    // reports every fallback measurement as a broken provider.
+    return {
+      project,
+      tool,
+      buildMs: ms,
+      strict,
+      servedBy: servedBy(logStem),
+    };
   }
   if (tool === TOOL_CODEGRAPH) {
     ensureLocalIgnored(repoDir, ".codegraph/");

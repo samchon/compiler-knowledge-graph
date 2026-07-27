@@ -111,8 +111,15 @@ for (const row of rows) {
     // TypeScript corpus indexed in 2.8 s reads as the flagship provider being
     // fast, and it was the best-effort syntax fallback doing almost none of the
     // work the other rows did.
+    // A cell measured with the providers stood down says so, because
+    // "no strict provider served" is also what a failed provider produces and
+    // the two must not read alike.
     const via =
-      typeof cell.servedBy === "string" ? `  via ${cell.servedBy}` : "";
+      cell.strict === false
+        ? "  strict providers stood down"
+        : typeof cell.servedBy === "string"
+          ? `  via ${cell.servedBy}`
+          : "";
     const caveat =
       typeof cell.servedBy === "string" && cell.servedBy.startsWith("static")
         ? "  <- NOT A SEMANTIC INDEX"

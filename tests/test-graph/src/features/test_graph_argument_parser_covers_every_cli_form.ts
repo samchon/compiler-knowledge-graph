@@ -22,6 +22,7 @@ export const test_graph_argument_parser_covers_every_cli_form = async () => {
     "--lsp-ready-quiet-ms=250",
     "--graph-file",
     "dump.json",
+    "--no-strict",
   ]);
   TestValidator.equals("cwd parses", parsed.cwd, "fixture");
   TestValidator.equals("mode parses", parsed.mode, "lsp");
@@ -31,6 +32,10 @@ export const test_graph_argument_parser_covers_every_cli_form = async () => {
   TestValidator.equals("integer arguments parse", parsed.lspConcurrency, 4);
   TestValidator.equals("equals integers parse", parsed.lspReadyQuietMs, 250);
   TestValidator.equals("graph files parse", parsed.graphFile, "dump.json");
+  // The measurement instrument, not a fallback: every other way of
+  // disabling a strict provider works by tripping its refusal, which
+  // measures the refusal instead of the lane underneath.
+  TestValidator.equals("strict providers can be stood down", parsed.strict, false);
 
   const equals = parseGraphArgs([
     "--cwd=fixture-two",

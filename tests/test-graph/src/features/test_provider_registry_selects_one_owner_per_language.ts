@@ -115,6 +115,29 @@ async function assertSelection(): Promise<void> {
   );
   TestValidator.equals("nothing declined, nothing said", partial.warnings, []);
 
+  // Stood down by request, which is a measurement instrument rather than a
+  // fallback: it is the only way to index a project without its strict provider
+  // that does not work by tripping a refusal, and a refusal is a different
+  // thing to measure. The benchmark needs both cells from one run on one host
+  // to say what a strict provider is worth.
+  const relaxed = selectGraphProviders(
+    "/root",
+    ["typescript", "c"],
+    { strict: false },
+    {},
+    [typescript, clang],
+  );
+  TestValidator.equals(
+    "standing strict providers down selects none",
+    relaxed.candidates,
+    [],
+  );
+  TestValidator.predicate(
+    "and says it was asked to rather than leaving an empty silence",
+    relaxed.warnings.length === 1 &&
+      relaxed.warnings[0]!.includes("stood down by request"),
+  );
+
   const both = selectGraphProviders(
     "/root",
     ["typescript", "cpp", "c"],

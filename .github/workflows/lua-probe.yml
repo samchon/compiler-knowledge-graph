@@ -76,10 +76,18 @@ jobs:
           function caller() callee() end
           function callee() return util.greet('world') end
           LUA
-          mkdir -p 'lua-probe-project\outside'
-          cat > 'lua-probe-project\outside/secret.lua' <<'LUA'
-          function boundaryOutside() return 'must stay outside' end
-          LUA
+
+      # Exercise the checked-in exporter rather than a TypeScript translation
+      # of its path rule. LuaLS deliberately filters workspace-library files
+      # from this doc-mode URI enumeration, so a small injected engine is the
+      # source-level seam that can present the exact POSIX sibling URI.
+      - name: Verify the actual exporter rejects POSIX backslash siblings
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes lua5.4
+          lua5.4 \
+            sidecars/lua/test-export-path-boundary.lua \
+            sidecars/lua/export.lua
 
       # docScriptPath is resolved as `<root> .. sub_path`, so the leading `/`
       # plus `..` segments walks back out of the project to the checked-in
@@ -88,14 +96,12 @@ jobs:
         run: |
           root="$GITHUB_WORKSPACE/lua-probe-project"
           rel=$(realpath --relative-to="$root" "$GITHUB_WORKSPACE/sidecars/lua/probe.lua")
-          boundary="$GITHUB_WORKSPACE/lua-probe-project\\outside"
-          node - "$rel" "$boundary" <<'NODE'
+          node - "$rel" <<'NODE'
           const fs = require("node:fs");
           fs.writeFileSync(
             "lua-probe-config.json",
             `${JSON.stringify({
               "Lua.docScriptPath": `/${process.argv[2]}`,
-              "Lua.workspace.library": [process.argv[3]],
             }, null, 2)}\n`,
           );
           NODE
@@ -116,14 +122,12 @@ jobs:
         run: |
           root="$GITHUB_WORKSPACE/lua-probe-project"
           rel=$(realpath --relative-to="$root" "$GITHUB_WORKSPACE/sidecars/lua/export.lua")
-          boundary="$GITHUB_WORKSPACE/lua-probe-project\\outside"
-          node - "$rel" "$boundary" <<'NODE'
+          node - "$rel" <<'NODE'
           const fs = require("node:fs");
           fs.writeFileSync(
             "lua-export-config.json",
             `${JSON.stringify({
               "Lua.docScriptPath": `/${process.argv[2]}`,
-              "Lua.workspace.library": [process.argv[3]],
             }, null, 2)}\n`,
           );
           NODE
@@ -131,35 +135,6 @@ jobs:
             --doc="$root" \
             --doc_out_path="$GITHUB_WORKSPACE/lua-probe-out" \
             --configpath="$GITHUB_WORKSPACE/lua-export-config.json"
-
-      - name: Verify POSIX containment against a backslash sibling
-        run: |
-          node <<'NODE'
-          const fs = require("node:fs");
-          const probe = JSON.parse(
-            fs.readFileSync(
-              "lua-probe-out/samchon-graph-lua-probe.json",
-              "utf8",
-            ),
-          );
-          if (probe.boundaryFixtureLoaded !== true) {
-            throw new Error("LuaLS did not load the backslash-boundary fixture");
-          }
-          const exported = JSON.parse(
-            fs.readFileSync(
-              "lua-probe-out/samchon-graph-lua.json",
-              "utf8",
-            ),
-          );
-          if (
-            exported.files.some((file) => file.includes("outside")) ||
-            exported.nodes.some((node) => node.name === "boundaryOutside")
-          ) {
-            throw new Error(
-              "the POSIX backslash sibling crossed the Lua project boundary",
-            );
-          }
-          NODE
 
       - name: Show the exported graph
         if: ${{ always() }}

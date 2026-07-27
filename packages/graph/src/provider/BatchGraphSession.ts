@@ -182,11 +182,17 @@ export class BatchGraphSession implements IBulkGraphSession {
     );
     try {
       const artifact = path.join(output, this.options.artifactName);
-      await this.run(
-        this.options.command,
-        this.options.indexArgs(artifact),
-        signal,
-      );
+      let producerFailure: Error | undefined;
+      try {
+        await this.run(
+          this.options.command,
+          this.options.indexArgs(artifact),
+          signal,
+        );
+      } catch (error) {
+        producerFailure =
+          error instanceof Error ? error : new Error(String(error));
+      }
       // Some producers cannot be told where to write. `scip-php` declares only
       // `--help` and `--memory-limit`, takes `getcwd()` as the project root, and
       // ends with `file_put_contents('index.scip', …)` — so it writes into the
@@ -194,12 +200,22 @@ export class BatchGraphSession implements IBulkGraphSession {
       // artifact out before anything reads it, which keeps the tool honest
       // rather than wrapping it in a shim a user would also have to install.
       //
-      // Moved rather than copied, and moved even though the run may have
-      // failed: a producer that wrote into someone's working tree does not get
-      // to leave the file there because it exited non-zero.
       const produced = this.options.artifactFrom?.(this.root);
+      if (producerFailure !== undefined) {
+        if (produced !== undefined && fs.existsSync(produced)) {
+          try {
+            fs.rmSync(produced, { force: true });
+          } catch (cleanupFailure) {
+            throw new AggregateError(
+              [producerFailure, cleanupFailure],
+              `${this.options.provider}: the producer failed and its project artifact could not be removed`,
+            );
+          }
+        }
+        throw producerFailure;
+      }
       if (produced !== undefined && fs.existsSync(produced)) {
-        fs.renameSync(produced, artifact);
+        relocateArtifact(produced, artifact);
       }
       if (!fs.existsSync(artifact)) {
         throw new Error(
@@ -456,6 +472,52 @@ export class BatchGraphSession implements IBulkGraphSession {
       throw new Error(`${this.options.provider}: session is closed`);
     }
   }
+}
+
+/**
+ * Take a fixed-path producer artifact without assuming the checkout and the
+ * operating-system temporary directory share a filesystem.
+ */
+function relocateArtifact(produced: string, artifact: string): void {
+  try {
+    fs.renameSync(produced, artifact);
+    return;
+    /* c8 ignore start -- EXDEV requires a checkout and OS temporary directory
+     * on different mounted filesystems; hosted CI keeps both on one volume. */
+  } catch (error) {
+    if (
+      typeof error !== "object" ||
+      error === null ||
+      !("code" in error) ||
+      error.code !== "EXDEV"
+    ) {
+      try {
+        fs.rmSync(produced, { force: true });
+      } catch (cleanupFailure) {
+        throw new AggregateError(
+          [error, cleanupFailure],
+          `could not relocate or remove producer artifact ${produced}`,
+        );
+      }
+      throw error;
+    }
+    try {
+      fs.copyFileSync(produced, artifact, fs.constants.COPYFILE_EXCL);
+      fs.rmSync(produced, { force: true });
+    } catch (transferFailure) {
+      fs.rmSync(artifact, { force: true });
+      try {
+        fs.rmSync(produced, { force: true });
+      } catch (cleanupFailure) {
+        throw new AggregateError(
+          [transferFailure, cleanupFailure],
+          `could not transfer or remove producer artifact ${produced}`,
+        );
+      }
+      throw transferFailure;
+    }
+  }
+  /* c8 ignore stop */
 }
 
 export namespace BatchGraphSession {

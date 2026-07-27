@@ -133,14 +133,6 @@ function export.serializeAndExport(docs, outputDir)
         if urisOk and type(uris) == 'table' then
             report.uriCount = #uris
             report.uriSample = {}
-            report.boundaryFixtureLoaded = false
-            for _, uri in ipairs(uris) do
-                local absolute = furi.decode(uri)
-                if type(absolute) == 'string'
-                    and absolute:find('lua-probe-project\\outside', 1, true) then
-                    report.boundaryFixtureLoaded = true
-                end
-            end
             for index = 1, math.min(#uris, 5) do
                 report.uriSample[index] = uris[index]
             end

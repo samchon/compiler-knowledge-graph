@@ -24,8 +24,15 @@ export function providerInputFiles(
       (file) => normalizePath(path.relative(resolved, file)),
     ),
   );
-  const names = new Set(buildFileNames);
-  visitBuildInputs(resolved, resolved, names, inputs);
+  const names = new Set(
+    buildFileNames.filter((name) => !/[\\/]/.test(name)),
+  );
+  const paths = new Set(
+    buildFileNames
+      .filter((name) => /[\\/]/.test(name))
+      .map((name) => normalizePath(name)),
+  );
+  visitBuildInputs(resolved, resolved, names, paths, inputs);
   return [...inputs].sort(compareOrdinal);
 }
 
@@ -33,6 +40,7 @@ function visitBuildInputs(
   root: string,
   directory: string,
   names: ReadonlySet<string>,
+  paths: ReadonlySet<string>,
   inputs: Set<string>,
 ): void {
   let entries: fs.Dirent[];
@@ -50,9 +58,10 @@ function visitBuildInputs(
     if (entry.isDirectory()) {
       if (DEFAULT_IGNORES.has(entry.name)) continue;
       if (fs.existsSync(path.join(absolute, ".git"))) continue;
-      visitBuildInputs(root, absolute, names, inputs);
-    } else if (entry.isFile() && names.has(entry.name)) {
-      inputs.add(normalizePath(path.relative(root, absolute)));
+      visitBuildInputs(root, absolute, names, paths, inputs);
+    } else if (entry.isFile()) {
+      const relative = normalizePath(path.relative(root, absolute));
+      if (names.has(entry.name) || paths.has(relative)) inputs.add(relative);
     }
   }
 }

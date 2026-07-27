@@ -48,11 +48,9 @@ export function parseScipIndex(
   );
   return {
     metadata: {
-      ...optionalEnumName(
+      ...optionalProtocolVersion(
         metadata.version,
         `${label}.metadata.version`,
-        "version",
-        PROTOCOL_VERSIONS,
       ),
       ...(toolInfo === undefined
         ? {}
@@ -321,11 +319,14 @@ function occurrenceRangeOf(
 
 function singleLineRangeOf(value: unknown, label: string): number[] {
   const range = objectOf(value, label);
+  // Both protobuf JSON and the decoder's Go `encoding/json` output omit
+  // zero-valued proto3 scalars. Absence is therefore the encoded value zero,
+  // not a missing coordinate.
   return rangeOf(
     [
-      range.line,
-      fieldOf(range, "startCharacter", "start_character", label),
-      fieldOf(range, "endCharacter", "end_character", label),
+      fieldOf(range, "line", "line", label) ?? 0,
+      fieldOf(range, "startCharacter", "start_character", label) ?? 0,
+      fieldOf(range, "endCharacter", "end_character", label) ?? 0,
     ],
     label,
   );
@@ -335,10 +336,10 @@ function multiLineRangeOf(value: unknown, label: string): number[] {
   const range = objectOf(value, label);
   return rangeOf(
     [
-      fieldOf(range, "startLine", "start_line", label),
-      fieldOf(range, "startCharacter", "start_character", label),
-      fieldOf(range, "endLine", "end_line", label),
-      fieldOf(range, "endCharacter", "end_character", label),
+      fieldOf(range, "startLine", "start_line", label) ?? 0,
+      fieldOf(range, "startCharacter", "start_character", label) ?? 0,
+      fieldOf(range, "endLine", "end_line", label) ?? 0,
+      fieldOf(range, "endCharacter", "end_character", label) ?? 0,
     ],
     label,
   );
@@ -601,6 +602,33 @@ function optionalEnumName<K extends string>(
 ): Partial<Record<K, string>> {
   if (value === undefined) return {};
   return { [key]: enumNameOf(value, label, names) } as Record<K, string>;
+}
+
+/**
+ * Preserve a protocol version that this decoder does not know yet.
+ *
+ * Protobuf keeps unknown enum numbers for forward compatibility. Most SCIP
+ * enums affect graph meaning and therefore remain closed below, but protocol
+ * version is metadata that graph does not interpret. Refusing a structurally
+ * valid int32 here would reject an otherwise usable index merely because its
+ * producer is ahead of the decoder (and scip-php 0.1.0 already writes `1`
+ * despite bundling a schema that only names `0`).
+ */
+function optionalProtocolVersion(
+  value: unknown,
+  label: string,
+): Partial<Record<"version", string>> {
+  if (value === undefined) return {};
+  if (typeof value === "string") return { version: value };
+  if (
+    typeof value !== "number" ||
+    !Number.isInteger(value) ||
+    value < -0x80000000 ||
+    value > 0x7fffffff
+  ) {
+    throw new Error(`scip: ${label} must be an enum name or int32 number`);
+  }
+  return { version: PROTOCOL_VERSIONS[value] ?? String(value) };
 }
 
 function enumNameOf(

@@ -370,6 +370,7 @@ interface IStandardScipProvider {
   producerConfiguration?: (
     root: string,
     env: NodeJS.ProcessEnv,
+    executable: string | undefined,
   ) => string;
 
   /** Where a producer that takes no output flag writes, relative to the root. */
@@ -438,6 +439,7 @@ function createScipProvider(
   props: IStandardScipProvider,
 ): IGraphProvider {
   const validateConfiguration = props.validateConfiguration;
+  const producerConfiguration = props.producerConfiguration;
   return scipProvider({
     name: props.name,
     languages: props.languages,
@@ -519,12 +521,24 @@ function createScipProvider(
             configuration,
           ) => validateConfiguration(root, configuration),
         }),
-    configuration: (root, _languages, env = process.env) => [
-      props.producerConfiguration?.(root, env) ??
-        toolVersion(root, env, props.command, props.override),
-      toolVersion(root, env, "scip", "SAMCHON_GRAPH_SCIP"),
-      ...toolchainVersions(root, env, props.toolchain),
-    ],
+    configuration: (root, _languages, env = process.env) => {
+      const producerRow =
+        producerConfiguration === undefined
+          ? toolVersion(root, env, props.command, props.override)
+          : producerConfiguration(
+              root,
+              env,
+              resolveProviderCommand.attempt(root, env, {
+                command: props.command,
+                override: props.override,
+              }).executable,
+            );
+      return [
+        producerRow,
+        toolVersion(root, env, "scip", "SAMCHON_GRAPH_SCIP"),
+        ...toolchainVersions(root, env, props.toolchain),
+      ];
+    },
     // Selected from the configuration rather than re-derived, so the
     // published compiler is the one this universe was computed from. Labelled
     // rather than positional: the indexer and the decoder are named exactly,
@@ -570,8 +584,17 @@ function rubyScipIndexArgs(artifact: string, root: string): string[] {
  * immutable source reference distinguishes two commits published under the
  * same development version without executing the indexer as a probe.
  */
-function phpProducerConfiguration(root: string): string {
+function phpProducerConfiguration(
+  root: string,
+  _env: NodeJS.ProcessEnv,
+  executable: string | undefined,
+): string {
   const label = "scip-php";
+  // A Composer lock identifies only the project-local binary that Composer
+  // installed. An override, private development build, npm shim, or PATH binary
+  // may be different bytes even when this checkout happens to contain a lock;
+  // attributing the lock's commit to it would make the build universe lie.
+  if (!isComposerScipPhp(root, executable)) return `${label}=unreported`;
   try {
     const lock = JSON.parse(
       fs.readFileSync(path.join(root, "composer.lock"), "utf8"),
@@ -607,6 +630,19 @@ function phpProducerConfiguration(root: string): string {
   } catch {
     return `${label}=unreported`;
   }
+}
+
+function isComposerScipPhp(
+  root: string,
+  executable: string | undefined,
+): boolean {
+  if (executable === undefined) return false;
+  const vendorBin = path.resolve(root, "vendor", "bin");
+  const relative = path.relative(vendorBin, path.resolve(executable));
+  return (
+    path.dirname(relative) === "." &&
+    /^scip-php(?:\.(?:exe|cmd|bat))?$/i.test(path.basename(relative))
+  );
 }
 
 function standardCompilerVersion(

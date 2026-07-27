@@ -20,8 +20,12 @@ export function languageBuildInputs(
       extensions.add(extension);
     }
   }
+  const fileNames = [...names].filter((name) => !/[\\/]/.test(name));
+  const relativePaths = [...names]
+    .filter((name) => /[\\/]/.test(name))
+    .map((name) => normalizePath(name));
   const existing = providerInputFiles(root, [], [...names], [...extensions]);
-  const candidates = new Set(existing);
+  const candidates = new Set([...existing, ...relativePaths]);
   if (languages.includes("dart")) {
     for (const file of dartPackageConfigInputs(root)) candidates.add(file);
   }
@@ -45,7 +49,7 @@ export function languageBuildInputs(
     }
   }
   for (const directory of directories) {
-    for (const name of names) {
+    for (const name of fileNames) {
       candidates.add(
         normalizePath(path.relative(resolved, path.join(directory, name))),
       );

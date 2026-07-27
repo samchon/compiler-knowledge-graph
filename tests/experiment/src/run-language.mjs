@@ -5,6 +5,7 @@ import { buildGraphDump } from "@samchon/graph";
 
 import { findExperiment } from "./catalog.mjs";
 import {
+  activateProvisionedTools,
   assertPinnedCorpus,
   cloneRepository,
   ensureDir,
@@ -16,6 +17,7 @@ import {
 } from "./process.mjs";
 import { runStrictLifecycle } from "./strict-lifecycle.mjs";
 
+activateProvisionedTools();
 const args = parseArgs(process.argv.slice(2));
 const experiment = findExperiment(args.language);
 const pinned = cloneRepository(experiment, { refresh: args.refresh === "true" });

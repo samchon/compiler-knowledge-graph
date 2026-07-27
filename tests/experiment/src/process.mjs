@@ -53,6 +53,19 @@ export const appendGithubPath = (dir) => {
   }
 };
 
+/**
+ * Re-enter the tool environment created by a prior setup process.
+ *
+ * GitHub carries `GITHUB_PATH` into the next step, but a local `pnpm setup`
+ * process cannot mutate the shell that later launches `pnpm start`. Every
+ * durable setup link lives in this directory, so the runner activates it
+ * explicitly instead of depending on a machine-global installation.
+ */
+export const activateProvisionedTools = () => {
+  const bin = path.join(workRoot, "tools", "bin");
+  process.env.PATH = `${bin}${path.delimiter}${process.env.PATH ?? ""}`;
+};
+
 export const localBin = (name) => {
   const suffix = process.platform === "win32" ? ".cmd" : "";
   const candidates = [

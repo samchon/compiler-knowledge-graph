@@ -94,6 +94,7 @@ export const test_standard_providers_execute_their_exact_contracts =
         process.env[key] = value;
       }
 
+      assertPhpConfigurationContracts(root);
       for (const provider of standardScipProviders) {
         const command = provider.resolve(root, process.env);
         TestValidator.predicate(
@@ -302,6 +303,7 @@ export const test_standard_providers_execute_their_exact_contracts =
         }
         await assertHeuristicTwinFails(provider, command, root);
       }
+      await assertRubyMetadataContracts(root);
 
       for (const provider of standardSidecarProviders) {
         const command = provider.resolve(root, process.env);
@@ -447,6 +449,206 @@ function buildInputs(
   return typeof provider.buildInputs === "function"
     ? provider.buildInputs(root)
     : (provider.buildInputs ?? []);
+}
+
+/**
+ * The PHP producer has no non-destructive version command.
+ *
+ * Its Composer lock is therefore the entire producer-identity boundary. This
+ * matrix covers both Composer package lists and every dishonest or malformed
+ * shape without ever executing the indexer as a probe.
+ */
+function assertPhpConfigurationContracts(root: string): void {
+  const provider = standardScipProviders.find(
+    (candidate) => candidate.name === "scip-php",
+  );
+  if (provider === undefined || provider.configuration === undefined) {
+    throw new Error("scip-php: configuration contract is unavailable");
+  }
+  const project = path.join(root, "php-configuration");
+  writeProject(project);
+  const vendorBin = path.join(project, "vendor", "bin");
+  fs.mkdirSync(vendorBin, { recursive: true });
+  const vendorIndexer = platformExecutable(vendorBin, "scip-php");
+  writeShim(vendorIndexer, "scip-php");
+  const unrelated = platformExecutable(vendorBin, "other-indexer");
+  writeShim(unrelated, "scip-php");
+  const lock = path.join(project, "composer.lock");
+  const artifact = path.join(project, "index.scip");
+  const priorOverride = process.env.SAMCHON_GRAPH_SCIP_PHP;
+  delete process.env.SAMCHON_GRAPH_SCIP_PHP;
+  const check = (
+    label: string,
+    value: string | undefined,
+    expected: string,
+  ): void => {
+    fs.rmSync(lock, { force: true });
+    if (value !== undefined) fs.writeFileSync(lock, value);
+    const configuration = provider.configuration?.(project, process.env);
+    TestValidator.equals(label, configuration?.[0], expected);
+    TestValidator.predicate(
+      `${label} without executing scip-php`,
+      fs.existsSync(artifact) === false,
+    );
+  };
+  try {
+    check(
+      "scip-php reports a missing Composer lock honestly",
+      undefined,
+      "scip-php=unreported",
+    );
+    check(
+      "scip-php reports malformed Composer metadata honestly",
+      "{not-json",
+      "scip-php=unreported",
+    );
+    check(
+      "scip-php ignores non-array Composer package fields",
+      JSON.stringify({ packages: {}, "packages-dev": {} }),
+      "scip-php=unreported",
+    );
+    check(
+      "scip-php ignores unrelated and malformed package entries",
+      JSON.stringify({
+        packages: [null, "package", { name: "another/tool" }],
+      }),
+      "scip-php=unreported",
+    );
+    check(
+      "scip-php identifies a production dependency by version and source",
+      JSON.stringify({
+        packages: [
+          {
+            name: "davidrjenni/scip-php",
+            version: " 0.1.0 ",
+            source: { reference: " 71a5b117 " },
+          },
+        ],
+      }),
+      "scip-php=0.1.0@71a5b117",
+    );
+    check(
+      "scip-php identifies a development dependency",
+      JSON.stringify({
+        "packages-dev": [
+          {
+            name: "davidrjenni/scip-php",
+            version: "dev-main",
+          },
+        ],
+      }),
+      "scip-php=dev-main",
+    );
+    check(
+      "scip-php does not invent a blank version or source reference",
+      JSON.stringify({
+        packages: [
+          {
+            name: "davidrjenni/scip-php",
+            version: " ",
+            source: { reference: " " },
+          },
+        ],
+      }),
+      "scip-php=unreported",
+    );
+    check(
+      "scip-php does not stringify non-string identity fields",
+      JSON.stringify({
+        packages: [
+          {
+            name: "davidrjenni/scip-php",
+            version: 1,
+            source: { reference: 2 },
+          },
+        ],
+      }),
+      "scip-php=unreported",
+    );
+    fs.writeFileSync(
+      lock,
+      JSON.stringify({
+        packages: [
+          { name: "davidrjenni/scip-php", version: "0.1.0" },
+        ],
+      }),
+    );
+    process.env.SAMCHON_GRAPH_SCIP_PHP = unrelated;
+    TestValidator.equals(
+      "scip-php never attributes a Composer lock to a different override",
+      provider.configuration(project, process.env)[0],
+      "scip-php=unreported",
+    );
+    delete process.env.SAMCHON_GRAPH_SCIP_PHP;
+    fs.rmSync(vendorIndexer);
+    const unresolved = { ...process.env, PATH: "", Path: "" };
+    TestValidator.equals(
+      "scip-php reports an unresolved producer honestly",
+      provider.configuration(project, unresolved)[0],
+      "scip-php=unreported",
+    );
+  } finally {
+    if (priorOverride === undefined) {
+      delete process.env.SAMCHON_GRAPH_SCIP_PHP;
+    } else {
+      process.env.SAMCHON_GRAPH_SCIP_PHP = priorOverride;
+    }
+    fs.rmSync(project, { recursive: true, force: true });
+  }
+}
+
+/**
+ * scip-ruby requires an explicit package identity only for package-less roots.
+ *
+ * Run the real provider boundary for both native metadata forms, a sanitized
+ * directory name, and the empty-name fallback. The fixture independently
+ * checks the exact fallback value supplied by the provider.
+ */
+async function assertRubyMetadataContracts(root: string): Promise<void> {
+  const provider = standardScipProviders.find(
+    (candidate) => candidate.name === "scip-ruby",
+  );
+  if (provider === undefined) {
+    throw new Error("scip-ruby: provider contract is unavailable");
+  }
+  const run = async (project: string): Promise<void> => {
+    const command = provider.resolve(project, process.env);
+    if (command === undefined) {
+      throw new Error("scip-ruby: fixture command did not resolve");
+    }
+    await indexOnce(provider, command, project);
+  };
+  const native = path.join(root, "ruby-native-metadata");
+  const sanitized = path.join(root, "ruby package !");
+  const unnamed = path.join(root, "---");
+  const priorExpected = process.env.SAMCHON_GRAPH_FIXTURE_GEM_METADATA;
+  try {
+    writeProject(native);
+    fs.writeFileSync(path.join(native, "Gemfile.lock"), "GEM\n");
+    await run(native);
+    fs.rmSync(path.join(native, "Gemfile.lock"));
+    fs.writeFileSync(path.join(native, "fixture.gemspec"), "# fixture\n");
+    await run(native);
+
+    writeProject(sanitized);
+    process.env.SAMCHON_GRAPH_FIXTURE_GEM_METADATA =
+      "ruby-package@workspace";
+    await run(sanitized);
+
+    writeProject(unnamed);
+    process.env.SAMCHON_GRAPH_FIXTURE_GEM_METADATA =
+      "workspace@workspace";
+    await run(unnamed);
+  } finally {
+    if (priorExpected === undefined) {
+      delete process.env.SAMCHON_GRAPH_FIXTURE_GEM_METADATA;
+    } else {
+      process.env.SAMCHON_GRAPH_FIXTURE_GEM_METADATA = priorExpected;
+    }
+    for (const project of [native, sanitized, unnamed]) {
+      fs.rmSync(project, { recursive: true, force: true });
+    }
+  }
 }
 
 function assertFixtureRegistryCoverage(): void {

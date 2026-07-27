@@ -199,9 +199,11 @@ const installGradle = async () => {
     throw new Error(`Gradle ${version} was not extracted at ${executable}`);
   }
   fs.chmodSync(executable, 0o755);
-  appendGithubPath(path.dirname(executable));
+  const link = path.join(binRoot, "gradle");
+  fs.rmSync(link, { force: true });
+  fs.symlinkSync(executable, link);
   const output = String(
-    run(executable, ["--version"], { stdio: "pipe" }).stdout,
+    run(link, ["--version"], { stdio: "pipe" }).stdout,
   );
   if (!output.includes(`Gradle ${version}`)) {
     throw new Error(`Expected Gradle ${version}, received:\n${output}`);

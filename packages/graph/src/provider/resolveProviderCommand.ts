@@ -35,6 +35,8 @@ export namespace resolveProviderCommand {
    */
   export interface IAttempt {
     command?: IGraphProvider.ICommand;
+    /** The exact file selected before a platform command wrapper is applied. */
+    executable?: string;
     asked: boolean;
   }
 
@@ -66,12 +68,20 @@ function resolveAttempt(
     path.isAbsolute(override) &&
     isSpawnableFile(override)
   ) {
-    return { command: spawnable(override, props.args), asked: true };
+    return {
+      command: spawnable(override, props.args),
+      executable: override,
+      asked: true,
+    };
   }
 
   for (const candidate of localCandidates(root, props.command)) {
     if (isSpawnableFile(candidate)) {
-      return { command: spawnable(candidate, props.args), asked: true };
+      return {
+        command: spawnable(candidate, props.args),
+        executable: candidate,
+        asked: true,
+      };
     }
   }
 
@@ -85,7 +95,11 @@ function resolveAttempt(
   if (!onPath.asked) return { asked: false };
   return onPath.found === undefined
     ? { asked: true }
-    : { command: spawnable(onPath.found, props.args), asked: true };
+    : {
+        command: spawnable(onPath.found, props.args),
+        executable: onPath.found,
+        asked: true,
+      };
 }
 
 /**

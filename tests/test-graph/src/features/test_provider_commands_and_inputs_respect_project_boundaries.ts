@@ -8,6 +8,7 @@ import {
   providerInputFiles,
   resolveProviderCommand,
 } from "@samchon/graph";
+import { languageBuildInputs } from "../../../../packages/graph/src/indexer/languageBuildInputs";
 import { spawnableCommand } from "../../../../packages/graph/src/utils/spawnableCommand";
 
 import { GraphPaths } from "../internal/GraphPaths";
@@ -42,6 +43,14 @@ export const test_provider_commands_and_inputs_respect_project_boundaries =
       fs.writeFileSync(path.join(root, "ignored", "node_modules", "go.mod"), "ignored\n");
       fs.writeFileSync(path.join(root, "foreign", "go.mod"), "foreign\n");
       fs.writeFileSync(path.join(root, "foreign", "foreign.go"), "package foreign\n");
+      fs.writeFileSync(
+        path.join(root, "src", "nested", "model.rb"),
+        "class Model; end\n",
+      );
+      fs.mkdirSync(path.join(root, "sorbet"), { recursive: true });
+      fs.mkdirSync(path.join(root, "other"), { recursive: true });
+      fs.writeFileSync(path.join(root, "sorbet", "config"), "--dir=.\n");
+      fs.writeFileSync(path.join(root, "other", "config"), "--ignore=.\n");
 
       TestValidator.equals(
         "source and nested build inputs are sorted inside one checkout",
@@ -53,6 +62,18 @@ export const test_provider_commands_and_inputs_respect_project_boundaries =
           "src/nested/go.mod",
           "src/nested/worker.go",
         ],
+      );
+      TestValidator.equals(
+        "a path-qualified build input watches only that exact relative file",
+        providerInputFiles(root, [], ["sorbet/config"]),
+        ["sorbet/config"],
+      );
+      TestValidator.equals(
+        "a generic lane keeps a path-qualified build input at its root",
+        languageBuildInputs(root, ["ruby"]).filter((input) =>
+          input.endsWith("sorbet/config"),
+        ),
+        ["sorbet/config"],
       );
       fs.mkdirSync(path.join(root, "vendor"), { recursive: true });
       fs.mkdirSync(path.join(root, "vendor", "example.com", "dep"), {
@@ -191,6 +212,16 @@ export const test_provider_commands_and_inputs_respect_project_boundaries =
           args: ["serve"],
         }),
         expectedCommand(local, ["serve"]),
+      );
+      const attempted = resolveProviderCommand.attempt(root, emptyPath, {
+        command,
+        override: "SAMCHON_TEST_PROVIDER",
+        args: ["serve"],
+      });
+      TestValidator.equals(
+        "resolution retains the exact executable before platform wrapping",
+        [attempted.command, attempted.executable, attempted.asked],
+        [expectedCommand(local, ["serve"]), local, true],
       );
 
       const goCommand = platformExecutable(privateBin, "samchon-graph-go");

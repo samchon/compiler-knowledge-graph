@@ -237,7 +237,6 @@ function assertIndexValidation(): void {
             TypedEnclosingRange: {
               MultiLineEnclosingRange: {
                 start_line: 3,
-                start_character: 0,
                 end_line: 5,
                 end_character: 1,
               },
@@ -318,6 +317,27 @@ function assertIndexValidation(): void {
       },
     ],
   );
+  TestValidator.equals(
+    "an unknown numeric protocol version is retained without weakening semantic enums",
+    [
+      parseScipIndex({
+        metadata: { projectRoot: "file:///r", version: 1 },
+        documents: [],
+      }).metadata.version,
+      parseScipIndex({
+        metadata: {
+          projectRoot: "file:///r",
+          version: "FutureProtocolVersion",
+        },
+        documents: [],
+      }).metadata.version,
+      parseScipIndex({
+        metadata: { projectRoot: "file:///r", version: -1 },
+        documents: [],
+      }).metadata.version,
+    ],
+    ["1", "FutureProtocolVersion", "-1"],
+  );
 
   // Every rejection below is a shape that, if accepted, would attribute facts
   // to source that never produced them.
@@ -362,6 +382,34 @@ function assertIndexValidation(): void {
         ],
       },
     ],
+    [
+      "a fractional protocol version",
+      {
+        metadata: { projectRoot: "file:///r", version: 1.5 },
+        documents: [],
+      },
+    ],
+    [
+      "a protocol version outside int32",
+      {
+        metadata: { projectRoot: "file:///r", version: 0x80000000 },
+        documents: [],
+      },
+    ],
+    [
+      "a negative protocol version outside int32",
+      {
+        metadata: { projectRoot: "file:///r", version: -0x80000001 },
+        documents: [],
+      },
+    ],
+    [
+      "a nonnumeric protocol version",
+      {
+        metadata: { projectRoot: "file:///r", version: false },
+        documents: [],
+      },
+    ],
     ["a non-string occurrence symbol", withOccurrence({ range: [0, 0, 1], symbol: 1 })],
     ["an occurrence without any range", withOccurrence({ symbol: "s" })],
     ["a two-element range", withOccurrence({ range: [0, 1], symbol: "s" })],
@@ -399,10 +447,10 @@ function assertIndexValidation(): void {
       }),
     ],
     [
-      "a typed range with a missing coordinate",
+      "a typed range with a nonnumeric coordinate",
       withOccurrence({
         symbol: "s",
-        singleLineRange: { line: 0, startCharacter: 0 },
+        singleLineRange: { line: 0, startCharacter: 0, endCharacter: "1" },
       }),
     ],
     [
@@ -646,6 +694,41 @@ function assertIndexValidation(): void {
     [
       [4, 2, 9],
       [4, 0, 10],
+    ],
+  );
+  TestValidator.equals(
+    "omitted protobuf scalar coordinates retain their zero defaults",
+    [
+      parseScipIndex(
+        withOccurrence({
+          symbol: "s",
+          singleLineRange: { endCharacter: 1 },
+        }),
+      ).documents[0]!.occurrences![0]!.range,
+      parseScipIndex(
+        withOccurrence({
+          symbol: "s",
+          multiLineRange: { endCharacter: 1 },
+        }),
+      ).documents[0]!.occurrences![0]!.range,
+      parseScipIndex(
+        withOccurrence({
+          symbol: "s",
+          singleLineRange: {},
+        }),
+      ).documents[0]!.occurrences![0]!.range,
+      parseScipIndex(
+        withOccurrence({
+          symbol: "s",
+          multiLineRange: {},
+        }),
+      ).documents[0]!.occurrences![0]!.range,
+    ],
+    [
+      [0, 0, 1],
+      [0, 0, 0, 1],
+      [0, 0, 0],
+      [0, 0, 0, 0],
     ],
   );
   const typedMultiLine = parseScipIndex(

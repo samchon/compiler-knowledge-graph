@@ -17,7 +17,10 @@
  *
  * The parser normalizes both protobuf JSON (lowerCamelCase with named enums)
  * and the Go-struct JSON emitted by `scip print --json` (snake_case with
- * numeric enums) into this one lowerCamelCase, named-enum representation.
+ * numeric enums) into this one lowerCamelCase representation. Known enums use
+ * their names. An unknown protocol-version number is retained as its decimal
+ * string because protobuf preserves unknown enum numbers for forward
+ * compatibility and graph does not interpret that metadata field.
  */
 export interface IScipIndex {
   metadata: IScipIndex.IMetadata;

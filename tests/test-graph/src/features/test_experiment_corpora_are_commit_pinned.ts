@@ -60,13 +60,20 @@ export const test_experiment_corpora_are_commit_pinned = () => {
       runner.includes("compilerLimitation: experiment.compilerLimitation"),
   );
   TestValidator.predicate(
-    "every setup path installs and records one verified Gradle",
+    "every setup path installs, persists, and records one verified Gradle",
     setup.includes('const version = "8.14.3"') &&
       setup.includes("services.gradle.org/distributions/gradle-") &&
       setup.includes(
         "bd71102213493060956ec229d946beee57158dbd89d0e62b91bca0fa2c5f3531",
       ) &&
+      setup.includes('path.join(binRoot, "gradle")') &&
       setup.includes("await installGradle()"),
+  );
+  TestValidator.predicate(
+    "a local start process reactivates the tools installed by setup",
+    helpers.includes("export const activateProvisionedTools") &&
+      helpers.includes('path.join(workRoot, "tools", "bin")') &&
+      runner.includes("activateProvisionedTools();"),
   );
   TestValidator.predicate(
     "a Java public lifecycle type stays valid through rename",

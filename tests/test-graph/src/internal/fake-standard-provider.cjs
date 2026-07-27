@@ -129,6 +129,15 @@ const contracts = {
       fs
         .readdirSync(process.cwd(), { withFileTypes: true })
         .some((entry) => entry.isFile() && entry.name.endsWith(".gemspec"));
+    const expected = process.env.SAMCHON_GRAPH_FIXTURE_GEM_METADATA;
+    if (
+      expected !== undefined &&
+      valueAfter(args, "--gem-metadata") !== expected
+    ) {
+      throw new Error(
+        `fake standard provider: scip-ruby expected --gem-metadata ${expected}`,
+      );
+    }
     return {
       leading: ["."],
       requires: declared ? [] : ["--gem-metadata"],

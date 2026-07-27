@@ -3,7 +3,7 @@ import path from "node:path";
 
 import { dartPackageConfigInputs } from "../../indexer/dartPackageConfigInputs";
 import { languageOf } from "../../indexer/languageOf";
-import { GraphLanguage } from "../../typings";
+import { GraphEdgeKind, GraphLanguage } from "../../typings";
 import { BoundedMap } from "../../utils/BoundedMap";
 import { spawnableCommand } from "../../utils/spawnableCommand";
 import { IGraphProvider } from "../IGraphProvider";
@@ -89,6 +89,14 @@ const dotnetScipProvider = createScipProvider({
 
 const pythonScipProvider = createScipProvider({
   name: "scip-python",
+  // scip-python 0.6.6 never populates `SymbolInformation.enclosing_symbol`.
+  // Every construction site in the published bundle passes `symbol`,
+  // `documentation` and `relationships` only, and the field appears nowhere but
+  // the generated protobuf accessors. `contains` is derived from exactly that
+  // field, so claiming the family told a consumer containment was proven and
+  // left it to read the absence as a project with no structure rather than an
+  // indexer that cannot describe one.
+  omitFacts: ["contains"],
   // `python3` is not the command a Windows Python answers to. The python.org
   // installer creates `python.exe` and `py.exe`; only the Microsoft Store build
   // creates `python3.exe`, so requiring the one spelling declined the strict
@@ -183,11 +191,17 @@ const dartScipProvider = createScipProvider({
  * why this needed a mechanism rather than a registry line, and why it arrived
  * after dart despite both having had a real indexer all along.
  *
- * Composer, not a released binary: `include $_composer_autoload_path ?? …`
- * means a global install supplies its own autoloader, so the tool does not have
- * to become a dependency of the project it indexes. It does need that project's
- * own `vendor/` present, because it resolves classes through the autoloader the
- * project generated.
+ * Composer, and inside the project rather than beside it. The note here used to
+ * argue the opposite — that `include $_composer_autoload_path ?? …` lets a
+ * global install bring its own autoloader — and a measurement refuted it:
+ * `Composer.php` computes its vendor directory as the package root plus
+ * `vendor`, which a global install flattens away, so the tool exits with
+ * `Invalid scip-php vendor directory` before doing anything. Its own
+ * instructions are `composer require --dev` followed by `vendor/bin/scip-php`.
+ *
+ * That is why `resolveProviderCommand` looks in `vendor/bin`: for this
+ * ecosystem, an indexer installed into the project is the expected arrangement
+ * and a global copy is the unusual one.
  */
 const phpScipProvider = createScipProvider({
   name: "scip-php",
@@ -222,6 +236,9 @@ export const standardScipProviders: readonly IGraphProvider[] = [
 
 interface IStandardScipProvider {
   name: string;
+
+  /** Fact families this indexer provably does not emit. */
+  omitFacts?: readonly GraphEdgeKind[];
   languages: readonly GraphLanguage[];
   command: string;
   override: string;

@@ -1,4 +1,8 @@
-import { GraphLanguage, GraphProviderAuthority } from "../../typings";
+import {
+  GraphEdgeKind,
+  GraphLanguage,
+  GraphProviderAuthority,
+} from "../../typings";
 import { IGraphProvider } from "../IGraphProvider";
 import { adaptScipIndex } from "./adaptScipIndex";
 import { ScipSession } from "./ScipSession";
@@ -32,6 +36,7 @@ export function scipProvider(props: scipProvider.IProps): IGraphProvider {
   const configuration = props.configuration;
   const compilerVersion = props.compilerVersion;
   const sourceText = props.sourceText;
+  const omitFacts = props.omitFacts;
   const projectRootFromInvocation = props.projectRootFromInvocation;
   const languageOf = props.languageOf;
   const languages = Object.freeze([...props.languages]);
@@ -110,6 +115,7 @@ export function scipProvider(props: scipProvider.IProps): IGraphProvider {
         ...(sourceText === undefined
           ? {}
           : { sourceText }),
+        ...(omitFacts === undefined ? {} : { omitFacts }),
         ...(projectRootFromInvocation === undefined
           ? {}
           : {
@@ -177,6 +183,9 @@ export namespace scipProvider {
 
     /** Whether this producer's document text is exact source evidence. */
     sourceText?: boolean;
+
+    /** Fact families this indexer provably does not emit. */
+    omitFacts?: readonly GraphEdgeKind[];
 
     /** Bind an omitted protobuf project root to this isolated invocation. */
     projectRootFromInvocation?: boolean;

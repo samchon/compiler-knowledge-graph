@@ -3,7 +3,11 @@ import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { GraphLanguage, GraphProviderAuthority } from "../../typings";
+import {
+  GraphEdgeKind,
+  GraphLanguage,
+  GraphProviderAuthority,
+} from "../../typings";
 import { fileFromUri } from "../../utils/fileFromUri";
 import { assertGraphSnapshotContract } from "../assertGraphSnapshotContract";
 import { BatchGraphSession } from "../BatchGraphSession";
@@ -50,10 +54,17 @@ export class ScipSession implements IBulkGraphSession {
         `${configured.provider}: maxArtifactBytes must be a positive safe integer`,
       );
     }
+    // Minus what this producer is known not to emit. Every SCIP entry
+    // inherited the same fact list, so a provider whose indexer never
+    // populates a field still advertised the family derived from it — a
+    // consumer degrading against  was told containment was proven and
+    // then found none, which reads as a project with no structure rather than
+    // an indexer that cannot describe one.
+    const omitted = new Set(configured.omitFacts ?? []);
     const facts = [
       ...adaptScipIndex.EDGE_KINDS,
       ...(configured.enrichment?.facts ?? []),
-    ];
+    ].filter((fact) => !omitted.has(fact));
     this.maxArtifactBytes = maxArtifactBytes;
     this.batch = new BatchGraphSession({
       root: configured.root,
@@ -164,7 +175,7 @@ export class ScipSession implements IBulkGraphSession {
         facts: [
           ...adaptScipIndex.EDGE_KINDS,
           ...(this.options.enrichment?.facts ?? []),
-        ],
+        ].filter((fact) => !(this.options.omitFacts ?? []).includes(fact)),
         schemaVersion: SCIP_SCHEMA_VERSION,
         tool: index.metadata.toolInfo?.name ?? this.options.provider,
         toolVersion: index.metadata.toolInfo?.version ?? "",
@@ -306,6 +317,15 @@ export namespace ScipSession {
     inputs: () => string[];
     configuration?: () => readonly string[];
     compilerVersion?: (configuration: readonly string[]) => string;
+
+    /**
+     * Fact families this indexer provably does not emit.
+     *
+     * Declared rather than inferred: an index with no containment edges may be
+     * a flat project or a producer that cannot describe nesting, and only
+     * reading the producer tells you which.
+     */
+    omitFacts?: readonly GraphEdgeKind[];
     sourceText?: boolean;
     projectRootFromInvocation?: boolean;
     languageOf: (file: string) => GraphLanguage;

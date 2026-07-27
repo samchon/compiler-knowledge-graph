@@ -103,14 +103,21 @@ export const test_standard_providers_execute_their_exact_contracts =
         if (command === undefined) {
           throw new Error(`${provider.name}: fixture command did not resolve`);
         }
+        const configuration = provider.configuration?.(root, process.env);
         TestValidator.predicate(
           `${provider.name} records indexer, decoder, and toolchain versions`,
-          sameArray(provider.configuration?.(root, process.env), [
-            `${producerOf(provider.name)}=${producerOf(provider.name)} v1.0.0`,
+          sameArray(configuration, [
+            producerRowOf(provider.name),
             "scip=scip v1.0.0",
             ...toolchainRowsOf(provider.name),
           ]),
         );
+        if (provider.name === "scip-php") {
+          TestValidator.predicate(
+            "scip-php derives configuration without running its versionless indexer",
+            fs.existsSync(path.join(root, "index.scip")) === false,
+          );
+        }
         TestValidator.predicate(
           `${provider.name} watches source and build inputs`,
           buildInputs(provider, root).length > 0,
@@ -964,6 +971,12 @@ function emptyPath(): NodeJS.ProcessEnv {
  */
 function producerOf(provider: string): string {
   return provider === "scip-dart" ? "scip_dart" : provider;
+}
+
+function producerRowOf(provider: string): string {
+  return provider === "scip-php"
+    ? "scip-php=unreported"
+    : `${producerOf(provider)}=${producerOf(provider)} v1.0.0`;
 }
 
 function toolchainRowsOf(provider: string): string[] {

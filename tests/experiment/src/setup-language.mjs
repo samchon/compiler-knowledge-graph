@@ -182,6 +182,40 @@ const installKotlinLanguageServer = async () => {
   fs.symlinkSync(launcher, link);
 };
 
+const installGradle = async () => {
+  const version = "8.14.3";
+  const url = `https://services.gradle.org/distributions/gradle-${version}-bin.zip`;
+  const archive = path.join(toolsRoot, `gradle-${version}-bin.zip`);
+  const target = path.join(toolsRoot, `gradle-${version}`);
+  await downloadFile(url, archive);
+  verifySha256(
+    archive,
+    "bd71102213493060956ec229d946beee57158dbd89d0e62b91bca0fa2c5f3531",
+  );
+  fs.rmSync(target, { force: true, recursive: true });
+  run("unzip", ["-q", archive, "-d", toolsRoot]);
+  const executable = path.join(target, "bin", "gradle");
+  if (!fs.statSync(executable, { throwIfNoEntry: false })?.isFile()) {
+    throw new Error(`Gradle ${version} was not extracted at ${executable}`);
+  }
+  fs.chmodSync(executable, 0o755);
+  appendGithubPath(path.dirname(executable));
+  const output = String(
+    run(executable, ["--version"], { stdio: "pipe" }).stdout,
+  );
+  if (!output.includes(`Gradle ${version}`)) {
+    throw new Error(`Expected Gradle ${version}, received:\n${output}`);
+  }
+  console.log(output.trim());
+  record({
+    tool: "gradle",
+    version,
+    source: url,
+    digest:
+      "sha256:bd71102213493060956ec229d946beee57158dbd89d0e62b91bca0fa2c5f3531",
+  });
+};
+
 const installZls = async () => {
   const url = await latestAsset("zigtools/zls", /x86_64.*linux.*\.tar\.xz$/);
   const archive = path.join(toolsRoot, "zls.tar.xz");
@@ -202,23 +236,26 @@ const installZls = async () => {
 };
 
 const installScip = async () => {
-  const archive = path.join(toolsRoot, "scip-v0.7.1-linux-amd64.tar.gz");
-  const target = path.join(toolsRoot, "scip-v0.7.1");
+  // scip-java v0.13.1 emits the typed-range oneof introduced by SCIP v0.9.
+  // An older decoder silently discards those unknown protobuf fields before
+  // printing JSON, making valid occurrences appear to have no source range.
+  const archive = path.join(toolsRoot, "scip-v0.9.0-linux-amd64.tar.gz");
+  const target = path.join(toolsRoot, "scip-v0.9.0");
   await downloadFile(
-    "https://github.com/scip-code/scip/releases/download/v0.7.1/scip-linux-amd64.tar.gz",
+    "https://github.com/scip-code/scip/releases/download/v0.9.0/scip-linux-amd64.tar.gz",
     archive,
   );
   verifySha256(
     archive,
-    "7bb1a566787478641a13bd9c93c2f571337556c76d659206f2225dc7d71a648b",
+    "fc2e7273e110be9f35924da1066000183791e8bfdb0391355de6eaaa070fec75",
   );
   record({
     tool: "scip",
-    version: "v0.7.1",
+    version: "v0.9.0",
     source:
-      "https://github.com/scip-code/scip/releases/download/v0.7.1/scip-linux-amd64.tar.gz",
+      "https://github.com/scip-code/scip/releases/download/v0.9.0/scip-linux-amd64.tar.gz",
     digest:
-      "sha256:7bb1a566787478641a13bd9c93c2f571337556c76d659206f2225dc7d71a648b",
+      "sha256:fc2e7273e110be9f35924da1066000183791e8bfdb0391355de6eaaa070fec75",
   });
   fs.rmSync(target, { force: true, recursive: true });
   ensureDir(target);
@@ -551,13 +588,7 @@ switch (experiment.language) {
   }
   case "kotlin":
     await installKotlinLanguageServer();
-    shell("gradle --version");
-    record({
-      tool: "gradle",
-      version: "8.14.3",
-      source: "gradle/actions/setup-gradle@v5",
-      digest: "unpinned",
-    });
+    await installGradle();
     // scip-java covers Kotlin through semanticdb-kotlinc, and it needs a JDK to
     // run the Gradle build it indexes through. koin is the worst lane measured
     // at 1349 s, almost all of it kotlin-language-server's Gradle sync before it

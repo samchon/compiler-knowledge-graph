@@ -130,6 +130,9 @@ export const runStrictLifecycle = async (experiment, pinnedRoot) => {
     assertCreatedEdge(created, fixture, experiment.language);
 
     fs.renameSync(createFile, renamedFile);
+    if (fixture.renamedText !== undefined) {
+      fs.writeFileSync(renamedFile, fixture.renamedText);
+    }
     if (compilationDatabase !== undefined) {
       compilationDatabaseLifecycle.move(
         compilationDatabase,

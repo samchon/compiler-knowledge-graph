@@ -11,15 +11,6 @@ export const test_experiment_corpora_are_commit_pinned = () => {
   const lifecycle = experimentSource("strict-lifecycle.mjs");
   const runner = experimentSource("run-language.mjs");
   const setup = experimentSource("setup-language.mjs");
-  const workflow = fs.readFileSync(
-    path.join(
-      GraphPaths.repositoryRoot,
-      ".github",
-      "workflows",
-      "experiment.yml",
-    ),
-    "utf8",
-  );
 
   const repositories = [...catalog.matchAll(/repository:\s*"[^"]+"/g)];
   const commits = [...catalog.matchAll(/commit:\s*"([0-9a-f]{40})"/g)];
@@ -57,21 +48,32 @@ export const test_experiment_corpora_are_commit_pinned = () => {
         row.includes("lifecycle: {"),
     ) &&
       helpers.includes('experiment.projectRoot ?? "."') &&
-      helpers.includes("projectRoot escapes its isolated corpus"),
+      helpers.includes("projectRoot escapes its pinned corpus") &&
+      helpers.includes("fs.cpSync(source, root"),
   );
   TestValidator.predicate(
     "an unavailable compiler identity requires an explicit row limitation",
     kotlin.includes("compilerLimitation:") &&
       runner.includes("experiment.compilerLimitation.trim()") &&
-      runner.includes("provenance.producer.compiler ===") &&
+      runner.includes('typeof provenance.producer.compiler === "string"') &&
+      runner.includes("provenance.producer.compiler.trim()") &&
       runner.includes("compilerLimitation: experiment.compilerLimitation"),
   );
   TestValidator.predicate(
-    "the wrapperless Kotlin fixture and its tool manifest share one Gradle",
-    workflow.includes('gradle-version: "8.14.3"') &&
-      setup.includes('shell("gradle --version")') &&
-      setup.includes('version: "8.14.3"') &&
-      setup.includes('source: "gradle/actions/setup-gradle@v5"'),
+    "every setup path installs and records one verified Gradle",
+    setup.includes('const version = "8.14.3"') &&
+      setup.includes("services.gradle.org/distributions/gradle-") &&
+      setup.includes(
+        "bd71102213493060956ec229d946beee57158dbd89d0e62b91bca0fa2c5f3531",
+      ) &&
+      setup.includes("await installGradle()"),
+  );
+  TestValidator.predicate(
+    "a Java public lifecycle type stays valid through rename",
+    java.includes("renamedText:") &&
+      java.includes("class SamchonGraphExperimentRenamed") &&
+      lifecycle.includes("fixture.renamedText !== undefined") &&
+      lifecycle.includes("fs.writeFileSync(renamedFile, fixture.renamedText)"),
   );
   TestValidator.predicate(
     "isolated lifecycle edges can prove a pinned corpus relationship claim",
@@ -203,6 +205,20 @@ export const test_experiment_corpora_are_commit_pinned = () => {
     setup,
     "const installScipPython",
     "const findFile",
+  );
+  const installDecoder = region(
+    setup,
+    "const installScip = async",
+    "const installScipRuby",
+  );
+  TestValidator.predicate(
+    "the SCIP decoder understands typed ranges and is digest-pinned",
+    installDecoder.includes("scip-v0.9.0-linux-amd64.tar.gz") &&
+      installDecoder.includes(
+        "fc2e7273e110be9f35924da1066000183791e8bfdb0391355de6eaaa070fec75",
+      ) &&
+      installDecoder.includes("verifySha256(") &&
+      installDecoder.includes("typed-range oneof"),
   );
   TestValidator.predicate(
     "the Python indexer and decoder are exact campaign-owned tools",

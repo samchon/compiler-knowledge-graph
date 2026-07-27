@@ -226,7 +226,7 @@ const rubyScipProvider = createScipProvider({
     "sorbet/config",
   ],
   buildExtensions: [".gemspec"],
-  indexArgs: (artifact) => [".", "--index-file", artifact],
+  indexArgs: rubyScipIndexArgs,
 });
 
 /**
@@ -304,6 +304,13 @@ const phpScipProvider = createScipProvider({
     "phpstan.neon",
     "phpstan.neon.dist",
   ],
+  // The CLI has no version flag: its only options are `--help` and
+  // `--memory-limit`. Invoking the conventional `--version` does not fail; it
+  // performs a full index and writes `index.scip`, so a probe would mutate the
+  // project before the guarded build even starts. Composer's pinned package
+  // metadata is the stable identity when present, and `unreported` is the
+  // honest answer for a global binary or the package's own checkout.
+  producerConfiguration: phpProducerConfiguration,
   indexArgs: () => [],
   artifactFrom: (root) => path.join(root, "index.scip"),
 });
@@ -352,6 +359,17 @@ interface IStandardScipProvider {
   compilerVersion?: (
     languages: readonly GraphLanguage[],
     configuration: readonly string[],
+  ) => string;
+
+  /**
+   * Derive the producer's configuration row without assuming `--version`.
+   *
+   * Most indexers implement that conventional flag. scip-php does not, and
+   * treating an unsupported flag as a harmless probe runs the indexer.
+   */
+  producerConfiguration?: (
+    root: string,
+    env: NodeJS.ProcessEnv,
   ) => string;
 
   /** Where a producer that takes no output flag writes, relative to the root. */
@@ -502,7 +520,8 @@ function createScipProvider(
           ) => validateConfiguration(root, configuration),
         }),
     configuration: (root, _languages, env = process.env) => [
-      toolVersion(root, env, props.command, props.override),
+      props.producerConfiguration?.(root, env) ??
+        toolVersion(root, env, props.command, props.override),
       toolVersion(root, env, "scip", "SAMCHON_GRAPH_SCIP"),
       ...toolchainVersions(root, env, props.toolchain),
     ],
@@ -516,6 +535,78 @@ function createScipProvider(
     sourceText: true,
     languageOf,
   });
+}
+
+/**
+ * Invoke scip-ruby with explicit package identity only when none is declared.
+ *
+ * The producer documents `--gem-metadata` for repositories without a
+ * `Gemfile.lock` or gemspec. Omitting it makes that supported project shape
+ * fail before indexing, which is exactly what the upstream config-only fixture
+ * exposed. A declared package keeps the producer's native inference.
+ */
+function rubyScipIndexArgs(artifact: string, root: string): string[] {
+  const args = [".", "--index-file", artifact];
+  const declared =
+    fs.statSync(path.join(root, "Gemfile.lock"), {
+      throwIfNoEntry: false,
+    })?.isFile() === true ||
+    fs
+      .readdirSync(root, { withFileTypes: true })
+      .some((entry) => entry.isFile() && entry.name.endsWith(".gemspec"));
+  if (declared) return args;
+  const inferred =
+    path
+      .basename(root)
+      .replace(/[^A-Za-z0-9._-]+/g, "-")
+      .replace(/^-+|-+$/g, "") || "workspace";
+  return [...args, "--gem-metadata", `${inferred}@workspace`];
+}
+
+/**
+ * Identify scip-php from the Composer lock that installed it.
+ *
+ * The lock is already a declared build input. Including both its version and
+ * immutable source reference distinguishes two commits published under the
+ * same development version without executing the indexer as a probe.
+ */
+function phpProducerConfiguration(root: string): string {
+  const label = "scip-php";
+  try {
+    const lock = JSON.parse(
+      fs.readFileSync(path.join(root, "composer.lock"), "utf8"),
+    ) as {
+      packages?: unknown;
+      "packages-dev"?: unknown;
+    };
+    const packages = [
+      ...(Array.isArray(lock.packages) ? lock.packages : []),
+      ...(Array.isArray(lock["packages-dev"]) ? lock["packages-dev"] : []),
+    ];
+    const installed = packages.find(
+      (entry): entry is {
+        name: string;
+        version?: unknown;
+        source?: { reference?: unknown };
+      } =>
+        typeof entry === "object" &&
+        entry !== null &&
+        (entry as { name?: unknown }).name === "davidrjenni/scip-php",
+    );
+    if (installed === undefined) return `${label}=unreported`;
+    const version =
+      typeof installed.version === "string" && installed.version.trim() !== ""
+        ? installed.version.trim()
+        : "unreported";
+    const reference =
+      typeof installed.source?.reference === "string" &&
+      installed.source.reference.trim() !== ""
+        ? `@${installed.source.reference.trim()}`
+        : "";
+    return `${label}=${version}${reference}`;
+  } catch {
+    return `${label}=unreported`;
+  }
 }
 
 function standardCompilerVersion(

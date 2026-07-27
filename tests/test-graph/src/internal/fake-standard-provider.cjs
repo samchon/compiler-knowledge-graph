@@ -14,7 +14,11 @@ const producer = producerArgument.slice("--producer=".length);
 const forwarded = args.filter((arg) => arg !== producerArgument);
 const heuristic = process.env.SAMCHON_GRAPH_FIXTURE_MODE === "heuristic";
 
-if (forwarded.includes("--version")) {
+// scip-php deliberately has no version flag. Its real entry point ignores that
+// unknown option and continues into indexing, so preserving the convenient
+// fake-version shortcut for this producer would make the configuration test
+// incapable of detecting the destructive probe it exists to forbid.
+if (producer !== "scip-php" && forwarded.includes("--version")) {
   process.stdout.write(`${producer} v1.0.0\n`);
   process.exit(0);
 }
@@ -115,12 +119,23 @@ const contracts = {
     requires: ["--project-name"],
     output: valueAfter(args, "--output"),
   }),
-  // `scip-ruby . --index-file <path>`
-  "scip-ruby": (args) => ({
-    leading: ["."],
-    requires: [],
-    output: valueAfter(args, "--index-file"),
-  }),
+  // `scip-ruby . --index-file <path> --gem-metadata <name@version>` for a
+  // project such as this fixture that has no Gemfile.lock or gemspec.
+  "scip-ruby": (args) => {
+    const declared =
+      fs.statSync(path.join(process.cwd(), "Gemfile.lock"), {
+        throwIfNoEntry: false,
+      })?.isFile() === true ||
+      fs
+        .readdirSync(process.cwd(), { withFileTypes: true })
+        .some((entry) => entry.isFile() && entry.name.endsWith(".gemspec"));
+    return {
+      leading: ["."],
+      requires: declared ? [] : ["--gem-metadata"],
+      forbids: declared ? ["--gem-metadata"] : [],
+      output: valueAfter(args, "--index-file"),
+    };
+  },
   // `scip_dart --output <path> .`
   //
   // The flag exists despite pub.dev listing none: `bin/scip_dart.dart` declares

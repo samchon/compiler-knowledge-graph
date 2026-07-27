@@ -88,12 +88,6 @@ jobs:
         with:
           swift-version: "6.0"
 
-      - name: Setup Gradle
-        if: ${{ matrix.language == 'kotlin' && (github.event_name != 'workflow_dispatch' || inputs.language == 'all' || inputs.language == matrix.language) }}
-        uses: gradle/actions/setup-gradle@v5
-        with:
-          gradle-version: "8.14.3"
-
       - name: Install
         if: ${{ github.event_name != 'workflow_dispatch' || inputs.language == 'all' || inputs.language == matrix.language }}
         run: pnpm install --frozen-lockfile

@@ -147,9 +147,14 @@ if (provenance !== undefined) {
     typeof experiment.compilerLimitation === "string"
       ? experiment.compilerLimitation.trim()
       : "";
+  const compiler =
+    typeof provenance.producer.compiler === "string"
+      ? provenance.producer.compiler.trim()
+      : "";
   if (
-    (provenance.producer.compiler === "" && compilerLimitation === "") ||
-    (provenance.producer.compiler !== "" && compilerLimitation !== "")
+    typeof provenance.producer.compiler !== "string" ||
+    (compiler === "" && compilerLimitation === "") ||
+    (compiler !== "" && compilerLimitation !== "")
   ) {
     throw new Error(
       `${experiment.language}: strict compiler provenance and its limitation disagree: ${JSON.stringify(provenance)}`,

@@ -97,38 +97,42 @@ export const toolManifest = (language) => {
 };
 
 /**
- * Copy one pinned clone into a workspace that preparation is allowed to change.
+ * Copy one pinned project into a workspace that preparation may change.
  *
  * A package manager run inside the clone itself writes locks, caches, generated
  * files, and build state, and the result still reports the pristine commit it no
- * longer has. Both lanes therefore prepare a copy: the clone exists only to
- * carry the commit, and `.git` is left behind so nothing can rewrite it.
+ * longer has. Both lanes therefore prepare a copy. A nested `projectRoot` is
+ * copied as the isolated root rather than returned beneath a copy of its parent:
+ * Gradle searches ancestors for settings files, so leaving the upstream
+ * monorepo around a standalone fixture changes which build the producer runs.
+ * The clone exists only to carry the commit, and `.git` is left behind so
+ * nothing can rewrite it.
  */
 export const isolateCorpus = (experiment, pinnedRoot, label) => {
   const root = path.join(workRoot, label, experiment.language);
-  fs.rmSync(root, { force: true, recursive: true });
-  ensureDir(path.dirname(root));
-  fs.cpSync(pinnedRoot, root, {
-    recursive: true,
-    filter: (source) => path.basename(source) !== ".git",
-  });
-  const project = path.resolve(root, experiment.projectRoot ?? ".");
-  const relative = path.relative(root, project);
+  const source = path.resolve(pinnedRoot, experiment.projectRoot ?? ".");
+  const relative = path.relative(pinnedRoot, source);
   if (
     relative === ".." ||
     relative.startsWith(`..${path.sep}`) ||
     path.isAbsolute(relative)
   ) {
     throw new Error(
-      `${experiment.language}: projectRoot escapes its isolated corpus: ${String(experiment.projectRoot)}`,
+      `${experiment.language}: projectRoot escapes its pinned corpus: ${String(experiment.projectRoot)}`,
     );
   }
-  if (!fs.statSync(project, { throwIfNoEntry: false })?.isDirectory()) {
+  if (!fs.statSync(source, { throwIfNoEntry: false })?.isDirectory()) {
     throw new Error(
       `${experiment.language}: projectRoot is not a directory in its pinned corpus: ${String(experiment.projectRoot)}`,
     );
   }
-  return project;
+  fs.rmSync(root, { force: true, recursive: true });
+  ensureDir(path.dirname(root));
+  fs.cpSync(source, root, {
+    recursive: true,
+    filter: (source) => path.basename(source) !== ".git",
+  });
+  return root;
 };
 
 /** Prove the pinned clone is still exactly the revision the result names. */

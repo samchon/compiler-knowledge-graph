@@ -208,6 +208,8 @@ export const LANGUAGE_EXPERIMENTS = [
         "src/main/java/com/SamchonGraphExperimentRenamed.java",
       createText:
         "package com;\n\npublic final class SamchonGraphExperiment {\n    public static Example samchonGraphExperiment() {\n        return new Example();\n    }\n}\n",
+      renamedText:
+        "package com;\n\npublic final class SamchonGraphExperimentRenamed {\n    public static Example samchonGraphExperiment() {\n        return new Example();\n    }\n}\n",
       createdSymbol: "samchonGraphExperiment",
       createdEdge: {
         kind: "references",
@@ -273,8 +275,8 @@ export const LANGUAGE_EXPERIMENTS = [
   {
     language: "kotlin",
     // A current Gradle fixture from the pinned producer keeps ten clean
-    // lifecycle builds bounded. The workflow supplies one exact Gradle version
-    // because this fixture intentionally carries no wrapper.
+    // lifecycle builds bounded. Language setup supplies one verified Gradle
+    // distribution because this fixture intentionally carries no wrapper.
     repository: "https://github.com/scip-code/scip-java.git",
     commit: "a609ba1adaf630292df5a73ec4ba06c170caba93",
     projectRoot:

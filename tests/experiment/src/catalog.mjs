@@ -102,7 +102,41 @@ export const LANGUAGE_EXPERIMENTS = [
     language: "cpp",
     repository: "https://github.com/fmtlib/fmt.git",
     commit: "bcaa44d05579c75a83571821faee7acf6a9a0d55",
-    maxFiles: 120,
+    // Uncapped: scip-clang publishes a whole-workspace artifact and refuses a
+    // file cap, so a capped row is one it declines to serve.
+    //
+    // The compilation database is what scip-clang consumes and what a CMake
+    // project has to be configured to produce; nothing is compiled by this.
+    prepare: "cmake -S . -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
+    strictProvider: "scip-clang",
+    strictAuthority: "semantic-index",
+    strictTool: "scip-clang",
+    requiredCapabilities: ["universe", "diskDigests"],
+    // References only. Whether scip-clang populates SCIP enclosing_symbol has
+    // not been established by reading it, and containment is derived from
+    // exactly that field.
+    semanticEdges: ["references"],
+    crossFileEdge: "references",
+    lifecycle: {
+      sourceFile: "src/format.cc",
+      editSuffix: "\n// samchon-graph lifecycle edit\n",
+      createFile: "samchon_graph_experiment.cc",
+      renamedFile: "samchon_graph_experiment_renamed.cc",
+      createText:
+        "int samchonGraphExperiment(void) { return 0; }\n",
+      createdSymbol: "samchonGraphExperiment",
+      // The database itself, because that is what this producer reads. Breaking
+      // CMakeLists would leave an already-generated database untouched and test
+      // nothing.
+      buildFile: "build/compile_commands.json",
+      failureFile: "build/compile_commands.json",
+      failureSuffix: "\n[ not json",
+      // A compilation database that will not parse leaves scip-clang with no
+      // translation units to index, so it cannot publish. Stated as the
+      // boundary it appears to be; a run that shows recovery makes this row
+      // wrong and it must then record what actually happens.
+      failurePolicy: "reject",
+    },
     minNodes: 1,
     minEdges: 1,
   },
@@ -110,7 +144,41 @@ export const LANGUAGE_EXPERIMENTS = [
     language: "c",
     repository: "https://github.com/libuv/libuv.git",
     commit: "9d51562c10be60bc1126a3d71803b1038f4fbb7e",
-    maxFiles: 120,
+    // Uncapped: scip-clang publishes a whole-workspace artifact and refuses a
+    // file cap, so a capped row is one it declines to serve.
+    //
+    // The compilation database is what scip-clang consumes and what a CMake
+    // project has to be configured to produce; nothing is compiled by this.
+    prepare: "cmake -S . -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
+    strictProvider: "scip-clang",
+    strictAuthority: "semantic-index",
+    strictTool: "scip-clang",
+    requiredCapabilities: ["universe", "diskDigests"],
+    // References only. Whether scip-clang populates SCIP enclosing_symbol has
+    // not been established by reading it, and containment is derived from
+    // exactly that field.
+    semanticEdges: ["references"],
+    crossFileEdge: "references",
+    lifecycle: {
+      sourceFile: "src/uv-common.c",
+      editSuffix: "\n// samchon-graph lifecycle edit\n",
+      createFile: "samchon_graph_experiment.c",
+      renamedFile: "samchon_graph_experiment_renamed.c",
+      createText:
+        "int samchonGraphExperiment(void) { return 0; }\n",
+      createdSymbol: "samchonGraphExperiment",
+      // The database itself, because that is what this producer reads. Breaking
+      // CMakeLists would leave an already-generated database untouched and test
+      // nothing.
+      buildFile: "build/compile_commands.json",
+      failureFile: "build/compile_commands.json",
+      failureSuffix: "\n[ not json",
+      // A compilation database that will not parse leaves scip-clang with no
+      // translation units to index, so it cannot publish. Stated as the
+      // boundary it appears to be; a run that shows recovery makes this row
+      // wrong and it must then record what actually happens.
+      failurePolicy: "reject",
+    },
     minNodes: 1,
     minEdges: 1,
   },

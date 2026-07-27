@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
+import cp from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -58,5 +60,95 @@ export function assertBothIndexColumnsAreMeasured() {
     runner,
     /"--no-strict"/,
     "the fallback column no longer stands the strict providers down",
+  );
+}
+
+/**
+ * The headline number is arithmetic, and arithmetic printed by nobody's test is
+ * arithmetic nobody has checked.
+ *
+ * What a strict provider was worth is the one figure this whole measurement
+ * exists to produce, and it is computed in the summary from two cells that must
+ * be paired correctly, skipped when either did not finish, and refused when the
+ * strict cell's provider never served.
+ */
+export function assertStrictComparisonArithmetic() {
+  const host = { cpu: "fixture", cores: 1, ramGB: 1, os: "fixture", node: "x" };
+  const cell = (project, tool, extra) => ({
+    project,
+    tool,
+    host,
+    strict: tool === "samchon-graph",
+    ...extra,
+  });
+  const fixture = {
+    index: {
+      scale: {},
+      cells: [
+        // Served, both finished: a ratio.
+        cell("alpha", "samchon-graph", {
+          buildMs: 10_000,
+          servedBy: "lsp scip-fake(go)",
+        }),
+        cell("alpha", "samchon-graph-fallback", {
+          buildMs: 250_000,
+          servedBy: "lsp no strict provider served",
+        }),
+        // Never served: both cells measured the same lane, so 1.0x would read
+        // as a provider that bought nothing rather than one that never ran.
+        cell("beta", "samchon-graph", {
+          buildMs: 20_000,
+          servedBy: "lsp no strict provider served",
+        }),
+        cell("beta", "samchon-graph-fallback", {
+          buildMs: 21_000,
+          servedBy: "lsp no strict provider served",
+        }),
+        // Fallback ran out of time: a timeout bounds a duration from below, so
+        // dividing by it would understate the very gap it is meant to show.
+        cell("gamma", "samchon-graph", {
+          buildMs: 5_000,
+          servedBy: "lsp scip-fake(c)",
+        }),
+        cell("gamma", "samchon-graph-fallback", {
+          buildMs: null,
+          timedOutMs: 3_600_000,
+          servedBy: "attempted no strict provider selected",
+        }),
+      ],
+    },
+  };
+
+  const file = path.join(
+    fs.mkdtempSync(path.join(os.tmpdir(), "samchon-graph-summary-")),
+    "graph.json",
+  );
+  fs.writeFileSync(file, JSON.stringify(fixture));
+  const ran = cp.spawnSync(
+    process.execPath,
+    [path.join(repoRoot, "tests", "benchmark", "graph", "index-time-summary.mjs")],
+    {
+      encoding: "utf8",
+      env: { ...process.env, SAMCHON_BENCH_INDEX_JSON: file },
+      windowsHide: true,
+    },
+  );
+  assert.equal(ran.status, 0, ran.stderr ?? "");
+  const out = ran.stdout ?? "";
+
+  assert.match(
+    out,
+    /alpha[^\n]*25\.0x/,
+    "a served project reports how much the strict provider saved",
+  );
+  assert.match(
+    out,
+    /beta[^\n]*both cells measured the same lane/,
+    "a project whose provider never served must not report a ratio",
+  );
+  assert.doesNotMatch(
+    out,
+    /gamma[^\n]*x$/m,
+    "a project with an unfinished cell must not be given a ratio",
   );
 }

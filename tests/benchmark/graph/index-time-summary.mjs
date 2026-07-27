@@ -21,7 +21,14 @@ import { fileURLToPath } from "node:url";
 import { PROJECTS } from "./corpus.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const websiteJson = path.resolve(here, "..", "results", "graph.json");
+// The publication by default, and a named one when asked. The headline number
+// this prints — what a strict provider was worth — is computed here and was
+// checked by nobody, because the only input was a file the tests must not
+// rewrite. Reading a given path makes the arithmetic testable against a fixture
+// without touching the real measurement.
+const websiteJson =
+  process.env.SAMCHON_BENCH_INDEX_JSON ??
+  path.resolve(here, "..", "results", "graph.json");
 
 const published = readJson(websiteJson);
 const index = published?.index ?? null;

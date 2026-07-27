@@ -20,7 +20,10 @@ import {
 import ordinal from "../graph/ordinal.cjs";
 import { assertDeclarationsPrecedeExecution } from "./declaration-order.mjs";
 import { assertWorkflowOptionForms } from "./option-form.mjs";
-import { assertBothIndexColumnsAreMeasured } from "./two-columns.mjs";
+import {
+  assertBothIndexColumnsAreMeasured,
+  assertStrictComparisonArithmetic,
+} from "./two-columns.mjs";
 
 const { compareNaturalOrdinal } = ordinal;
 

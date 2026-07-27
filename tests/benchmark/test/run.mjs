@@ -91,6 +91,27 @@ function testPublishedIndexCellsNameTheirMachine() {
     [],
     "a published index cell carries a build time, a timeout, or says it has no build step",
   );
+  // A fallback cell reports "no strict provider served" and so does a strict
+  // cell whose provider failed. Only the recorded intent separates them, so a
+  // publication that has both columns must say which is which or the comparison
+  // it exists for reads as thirteen broken providers.
+  const columns = new Set(
+    (published.index.cells ?? []).map((cell) => String(cell?.tool)),
+  );
+  if (columns.has("samchon-graph") && columns.has("samchon-graph-fallback")) {
+    const unlabelled = (published.index.cells ?? []).filter(
+      (cell) =>
+        String(cell?.tool).startsWith("samchon-graph") &&
+        typeof cell?.strict !== "boolean",
+    );
+    assert.deepEqual(
+      unlabelled.map(
+        (cell) => `${String(cell.project)}/${String(cell.tool)}`,
+      ),
+      [],
+      "a published cell must say whether it was measured with strict providers",
+    );
+  }
 }
 
 function testCorpusAndPromptProvenance() {

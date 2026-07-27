@@ -159,7 +159,7 @@ jobs:
         run: |
           node tests/benchmark/graph/index-time.mjs \
             --project=${{ matrix.project }} \
-            --tools=samchon-graph \
+            --tools=samchon-graph,samchon-graph-fallback \
             --await-quiet=240 \
             --no-website \
             --out="$GITHUB_WORKSPACE/index-time-out/${{ matrix.project }}"

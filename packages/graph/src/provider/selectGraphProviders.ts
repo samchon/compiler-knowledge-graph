@@ -22,6 +22,22 @@ export function selectGraphProviders(
   const requested = new Set(languages);
   const candidates: selectGraphProviders.ICandidate[] = [];
   const warnings: string[] = [];
+  // Asked to stand every strict provider down, and saying so.
+  //
+  // This exists for measurement: what a strict provider is worth can only be
+  // stated against the same project indexed without one, on the same machine,
+  // in the same run. Every other way of disabling one — capping files, naming a
+  // server — works by tripping a refusal, which measures the refusal rather
+  // than the fallback.
+  if (options.strict === false) {
+    return {
+      candidates,
+      warnings: [
+        "strict providers were stood down by request, so every language falls " +
+          "through to the generic language-server lane",
+      ],
+    };
+  }
 
   for (const provider of registry) {
     const owned = provider.languages.filter((language) =>

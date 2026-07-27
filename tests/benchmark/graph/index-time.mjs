@@ -77,11 +77,18 @@ const SOURCE_EXTENSIONS = {
 };
 
 const TOOL_SAMCHON = "samchon-graph";
+// The same tool on the same project with every strict provider stood down.
+// What a strict provider is worth cannot be read off one number: redis went
+// from 263 s to 15.6 s when scip-clang finally served, and that was only
+// visible by comparing two runs days apart on different machines. Two cells in
+// one run, one host, one clock is the comparison the table was missing.
+const TOOL_SAMCHON_FALLBACK = "samchon-graph-fallback";
 const TOOL_CODEGRAPH = "codegraph";
 const TOOL_CODEBASE_MEMORY = "codebase-memory";
 const TOOL_SERENA = "serena";
 const ALL_TOOLS = [
   TOOL_SAMCHON,
+  TOOL_SAMCHON_FALLBACK,
   TOOL_CODEGRAPH,
   TOOL_CODEBASE_MEMORY,
   TOOL_SERENA,
@@ -287,8 +294,14 @@ function runIndexCell({ project, spec, repoDir, tool }) {
       cleanupInsideFixture(repoDir, ".serena");
     }
   }
-  if (tool === TOOL_SAMCHON) {
-    const logStem = path.join(outDir, `samchon-graph-index-${project}`);
+  if (tool === TOOL_SAMCHON || tool === TOOL_SAMCHON_FALLBACK) {
+    const strict = tool === TOOL_SAMCHON;
+    const logStem = path.join(
+      outDir,
+      strict
+        ? `samchon-graph-index-${project}`
+        : `samchon-graph-fallback-index-${project}`,
+    );
     const ms = timeChecked(
       process.execPath,
       [
@@ -300,13 +313,17 @@ function runIndexCell({ project, spec, repoDir, tool }) {
         spec.language,
         "--mode",
         "lsp",
+        // Stood down rather than tripped. Capping files or naming a server
+        // also disables a strict provider, but by making it refuse — which
+        // measures the refusal, not the lane underneath it.
+        ...(strict ? [] : ["--no-strict"]),
         ...serverArgsForPreparedFixture(spec, repoDir).flatMap((arg) => [
           "--server-arg",
           arg,
         ]),
       ],
       {
-        label: `samchon-graph dump ${project}`,
+        label: `${tool} dump ${project}`,
         logBase: logStem,
         // The dump JSON reaches hundreds of MB on vscode; the payload is the
         // wire benchmark's concern, not this one's, so stdout is discarded.

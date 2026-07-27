@@ -75,14 +75,21 @@ function testPublishedIndexCellsNameTheirMachine() {
     [],
     "a published index cell must name the machine it was measured on",
   );
+  // Three ways a cell can be legitimate: it timed the build, it has no build
+  // step to time, or it ran out of time. The third was rejected here, which
+  // would have failed the moment a timeout cell reached the publication —
+  // exactly the cells added so that a language exceeding the cap contributes a
+  // fact instead of nothing at all.
   const unmeasurable = (published.index.cells ?? []).filter(
     (cell) =>
-      typeof cell?.buildMs !== "number" && cell?.hasBuildStep !== false,
+      typeof cell?.buildMs !== "number" &&
+      typeof cell?.timedOutMs !== "number" &&
+      cell?.hasBuildStep !== false,
   );
   assert.deepEqual(
     unmeasurable.map((cell) => `${String(cell.project)}/${String(cell.tool)}`),
     [],
-    "a published index cell carries a build time or says it has no build step",
+    "a published index cell carries a build time, a timeout, or says it has no build step",
   );
 }
 

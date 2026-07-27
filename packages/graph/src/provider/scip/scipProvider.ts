@@ -44,10 +44,15 @@ export function scipProvider(props: scipProvider.IProps): IGraphProvider {
     props.enrichment === undefined
       ? undefined
       : ScipEnrichment.normalize(props.enrichment, languages);
-  const facts = Object.freeze([
-    ...adaptScipIndex.EDGE_KINDS,
-    ...(enrichment?.facts ?? []),
-  ]);
+  // The registry claim and the published provenance are the same list by
+  // construction. `assertGraphSnapshotContract` requires them to be equal, so
+  // subtracting a family from one and not the other would not narrow a claim —
+  // it would refuse every snapshot the provider produced.
+  const facts = Object.freeze(
+    [...adaptScipIndex.EDGE_KINDS, ...(enrichment?.facts ?? [])].filter(
+      (fact) => !(omitFacts ?? []).includes(fact),
+    ),
+  );
   const provider: IGraphProvider = {
     name,
     languages,

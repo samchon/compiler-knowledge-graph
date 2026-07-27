@@ -53,9 +53,24 @@ const zigGraphProvider = externalSidecar({
 // already naming the declaration that encloses it — the one thing lua's exporter
 // could not answer, and the reason `innermostContaining` had to reconstruct it.
 //
-// zig is the one language on the list with no channel of any kind: no SCIP
-// indexer, and ZLS has no batch mode and no injection point of lua's kind. Its
-// entry still describes work nobody has started.
+// zig has a channel too, and it is a stranger one. ZLS has no batch mode, but
+// the compiler's `-femit-docs` emits `sources.tar` beside a `main.wasm` that is
+// itself the analyzer — since the autodoc redesign the compiler stops emitting
+// machine-readable analysis and the work moved into that module, which the docs
+// page drives from JavaScript. Node can drive it the same way, with no browser
+// and no second toolchain.
+//
+// What it answers is the problem. `find_module_root` and `namespace_members`
+// walk every declaration, and `decl_name`, `decl_fqn`, `decl_file_path`,
+// `decl_parent` and `categorize_decl` describe each one — so a whole-project
+// declaration tree is reachable. Nothing exposes a reference or a callee. Not a
+// gap in the exports: analysis runs over ZIR, which is untyped and pre-semantic.
+//
+// So a zig provider could honestly claim `contains` and little else, while the
+// ZLS lane it would replace does answer references. Strict does not mean better
+// here, and that is a decision rather than an implementation task: whether a
+// whole-project containment index is worth having beside a narrower fallback
+// that proves more kinds of fact.
 
 /** External analyzer sidecars in deterministic registry order. */
 export const standardSidecarProviders = [

@@ -368,9 +368,16 @@ function runIndexCell({ project, spec, repoDir, tool, env }) {
       {
         label: `${tool} dump ${project}`,
         logBase: logStem,
+        // Per-request tracing is intentionally absent here. Its formatting and
+        // stderr writes scale with generic-LSP requests while bulk strict
+        // providers bypass that path, so enabling it inside this clock would
+        // asymmetrically inflate the fallback column. Slow-lane diagnosis runs
+        // afterwards through lsp-request-diagnosis.mjs.
         env: {
           ...env,
-          SAMCHON_GRAPH_LSP_REQUEST_TRACE: "1",
+          // A caller may have enabled diagnosis in its shell. The publication
+          // contract owns this process and forces that opt-in back off.
+          SAMCHON_GRAPH_LSP_REQUEST_TRACE: "0",
         },
         // The dump JSON reaches hundreds of MB on vscode; the payload is the
         // wire benchmark's concern, not this one's, so stdout is discarded.

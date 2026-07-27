@@ -51,8 +51,22 @@ export function runGraph(argv: readonly string[] = process.argv.slice(
 }
 
 async function runDump(argv: readonly string[]): Promise<void> {
+  const controller = new AbortController();
+  // A benchmark timeout sends SIGTERM to this CLI process. Convert it into the
+  // same abort contract resident callers use, so an in-flight strict producer
+  // or language server retires its owned process tree before the dump exits.
+  // Without this handler the timed-out CLI died first and left that server
+  // consuming the host while the next supposedly quiet cell was measured.
+  /* c8 ignore next -- exercised by the POSIX child-process integration; the
+   * Windows coverage host cannot deliver a catchable SIGTERM to Node. */
+  const abort = (): void => controller.abort();
+  process.once("SIGINT", abort);
+  process.once("SIGTERM", abort);
   try {
-    const dump = await buildGraphDump(parseGraphArgs(argv));
+    const dump = await buildGraphDump({
+      ...parseGraphArgs(argv),
+      signal: controller.signal,
+    });
     // What produced this graph, on stderr, before the payload goes to stdout.
     //
     // A dump says how long it took and nothing about which path it took, and
@@ -70,6 +84,9 @@ async function runDump(argv: readonly string[]): Promise<void> {
   } catch (error) {
     writeError(error as Error);
     process.exitCode = 1;
+  } finally {
+    process.off("SIGINT", abort);
+    process.off("SIGTERM", abort);
   }
 }
 

@@ -1,6 +1,6 @@
 import type { LspClient } from "./LspClient";
 
-export const LSP_REQUEST_TRACE_ENV =
+const LSP_REQUEST_TRACE_ENV =
   "SAMCHON_GRAPH_LSP_REQUEST_TRACE";
 
 /**

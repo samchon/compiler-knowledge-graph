@@ -13,6 +13,7 @@ import {
   assertPinnedCheckout,
 } from "../graph/language.mjs";
 import { javaSystemProperty } from "../graph/java-tool-options.mjs";
+import { summarizeLspRequestTrace } from "../graph/lsp-request-summary.mjs";
 import { assertPublicationCandidates } from "../graph/publication-gate.mjs";
 import { agentPublicationDocument } from "../graph/publication-document.mjs";
 import { removeTree } from "../graph/remove-tree.mjs";
@@ -70,6 +71,7 @@ testPublishedIndexCellsNameTheirMachine();
 testAgentPublicationPreservesIndexResults();
 testIndexPublicationRefusesMalformedJson();
 testIndexCellIsolationContract();
+testLspRequestDiagnosisSummary();
 testJavaToolOptionEncoding();
 testReadOnlyCellCacheCleanup();
 console.log("benchmark system tests: ok");
@@ -658,6 +660,10 @@ function testIndexCellIsolationContract() {
     path.join(repoRoot, ".github", "workflows", "index-time.yml"),
     "utf8",
   );
+  const diagnosis = fs.readFileSync(
+    path.join(graphDir, "lsp-request-diagnosis.mjs"),
+    "utf8",
+  );
   const prepared = source.indexOf(
     "cellRepoDir = prepareCellFixture(project, spec, repoDir, tool)",
   );
@@ -704,8 +710,23 @@ function testIndexCellIsolationContract() {
     "Maven-launched JVMs and direct JDTLS must share one quoted, caller-preserving local-repository property",
   );
   assert.ok(
-    source.includes('SAMCHON_GRAPH_LSP_REQUEST_TRACE: "1"'),
-    "graph index cells must retain per-request timing evidence for lanes that reach the outer timeout",
+    !source.includes('SAMCHON_GRAPH_LSP_REQUEST_TRACE: "1"') &&
+      source.includes('SAMCHON_GRAPH_LSP_REQUEST_TRACE: "0"') &&
+      diagnosis.includes('SAMCHON_GRAPH_LSP_REQUEST_TRACE: "1"') &&
+      diagnosis.includes("authoritative: false") &&
+      diagnosis.includes('"--no-hardlinks"') &&
+      diagnosis.includes("prepareFixture(spec, fixtureDir)") &&
+      diagnosis.includes("removeTree(fixtureDir)"),
+    "authoritative graph cells must stay trace-free while a separate diagnostic run records request evidence",
+  );
+  assert.ok(
+    workflow.indexOf("Measure cold index build") >= 0 &&
+      workflow.indexOf("Measure cold index build") <
+      workflow.indexOf("Diagnose slow LSP requests outside the measurement") &&
+      workflow.includes("--project=${{ matrix.project }}") &&
+      workflow.includes("--timeout-ms=300000") &&
+      workflow.includes("timeout-minutes: 10"),
+    "slow-lane request diagnosis must run after the authoritative measurement with its own bounded budget",
   );
   assert.ok(
     source.includes("copyPreparedFixtureCompanion(spec, source, target)") &&
@@ -721,6 +742,49 @@ function testIndexCellIsolationContract() {
           'node tests/benchmark/graph/index-time.mjs --publish="$report"',
         ),
     "a complete matrix must discard stale index cells before folding current reports",
+  );
+}
+
+function testLspRequestDiagnosisSummary() {
+  const summary = summarizeLspRequestTrace(
+    [
+      "unrelated stderr",
+      '@samchon/graph: lsp-request id=2 method="textDocument/references" phase=start',
+      '@samchon/graph: lsp-request id=1 method="initialize" phase=start',
+      '@samchon/graph: lsp-request id=1 method="initialize" phase=end status=success durationMs=12.500',
+      '@samchon/graph: lsp-request id=3 method="textDocument/references" phase=start',
+      '@samchon/graph: lsp-request id=3 method="textDocument/references" phase=end status=error durationMs=4.250',
+    ].join("\n"),
+  );
+  assert.deepEqual(
+    {
+      requestCount: summary.requestCount,
+      completedCount: summary.completedCount,
+      inFlight: summary.inFlight,
+      methods: summary.methods,
+    },
+    {
+      requestCount: 3,
+      completedCount: 2,
+      inFlight: [{ id: 2, method: "textDocument/references" }],
+      methods: {
+        initialize: {
+          started: 1,
+          completed: 1,
+          errors: 0,
+          totalDurationMs: 12.5,
+          maxDurationMs: 12.5,
+        },
+        "textDocument/references": {
+          started: 2,
+          completed: 1,
+          errors: 1,
+          totalDurationMs: 4.25,
+          maxDurationMs: 4.25,
+        },
+      },
+    },
+    "request diagnosis must preserve completed progress and the exact call still in flight",
   );
 }
 

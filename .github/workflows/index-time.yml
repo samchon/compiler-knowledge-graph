@@ -201,6 +201,22 @@ jobs:
           # that is a finding worth having instead of a timeout worth repeating.
           SAMCHON_GRAPH_BENCH_TIMEOUT_MS: "3600000"
 
+      # Request tracing is deliberately outside the stopwatch above. Generic
+      # LSP pays two stderr writes per request while strict bulk providers pay
+      # none, so enabling it in the measured process would bias the comparison.
+      # The two lanes that repeatedly reached the outer timeout get a short
+      # post-measurement sample instead: completed requests versus the exact
+      # request(s) still in flight distinguish a slow client lane from one
+      # server request that never returned without publishing the trace cost.
+      - name: Diagnose slow LSP requests outside the measurement
+        if: ${{ always() && (matrix.project == 'sinatra' || matrix.project == 'darthttp') && (github.event_name != 'workflow_dispatch' || inputs.project == 'all' || inputs.project == matrix.project) }}
+        timeout-minutes: 10
+        run: |
+          node tests/benchmark/graph/lsp-request-diagnosis.mjs \
+            --project=${{ matrix.project }} \
+            --timeout-ms=300000 \
+            --out="$GITHUB_WORKSPACE/index-time-out/${{ matrix.project }}"
+
       # The whole output directory, not just the report. A lane that fails
       # writes its diagnosis to `<label>.err.log` beside the report, and
       # uploading only `report.json` meant a failed lane produced no report and

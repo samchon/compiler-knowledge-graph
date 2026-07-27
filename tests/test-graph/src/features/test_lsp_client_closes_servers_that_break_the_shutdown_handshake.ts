@@ -192,8 +192,56 @@ const assertRequestTracing = async (
     undefined,
     (event) => events.push(event),
   );
+  let serializationFailure: Error | undefined;
+  await client
+    .request("workspace/executeCommand", { argument: 1n })
+    .catch((error: Error) => void (serializationFailure = error));
+  TestValidator.predicate(
+    "an unserializable request rejects through its own promise",
+    serializationFailure?.message.includes("BigInt") === true,
+  );
+  let nonErrorSerializationFailure: Error | undefined;
+  const throwingParams = Object.defineProperty({}, "argument", {
+    enumerable: true,
+    get: () => {
+      throw "synthetic serialization failure";
+    },
+  });
+  await client
+    .request("workspace/executeCommand", throwingParams)
+    .catch(
+      (error: Error) =>
+        void (nonErrorSerializationFailure = error),
+    );
+  TestValidator.predicate(
+    "a non-Error serialization failure is normalized on the same boundary",
+    nonErrorSerializationFailure?.message ===
+      "synthetic serialization failure",
+  );
+  TestValidator.equals(
+    "an unserializable request removes its pending transport state",
+    (client as unknown as ILspClientInternals).pending.size,
+    0,
+  );
   await client.request("initialize", {});
   await client.close();
+  const unserializable = events.filter(
+    (event) => event.method === "workspace/executeCommand",
+  );
+  TestValidator.equals(
+    "a synchronous serialization failure still closes its trace",
+    unserializable.map((event) => [
+      event.phase,
+      event.id,
+      event.phase === "end" ? event.status : undefined,
+    ]),
+    [
+      ["start", 1, undefined],
+      ["end", 1, "error"],
+      ["start", 2, undefined],
+      ["end", 2, "error"],
+    ],
+  );
   const initialize = events.filter(
     (event) => event.method === "initialize",
   );
@@ -205,8 +253,8 @@ const assertRequestTracing = async (
       event.phase === "end" ? event.status : undefined,
     ]),
     [
-      ["start", 1, undefined],
-      ["end", 1, "success"],
+      ["start", 3, undefined],
+      ["end", 3, "success"],
     ],
   );
   TestValidator.predicate(
@@ -232,13 +280,13 @@ const assertRequestTracing = async (
 };
 
 const assertRequestTraceFormatting = async (): Promise<void> => {
-  const { LSP_REQUEST_TRACE_ENV, lspRequestTrace } = await importLib<{
-    LSP_REQUEST_TRACE_ENV: string;
+  const { lspRequestTrace } = await importLib<{
     lspRequestTrace(
       env?: NodeJS.ProcessEnv,
       write?: (line: string) => unknown,
     ): ((event: LspRequestTrace) => void) | undefined;
   }>("lsp/lspRequestTrace.js");
+  const LSP_REQUEST_TRACE_ENV = "SAMCHON_GRAPH_LSP_REQUEST_TRACE";
   const previous = process.env[LSP_REQUEST_TRACE_ENV];
   delete process.env[LSP_REQUEST_TRACE_ENV];
   try {

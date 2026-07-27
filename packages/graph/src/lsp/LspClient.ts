@@ -98,9 +98,10 @@ export class LspClient {
     const payload = { jsonrpc: "2.0", id, method, params };
     const started = process.hrtime.bigint();
     this.observeRequest({ phase: "start", id, method });
+    let pending!: IRequest;
     const promise = new Promise<T>((resolve, reject) => {
       const effectiveTimeoutMs = timeoutMs ?? this.timeoutMs;
-      const pending: IRequest = {
+      pending = {
         resolve: (value) => resolve(value as T),
         reject,
         timer: undefined,
@@ -121,7 +122,16 @@ export class LspClient {
         signal.addEventListener("abort", pending.abort, { once: true });
       }
     });
-    this.write(payload);
+    try {
+      this.write(payload);
+    } catch (error) {
+      // JSON serialization can fail synchronously for a cyclic value, BigInt,
+      // or throwing accessor. The request already has an identity, observer
+      // start event, timeout, and abort listener at this point, so settle that
+      // same promise rather than escaping around all four cleanup owners.
+      this.deletePending(id, pending);
+      pending.reject(asError(error));
+    }
     try {
       const result = await promise;
       this.observeRequest({
@@ -403,6 +413,10 @@ function abortedError(method: string): Error {
 function stdinError(error: unknown): Error {
   const message = error instanceof Error ? error.message : String(error);
   return new Error(`Language server stdin failed: ${message}`);
+}
+
+function asError(error: unknown): Error {
+  return error instanceof Error ? error : new Error(String(error));
 }
 
 function waitForExit(exit: Promise<void>, timeoutMs: number): Promise<boolean> {

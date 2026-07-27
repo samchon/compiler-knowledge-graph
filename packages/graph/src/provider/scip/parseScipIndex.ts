@@ -658,18 +658,20 @@ function enumNameOf(
   label: string,
   names: Readonly<Record<number, string>>,
 ): string {
-  if (
-    typeof value === "string" &&
-    Object.values(names).includes(value)
-  ) {
-    return value;
+  if (typeof value === "string") {
+    if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(value)) return value;
+    throw new Error(
+      `scip: ${label} must be a protobuf enum name or known number`,
+    );
   }
   if (
     typeof value !== "number" ||
     !Number.isSafeInteger(value) ||
     names[value] === undefined
   ) {
-    throw new Error(`scip: ${label} must be a known enum name or number`);
+    throw new Error(
+      `scip: ${label} must be a protobuf enum name or known number`,
+    );
   }
   return names[value];
 }

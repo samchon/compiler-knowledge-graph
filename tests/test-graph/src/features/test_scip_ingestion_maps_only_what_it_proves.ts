@@ -334,6 +334,40 @@ function assertIndexValidation(): void {
     ],
     ["1", "FutureProtocolVersion"],
   );
+  const futureSemanticNames = parseScipIndex({
+    metadata: { projectRoot: "file:///r" },
+    documents: [
+      {
+        relativePath: "future.go",
+        symbols: [
+          {
+            symbol: "scip-go gomod example v1 `main`/Future#",
+            kind: "FutureSymbolKind",
+          },
+        ],
+        occurrences: [
+          {
+            range: [0, 0, 1],
+            symbol: "scip-go gomod example v1 `main`/Future#",
+            syntaxKind: "FutureSyntaxKind",
+            diagnostics: [
+              { message: "future", severity: "FutureSeverity" },
+            ],
+          },
+        ],
+      },
+    ],
+  });
+  TestValidator.equals(
+    "future semantic enum names remain available to conservative adapters",
+    [
+      futureSemanticNames.documents[0]?.symbols?.[0]?.kind,
+      futureSemanticNames.documents[0]?.occurrences?.[0]?.syntaxKind,
+      futureSemanticNames.documents[0]?.occurrences?.[0]?.diagnostics?.[0]
+        ?.severity,
+    ],
+    ["FutureSymbolKind", "FutureSyntaxKind", "FutureSeverity"],
+  );
 
   // Every rejection below is a shape that, if accepted, would attribute facts
   // to source that never produced them.
@@ -543,10 +577,6 @@ function assertIndexValidation(): void {
     [
       "an unknown numeric symbol kind",
       withSymbol({ symbol: "s", kind: 83 }),
-    ],
-    [
-      "an unknown named symbol kind",
-      withSymbol({ symbol: "s", kind: "FutureSymbolKind" }),
     ],
     [
       "a numeric-looking named syntax kind",

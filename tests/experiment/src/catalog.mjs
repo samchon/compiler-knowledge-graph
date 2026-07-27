@@ -128,7 +128,37 @@ export const LANGUAGE_EXPERIMENTS = [
     language: "csharp",
     repository: "https://github.com/serilog/serilog.git",
     commit: "07d39cfb2928076ecd902a61d295f90d74fe1fa5",
-    maxFiles: 120,
+    // Uncapped, because scip-dotnet refuses a cap: a SCIP indexer publishes a
+    // whole-workspace artifact and has no bounded mode, so a capped row is a row
+    // it declines to serve.
+    strictProvider: "scip-dotnet",
+    strictAuthority: "semantic-index",
+    strictTool: "scip-dotnet",
+    requiredCapabilities: ["universe", "diskDigests"],
+    // `references` only, and deliberately not `contains`. Whether scip-dotnet
+    // populates SCIP's `enclosing_symbol` — the one field the common adapter
+    // derives containment from — has not been established by reading it, and a
+    // row that claims a family on the assumption it is there would go green
+    // against an index that proves nothing of the kind.
+    semanticEdges: ["references"],
+    crossFileEdge: "references",
+    lifecycle: {
+      sourceFile: "src/Serilog/Log.cs",
+      editSuffix: "\n// samchon-graph lifecycle edit\n",
+      createFile: "src/Serilog/SamchonGraphExperiment.cs",
+      renamedFile: "src/Serilog/SamchonGraphExperimentRenamed.cs",
+      createText:
+        "namespace Serilog;\n\ninternal static class SamchonGraphExperiment\n{\n    internal static string Run() => \"strict-lifecycle\";\n}\n",
+      createdSymbol: "SamchonGraphExperiment",
+      buildFile: "src/Serilog/Serilog.csproj",
+      failureFile: "src/Serilog/Serilog.csproj",
+      failureSuffix: "\n<NotClosed>",
+      // MSBuild refuses to evaluate a malformed project file, so the build
+      // scip-dotnet drives cannot start and no index is written. Stated as the
+      // fail-closed boundary it looks like; if the run shows the producer
+      // recovering, this row is wrong and must say what it actually does.
+      failurePolicy: "reject",
+    },
     minNodes: 1,
     minEdges: 0,
     // The upstream solution's perf/AOT entries make csharp-ls return no symbols.

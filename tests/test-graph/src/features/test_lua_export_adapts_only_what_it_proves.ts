@@ -45,10 +45,10 @@ export const test_lua_export_adapts_only_what_it_proves = (): void => {
     "every named declaration becomes a node with a positioned identity",
     result.nodes.map((entry) => entry.id),
     [
-      "main.lua#util@1:variable",
-      "main.lua#caller@3:function",
-      "util.lua#M@1:variable",
-      "util.lua#greet@2:field",
+      "main.lua#util@1:7:variable",
+      "main.lua#caller@3:10:function",
+      "util.lua#M@1:7:variable",
+      "util.lua#greet@2:10:field",
     ],
   );
 
@@ -73,8 +73,8 @@ export const test_lua_export_adapts_only_what_it_proves = (): void => {
     "a use is attributed to the declaration that contains it",
     result.edges[0],
     {
-      from: "main.lua#caller@3:function",
-      to: "util.lua#greet@2:field",
+      from: "main.lua#caller@3:10:function",
+      to: "util.lua#greet@2:10:field",
       kind: "references",
       evidence: {
         file: "main.lua",
@@ -151,7 +151,7 @@ function assertADroppedDeclarationDoesNotShiftItsNeighboursEdges(): void {
   TestValidator.equals(
     "the edge still names the declaration its index pointed at",
     result.edges.map((entry) => `${entry.from} -> ${entry.to}`),
-    ["main.lua#holder@9:function -> main.lua#kept@6:variable"],
+    ["main.lua#holder@9:10:function -> main.lua#kept@6:1:variable"],
   );
 }
 

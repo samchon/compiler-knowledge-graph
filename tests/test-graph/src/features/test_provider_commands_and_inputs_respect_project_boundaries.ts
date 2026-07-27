@@ -372,6 +372,21 @@ export const test_provider_commands_and_inputs_respect_project_boundaries =
         ),
         expectedCommand(onPath),
       );
+      if (process.platform !== "win32") {
+        const injectionMarker = path.join(root, "lookup-injected.txt");
+        const shellSyntax =
+          `definitely-absent; printf injected > "${injectionMarker}"`;
+        TestValidator.equals(
+          "a POSIX PATH lookup treats project-derived shell syntax as one name",
+          [
+            resolveProviderCommand(root, pathEnvironment(pathBin), {
+              command: shellSyntax,
+            }),
+            fs.existsSync(injectionMarker),
+          ],
+          [undefined, false],
+        );
+      }
       TestValidator.equals(
         "an unavailable provider resolves to no command",
         resolveProviderCommand(root, emptyPath, {

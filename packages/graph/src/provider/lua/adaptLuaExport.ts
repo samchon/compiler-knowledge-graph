@@ -28,8 +28,9 @@ export function adaptLuaExport(
   // Identity has to be stable across runs and unique within a file. The
   // exporter can emit two declarations with one name in one file — a local
   // shadowing an earlier local is ordinary Lua — so the declaration's own line
-  // disambiguates. It is not in `evidence` alone because two nodes that differ
-  // only by position would otherwise collapse into one id.
+  // and column disambiguate. Both belong in the id because Lua also permits
+  // several declarations on one line; evidence alone cannot keep either case
+  // from collapsing.
   const seen = new Set<string>();
   for (const entry of report.nodes) {
     const kind = NODE_KINDS[entry.kind];
@@ -39,8 +40,7 @@ export function adaptLuaExport(
       );
       continue;
     }
-    const line = entry.location.startLine + 1;
-    const id = `${entry.location.file}#${entry.name}@${String(line)}:${kind}`;
+    const id = identityOf(entry, kind);
     if (seen.has(id)) {
       warnings.push(
         `${provider}: two declarations share the identity ${id}; the later one is dropped`,
@@ -78,7 +78,7 @@ export function adaptLuaExport(
     }
     const kind = NODE_KINDS[origin.kind];
     if (kind === undefined) continue;
-    const from = `${origin.location.file}#${origin.name}@${String(origin.location.startLine + 1)}:${kind}`;
+    const from = identityOf(origin, kind);
     // Defensive rather than reachable, and worth keeping. A duplicate origin
     // resolves to the identity its twin already published, which is the right
     // endpoint — so the only way here is an origin whose kind mapped and whose
@@ -355,7 +355,7 @@ function identityOf(
   node: adaptLuaExport.INode,
   kind: GraphNodeKind,
 ): string {
-  return `${node.location.file}#${node.name}@${String(node.location.startLine + 1)}:${kind}`;
+  return `${node.location.file}#${node.name}@${String(node.location.startLine + 1)}:${String(node.location.startColumn + 1)}:${kind}`;
 }
 
 function evidenceOf(location: adaptLuaExport.ILocation) {

@@ -40,7 +40,9 @@ export const test_lua_export_folds_repeated_uses_into_one_edge = (): void => {
   TestValidator.equals(
     "a symbol read twice yields one edge",
     result.edges.map((entry) => `${entry.from} -> ${entry.to}`),
-    ["theme.lua#get_mode_color@3:function -> theme.lua#colors@1:variable"],
+    [
+      "theme.lua#get_mode_color@3:21:function -> theme.lua#colors@1:7:variable",
+    ],
   );
   // The earliest use is the one that proves the relationship; a later position
   // would claim the reference starts further down the body than it does.

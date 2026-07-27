@@ -125,20 +125,28 @@ function rewriteArguments(
   output,
   rewrittenOutput,
 ) {
+  const found = argumentOutput(args);
+  const replacement =
+    found === undefined || output === undefined || rewrittenOutput === undefined
+      ? undefined
+      : rewritePathForm(
+          found.value,
+          directory,
+          output,
+          rewrittenOutput,
+        );
   return args.map((argument, index) => {
     if (typeof argument !== "string") return argument;
-    if (
-      index > 0 &&
-      args[index - 1] === "-o" &&
-      output !== undefined &&
-      rewrittenOutput !== undefined
-    ) {
-      return rewritePathForm(
-        argument,
-        directory,
-        output,
-        rewrittenOutput,
-      );
+    if (found !== undefined && replacement !== undefined) {
+      if (found.form === "separate" && index === found.index + 1) {
+        return replacement;
+      }
+      if (found.form === "joined" && index === found.index) {
+        return `-o${replacement}`;
+      }
+      if (found.form === "equals" && index === found.index) {
+        return `--output=${replacement}`;
+      }
     }
     return path.resolve(directory, argument) === source
       ? rewrittenSource
@@ -184,7 +192,7 @@ function compilationOutput(entry) {
   if (Array.isArray(entry.arguments)) {
     const argument = argumentOutput(entry.arguments);
     if (argument !== undefined) {
-      candidates.push({ kind: "arguments", value: argument });
+      candidates.push({ kind: "arguments", value: argument.value });
     }
   }
   if (typeof entry.command === "string") {
@@ -210,12 +218,35 @@ function compilationOutput(entry) {
 function argumentOutput(args) {
   const outputs = [];
   for (let index = 0; index < args.length; index++) {
-    if (args[index] !== "-o") continue;
-    const output = args[index + 1];
-    if (typeof output !== "string" || output === "") {
-      throw new Error("compilation arguments have -o without an output path");
+    const argument = args[index];
+    if (argument === "-o" || argument === "--output") {
+      const output = args[index + 1];
+      if (typeof output !== "string" || output === "") {
+        throw new Error(
+          `compilation arguments have ${argument} without an output path`,
+        );
+      }
+      outputs.push({ form: "separate", index, value: output });
+      index++;
+    } else if (
+      typeof argument === "string" &&
+      argument.startsWith("--output=")
+    ) {
+      const output = argument.slice("--output=".length);
+      if (output === "") {
+        throw new Error(
+          "compilation arguments have --output= without an output path",
+        );
+      }
+      outputs.push({ form: "equals", index, value: output });
+    } else if (
+      typeof argument === "string" &&
+      argument.startsWith("-o") &&
+      argument.length > 2 &&
+      !/^-(?:object(?:$|-)|offload)/.test(argument)
+    ) {
+      outputs.push({ form: "joined", index, value: argument.slice(2) });
     }
-    outputs.push(output);
   }
   if (outputs.length > 1) {
     throw new Error("compilation arguments name more than one output");
@@ -226,7 +257,7 @@ function argumentOutput(args) {
 function commandOutput(command) {
   const matches = [
     ...command.matchAll(
-      /(?:^|\s)-o\s+(?:"([^"]+)"|'([^']+)'|([^\s"']+))/g,
+      /(?:^|\s)(?:(?:-o|--output)\s+|--output=|-o(?!bject(?:$|[-=\s])|ffload))(?:"([^"]+)"|'([^']+)'|([^\s"']+))/g,
     ),
   ];
   if (matches.length > 1) {

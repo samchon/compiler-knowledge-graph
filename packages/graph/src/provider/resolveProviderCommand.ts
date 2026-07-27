@@ -108,15 +108,16 @@ function resolveOnPath(
   const lookup =
     process.platform === "win32"
       ? spawnableCommand.windowsSystem("where.exe", env)
-      : "command";
-  const args = process.platform === "win32" ? [command] : ["-v", command];
-  const shell = process.platform !== "win32";
+      : "/bin/sh";
+  const args =
+    process.platform === "win32"
+      ? [command]
+      : ["-c", 'command -v "$1"', "samchon-graph", command];
   /* c8 ignore stop */
   const result = spawnSync(lookup, args, {
     cwd: root,
     encoding: "utf8",
     env,
-    shell,
     windowsHide: true,
   });
   // Nothing was learned: the process could not be started, or was killed by a

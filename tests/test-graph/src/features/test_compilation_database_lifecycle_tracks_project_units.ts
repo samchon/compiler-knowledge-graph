@@ -17,8 +17,14 @@ export const test_compilation_database_lifecycle_tracks_project_units =
     );
     const source = path.join(root, "source.c");
     const argumentsSource = path.join(root, "arguments.c");
+    const joinedSource = path.join(root, "joined.c");
+    const longSource = path.join(root, "long.c");
+    const longArgumentsSource = path.join(root, "long-arguments.c");
     const created = path.join(root, "created.c");
     const argumentsCreated = path.join(root, "arguments-created.c");
+    const joinedCreated = path.join(root, "joined-created.c");
+    const longCreated = path.join(root, "long-created.c");
+    const longArgumentsCreated = path.join(root, "long-arguments-created.c");
     const renamed = path.join(root, "renamed.c");
     const databaseFile = path.join(root, "compile_commands.json");
     fs.writeFileSync(source, "int source(void) { return 0; }\n");
@@ -26,6 +32,9 @@ export const test_compilation_database_lifecycle_tracks_project_units =
       argumentsSource,
       "int arguments_source(void) { return 0; }\n",
     );
+    for (const file of [joinedSource, longSource, longArgumentsSource]) {
+      fs.writeFileSync(file, "int unit(void) { return 0; }\n");
+    }
     fs.writeFileSync(
       databaseFile,
       `${JSON.stringify(
@@ -33,7 +42,7 @@ export const test_compilation_database_lifecycle_tracks_project_units =
           {
             directory: root,
             file: source,
-            command: `cc -c "${source}" -o source.c.o`,
+            command: `cc -c "${source}" -object-file-name debug.o -o source.c.o`,
             output: "source.c.o",
           },
           {
@@ -41,6 +50,36 @@ export const test_compilation_database_lifecycle_tracks_project_units =
             file: "arguments.c",
             arguments: ["cc", "-c", "arguments.c", "-o", "arguments.c.o"],
             output: "arguments.c.o",
+          },
+          {
+            directory: root,
+            file: "joined.c",
+            arguments: [
+              "cc",
+              "-c",
+              "joined.c",
+              "-offload-arch=gpu",
+              "-ojoined.c.o",
+            ],
+            output: "joined.c.o",
+          },
+          {
+            directory: root,
+            file: longSource,
+            command: `cc -c "${longSource}" --output=long.c.o`,
+            output: "long.c.o",
+          },
+          {
+            directory: root,
+            file: "long-arguments.c",
+            arguments: [
+              "cc",
+              "-c",
+              "long-arguments.c",
+              "--output",
+              "long-arguments.c.o",
+            ],
+            output: "long-arguments.c.o",
           },
         ],
         null,
@@ -66,34 +105,78 @@ export const test_compilation_database_lifecycle_tracks_project_units =
 
     lifecycle.add(databaseFile, source, created);
     lifecycle.add(databaseFile, argumentsSource, argumentsCreated);
+    lifecycle.add(databaseFile, joinedSource, joinedCreated);
+    lifecycle.add(databaseFile, longSource, longCreated);
+    lifecycle.add(
+      databaseFile,
+      longArgumentsSource,
+      longArgumentsCreated,
+    );
     let database = readDatabase(databaseFile);
     TestValidator.equals(
       "creating a unit preserves the template and registers the new source",
       database.map((entry) => path.resolve(entry.directory, entry.file)),
-      [source, argumentsSource, created, argumentsCreated],
+      [
+        source,
+        argumentsSource,
+        joinedSource,
+        longSource,
+        longArgumentsSource,
+        created,
+        argumentsCreated,
+        joinedCreated,
+        longCreated,
+        longArgumentsCreated,
+      ],
     );
+    const createdCommand = findEntry(database, created);
     TestValidator.predicate(
       "the cloned command and metadata name one unique created output",
-      database[2]?.command?.includes(created) === true &&
-        database[2]?.command?.includes("-o created.c.o") === true &&
-        database[2]?.command?.includes("-o source.c.o") === false &&
-        database[2]?.output === "created.c.o",
+      createdCommand.command?.includes(created) === true &&
+        createdCommand.command?.includes("-o created.c.o") === true &&
+        createdCommand.command?.includes("-o source.c.o") === false &&
+        createdCommand.output === "created.c.o",
     );
+    const createdArguments = findEntry(database, argumentsCreated);
     TestValidator.predicate(
       "the cloned argument vector and metadata name one unique created output",
-      database[3]?.arguments?.includes("arguments-created.c") === true &&
-        database[3]?.arguments?.includes("arguments-created.c.o") === true &&
-        database[3]?.arguments?.includes("arguments.c.o") === false &&
-        database[3]?.output === "arguments-created.c.o",
+      createdArguments.arguments?.includes("arguments-created.c") === true &&
+        createdArguments.arguments?.includes("arguments-created.c.o") ===
+          true &&
+        createdArguments.arguments?.includes("arguments.c.o") === false &&
+        createdArguments.output === "arguments-created.c.o",
+    );
+    const joinedArguments = findEntry(database, joinedCreated);
+    TestValidator.predicate(
+      "a joined -o argument keeps its spelling and receives a unique output",
+      joinedArguments.arguments?.includes("-ojoined-created.c.o") === true &&
+        joinedArguments.arguments?.includes("-ojoined.c.o") === false &&
+        joinedArguments.output === "joined-created.c.o",
+    );
+    const longCommand = findEntry(database, longCreated);
+    TestValidator.predicate(
+      "a --output= command keeps its spelling and receives a unique output",
+      longCommand.command?.includes("--output=long-created.c.o") === true &&
+        longCommand.command?.includes("--output=long.c.o") === false &&
+        longCommand.output === "long-created.c.o",
+    );
+    const longArguments = findEntry(database, longArgumentsCreated);
+    TestValidator.predicate(
+      "a split --output argument keeps its spelling and receives a unique output",
+      longArguments.arguments?.includes("--output") === true &&
+        longArguments.arguments?.includes("long-arguments-created.c.o") ===
+          true &&
+        longArguments.arguments?.includes("long-arguments.c.o") === false &&
+        longArguments.output === "long-arguments-created.c.o",
     );
 
     lifecycle.move(databaseFile, created, renamed);
     database = readDatabase(databaseFile);
+    const renamedCommand = findEntry(database, renamed);
     TestValidator.predicate(
       "renaming a unit moves both the declared file and its command",
-      path.resolve(database[2]!.directory, database[2]!.file) === renamed &&
-        database[2]?.command?.includes(renamed) === true &&
-        !database[2]?.command?.includes(created),
+      renamedCommand.command?.includes(renamed) === true &&
+        !renamedCommand.command?.includes(created),
     );
 
     lifecycle.remove(databaseFile, renamed);
@@ -101,7 +184,17 @@ export const test_compilation_database_lifecycle_tracks_project_units =
     TestValidator.equals(
       "deleting a unit removes only its cloned compilation command",
       database.map((entry) => path.resolve(entry.directory, entry.file)),
-      [source, argumentsSource, argumentsCreated],
+      [
+        source,
+        argumentsSource,
+        joinedSource,
+        longSource,
+        longArgumentsSource,
+        argumentsCreated,
+        joinedCreated,
+        longCreated,
+        longArgumentsCreated,
+      ],
     );
     lifecycle.remove(databaseFile, argumentsCreated);
     TestValidator.error(
@@ -135,4 +228,15 @@ interface ICompilationCommand {
   command?: string;
   arguments?: string[];
   output?: string;
+}
+
+function findEntry(
+  database: ICompilationCommand[],
+  file: string,
+): ICompilationCommand {
+  const found = database.find(
+    (entry) => path.resolve(entry.directory, entry.file) === file,
+  );
+  if (found === undefined) throw new Error(`${file}: compilation entry absent`);
+  return found;
 }

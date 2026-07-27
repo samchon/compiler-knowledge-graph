@@ -30,6 +30,29 @@ local original = export.serializeAndExport
 local files = require 'files'
 local furi = require 'file-uri'
 
+---Return a portable path only when `absolute` is actually below `root`.
+---
+---A raw prefix is not containment: `/work/project-copy/a.lua` starts with
+---`/work/project` but belongs to its sibling. Decoded file URIs use either
+---slash spelling depending on the host, so the boundary accepts both.
+local function relativeToRoot(absolute, root)
+    if type(absolute) ~= 'string' or type(root) ~= 'string'
+        or absolute:sub(1, #root) ~= root then
+        return nil
+    end
+    local suffix = absolute:sub(#root + 1)
+    if suffix == '' then
+        return nil
+    end
+    local rootEnd = root:sub(-1)
+    local suffixStart = suffix:sub(1, 1)
+    if rootEnd ~= '/' and rootEnd ~= '\\'
+        and suffixStart ~= '/' and suffixStart ~= '\\' then
+        return nil
+    end
+    return suffix:gsub('^[/\\]+', ''):gsub('\\', '/')
+end
+
 -- Declaration kinds this exporter claims. Deliberately a list rather than
 -- "anything with a name": a graph that emits every parser node it happens to
 -- recognise cannot say what it proves, and the provider has to declare exactly
@@ -93,10 +116,10 @@ local function locationOf(uri, source, root)
     end
     -- Relative to the project, and only inside it. The uri list carries the
     -- server's bundled definitions too, and those are not this project's code.
-    if absolute:sub(1, #root) ~= root then
+    local relative = relativeToRoot(absolute, root)
+    if relative == nil then
         return nil
     end
-    local relative = absolute:sub(#root + 1):gsub('^[/\\]', ''):gsub('\\', '/')
     return {
         file = relative,
         startLine = startRow,
@@ -143,7 +166,10 @@ function export.serializeAndExport(docs, outputDir)
 
     for _, uri in ipairs(uris) do
         local absolute = furi.decode(uri)
-        if absolute == nil or absolute:sub(1, #root) ~= root then
+        local relative = absolute ~= nil
+            and relativeToRoot(absolute, root)
+            or nil
+        if relative == nil then
             report.skipped.outsideRoot = report.skipped.outsideRoot + 1
             goto continue
         end
@@ -157,12 +183,7 @@ function export.serializeAndExport(docs, outputDir)
             goto continue
         end
 
-        do
-            local relative = absolute:sub(#root + 1)
-                :gsub('^[/\\]', '')
-                :gsub('\\', '/')
-            report.files[#report.files + 1] = relative
-        end
+        report.files[#report.files + 1] = relative
 
         guide.eachSource(state.ast, function(source)
             local kind = DECLARATIONS[source.type]

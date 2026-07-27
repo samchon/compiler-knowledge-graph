@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { GraphEdgeKind, GraphLanguage } from "../../typings";
+import { isSubPath } from "../../utils/isSubPath";
 import { assertGraphSnapshotContract } from "../assertGraphSnapshotContract";
 import { BatchGraphSession } from "../BatchGraphSession";
 import { IBulkGraphSession } from "../IBulkGraphSession";
@@ -94,15 +95,34 @@ export class LuaGraphSession implements IBulkGraphSession {
     const adapted = adaptLuaExport(report, provider);
 
     const sources = new Map<string, IBulkGraphSession.ISourceDigest>();
+    const resolvedRoot = path.resolve(root);
+    const realRoot = fs.realpathSync(resolvedRoot);
     for (const file of adapted.files) {
       // The exporter reports paths relative to the project, because that is what
       // a graph node's `file` is. A source manifest identity is the other thing:
       // absolute and normalized, so two providers naming one file agree on it.
-      const identity = path.resolve(root, file);
+      const identity = path.resolve(resolvedRoot, file);
+      if (!isSubPath(resolvedRoot, identity)) {
+        throw new Error(
+          `${provider}: exported source escapes the project: ${file}`,
+        );
+      }
       let bytes: Buffer;
       try {
+        const realIdentity = fs.realpathSync(identity);
+        if (!isSubPath(realRoot, realIdentity)) {
+          throw new Error(
+            `${provider}: exported source crosses a link outside the project: ${file}`,
+          );
+        }
         bytes = fs.readFileSync(identity);
-      } catch {
+      } catch (error) {
+        if (
+          error instanceof Error &&
+          error.message.startsWith(`${provider}: exported source crosses`)
+        ) {
+          throw error;
+        }
         // A file the server indexed and that cannot be read back is a moved
         // generation, not a snapshot to publish around.
         throw new Error(

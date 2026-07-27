@@ -11,7 +11,7 @@ import { adaptLuaExport } from "../../../../packages/graph/src/provider/lua/adap
  * the comment above it is the only evidence it works.
  */
 export const test_lua_export_refuses_what_it_cannot_prove = (): void => {
-  assertADuplicateIdentityIsDroppedAndNamed();
+  assertSameLineDeclarationsRemainDistinctAndExactDuplicatesAreNamed();
   assertAnEdgeWithNoDeclarationIsNamed();
   assertAUseAtFileScopeIsNotAttributed();
   assertAMalformedArtifactIsRefused();
@@ -22,25 +22,45 @@ export const test_lua_export_refuses_what_it_cannot_prove = (): void => {
   assertABodylessDeclarationCanBeDisplaced();
 };
 
-function assertADuplicateIdentityIsDroppedAndNamed(): void {
-  // Same name, same line, same kind: two declarations the identity cannot tell
-  // apart. Keeping both would publish one id twice.
-  const twin = node("same", "local", "local", "main.lua", 0, 0);
+function assertSameLineDeclarationsRemainDistinctAndExactDuplicatesAreNamed(): void {
+  // A second `local same` on one line is a distinct variable. Only an exact
+  // position duplicate is malformed producer output and must be dropped.
+  const first = node("same", "local", "local", "main.lua", 0, 6);
+  const second = node("same", "local", "local", "main.lua", 0, 22);
+  const host = withBody(
+    node("host", "function", "function", "main.lua", 1, 9),
+    { startLine: 1, startColumn: 0, endLine: 4, endColumn: 3 },
+  );
   const result = adaptLuaExport(
     {
       schemaVersion: 1,
       files: ["main.lua"],
-      nodes: [twin, twin],
-      edges: [],
+      nodes: [first, second, second, host],
+      edges: [edge(2, "main.lua", 2, 2)],
       skipped: { unnamed: 0, outsideRoot: 0, refsFailed: 0 },
       warnings: [],
     },
     "samchon-graph-lua",
   );
-  TestValidator.equals("a duplicate identity keeps one node", result.nodes.length, 1);
+  TestValidator.equals(
+    "same-line shadowing keeps both distinct declarations",
+    result.nodes.map((entry) => entry.id),
+    [
+      "main.lua#same@1:7:variable",
+      "main.lua#same@1:23:variable",
+      "main.lua#host@2:10:function",
+    ],
+  );
   TestValidator.predicate(
-    "and says which identity collided",
-    result.warnings.some((warning) => warning.includes("main.lua#same@1:variable")),
+    "an exact duplicate is still dropped and named",
+    result.warnings.some((warning) =>
+      warning.includes("main.lua#same@1:23:variable"),
+    ),
+  );
+  TestValidator.equals(
+    "a reference to the later local points at that declaration",
+    result.edges.map((entry) => [entry.from, entry.to]),
+    [["main.lua#host@2:10:function", "main.lua#same@1:23:variable"]],
   );
 }
 
@@ -316,7 +336,7 @@ function assertTheInnermostEnclosingDeclarationWins(): void {
   TestValidator.equals(
     "the inner declaration owns the reference",
     result.edges.map((entry) => entry.from),
-    ["main.lua#inner@6:function"],
+    ["main.lua#inner@6:12:function"],
   );
 }
 
@@ -463,6 +483,6 @@ function assertABodylessDeclarationCanBeDisplaced(): void {
   TestValidator.equals(
     "the declaration that starts later owns the use",
     result.edges.map((entry) => entry.from),
-    ["main.lua#inner@6:function"],
+    ["main.lua#inner@6:3:function"],
   );
 }

@@ -20,9 +20,10 @@ export const test_lua_provider_declines_what_it_cannot_serve =
     assertPrepareWritesAConfigOutsideTheProject();
   assertASessionNeedsNoConfiguration();
   assertTheProviderWatchesLuaBuildInputs();
-  assertTheProviderResolvesTheServerItDrives();
-  assertAnInstallationWithoutItsExporterDeclines();
+    assertTheProviderResolvesTheServerItDrives();
+    assertAnInstallationWithoutItsExporterDeclines();
     await assertAnUnreadableSourceIsNotPublishedAround();
+    await assertAnOutsideSourceIsNotReadBack();
   };
 
 /**
@@ -136,6 +137,76 @@ async function assertAnUnreadableSourceIsNotPublishedAround(): Promise<void> {
     "a source that cannot be read back refuses the snapshot",
     message.includes("could not be read back"),
   );
+}
+
+/**
+ * The producer artifact is input from a separately spawned process. Even when
+ * an outside path exists and is readable, it cannot become project source
+ * provenance merely because the report asked for it.
+ */
+async function assertAnOutsideSourceIsNotReadBack(): Promise<void> {
+  const root = GraphPaths.createTempDirectory("samchon-graph-lua-confined-");
+  const outside = GraphPaths.createTempDirectory(
+    "samchon-graph-lua-outside-",
+  );
+  const outsideFile = path.join(outside, "secret.lua");
+  fs.writeFileSync(outsideFile, "return 'outside'\n");
+  const declared = path.relative(root, outsideFile).replaceAll("\\", "/");
+  const message = await refreshLuaArtifact(root, declared);
+  TestValidator.predicate(
+    "a readable outside source is refused before publication",
+    message.includes("escapes the project"),
+  );
+
+  const linked = path.join(root, "linked");
+  fs.symlinkSync(
+    outside,
+    linked,
+    process.platform === "win32" ? "junction" : "dir",
+  );
+  const linkedMessage = await refreshLuaArtifact(root, "linked/secret.lua");
+  TestValidator.predicate(
+    "an in-project link cannot redirect a source read outside",
+    linkedMessage.includes("crosses a link outside the project"),
+  );
+}
+
+async function refreshLuaArtifact(
+  root: string,
+  declared: string,
+): Promise<string> {
+  const session = new LuaGraphSession({
+    root,
+    languages: ["lua"],
+    provider: "samchon-graph-lua",
+    command: {
+      command: process.execPath,
+      args: [
+        "-e",
+        `require("node:fs").writeFileSync(process.argv[1], ${JSON.stringify(
+          JSON.stringify({
+            schemaVersion: 1,
+            files: [declared],
+            nodes: [],
+            edges: [],
+            skipped: { unnamed: 0, outsideRoot: 0, refsFailed: 0 },
+            warnings: [],
+          }),
+        )})`,
+      ],
+    },
+    indexArgs: (produced) => [produced],
+    inputs: () => [],
+  });
+  let message = "";
+  try {
+    await session.refresh();
+  } catch (error) {
+    message = error instanceof Error ? error.message : String(error);
+  } finally {
+    await session.close();
+  }
+  return message;
 }
 
 /**

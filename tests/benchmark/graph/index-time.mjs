@@ -774,10 +774,7 @@ function assertIncomingReportScope(incoming) {
         `incoming index-time result cell ${cell.project}/${cell.tool} does not match its scoped fixture revision`,
       );
     }
-    if (
-      incoming.measurementId !== undefined &&
-      cell.measurementId !== incoming.measurementId
-    ) {
+    if (cell.measurementId !== incoming.measurementId) {
       throw new TypeError(
         `incoming index-time result cell ${cell.project}/${cell.tool} does not match its measurement`,
       );

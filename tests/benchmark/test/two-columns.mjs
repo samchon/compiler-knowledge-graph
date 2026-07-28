@@ -114,6 +114,7 @@ export function assertStrictComparisonArithmetic() {
   const absentProject = "flask";
   const timeoutProject = "gin";
   const staticProject = "gson";
+  const absentStaticProject = "lualine";
   const differentRunProject = "tokio";
   const differentHostProject = "redis";
   const projects = [
@@ -121,6 +122,7 @@ export function assertStrictComparisonArithmetic() {
     absentProject,
     timeoutProject,
     staticProject,
+    absentStaticProject,
     differentRunProject,
     differentHostProject,
   ];
@@ -175,6 +177,16 @@ export function assertStrictComparisonArithmetic() {
         }),
         cell(staticProject, "samchon-graph-fallback", {
           buildMs: 3_000,
+          servedBy: "static no strict provider served",
+        }),
+        // A provider failure does not make a static strict-off cell the same
+        // lane as the strict cell's completed LSP fallback.
+        cell(absentStaticProject, "samchon-graph", {
+          buildMs: 40_000,
+          servedBy: "lsp no strict provider served",
+        }),
+        cell(absentStaticProject, "samchon-graph-fallback", {
+          buildMs: 4_000,
           servedBy: "static no strict provider served",
         }),
         // Finished semantic cells from separate runs compare runners as much as
@@ -235,6 +247,18 @@ export function assertStrictComparisonArithmetic() {
       `${absentProject}[^\\n]*both cells measured the same lane`,
     ),
     "a project whose provider never served must not report a ratio",
+  );
+  assert.match(
+    out,
+    new RegExp(
+      `${absentStaticProject}[^\\n]*at least one cell produced no semantic index`,
+    ),
+    "a provider failure must not make a static strict-off result the same lane",
+  );
+  assert.doesNotMatch(
+    out,
+    new RegExp(`${absentStaticProject}[^\\n]*x$`, "m"),
+    "a provider failure paired with static output must not report a ratio",
   );
   assert.doesNotMatch(
     out,

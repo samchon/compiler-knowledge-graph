@@ -182,14 +182,6 @@ function assertTypedEvidenceIsCanonical(): void {
       },
     ],
     [
-      "inconclusive indexes stay in canonical order",
-      {
-        rows: ["a=unasked", "b=unasked"],
-        inconclusive: [1, 0],
-        identities: ["a", "b"],
-      },
-    ],
-    [
       "inconclusive evidence has a private identity",
       {
         rows: ["tool=unasked"],
@@ -205,6 +197,25 @@ function assertTypedEvidenceIsCanonical(): void {
   for (const [label, derivation] of invalid)
     TestValidator.error(label, () => toolchainVersion.normalize(derivation));
 
+  const unordered = {
+    rows: ["a=unasked", "b=unasked"],
+    inconclusive: [1, 0],
+    identities: ["a", "b"],
+  };
+  TestValidator.equals(
+    "unique inconclusive indexes normalize into canonical order",
+    toolchainVersion.normalize(unordered),
+    {
+      rows: ["a=unasked", "b=unasked"],
+      inconclusive: [0, 1],
+      identities: ["a", "b"],
+    },
+  );
+  TestValidator.equals(
+    "normalizing typed evidence does not mutate the provider's indexes",
+    unordered.inconclusive,
+    [1, 0],
+  );
   TestValidator.equals(
     "public string rows remain valid without private identities",
     toolchainVersion.normalize(["SETTING=unasked"]),

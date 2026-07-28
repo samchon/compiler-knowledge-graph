@@ -207,6 +207,10 @@ if (paired.length > 0) {
     const served =
       typeof strict.servedBy === "string" &&
       !/no strict provider/.test(strict.servedBy);
+    const strictFallbackSemantic =
+      !served &&
+      typeof strict.servedBy === "string" &&
+      strict.servedBy.startsWith("lsp ");
     const fallbackSemantic =
       typeof fallback.servedBy === "string" &&
       fallback.servedBy.startsWith("lsp ");
@@ -214,13 +218,17 @@ if (paired.length > 0) {
       typeof strict.measurementId === "string" &&
       strict.measurementId === fallback.measurementId &&
       sameHost(strict.host, fallback.host);
-    const verdict = !served
-      ? "no strict provider served, so both cells measured the same lane"
-      : !fallbackSemantic
-        ? "strict-off cell produced no semantic index; times are not comparable"
-        : !sameMeasurement
-          ? "cells were not measured together on the same host; times are not comparable"
-          : `${(fallback.buildMs / strict.buildMs).toFixed(1)}x`;
+    const verdict = !served && (!strictFallbackSemantic || !fallbackSemantic)
+      ? "strict provider did not serve and at least one cell produced no semantic index; times are not comparable"
+      : !served && !sameMeasurement
+        ? "strict provider did not serve and cells were not measured together on the same host; times are not comparable"
+        : !served
+          ? "no strict provider served, so both cells measured the same lane (LSP)"
+          : !fallbackSemantic
+            ? "strict-off cell produced no semantic index; times are not comparable"
+            : !sameMeasurement
+              ? "cells were not measured together on the same host; times are not comparable"
+              : `${(fallback.buildMs / strict.buildMs).toFixed(1)}x`;
     const strictTime = `${(strict.buildMs / 1000).toFixed(1)} s`;
     const fallbackTime = `${(fallback.buildMs / 1000).toFixed(1)} s`;
     process.stdout.write(

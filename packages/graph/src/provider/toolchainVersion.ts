@@ -258,6 +258,7 @@ export namespace toolchainVersion {
       identities: [...value.identities],
     };
     validate(derivation);
+    derivation.inconclusive.sort((left, right) => left - right);
     return derivation;
   }
 
@@ -363,7 +364,7 @@ export namespace toolchainVersion {
       throw new Error(
         "toolchain configuration identities must align with its rows",
       );
-    let previous = -1;
+    const seen = new Set<number>();
     for (const index of derivation.inconclusive) {
       if (
         !Number.isSafeInteger(index) ||
@@ -373,16 +374,16 @@ export namespace toolchainVersion {
         throw new Error(
           "toolchain inconclusive evidence must index an existing row",
         );
-      if (index <= previous)
+      if (seen.has(index))
         throw new Error(
-          "toolchain inconclusive evidence must be strictly increasing",
+          "toolchain inconclusive evidence must not contain duplicates",
         );
       const identity = derivation.identities[index];
       if (typeof identity !== "string" || identity.length === 0)
         throw new Error(
           "toolchain inconclusive evidence must carry a stable identity",
         );
-      previous = index;
+      seen.add(index);
     }
   }
 

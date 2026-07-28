@@ -1020,6 +1020,7 @@ function compilerToken(
     directory === undefined ? undefined : path.resolve(directory);
   let envBaseCwd = cwd;
   let environmentPath: IEnvSearchPath | null | undefined;
+  let environmentPathext: string | null | undefined;
   let commandPath: IEnvSearchPath | undefined;
 
   for (;;) {
@@ -1036,6 +1037,7 @@ function compilerToken(
     }
     if (envWrapped && options && token === "-") {
       environmentPath = null;
+      environmentPathext = null;
       options = false;
       continue;
     }
@@ -1048,7 +1050,10 @@ function compilerToken(
         ) {
           return undefined;
         }
-        if (name === "--ignore-environment") environmentPath = null;
+        if (name === "--ignore-environment") {
+          environmentPath = null;
+          environmentPathext = null;
+        }
         if (
           name === "--null" ||
           name === "--help" ||
@@ -1076,6 +1081,9 @@ function compilerToken(
         if (isEnvironmentVariable(operand, "PATH")) {
           environmentPath = null;
         }
+        if (isEnvironmentVariable(operand, "PATHEXT")) {
+          environmentPathext = null;
+        }
       }
       continue;
     }
@@ -1087,12 +1095,14 @@ function compilerToken(
         envBaseCwd,
         cwd,
         environmentPath,
+        environmentPathext,
       );
       if (parsed === undefined) return undefined;
       candidates = parsed.tokens;
       index = parsed.index;
       cwd = parsed.cwd;
       environmentPath = parsed.environmentPath;
+      environmentPathext = parsed.environmentPathext;
       commandPath = parsed.commandPath ?? commandPath;
       if (parsed.inserted) {
         options = true;
@@ -1111,14 +1121,25 @@ function compilerToken(
           delimiter: path.delimiter,
         };
       }
+      if (isEnvironmentVariable(assignment.name, "PATHEXT")) {
+        environmentPathext = assignment.value;
+        if (!envWrapped && environmentPath === undefined) {
+          environmentPath = inheritedSearchPath(env);
+        }
+      }
       continue;
     }
     if (assignments && envWrapped && token.startsWith("=")) return undefined;
 
     const program = programName(token);
     if (program === "env") {
-      if (!envWrapped && environmentPath === undefined) {
-        environmentPath = inheritedSearchPath(env);
+      if (!envWrapped) {
+        if (environmentPath === undefined) {
+          environmentPath = inheritedSearchPath(env);
+        }
+        if (environmentPathext === undefined) {
+          environmentPathext = inheritedPathext(env);
+        }
       }
       envWrapped = true;
       envBaseCwd = cwd;
@@ -1139,6 +1160,7 @@ function compilerToken(
       token,
       cwd,
       commandPath ?? environmentPath,
+      environmentPathext,
       env,
     );
   }
@@ -1154,6 +1176,7 @@ interface IParsedShortEnvOptions {
   index: number;
   cwd: string | undefined;
   environmentPath: IEnvSearchPath | null | undefined;
+  environmentPathext: string | null | undefined;
   commandPath?: IEnvSearchPath;
   inserted: boolean;
 }
@@ -1165,15 +1188,18 @@ function parseShortEnvOptions(
   envBaseCwd: string | undefined,
   initialCwd: string | undefined,
   initialEnvironmentPath: IEnvSearchPath | null | undefined,
+  initialEnvironmentPathext: string | null | undefined,
 ): IParsedShortEnvOptions | undefined {
   let cwd = initialCwd;
   let environmentPath = initialEnvironmentPath;
+  let environmentPathext = initialEnvironmentPathext;
   let commandPath: IEnvSearchPath | undefined;
   const cluster = token.slice(1);
   for (let at = 0; at < cluster.length; at += 1) {
     const option = cluster[at]!;
     if (option === "i") {
       environmentPath = null;
+      environmentPathext = null;
       continue;
     }
     if (option === "0") return undefined;
@@ -1195,6 +1221,7 @@ function parseShortEnvOptions(
         index: 0,
         cwd,
         environmentPath,
+        environmentPathext,
         inserted: true,
       };
     }
@@ -1209,6 +1236,9 @@ function parseShortEnvOptions(
       if (isEnvironmentVariable(operand, "PATH")) {
         environmentPath = null;
       }
+      if (isEnvironmentVariable(operand, "PATHEXT")) {
+        environmentPathext = null;
+      }
     }
     // The rest of this token is the operand, so the option cluster ends here.
     break;
@@ -1218,6 +1248,7 @@ function parseShortEnvOptions(
     index,
     cwd,
     environmentPath,
+    environmentPathext,
     ...(commandPath === undefined ? {} : { commandPath }),
     inserted: false,
   };
@@ -1251,6 +1282,13 @@ function inheritedSearchPath(
       };
 }
 
+function inheritedPathext(env: NodeJS.ProcessEnv): string {
+  return (
+    environmentValue(env, "PATHEXT") ??
+    DEFAULT_WINDOWS_EXECUTABLE_EXTENSIONS
+  );
+}
+
 function shellAssignment(
   token: string,
 ): { name: string; value: string } | undefined {
@@ -1272,27 +1310,28 @@ function isEnvironmentName(name: string): boolean {
 }
 
 function isEnvironmentVariable(name: string, expected: string): boolean {
-  /* c8 ignore start -- each CI operating system exercises its native arm. */
-  return process.platform === "win32"
-    ? name.toUpperCase() === expected.toUpperCase()
-    : name === expected;
-  /* c8 ignore stop */
+  return (
+    canonicalEnvironmentName(name) ===
+    canonicalEnvironmentName(expected)
+  );
 }
 
 function environmentValue(
   env: NodeJS.ProcessEnv,
   name: string,
 ): string | undefined {
-  /* c8 ignore start -- each CI operating system exercises its native arm. */
-  if (process.platform !== "win32") return env[name];
-  if (env[name] !== undefined) return env[name];
-  const expected = name.toUpperCase();
+  const expected = canonicalEnvironmentName(name);
   const key = Object.keys(env).find(
     (candidate) =>
-      candidate.toUpperCase() === expected && env[candidate] !== undefined,
+      canonicalEnvironmentName(candidate) === expected &&
+      env[candidate] !== undefined,
   );
   return key === undefined ? undefined : env[key];
-  /* c8 ignore stop */
+}
+
+function canonicalEnvironmentName(name: string): string {
+  /* c8 ignore next -- each CI operating system exercises its native arm. */
+  return process.platform === "win32" ? name.toUpperCase() : name;
 }
 
 /**
@@ -1300,8 +1339,10 @@ function environmentValue(
  *
  * A compilation database does not retain the environment that expanded
  * `${NAME}` when it was produced. Such an operand is therefore inconclusive
- * and fails closed; every literal escape and quoting rule that can be replayed
- * from the artifact is handled exactly.
+ * and fails closed. GNU rejects a backslash before literal whitespace while
+ * FreeBSD accepts it, and the database does not name the `env` dialect either,
+ * so that boundary fails closed too. Every rule the two dialects share can be
+ * replayed exactly.
  */
 function splitEnvString(input: string): string[] | undefined {
   const tokens: string[] = [];
@@ -1380,6 +1421,7 @@ function resolveEnvDriver(
   driver: string,
   cwd: string | undefined,
   searchPath: IEnvSearchPath | null | undefined,
+  environmentPathext: string | null | undefined,
   env: NodeJS.ProcessEnv,
 ): string | undefined {
   if (path.isAbsolute(driver)) return driver;
@@ -1399,7 +1441,11 @@ function resolveEnvDriver(
             ? undefined
             : path.resolve(cwd, directory);
     if (absoluteDirectory === undefined) return undefined;
-    for (const spelling of envDriverSpellings(driver, env)) {
+    for (const spelling of envDriverSpellings(
+      driver,
+      environmentPathext,
+      env,
+    )) {
       candidates.push(path.resolve(absoluteDirectory, spelling));
     }
   }
@@ -1411,17 +1457,25 @@ function resolveEnvDriver(
 
 function envDriverSpellings(
   driver: string,
+  environmentPathext: string | null | undefined,
   env: NodeJS.ProcessEnv,
 ): string[] {
   /* c8 ignore start -- each CI operating system exercises its native arm. */
   if (process.platform !== "win32") return [driver];
   if (/\.(?:exe|cmd|bat)$/i.test(driver)) return [driver];
-  const extensions = (environmentValue(env, "PATHEXT") ?? ".EXE;.CMD;.BAT")
+  const configured =
+    environmentPathext === undefined
+      ? (environmentValue(env, "PATHEXT") ??
+        DEFAULT_WINDOWS_EXECUTABLE_EXTENSIONS)
+      : environmentPathext;
+  if (configured === null) return [driver];
+  const extensions = configured
     .split(";")
     .filter((extension) => extension !== "")
     .map((extension) =>
       extension.startsWith(".") ? extension : `.${extension}`,
     );
+  if (extensions.length === 0) return [driver];
   return extensions.map((extension) => `${driver}${extension.toLowerCase()}`);
   /* c8 ignore stop */
 }
@@ -1545,8 +1599,6 @@ const ENV_SHORT_OPTIONS_WITH_OPERAND = new Set([
 ]);
 const ENV_SPLIT_WHITESPACE = new Set([" ", "\t", "\n", "\v", "\f", "\r"]);
 const ENV_SPLIT_ESCAPES: Readonly<Record<string, string>> = {
-  " ": " ",
-  "\t": "\t",
   f: "\f",
   n: "\n",
   r: "\r",
@@ -1558,6 +1610,7 @@ const ENV_SPLIT_ESCAPES: Readonly<Record<string, string>> = {
   "'": "'",
   "\\": "\\",
 };
+const DEFAULT_WINDOWS_EXECUTABLE_EXTENSIONS = ".EXE;.CMD;.BAT";
 
 /** A separator no path can contain. */
 const SEPARATOR = String.fromCharCode(0);

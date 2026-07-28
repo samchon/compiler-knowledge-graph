@@ -71,11 +71,16 @@ function assertALauncherIsNotTheCompiler(): void {
     // is the ordinary configuration for a project that uses ccache. Publishing
     // ccache's version as the toolchain would name a cache as the thing that
     // decided the program's semantics.
-    { arguments: ["ccache", "gcc", "-c", "a.c"] },
+    {
+      arguments: ["ccache", relativeShimPath("gcc"), "-c", "a.c"],
+    },
     // A leading shell assignment is not a program either, and a launcher named
     // with a Windows spelling is the same launcher — the comparison cannot
     // depend on the case, the suffix, or which platform is reading the file.
-    { command: "SOURCE_DATE_EPOCH=0 C:\\tools\\CCACHE.EXE clang -c b.cpp" },
+    {
+      command:
+        `SOURCE_DATE_EPOCH=0 C:\\tools\\CCACHE.EXE ${relativeShimPath("clang")} -c b.cpp`,
+    },
     // `env` is itself a launcher, but its flags and their operands are not
     // programs. The command after them remains the compiler even when another
     // launcher follows it.
@@ -87,6 +92,7 @@ function assertALauncherIsNotTheCompiler(): void {
         "-u",
         "CPATH",
         "PATH=.samchon-graph/bin",
+        "PATHEXT=.EXE;.CMD;.BAT",
         "SOURCE_DATE_EPOCH=0",
         "ccache",
         "gcc",
@@ -154,6 +160,7 @@ function assertALauncherIsNotTheCompiler(): void {
         "--ignore-environment",
         "--",
         "PATH=.samchon-graph/bin",
+        "PATHEXT=.EXE;.CMD;.BAT",
         "clang",
         "-c",
         "e.c",
@@ -231,7 +238,16 @@ function assertEnvExecutionContextIsCompilerContext(): void {
       {
         directory: root,
         file: "f.c",
-        arguments: ["env", "-", `PATH=${searched}`, "env", "cc", "-c", "f.c"],
+        arguments: [
+          "env",
+          "-",
+          `PATH=${searched}`,
+          "PATHEXT=.EXE;.CMD;.BAT",
+          "env",
+          "cc",
+          "-c",
+          "f.c",
+        ],
       },
       {
         directory: root,
@@ -353,12 +369,15 @@ function assertEnvPlatformAndSplitRules(): void {
   for (const name of [
     "--",
     "casecc",
-    "escaped cc",
     "spacecc",
     "unsetcc",
   ]) {
     shim(searched, name);
   }
+  exactShim(searched, "pathext.cmd", "cmd");
+  exactShim(searched, "pathext.exe", "exe");
+  exactShim(root, "leading.cmd", "leading-cmd");
+  exactShim(root, "leading.exe", "leading-exe");
   writeShims(root, []);
   fs.writeFileSync(
     path.join(root, "compile_commands.json"),
@@ -398,8 +417,9 @@ function assertEnvPlatformAndSplitRules(): void {
         file: "d.c",
         arguments: [
           "env",
-          "-S",
-          `PATH=${envSplitQuoted(searched)} escaped\\ cc`,
+          `PATH=${searched}`,
+          "PATHEXT=.CMD",
+          "pathext",
           "-c",
           "d.c",
         ],
@@ -409,8 +429,9 @@ function assertEnvPlatformAndSplitRules(): void {
         file: "e.c",
         arguments: [
           "env",
-          "-S",
-          `PATH=${envSplitQuoted(searched)} escaped\\\tcc`,
+          `PATH=${searched}`,
+          "Pathext=.EXE",
+          "pathext",
           "-c",
           "e.c",
         ],
@@ -420,6 +441,76 @@ function assertEnvPlatformAndSplitRules(): void {
         file: "f.c",
         arguments: ["env", `PATH=${searched}`, "--", "-c", "f.c"],
       },
+      {
+        directory: root,
+        file: "g.c",
+        arguments: [
+          "env",
+          "-i",
+          `PATH=${searched}`,
+          "pathext",
+          "-c",
+          "g.c",
+        ],
+      },
+      {
+        directory: root,
+        file: "h.c",
+        arguments: [
+          "env",
+          `PATH=${searched}`,
+          "PATHEXT=.CMD",
+          "env",
+          "-u",
+          "PaThExT",
+          "pathext",
+          "-c",
+          "h.c",
+        ],
+      },
+      {
+        directory: root,
+        file: "i.c",
+        arguments: [
+          "env",
+          `PATH=${searched}`,
+          "PATHEXT=.CMD",
+          "env",
+          "--unset=PATHEXT",
+          "pathext",
+          "-c",
+          "i.c",
+        ],
+      },
+      {
+        directory: root,
+        file: "j.c",
+        arguments: [
+          "env",
+          `PATH=${searched}`,
+          "PATHEXT=",
+          "pathext",
+          "-c",
+          "j.c",
+        ],
+      },
+      {
+        directory: root,
+        file: "k.c",
+        arguments: [
+          `PATH=${searched}`,
+          "PATHEXT=.CMD",
+          "env",
+          "pathext",
+          "-c",
+          "k.c",
+        ],
+      },
+      {
+        directory: root,
+        file: "l.c",
+        arguments: ["PATHEXT=.CMD", "leading", "-c", "l.c"],
+      },
     ]),
   );
   TestValidator.equals(
@@ -427,17 +518,19 @@ function assertEnvPlatformAndSplitRules(): void {
     drivers(root),
     process.platform === "win32"
       ? [
+          "leading=leading-cmd v1.0.0",
           "--=-- v1.0.0",
           "casecc=casecc v1.0.0",
-          "escaped\tcc=unavailable",
-          "escaped cc=escaped cc v1.0.0",
+          "pathext=unavailable",
+          "pathext=cmd v1.0.0",
+          "pathext=exe v1.0.0",
           "spacecc=spacecc v1.0.0",
         ]
       : [
           "casecc=unavailable",
+          "leading=unavailable",
           "--=-- v1.0.0",
-          "escaped\tcc=unavailable",
-          "escaped cc=escaped cc v1.0.0",
+          "pathext=unavailable",
           "spacecc=spacecc v1.0.0",
           "unsetcc=unsetcc v1.0.0",
         ],
@@ -478,7 +571,7 @@ function assertMemoizedDatabaseUsesTheCurrentEnvironment(): void {
   );
   TestValidator.equals(
     "an inherited environment without a search path declines a bare command",
-    rows({ PATH: undefined, Path: undefined }),
+    rows({ PATH: undefined, Path: undefined, PATHEXT: undefined }),
     ["cc=unavailable"],
   );
 }
@@ -609,6 +702,12 @@ function assertAnUnusableDatabaseNamesNoCompiler(): void {
         { arguments: ["env", "-S", "gcc\\"] },
         { arguments: ["env", "-S", '"gcc\\c"'] },
         { arguments: ["env", "-S", "gcc\\q"] },
+        { arguments: ["env", "-S", "gcc\\ gcc"] },
+        { arguments: ["env", "-S", "gcc\\\tgcc"] },
+        { arguments: ["env", "-S", "gcc\\\ngcc"] },
+        { arguments: ["env", "-S", "gcc\\\vgcc"] },
+        { arguments: ["env", "-S", "gcc\\\fgcc"] },
+        { arguments: ["env", "-S", "gcc\\\rgcc"] },
       ]),
     ],
     [
@@ -792,6 +891,14 @@ function writeShims(root: string, names: readonly string[]): void {
 function shimPath(root: string, name: string): string {
   return path.join(
     root,
+    ".samchon-graph",
+    "bin",
+    process.platform === "win32" ? `${name}.cmd` : name,
+  );
+}
+
+function relativeShimPath(name: string): string {
+  return path.join(
     ".samchon-graph",
     "bin",
     process.platform === "win32" ? `${name}.cmd` : name,

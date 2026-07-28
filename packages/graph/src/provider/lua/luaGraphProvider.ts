@@ -1,6 +1,5 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 
 import { providerInputFiles } from "../providerInputFiles";
@@ -70,37 +69,13 @@ export const luaGraphProvider: IGraphProvider = {
     });
   },
 
-  /**
-   * Write the config that points the server at our exporter.
-   *
-   * `Lua.docScriptPath` is concatenated onto the indexed root as a plain
-   * string, so a path built from the root's own relative distance walks back
-   * out to the installed package instead of being written into someone's
-   * project. Nothing lands in the tree being analysed.
-   *
-   * Throwing declines the candidate rather than failing the build, which is
-   * what the hook is for: a Lua project whose config cannot be written is a
-   * fallback condition.
-   */
-  prepare: (root) => {
-    const script = exporterScript(process.env);
-    if (script === undefined) {
+  open: (props) => {
+    if (exporterScript(process.env) === undefined) {
       throw new Error(
         "samchon-graph-lua: the exporter script is missing from this installation",
       );
     }
-    const relative = path
-      .relative(path.resolve(root), script)
-      .split(path.sep)
-      .join("/");
-    fs.writeFileSync(
-      configPath(root),
-      `${JSON.stringify({ "Lua.docScriptPath": `/${relative}` }, null, 2)}\n`,
-    );
-  },
-
-  open: (props) =>
-    new LuaGraphSession({
+    return new LuaGraphSession({
       root: props.root,
       languages: props.languages,
       provider: "samchon-graph-lua",
@@ -108,11 +83,24 @@ export const luaGraphProvider: IGraphProvider = {
       // `--doc` names the project, `--doc_out_path` the directory the exporter
       // writes into — which is the artifact's own directory, so the file lands
       // exactly where the session looks for it.
-      indexArgs: (artifact) => [
-        `--doc=${path.resolve(props.root)}`,
-        `--doc_out_path=${path.dirname(artifact)}`,
-        `--configpath=${configPath(props.root)}`,
-      ],
+      indexArgs: (artifact) => {
+        const script = exporterScript(process.env);
+        if (script === undefined) {
+          throw new Error(
+            "samchon-graph-lua: the exporter script is missing from this installation",
+          );
+        }
+        const config = writeExporterConfig(
+          props.root,
+          script,
+          artifact,
+        );
+        return [
+          `--doc=${path.resolve(props.root)}`,
+          `--doc_out_path=${path.dirname(artifact)}`,
+          `--configpath=${config}`,
+        ];
+      },
       inputs: () =>
         providerInputFiles(
           props.root,
@@ -122,7 +110,8 @@ export const luaGraphProvider: IGraphProvider = {
         ),
       configuration: () =>
         luaConfiguration(props.root, process.env, props.command),
-    }),
+    });
+  },
 };
 
 function luaConfiguration(
@@ -139,7 +128,31 @@ function luaConfiguration(
       args: ["--version"],
       ...(resolved === undefined ? {} : { resolved }),
     }),
+    luaExporterConfiguration(env),
   ]);
+}
+
+function luaExporterConfiguration(
+  env: NodeJS.ProcessEnv,
+): toolchainVersion.IObservation {
+  const script = exporterScript(env);
+  if (script === undefined) {
+    return toolchainVersion.conclusive(
+      "lua-exporter=unavailable",
+      "lua-exporter",
+    );
+  }
+  const identity = `lua-exporter:${path.resolve(script)}`;
+  try {
+    return toolchainVersion.conclusive(
+      `lua-exporter=sha256:${createHash("sha256")
+        .update(fs.readFileSync(script))
+        .digest("hex")}`,
+      identity,
+    );
+  } catch {
+    return toolchainVersion.conclusive("lua-exporter=unreadable", identity);
+  }
 }
 
 /**
@@ -176,16 +189,32 @@ function exporterScript(env: NodeJS.ProcessEnv): string | undefined {
 }
 
 /**
- * Where this project's generated config lives.
+ * Write one generated config inside this generation's private output.
  *
- * Outside the project, because writing into the tree being indexed is what the
- * relative-escape above exists to avoid, and keyed by the root so two projects
- * indexed in one process do not overwrite each other's script path.
+ * `Lua.docScriptPath` is concatenated onto the indexed root as a plain string,
+ * so the value walks from that root to the installed exporter. The config
+ * itself belongs beside the generation artifact: `BatchGraphSession` gives
+ * every refresh a unique temporary directory and removes it afterwards. A
+ * root-keyed file in the shared OS temporary directory let two concurrent
+ * sessions for the same project overwrite each other's exporter selection and
+ * left the path behind after both sessions closed.
  */
-function configPath(root: string): string {
-  const key = createHash("sha256")
-    .update(path.resolve(root))
-    .digest("hex")
-    .slice(0, 16);
-  return path.join(os.tmpdir(), `samchon-graph-lua-${key}.json`);
+function writeExporterConfig(
+  root: string,
+  script: string,
+  artifact: string,
+): string {
+  const relative = path
+    .relative(path.resolve(root), script)
+    .split(path.sep)
+    .join("/");
+  const config = path.join(
+    path.dirname(artifact),
+    "samchon-graph-lua-config.json",
+  );
+  fs.writeFileSync(
+    config,
+    `${JSON.stringify({ "Lua.docScriptPath": `/${relative}` }, null, 2)}\n`,
+  );
+  return config;
 }

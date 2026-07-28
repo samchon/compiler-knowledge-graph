@@ -17,11 +17,11 @@ import { GraphPaths } from "../internal/GraphPaths";
 export const test_lua_provider_declines_what_it_cannot_serve =
   async (): Promise<void> => {
     assertBoundedOptionsAreRefusedByName();
-    assertPrepareWritesAConfigOutsideTheProject();
     assertASessionNeedsNoConfiguration();
     assertTheProviderWatchesLuaBuildInputs();
     assertTheProviderResolvesTheServerItDrives();
     assertAnInstallationWithoutItsExporterDeclines();
+    await assertExporterConfigurationIsIsolatedAndVersioned();
     await assertTheServerVersionIsPublished();
     await assertAnUnreadableSourceIsNotPublishedAround();
     await assertAnOutsideSourceIsNotReadBack();
@@ -118,24 +118,117 @@ async function assertTheServerVersionIsPublished(): Promise<void> {
 }
 
 /**
- * The config lands outside the project, and points back into the package.
+ * Exporter selection is both a build input and private to one generation.
  *
- * `Lua.docScriptPath` is concatenated onto the indexed root as a plain string,
- * so the path has to be relative to that root — and it has to escape it, since
- * writing our exporter into somebody's repository to index it is not a trade
- * this provider makes.
+ * The exporter may live outside the project, so changing it does not move any
+ * source hash. Its content digest must still rebuild a resident session, and
+ * the generated config must disappear with that generation rather than remain
+ * in the project or in a root-keyed shared temporary file.
  */
-function assertPrepareWritesAConfigOutsideTheProject(): void {
-  const root = GraphPaths.createTempDirectory("samchon-graph-lua-prepare-");
-  luaGraphProvider.prepare?.(root, { cwd: root });
-  const written = fs
-    .readdirSync(root)
-    .filter((entry) => entry.endsWith(".json"));
-  TestValidator.equals(
-    "nothing is written into the project being indexed",
-    written,
-    [],
+async function assertExporterConfigurationIsIsolatedAndVersioned(): Promise<void> {
+  const root = GraphPaths.createTempDirectory("samchon-graph-lua-exporter-");
+  const outside = GraphPaths.createTempDirectory(
+    "samchon-graph-lua-exporter-outside-",
   );
+  const exporter = path.join(outside, "export.lua");
+  const replacement = path.join(outside, "replacement.lua");
+  const capture = path.join(outside, "capture.json");
+  const producer = path.join(root, "producer.cjs");
+  fs.writeFileSync(path.join(root, "main.lua"), "return 1\n");
+  fs.writeFileSync(exporter, "return 'first'\n");
+  fs.writeFileSync(replacement, "return 'replacement'\n");
+  const artifact = JSON.stringify({
+    schemaVersion: 2,
+    compilerVersion: "Lua 5.4",
+    files: ["main.lua"],
+    nodes: [],
+    edges: [],
+    skipped: { unnamed: 0, outsideRoot: 0, refsFailed: 0 },
+    warnings: [],
+  });
+  fs.writeFileSync(
+    producer,
+    [
+      'const fs = require("node:fs");',
+      'const path = require("node:path");',
+      'if (process.argv.includes("--version")) {',
+      '  process.stdout.write("fixture-lua-language-server 1.0.0\\n");',
+      "} else {",
+      '  const output = process.argv.find((arg) => arg.startsWith("--doc_out_path=")).slice("--doc_out_path=".length);',
+      '  const config = process.argv.find((arg) => arg.startsWith("--configpath=")).slice("--configpath=".length);',
+      `  fs.writeFileSync(${JSON.stringify(capture)}, JSON.stringify({ config, body: fs.readFileSync(config, "utf8") }));`,
+      `  fs.writeFileSync(path.join(output, ${JSON.stringify(LuaGraphSession.ARTIFACT)}), ${JSON.stringify(artifact)});`,
+      "}",
+    ].join("\n"),
+  );
+
+  const previous = process.env.SAMCHON_GRAPH_LUA_EXPORTER;
+  process.env.SAMCHON_GRAPH_LUA_EXPORTER = exporter;
+  const session = luaGraphProvider.open({
+    root,
+    languages: ["lua"],
+    command: { command: process.execPath, args: [producer] },
+    options: { cwd: root },
+  });
+  try {
+    const initial = await session.refresh();
+    const first = JSON.parse(fs.readFileSync(capture, "utf8")) as {
+      config: string;
+      body: string;
+    };
+    fs.writeFileSync(exporter, "return 'second'\n");
+    const rebuilt = await session.refresh();
+    const second = JSON.parse(fs.readFileSync(capture, "utf8")) as {
+      config: string;
+      body: string;
+    };
+    process.env.SAMCHON_GRAPH_LUA_EXPORTER = replacement;
+    const replaced = await session.refresh();
+    const third = JSON.parse(fs.readFileSync(capture, "utf8")) as {
+      config: string;
+      body: string;
+    };
+
+    TestValidator.equals(
+      "exporter content and selection rebuild resident generations",
+      [
+        initial.mode,
+        rebuilt.mode,
+        rebuilt.generation,
+        replaced.mode,
+        replaced.generation,
+      ],
+      ["initial", "rebuild", 2, "rebuild", 3],
+    );
+    TestValidator.predicate(
+      "each generation owns and removes a different config",
+      first.config !== second.config &&
+        second.config !== third.config &&
+        !fs.existsSync(first.config) &&
+        !fs.existsSync(second.config) &&
+        !fs.existsSync(third.config),
+    );
+    TestValidator.predicate(
+      "every generated config points at that generation's exporter",
+      first.body.includes("docScriptPath") &&
+        first.body.includes("export.lua") &&
+        second.body.includes("docScriptPath") &&
+        second.body.includes("export.lua") &&
+        third.body.includes("docScriptPath") &&
+        third.body.includes("replacement.lua"),
+    );
+    TestValidator.equals(
+      "nothing generated is written into the project",
+      fs
+        .readdirSync(root)
+        .filter((entry) => entry.includes("samchon-graph-lua-config")),
+      [],
+    );
+  } finally {
+    await session.close();
+    if (previous === undefined) delete process.env.SAMCHON_GRAPH_LUA_EXPORTER;
+    else process.env.SAMCHON_GRAPH_LUA_EXPORTER = previous;
+  }
 }
 
 /**
@@ -385,7 +478,12 @@ function assertAnInstallationWithoutItsExporterDeclines(): void {
     );
     let message = "";
     try {
-      luaGraphProvider.prepare?.(root, { cwd: root });
+      luaGraphProvider.open({
+        root,
+        languages: ["lua"],
+        command: { command: process.execPath, args: ["-e", ""] },
+        options: { cwd: root },
+      });
     } catch (error) {
       message = error instanceof Error ? error.message : String(error);
     }

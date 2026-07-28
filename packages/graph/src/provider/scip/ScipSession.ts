@@ -57,9 +57,9 @@ export class ScipSession implements IBulkGraphSession {
     // Minus what this producer is known not to emit. Every SCIP entry
     // inherited the same fact list, so a provider whose indexer never
     // populates a field still advertised the family derived from it — a
-    // consumer degrading against  was told containment was proven and
-    // then found none, which reads as a project with no structure rather than
-    // an indexer that cannot describe one.
+    // consumer degrading against scip-python was told containment was proven
+    // and then found none, which reads as a project with no structure rather
+    // than an indexer that cannot describe one.
     const omitted = new Set(configured.omitFacts ?? []);
     const facts = [
       ...adaptScipIndex.EDGE_KINDS,

@@ -73,10 +73,38 @@ function assertALauncherIsNotTheCompiler(): void {
     // with a Windows spelling is the same launcher — the comparison cannot
     // depend on the case, the suffix, or which platform is reading the file.
     { command: "SOURCE_DATE_EPOCH=0 C:\\tools\\CCACHE.EXE clang -c b.cpp" },
+    // `env` is itself a launcher, but its flags and their operands are not
+    // programs. The command after them remains the compiler even when another
+    // launcher follows it.
+    {
+      arguments: [
+        "env",
+        "",
+        "-i",
+        "-u",
+        "CPATH",
+        "--chdir",
+        root,
+        "SOURCE_DATE_EPOCH=0",
+        "ccache",
+        "gcc",
+        "-c",
+        "c.c",
+      ],
+    },
+    // GNU env's split-string inserts command tokens back into its argv. The
+    // option terminator also has to disappear rather than becoming a driver.
+    { command: "env -S'ccache gcc' -c d.c" },
+    {
+      arguments: ["env", "--split-string", "ccache clang", "-c", "d1.c"],
+    },
+    { command: "env --split-string='ccache gcc' -c d2.c" },
+    { arguments: ["env", "--unset=CPATH", "clang", "-c", "d3.c"] },
+    { arguments: ["env", "--ignore-environment", "--", "clang", "-c", "e.c"] },
   ]);
-  writeShims(root, ["gcc", "clang", "ccache"]);
+  writeShims(root, ["gcc", "clang", "ccache", "env"]);
   TestValidator.equals(
-    "a launcher, its Windows spelling, and a leading assignment are stepped over",
+    "launchers, env options, and leading assignments are stepped over",
     drivers(root),
     ["clang=clang v1.0.0", "gcc=gcc v1.0.0"],
   );
@@ -195,6 +223,10 @@ function assertAnUnusableDatabaseNamesNoCompiler(): void {
     ["entries that are not objects", '[1, null, "a"]'],
     ["entries naming no program", '[{"file":"a.c"},{"command":"   "}]'],
     ["entries whose command is only a launcher", '[{"command":"ccache"}]'],
+    [
+      "entries whose env invocation names no command",
+      '[{"command":"env -i -u CPATH"},{"arguments":["env","-S"]}]',
+    ],
   ] as const) {
     // A distinct root per case. Sharing one would let the memo answer a later
     // case from an earlier parse whenever two rewrites land in the same

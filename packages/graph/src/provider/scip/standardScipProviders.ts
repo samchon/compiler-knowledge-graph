@@ -993,13 +993,70 @@ function readCompilationDatabaseCompilers(contents: Buffer): string[] {
  * the toolchain that decided the index's semantics would name a cache.
  */
 function compilerToken(tokens: readonly string[]): string | undefined {
-  for (const token of tokens) {
+  let candidates = [...tokens];
+  for (let index = 0; index < candidates.length; index += 1) {
+    const token = candidates[index]!;
     if (token === "") continue;
     if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(token)) continue;
-    if (COMPILER_LAUNCHERS.has(programName(token))) continue;
+    const program = programName(token);
+    if (program === "env") {
+      candidates = envCommandTokens(candidates.slice(index + 1));
+      index = -1;
+      continue;
+    }
+    if (COMPILER_LAUNCHERS.has(program)) continue;
     return token;
   }
   return undefined;
+}
+
+/**
+ * The command argv left after a portable `env` invocation has consumed its
+ * own flags and assignments.
+ *
+ * `env` is a launcher, but unlike ccache it has options before the program.
+ * Merely stepping over its executable makes `-i`, `-u`, or the operand of
+ * `--chdir` look like the compiler. GNU `-S` also inserts a shell-like token
+ * string back into the argv, so parse that insertion through the same rules.
+ */
+function envCommandTokens(tokens: readonly string[]): string[] {
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index]!;
+    if (token === "" || /^[A-Za-z_][A-Za-z0-9_]*=/.test(token)) continue;
+    if (token === "--") return [...tokens.slice(index + 1)];
+    if (token === "-S" || token === "--split-string") {
+      const split = tokens[index + 1];
+      if (split === undefined) return [];
+      return envCommandTokens([
+        ...splitCommand(split),
+        ...tokens.slice(index + 2),
+      ]);
+    }
+    if (token.startsWith("--split-string=")) {
+      return envCommandTokens([
+        ...splitCommand(token.slice("--split-string=".length)),
+        ...tokens.slice(index + 1),
+      ]);
+    }
+    if (token.startsWith("-S") && token.length > 2) {
+      return envCommandTokens([
+        ...splitCommand(token.slice(2)),
+        ...tokens.slice(index + 1),
+      ]);
+    }
+    if (ENV_OPTIONS_WITH_OPERAND.has(token)) {
+      index += 1;
+      continue;
+    }
+    if (
+      ENV_OPTIONS_WITHOUT_OPERAND.has(token) ||
+      ENV_INLINE_OPTION.test(token)
+    ) {
+      continue;
+    }
+    return [...tokens.slice(index)];
+  }
+  return [];
 }
 
 /**
@@ -1085,9 +1142,35 @@ const COMPILER_LAUNCHERS = new Set([
   "distcc",
   "icecc",
   "icecream",
-  "env",
   "buildcache",
 ]);
+
+const ENV_OPTIONS_WITH_OPERAND = new Set([
+  "-u",
+  "--unset",
+  "-C",
+  "--chdir",
+  "-P",
+  "-a",
+  "--argv0",
+]);
+const ENV_OPTIONS_WITHOUT_OPERAND = new Set([
+  "-",
+  "-i",
+  "--ignore-environment",
+  "-0",
+  "--null",
+  "-v",
+  "--debug",
+  "--block-signal",
+  "--default-signal",
+  "--ignore-signal",
+  "--list-signal-handling",
+  "--help",
+  "--version",
+]);
+const ENV_INLINE_OPTION =
+  /^(?:-[uCPa].+|--(?:unset|chdir|argv0|block-signal|default-signal|ignore-signal)=.*)$/;
 
 /** A separator no path can contain. */
 const SEPARATOR = String.fromCharCode(0);

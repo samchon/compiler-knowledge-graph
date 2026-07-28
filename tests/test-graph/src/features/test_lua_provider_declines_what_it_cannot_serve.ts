@@ -121,9 +121,10 @@ async function assertTheServerVersionIsPublished(): Promise<void> {
  * Exporter selection is both a build input and private to one generation.
  *
  * The exporter may live outside the project, so changing it does not move any
- * source hash. Its content digest must still rebuild a resident session, and
- * the generated config must disappear with that generation rather than remain
- * in the project or in a root-keyed shared temporary file.
+ * source hash. Its content digest must still rebuild a resident session, the
+ * exact bytes behind that digest must be what the server executes, and every
+ * generated input must disappear with that generation rather than remain in
+ * the project or in a root-keyed shared temporary file.
  */
 async function assertExporterConfigurationIsIsolatedAndVersioned(): Promise<void> {
   const root = GraphPaths.createTempDirectory("samchon-graph-lua-exporter-");
@@ -156,7 +157,11 @@ async function assertExporterConfigurationIsIsolatedAndVersioned(): Promise<void
       "} else {",
       '  const output = process.argv.find((arg) => arg.startsWith("--doc_out_path=")).slice("--doc_out_path=".length);',
       '  const config = process.argv.find((arg) => arg.startsWith("--configpath=")).slice("--configpath=".length);',
-      `  fs.writeFileSync(${JSON.stringify(capture)}, JSON.stringify({ config, body: fs.readFileSync(config, "utf8") }));`,
+      '  const root = process.argv.find((arg) => arg.startsWith("--doc=")).slice("--doc=".length);',
+      '  const body = fs.readFileSync(config, "utf8");',
+      '  fs.appendFileSync(process.env.SAMCHON_GRAPH_LUA_EXPORTER, "-- changed after derivation\\n");',
+      '  const script = path.normalize(root + JSON.parse(body)["Lua.docScriptPath"]);',
+      `  fs.writeFileSync(${JSON.stringify(capture)}, JSON.stringify({ config, body, script, source: fs.readFileSync(script, "utf8") }));`,
       `  fs.writeFileSync(path.join(output, ${JSON.stringify(LuaGraphSession.ARTIFACT)}), ${JSON.stringify(artifact)});`,
       "}",
     ].join("\n"),
@@ -175,18 +180,24 @@ async function assertExporterConfigurationIsIsolatedAndVersioned(): Promise<void
     const first = JSON.parse(fs.readFileSync(capture, "utf8")) as {
       config: string;
       body: string;
+      script: string;
+      source: string;
     };
     fs.writeFileSync(exporter, "return 'second'\n");
     const rebuilt = await session.refresh();
     const second = JSON.parse(fs.readFileSync(capture, "utf8")) as {
       config: string;
       body: string;
+      script: string;
+      source: string;
     };
     process.env.SAMCHON_GRAPH_LUA_EXPORTER = replacement;
     const replaced = await session.refresh();
     const third = JSON.parse(fs.readFileSync(capture, "utf8")) as {
       config: string;
       body: string;
+      script: string;
+      source: string;
     };
 
     TestValidator.equals(
@@ -206,16 +217,27 @@ async function assertExporterConfigurationIsIsolatedAndVersioned(): Promise<void
         second.config !== third.config &&
         !fs.existsSync(first.config) &&
         !fs.existsSync(second.config) &&
-        !fs.existsSync(third.config),
+        !fs.existsSync(third.config) &&
+        !fs.existsSync(first.script) &&
+        !fs.existsSync(second.script) &&
+        !fs.existsSync(third.script),
+    );
+    TestValidator.equals(
+      "the server reads the exact exporter bytes that moved each universe",
+      [first.source, second.source, third.source],
+      [
+        "return 'first'\n",
+        "return 'second'\n",
+        "return 'replacement'\n",
+      ],
     );
     TestValidator.predicate(
-      "every generated config points at that generation's exporter",
-      first.body.includes("docScriptPath") &&
-        first.body.includes("export.lua") &&
-        second.body.includes("docScriptPath") &&
-        second.body.includes("export.lua") &&
-        third.body.includes("docScriptPath") &&
-        third.body.includes("replacement.lua"),
+      "every config points at its private exporter copy",
+      [first, second, third].every(
+        (entry) =>
+          entry.body.includes("docScriptPath") &&
+          entry.body.includes("samchon-graph-lua-export.lua"),
+      ),
     );
     TestValidator.equals(
       "nothing generated is written into the project",
@@ -223,6 +245,23 @@ async function assertExporterConfigurationIsIsolatedAndVersioned(): Promise<void
         .readdirSync(root)
         .filter((entry) => entry.includes("samchon-graph-lua-config")),
       [],
+    );
+    const retained = session.current;
+    process.env.SAMCHON_GRAPH_LUA_EXPORTER = path.join(
+      outside,
+      "absent.lua",
+    );
+    let message = "";
+    try {
+      await session.refresh();
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+    TestValidator.predicate(
+      "a vanished exporter rejects one generation and retains the last snapshot",
+      message.includes("exporter script is missing or unreadable") &&
+        session.generation === 3 &&
+        session.current === retained,
     );
   } finally {
     await session.close();
@@ -490,6 +529,14 @@ function assertAnInstallationWithoutItsExporterDeclines(): void {
     TestValidator.predicate(
       "and says so rather than writing a config pointing nowhere",
       message.includes("exporter script is missing"),
+    );
+    process.env.SAMCHON_GRAPH_LUA_EXPORTER = root;
+    TestValidator.predicate(
+      "an unreadable exporter is distinguished in configuration evidence",
+      luaGraphProvider
+        .configuration?.(root, process.env)
+        .includes("lua-exporter=unreadable") === true &&
+        luaGraphProvider.resolve(root, process.env) === undefined,
     );
   } finally {
     if (previous === undefined) delete process.env.SAMCHON_GRAPH_LUA_EXPORTER;

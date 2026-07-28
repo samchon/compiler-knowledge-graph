@@ -149,8 +149,10 @@ function assertPublicConfigurationKeepsEvidenceInternal(): void {
     "public configuration remains rows while internal evidence stays parallel",
     visible !== undefined &&
       evidence !== undefined &&
-      visible.length === 1 &&
+      visible.length === 2 &&
       JSON.stringify(visible) === JSON.stringify(evidence.rows) &&
+      visible[1]?.startsWith("lua-exporter=") === true &&
+      evidence.identities.length === visible.length &&
       evidence.inconclusive.length === 0,
   );
 }

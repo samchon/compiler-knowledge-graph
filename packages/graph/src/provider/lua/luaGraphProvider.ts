@@ -62,7 +62,7 @@ export const luaGraphProvider: IGraphProvider = {
   },
 
   resolve: (root, env) => {
-    if (exporterScript(env) === undefined) return undefined;
+    if (inspectExporter(env).status !== "available") return undefined;
     return resolveProviderCommand(root, env, {
       command: "lua-language-server",
       override: "SAMCHON_GRAPH_LUA",
@@ -70,11 +70,13 @@ export const luaGraphProvider: IGraphProvider = {
   },
 
   open: (props) => {
-    if (exporterScript(process.env) === undefined) {
+    const initial = inspectExporter(process.env);
+    if (initial.status !== "available") {
       throw new Error(
         "samchon-graph-lua: the exporter script is missing from this installation",
       );
     }
+    let exporter: IAvailableExporter | undefined = initial;
     return new LuaGraphSession({
       root: props.root,
       languages: props.languages,
@@ -84,15 +86,14 @@ export const luaGraphProvider: IGraphProvider = {
       // writes into — which is the artifact's own directory, so the file lands
       // exactly where the session looks for it.
       indexArgs: (artifact) => {
-        const script = exporterScript(process.env);
-        if (script === undefined) {
+        if (exporter === undefined) {
           throw new Error(
-            "samchon-graph-lua: the exporter script is missing from this installation",
+            "samchon-graph-lua: the exporter script is missing or unreadable",
           );
         }
         const config = writeExporterConfig(
           props.root,
-          script,
+          exporter,
           artifact,
         );
         return [
@@ -108,8 +109,17 @@ export const luaGraphProvider: IGraphProvider = {
           BUILD_FILES,
           BUILD_EXTENSIONS,
         ),
-      configuration: () =>
-        luaConfiguration(props.root, process.env, props.command),
+      configuration: () => {
+        const inspected = inspectExporter(process.env);
+        exporter =
+          inspected.status === "available" ? inspected : undefined;
+        return luaConfiguration(
+          props.root,
+          process.env,
+          props.command,
+          inspected,
+        );
+      },
     });
   },
 };
@@ -118,6 +128,7 @@ function luaConfiguration(
   root: string,
   env: NodeJS.ProcessEnv,
   resolved?: IGraphProvider.ICommand,
+  exporter: IExporterInspection = inspectExporter(env),
 ): toolchainVersion.IDerivation {
   return toolchainVersion.derive([
     toolchainVersion.observe({
@@ -128,31 +139,29 @@ function luaConfiguration(
       args: ["--version"],
       ...(resolved === undefined ? {} : { resolved }),
     }),
-    luaExporterConfiguration(env),
+    luaExporterConfiguration(exporter),
   ]);
 }
 
 function luaExporterConfiguration(
-  env: NodeJS.ProcessEnv,
+  exporter: IExporterInspection,
 ): toolchainVersion.IObservation {
-  const script = exporterScript(env);
-  if (script === undefined) {
+  if (exporter.status === "unavailable") {
     return toolchainVersion.conclusive(
       "lua-exporter=unavailable",
       "lua-exporter",
     );
   }
-  const identity = `lua-exporter:${path.resolve(script)}`;
-  try {
-    return toolchainVersion.conclusive(
-      `lua-exporter=sha256:${createHash("sha256")
-        .update(fs.readFileSync(script))
-        .digest("hex")}`,
-      identity,
-    );
-  } catch {
+  const identity = `lua-exporter:${exporter.path}`;
+  if (exporter.status === "unreadable") {
     return toolchainVersion.conclusive("lua-exporter=unreadable", identity);
   }
+  return toolchainVersion.conclusive(
+    `lua-exporter=sha256:${createHash("sha256")
+      .update(exporter.source)
+      .digest("hex")}`,
+    identity,
+  );
 }
 
 /**
@@ -171,7 +180,7 @@ function luaExporterConfiguration(
  * A seam that makes the behaviour testable is better than a hint that makes the
  * tool look away.
  */
-function exporterScript(env: NodeJS.ProcessEnv): string | undefined {
+function inspectExporter(env: NodeJS.ProcessEnv): IExporterInspection {
   const named = env.SAMCHON_GRAPH_LUA_EXPORTER;
   const script =
     named !== undefined && named !== ""
@@ -185,25 +194,52 @@ function exporterScript(env: NodeJS.ProcessEnv): string | undefined {
           "lua",
           "export.lua",
         );
-  return fs.existsSync(script) ? script : undefined;
+  if (!fs.existsSync(script)) return { status: "unavailable" };
+  try {
+    return {
+      status: "available",
+      path: script,
+      source: fs.readFileSync(script),
+    };
+  } catch {
+    return { status: "unreadable", path: script };
+  }
 }
+
+interface IAvailableExporter {
+  status: "available";
+  path: string;
+  source: Buffer;
+}
+
+type IExporterInspection =
+  | IAvailableExporter
+  | { status: "unavailable" }
+  | { status: "unreadable"; path: string };
 
 /**
  * Write one generated config inside this generation's private output.
  *
  * `Lua.docScriptPath` is concatenated onto the indexed root as a plain string,
- * so the value walks from that root to the installed exporter. The config
- * itself belongs beside the generation artifact: `BatchGraphSession` gives
- * every refresh a unique temporary directory and removes it afterwards. A
- * root-keyed file in the shared OS temporary directory let two concurrent
- * sessions for the same project overwrite each other's exporter selection and
- * left the path behind after both sessions closed.
+ * so the value walks from that root to a private copy beside the generation
+ * artifact. That copy is the exact buffer whose digest moved the build
+ * universe: changing the installed file while the server starts cannot make
+ * the artifact come from bytes different from the recorded digest.
+ * `BatchGraphSession` gives every refresh a unique temporary directory and
+ * removes it afterwards. A root-keyed file in the shared OS temporary
+ * directory let two concurrent sessions for the same project overwrite each
+ * other's exporter selection and left the path behind after both closed.
  */
 function writeExporterConfig(
   root: string,
-  script: string,
+  exporter: IAvailableExporter,
   artifact: string,
 ): string {
+  const script = path.join(
+    path.dirname(artifact),
+    "samchon-graph-lua-export.lua",
+  );
+  fs.writeFileSync(script, exporter.source);
   const relative = path
     .relative(path.resolve(root), script)
     .split(path.sep)

@@ -295,6 +295,35 @@ function assertAMalformedArtifactIsRefused(): void {
       },
       "runtime version",
     ],
+    [
+      "an artifact whose exporter could not complete workspace analysis",
+      {
+        schemaVersion: 2,
+        compilerVersion: "Lua 5.4",
+        files: ["a.lua"],
+        nodes: [],
+        edges: [],
+        skipped: { unnamed: 0, outsideRoot: 0, refsFailed: 0 },
+        warnings: [
+          "could not parse file:///workspace/a.lua",
+          "could not parse file:///workspace/b.lua",
+        ],
+      },
+      "reported 2 operational warnings",
+    ],
+    [
+      "an artifact with failed reference queries",
+      {
+        schemaVersion: 2,
+        compilerVersion: "Lua 5.4",
+        files: ["a.lua"],
+        nodes: [],
+        edges: [],
+        skipped: { unnamed: 0, outsideRoot: 0, refsFailed: 2 },
+        warnings: [],
+      },
+      "reference collection failed for 2 declarations",
+    ],
   ];
   for (const [reason, artifact, expected] of refusals) {
     let message = "";
@@ -324,11 +353,11 @@ function assertAMalformedArtifactIsRefused(): void {
         nodes: [],
         edges: [],
         warnings: [],
-        skipped: { unnamed: -3, outsideRoot: 1.5, refsFailed: 2 },
+        skipped: { unnamed: -3, outsideRoot: 1.5, refsFailed: -2 },
       },
       "samchon-graph-lua",
     ).skipped,
-    { unnamed: 0, outsideRoot: 0, refsFailed: 2 },
+    { unnamed: 0, outsideRoot: 0, refsFailed: 0 },
   );
   TestValidator.equals(
     "absent skip counters read as zero",

@@ -221,14 +221,35 @@ export namespace adaptLuaExport {
         `${provider}: the export artifact has no effective Lua runtime version`,
       );
     }
+    // Every warning the shipped exporter emits is an operational failure:
+    // workspace-root decoding, file enumeration, or one file's parse. Carrying
+    // that text into an otherwise successful strict snapshot would publish the
+    // missing declarations as though the project had none. Count rather than
+    // echo the array so a failure in many files cannot amplify stderr.
+    const operationalWarnings = report.warnings as unknown[];
+    if (operationalWarnings.length !== 0) {
+      throw new Error(
+        `${provider}: the exporter reported ${String(operationalWarnings.length)} operational warnings, so its workspace snapshot is incomplete`,
+      );
+    }
+    const skipped = countsOf(report.skipped);
+    // `vm.getRefs` is the only relationship channel this provider has. One
+    // failed query means the advertised `references` fact family is incomplete,
+    // and absence in that partial result is indistinguishable from "no
+    // references exist" unless the strict candidate fails closed.
+    if (skipped.refsFailed !== 0) {
+      throw new Error(
+        `${provider}: reference collection failed for ${String(skipped.refsFailed)} declarations, so its references snapshot is incomplete`,
+      );
+    }
     return {
       schemaVersion: 2,
       compilerVersion: report.compilerVersion,
       files: report.files as string[],
       nodes: report.nodes as INode[],
       edges: report.edges as IEdge[],
-      skipped: countsOf(report.skipped),
-      warnings: report.warnings as string[],
+      skipped,
+      warnings: [],
     };
   }
   /* c8 ignore start -- declaration merging emits an unreachable namespace

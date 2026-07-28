@@ -70,10 +70,11 @@ node tests/benchmark/build/graph-benchmark-svg.cjs --png
 ```
 
 Each project measures its strict and strict-off cells sequentially on one quiet
-host; the complete matrix uses an isolated runner per project so unrelated
-languages do not compete for that host. Every published cold-index cell carries
-its full fixture commit and its own host block; a stored cell whose revision no
-longer matches `corpus.mjs` is not summarized or preserved by a later fold.
+host; the GitHub Actions complete matrix uses an isolated runner per project so
+unrelated languages do not compete for that host. Every published cold-index
+cell carries its full fixture commit and its own host block; a stored cell whose
+revision no longer matches `corpus.mjs` is not summarized or preserved by a
+later fold.
 `results/graph.json` keeps the raw samples. The summary reports a strict-provider
 time ratio only when both cells produced semantic indexes in the same
 measurement on the same host; a completed static fallback or a cell retained

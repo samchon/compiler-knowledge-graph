@@ -264,7 +264,7 @@ export const test_semantic_identity_edge_cases_stay_covered = async () => {
       { length: 11 },
       (_, at) => `target-${String(at).padStart(2, "0")}`,
     ),
-    "target-10",
+    "target-00",
   ];
   const flooded = floodAmbiguousWarnings(floodTargets);
   const reversedFlood = floodAmbiguousWarnings([...floodTargets].reverse());

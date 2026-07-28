@@ -866,6 +866,27 @@ function assertIndexValidation(): void {
       'scip: a.go occurrence "s" at [8,4,10] carries an enclosing range that does not enclose it; the optional scope was omitted',
     ],
   );
+  const symbolLessWarnings: string[] = [];
+  const malformedSymbolLess = parseScipIndex(
+    withOccurrence({
+      range: [8, 4, 10],
+      enclosingRange: [1, 0, 5, 1],
+    }),
+    "scip-java",
+    symbolLessWarnings,
+  ).documents[0]!.occurrences![0]!;
+  TestValidator.equals(
+    "a malformed symbol-less optional scope preserves its occurrence",
+    [malformedSymbolLess.range, malformedSymbolLess.enclosingRange],
+    [[8, 4, 10], undefined],
+  );
+  TestValidator.equals(
+    "a malformed symbol-less optional scope is named without inventing an identity",
+    symbolLessWarnings,
+    [
+      "scip: a.go occurrence without a symbol at [8,4,10] carries an enclosing range that does not enclose it; the optional scope was omitted",
+    ],
+  );
   // Optional records the graph does not read are still validated, because a
   // malformed one is evidence the index was not produced the way it claims.
   const documented = parseScipIndex(

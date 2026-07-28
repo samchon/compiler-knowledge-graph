@@ -297,6 +297,7 @@ function testIndexPublicationRefusesMalformedJson() {
   });
   const validReport = JSON.stringify({
     schemaVersion: 2,
+    measurementId: "fixture-measurement",
     host: FIXTURE_HOST,
     toolchain: {
       status: "recorded",
@@ -318,6 +319,8 @@ function testIndexPublicationRefusesMalformedJson() {
         project: INDEX_PROJECT,
         tool: "samchon-graph",
         buildMs: 1,
+        strict: true,
+        measurementId: "fixture-measurement",
         fixtureCommit: FIXTURE_COMMIT,
         toolchain: {
           status: "recorded",
@@ -641,6 +644,17 @@ function testIndexPublicationRefusesMalformedJson() {
       { ...validReportDocument, measurementId: "" },
     ],
     [
+      "missing measurement identity",
+      {
+        ...validReportDocument,
+        measurementId: undefined,
+        cells: validReportDocument.cells.map((cell) => ({
+          ...cell,
+          measurementId: undefined,
+        })),
+      },
+    ],
+    [
       "cell measurement mismatch",
       {
         ...validReportDocument,
@@ -658,6 +672,10 @@ function testIndexPublicationRefusesMalformedJson() {
       {
         ...validReportDocument,
         measurementId: "incoming-measurement",
+        cells: validReportDocument.cells.map((cell) => ({
+          ...cell,
+          measurementId: undefined,
+        })),
       },
     ],
     [
@@ -670,6 +688,48 @@ function testIndexPublicationRefusesMalformedJson() {
             measurementId: "unbound-cell-measurement",
           },
         ],
+      },
+    ],
+    [
+      "cell host mismatch",
+      {
+        ...validReportDocument,
+        cells: validReportDocument.cells.map((cell) => ({
+          ...cell,
+          host: { ...cell.host, cpu: "different fixture" },
+        })),
+      },
+    ],
+    [
+      "unknown tool scope",
+      {
+        ...validReportDocument,
+        tools: ["unknown-indexer"],
+        cells: validReportDocument.cells.map((cell) => ({
+          ...cell,
+          tool: "unknown-indexer",
+          strict: undefined,
+        })),
+      },
+    ],
+    [
+      "missing strict-provider intent",
+      {
+        ...validReportDocument,
+        cells: validReportDocument.cells.map((cell) => ({
+          ...cell,
+          strict: undefined,
+        })),
+      },
+    ],
+    [
+      "reversed strict-provider intent",
+      {
+        ...validReportDocument,
+        cells: validReportDocument.cells.map((cell) => ({
+          ...cell,
+          strict: false,
+        })),
       },
     ],
     [
@@ -803,6 +863,7 @@ function testIndexPublicationRefusesMalformedJson() {
   };
   const incompletePairReport = {
     schemaVersion: 2,
+    measurementId: validReportDocument.measurementId,
     host: FIXTURE_HOST,
     toolchain: validReportDocument.toolchain,
     projects: [INDEX_PROJECT],
@@ -814,6 +875,8 @@ function testIndexPublicationRefusesMalformedJson() {
         project: INDEX_PROJECT,
         tool: "samchon-graph",
         buildMs: 4,
+        strict: true,
+        measurementId: validReportDocument.measurementId,
         fixtureCommit: FIXTURE_COMMIT,
         toolchain: validReportDocument.toolchain,
         host: FIXTURE_HOST,

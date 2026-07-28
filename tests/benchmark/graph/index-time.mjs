@@ -712,9 +712,8 @@ function assertIncomingReportScope(incoming) {
     );
   }
   if (
-    incoming.measurementId !== undefined &&
-    (typeof incoming.measurementId !== "string" ||
-      incoming.measurementId.trim() === "")
+    typeof incoming.measurementId !== "string" ||
+    incoming.measurementId.trim() === ""
   ) {
     throw new TypeError(
       "incoming index-time result.measurementId must be a nonempty string",
@@ -739,6 +738,13 @@ function assertIncomingReportScope(incoming) {
   }
   const projects = new Set(incoming.projects);
   const tools = new Set(incoming.tools);
+  for (const tool of tools) {
+    if (!ALL_TOOLS.includes(tool)) {
+      throw new TypeError(
+        `incoming index-time result.tools names unknown tool ${tool}`,
+      );
+    }
+  }
   if (
     incoming.schemaVersion !== 2 ||
     typeof incoming.fixtures !== "object" ||
@@ -792,6 +798,11 @@ function assertIncomingReportScope(incoming) {
         `incoming index-time result cell ${cell.project}/${cell.tool} does not match its measurement`,
       );
     }
+    if (!sameHostEvidence(cell.host, incoming.host)) {
+      throw new TypeError(
+        `incoming index-time result cell ${cell.project}/${cell.tool} does not match its host evidence`,
+      );
+    }
     if (
       JSON.stringify(cell.toolchain) !==
       JSON.stringify(incoming.toolchain)
@@ -800,7 +811,27 @@ function assertIncomingReportScope(incoming) {
         `incoming index-time result cell ${cell.project}/${cell.tool} does not match its toolchain evidence`,
       );
     }
+    const expectedStrict =
+      cell.tool === TOOL_SAMCHON
+        ? true
+        : cell.tool === TOOL_SAMCHON_FALLBACK
+          ? false
+          : undefined;
+    if (
+      expectedStrict !== undefined &&
+      cell.strict !== expectedStrict
+    ) {
+      throw new TypeError(
+        `incoming index-time result cell ${cell.project}/${cell.tool} does not match its strict-provider intent`,
+      );
+    }
   }
+}
+
+function sameHostEvidence(left, right) {
+  return ["cpu", "cores", "ramGB", "os", "kernel", "node"].every(
+    (field) => left?.[field] === right?.[field],
+  );
 }
 
 /**

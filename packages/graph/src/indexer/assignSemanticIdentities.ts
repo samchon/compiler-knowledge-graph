@@ -13,6 +13,8 @@ import {
 } from "../structures";
 import { fileOfNodeId } from "../utils/fileOfNodeId";
 
+const MAX_AMBIGUOUS_EDGE_WARNING_EXAMPLES = 10;
+
 /**
  * Give best-effort generic declarations intrinsic ids before dedupe.
  *
@@ -26,6 +28,9 @@ export function assignSemanticIdentities(
   edges: ISamchonGraphEdge[] = [],
   warnings: string[] = [],
 ): void {
+  let omittedAmbiguousEdgeCount = 0;
+  const omittedAmbiguousEdgeWarnings: string[] = [];
+  const omittedAmbiguousEdgeExamples = new Set<string>();
   const idCounts = new Map<string, number>();
   for (const node of nodes) {
     idCounts.set(node.id, (idCounts.get(node.id) ?? 0) + 1);
@@ -108,14 +113,41 @@ export function assignSemanticIdentities(
     );
     const to = endpointOf(edge.to, remap.get(edge.to), edge.evidence, "to");
     if (from === undefined || to === undefined) {
-      warnings.push(
-        `@samchon/graph: omitted an ambiguous generic edge without provider endpoint proof: ${edge.kind} ${edge.from} -> ${edge.to}`,
-      );
+      const warning =
+        `@samchon/graph: omitted an ambiguous generic edge without provider endpoint proof: ` +
+        `${edge.kind} ${edge.from} -> ${edge.to}`;
+      omittedAmbiguousEdgeCount += 1;
+      if (
+        omittedAmbiguousEdgeCount <=
+        MAX_AMBIGUOUS_EDGE_WARNING_EXAMPLES
+      ) {
+        omittedAmbiguousEdgeWarnings.push(warning);
+      }
+      omittedAmbiguousEdgeExamples.add(warning);
+      if (
+        omittedAmbiguousEdgeExamples.size >
+        MAX_AMBIGUOUS_EDGE_WARNING_EXAMPLES
+      ) {
+        omittedAmbiguousEdgeExamples.delete(
+          [...omittedAmbiguousEdgeExamples].sort().pop()!,
+        );
+      }
       edges.splice(index, 1);
       continue;
     }
     edge.from = from;
     edge.to = to;
+  }
+  if (
+    omittedAmbiguousEdgeCount <=
+    MAX_AMBIGUOUS_EDGE_WARNING_EXAMPLES
+  ) {
+    warnings.push(...omittedAmbiguousEdgeWarnings);
+  } else {
+    warnings.push(
+      `@samchon/graph: omitted ${String(omittedAmbiguousEdgeCount)} ambiguous generic edges without provider endpoint proof; up to ${String(MAX_AMBIGUOUS_EDGE_WARNING_EXAMPLES)} distinct examples follow`,
+      ...[...omittedAmbiguousEdgeExamples].sort(),
+    );
   }
 }
 

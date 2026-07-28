@@ -221,7 +221,64 @@ export const test_semantic_identity_edge_cases_stay_covered = async () => {
     ambiguousEdges,
     [],
   );
-  TestValidator.equals("the omitted endpoint is reported", ambiguousWarnings.length, 1);
+  TestValidator.equals(
+    "the omitted endpoint is reported precisely below the warning cap",
+    ambiguousWarnings,
+    [
+      "@samchon/graph: omitted an ambiguous generic edge without provider endpoint proof: calls src/a.go#foo:function -> src/a.go#bare:function",
+    ],
+  );
+
+  const floodedAmbiguous: ISamchonGraphNode[] = [
+    gnode({
+      id: "src/flood.go#foo:function",
+      name: "foo",
+      qualifiedName: "foo",
+      evidence: { file: "src/flood.go", startLine: 1 },
+    }),
+    gnode({
+      id: "src/flood.go#foo:function",
+      name: "foo",
+      qualifiedName: "foo",
+      evidence: { file: "src/flood.go", startLine: 5 },
+    }),
+  ];
+  const floodedAmbiguousEdges: ISamchonGraphEdge[] = Array.from(
+    { length: 12 },
+    (_, at): ISamchonGraphEdge => ({
+      kind: "calls",
+      from: "src/flood.go#foo:function",
+      to: `target-${String(at).padStart(2, "0")}`,
+    }),
+  );
+  const floodedAmbiguousWarnings: string[] = [];
+  assignSemanticIdentities(
+    floodedAmbiguous,
+    floodedAmbiguousEdges,
+    floodedAmbiguousWarnings,
+  );
+  TestValidator.equals(
+    "amplified ambiguous generic-edge warnings are capped and deterministic",
+    [
+      floodedAmbiguousEdges.length,
+      floodedAmbiguousWarnings.length,
+      floodedAmbiguousWarnings[0],
+      floodedAmbiguousWarnings[1],
+      floodedAmbiguousWarnings[10],
+      floodedAmbiguousWarnings.some(
+        (warning) =>
+          warning.includes("target-10") || warning.includes("target-11"),
+      ),
+    ],
+    [
+      0,
+      11,
+      "@samchon/graph: omitted 12 ambiguous generic edges without provider endpoint proof; up to 10 distinct examples follow",
+      "@samchon/graph: omitted an ambiguous generic edge without provider endpoint proof: calls src/flood.go#foo:function -> target-00",
+      "@samchon/graph: omitted an ambiguous generic edge without provider endpoint proof: calls src/flood.go#foo:function -> target-09",
+      false,
+    ],
+  );
 
   const duplicateLocations: ISamchonGraphNode[] = [
     gnode({

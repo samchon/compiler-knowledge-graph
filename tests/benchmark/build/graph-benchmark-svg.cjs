@@ -575,27 +575,20 @@ function renderIndex(index) {
       ) {
         return null;
       }
+      const outcomes = Object.fromEntries(
+        INDEX_TOOLS.map((tool) => [tool.key, indexOutcome(cells[tool.key])]),
+      );
+      if (Object.values(outcomes).some((outcome) => outcome === null)) {
+        return null;
+      }
       return {
         project,
         label: REPO_LABELS[project] ?? project,
         scale: index.scale?.[project] ?? { files: 0, lines: 0 },
-        values: INDEX_TOOLS.map((tool) => {
-          const cell = cells[tool.key];
-          const measured =
-            typeof cell?.buildMs === "number" &&
-            Number.isFinite(cell.buildMs) &&
-            cell.buildMs >= 0;
-          const timedOut =
-            !measured &&
-            typeof cell?.timedOutMs === "number" &&
-            Number.isFinite(cell.timedOutMs) &&
-            cell.timedOutMs > 0;
-          return {
-            ...tool,
-            ms: measured ? cell.buildMs : timedOut ? cell.timedOutMs : 0,
-            timedOut,
-          };
-        }),
+        values: INDEX_TOOLS.map((tool) => ({
+          ...tool,
+          ...outcomes[tool.key],
+        })),
       };
     })
     .filter((row) => row !== null)
@@ -615,9 +608,9 @@ function renderIndex(index) {
   const barHeight = 11;
   const barStep = 15;
   const title =
-    "Cold graph build time — strict providers enabled vs disabled";
+    "Cold graph build outcomes — strict providers enabled vs disabled";
   const subtitle =
-    "Lower is better. Each project pair shares one recorded runner; dashed bars exceeded the displayed timeout.";
+    "Same-run outcomes only; outlined STATIC/HYBRID bars used syntax fallback, dashed bars exceeded the timeout.";
 
   const grid = ticks
     .map((tick) => {
@@ -642,14 +635,20 @@ function renderIndex(index) {
         const barWidth = value.ms > 0 ? (value.ms / max) * plotWidth : 0;
         const outcome = value.timedOut
           ? `>${fmtBuildMs(value.ms)}`
-          : fmtBuildMs(value.ms);
+          : value.nonSemantic !== null
+            ? `${value.nonSemantic} ${fmtBuildMs(value.ms)}`
+            : fmtBuildMs(value.ms);
+        const treatment = value.timedOut
+          ? ` fill-opacity="0.45" stroke="${value.color}" stroke-width="1.5" stroke-dasharray="5 3"`
+          : value.nonSemantic !== null
+            ? ` fill-opacity="0.12" stroke="${value.color}" stroke-width="1.5"`
+            : "";
         lines.push(
-          `  <rect x="${chart.left}" y="${y.toFixed(1)}" width="${barWidth.toFixed(1)}" height="${barHeight}" fill="${value.color}"${value.timedOut ? ` fill-opacity="0.45" stroke="${value.color}" stroke-width="1.5" stroke-dasharray="5 3"` : ""} rx="2"/>`,
+          `  <rect x="${chart.left}" y="${y.toFixed(1)}" width="${barWidth.toFixed(1)}" height="${barHeight}" fill="${value.color}"${treatment} rx="2"/>`,
         );
-        if (value.ms > 0)
-          lines.push(
-            `  <text x="${(chart.left + barWidth + 8).toFixed(1)}" y="${(y + barHeight - 1).toFixed(1)}" fill="${value.color}" font-size="11">${escapeXml(outcome)}</text>`,
-          );
+        lines.push(
+          `  <text x="${(chart.left + barWidth + 8).toFixed(1)}" y="${(y + barHeight - 1).toFixed(1)}" fill="${value.color}" font-size="11">${escapeXml(outcome)}</text>`,
+        );
       });
       return lines.join("\n");
     })
@@ -692,6 +691,31 @@ function sameIndexMeasurement(left, right) {
         left.host[field] === right.host[field],
     )
   );
+}
+
+function indexOutcome(cell) {
+  const measured =
+    typeof cell?.buildMs === "number" &&
+    Number.isFinite(cell.buildMs) &&
+    cell.buildMs >= 0;
+  const timedOut =
+    !measured &&
+    typeof cell?.timedOutMs === "number" &&
+    Number.isFinite(cell.timedOutMs) &&
+    cell.timedOutMs > 0;
+  if (timedOut) {
+    return { ms: cell.timedOutMs, timedOut: true, nonSemantic: null };
+  }
+  if (!measured) return null;
+  if (typeof cell.servedBy !== "string") return null;
+  if (cell.servedBy.startsWith("static")) {
+    return { ms: cell.buildMs, timedOut: false, nonSemantic: "STATIC" };
+  }
+  if (cell.servedBy.startsWith("hybrid")) {
+    return { ms: cell.buildMs, timedOut: false, nonSemantic: "HYBRID" };
+  }
+  if (!cell.servedBy.startsWith("lsp ")) return null;
+  return { ms: cell.buildMs, timedOut: false, nonSemantic: null };
 }
 
 // The wall clock a first answer costs from a cold checkout: build the tool's

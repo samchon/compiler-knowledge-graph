@@ -1013,43 +1013,43 @@ function testIndexCellIsolationContract() {
         ),
     "a complete matrix must discard stale index cells before folding current reports",
   );
-  const collect = workflow.indexOf("\n  collect:");
-  const collectSetup = workflow.indexOf("- name: Setup Node", collect);
-  const installRenderer = workflow.indexOf(
+  const collectStart = workflow.indexOf("\n  collect:");
+  const collectTail = workflow.slice(collectStart + 1);
+  const collectHeader = "  collect:";
+  const nextJob = /\n  [a-zA-Z0-9_-]+:\r?\n/.exec(
+    collectTail.slice(collectHeader.length),
+  );
+  const collect =
+    nextJob === null
+      ? collectTail
+      : collectTail.slice(0, collectHeader.length + nextJob.index);
+  const collectSetup = collect.indexOf("- name: Setup Node");
+  const installRenderer = collect.indexOf(
     "- name: Install renderer dependencies",
-    collect,
   );
-  const foldPublication = workflow.indexOf(
+  const foldPublication = collect.indexOf(
     "- name: Fold reports into the publication",
-    collect,
   );
-  const showPublication = workflow.indexOf(
-    "- name: Show what was measured",
-    collect,
-  );
-  const renderPublication = workflow.indexOf(
+  const showPublication = collect.indexOf("- name: Show what was measured");
+  const renderPublication = collect.indexOf(
     "- name: Render publication charts",
-    collect,
   );
-  const uploadPublication = workflow.indexOf(
-    "- name: Upload publication",
-    collect,
-  );
+  const uploadPublication = collect.indexOf("- name: Upload publication");
   assert.ok(
-    collect >= 0 &&
-      collectSetup > collect &&
+    collectStart >= 0 &&
+      collectSetup >= 0 &&
       installRenderer > collectSetup &&
       foldPublication > installRenderer &&
       showPublication > foldPublication &&
       renderPublication > showPublication &&
       uploadPublication > renderPublication &&
-      workflow.includes("run: pnpm install --frozen-lockfile") &&
-      workflow.includes(
+      collect.includes("run: pnpm install --frozen-lockfile") &&
+      collect.includes(
         "run: pnpm --filter @samchon/graph-benchmark render:png",
       ) &&
-      workflow.includes("tests/benchmark/results/graph.json") &&
-      workflow.includes("tests/benchmark/results/svg") &&
-      workflow.includes("tests/benchmark/results/png"),
+      collect.includes("tests/benchmark/results/graph.json") &&
+      collect.includes("tests/benchmark/results/svg") &&
+      collect.includes("tests/benchmark/results/png"),
     "the collect job must install the pinned renderer, render both chart formats, and publish JSON, SVG, and PNG together",
   );
   assert.ok(
@@ -1695,6 +1695,8 @@ function testReferenceRenderer() {
   assert.match(index, /strict providers enabled vs disabled/);
   assert.match(index, /strict providers enabled/);
   assert.match(index, /strict providers disabled/);
+  assert.match(index, /outlined STATIC\/HYBRID bars used syntax fallback/);
+  assert.match(index, /STATIC 1\.2 s/);
   assert.match(index, /&gt;60\.0 min/);
   assert.match(index, /stroke-dasharray="5 3"/);
 
@@ -1771,6 +1773,48 @@ function testReferenceRenderer() {
     ),
     false,
     "cells from different measurements or hosts cannot leave a comparison PNG",
+  );
+
+  const incompleteIndexReport = sampleReport();
+  for (const cell of incompleteIndexReport.index.cells) {
+    if (cell.tool !== "samchon-graph-fallback") continue;
+    delete cell.timedOutMs;
+    delete cell.buildMs;
+    cell.hasBuildStep = false;
+  }
+  const incompleteIndexOut = path.join(root, "incomplete-index-out");
+  fs.mkdirSync(path.join(incompleteIndexOut, "svg"), { recursive: true });
+  fs.mkdirSync(path.join(incompleteIndexOut, "png"), { recursive: true });
+  fs.writeFileSync(
+    path.join(incompleteIndexOut, "svg", "graph-index-time.svg"),
+    "stale",
+  );
+  fs.writeFileSync(
+    path.join(incompleteIndexOut, "png", "graph-index-time.png"),
+    "stale",
+  );
+  fs.writeFileSync(input, JSON.stringify(incompleteIndexReport));
+  run(
+    process.execPath,
+    [path.join(benchmarkDir, "build", "graph-benchmark-svg.cjs")],
+    {
+      ...env,
+      SAMCHON_GRAPH_BENCH_RENDER_OUT: incompleteIndexOut,
+    },
+  );
+  assert.equal(
+    fs.existsSync(
+      path.join(incompleteIndexOut, "svg", "graph-index-time.svg"),
+    ),
+    false,
+    "an incomplete or no-build cell cannot leave a comparison SVG",
+  );
+  assert.equal(
+    fs.existsSync(
+      path.join(incompleteIndexOut, "png", "graph-index-time.png"),
+    ),
+    false,
+    "an incomplete or no-build cell cannot leave a comparison PNG",
   );
 
   const legacyReport = sampleReport();
@@ -2071,6 +2115,14 @@ function sampleReport() {
             ramGB: 32,
             node: "v22.0.0",
           },
+          servedBy:
+            tool === "samchon-graph"
+              ? "lsp test strict provider"
+              : tool === "samchon-graph-fallback"
+                ? project === "gin"
+                  ? "attempted no strict provider selected"
+                  : "static no strict provider served"
+                : "lsp comparator",
           ...(project === "gin" &&
           tool === "samchon-graph-fallback"
             ? { buildMs: null, timedOutMs: 3_600_000 }

@@ -12,7 +12,10 @@ on:
     paths:
       - ".github/workflows/experiment.yml"
       - ".github/scripts/latest-workflow-update.mjs"
+      - "config/**"
+      - "package.json"
       - "packages/graph/**"
+      - "packages/graph-sitter/**"
       - "sidecars/**"
       - "tests/experiment/**"
       - "pnpm-lock.yaml"
@@ -44,7 +47,10 @@ jobs:
           node .github/scripts/latest-workflow-update.mjs \
             --include=.github/workflows/experiment.yml \
             --include=.github/scripts/latest-workflow-update.mjs \
+            --include=config/** \
+            --include=package.json \
             --include=packages/graph/** \
+            --include=packages/graph-sitter/** \
             --include=sidecars/** \
             --include=tests/experiment/** \
             --include=pnpm-lock.yaml \

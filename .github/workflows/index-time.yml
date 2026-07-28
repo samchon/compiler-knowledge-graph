@@ -64,6 +64,9 @@ jobs:
   latest_update:
     name: latest update
     runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
     outputs:
       run: ${{ steps.classify.outputs.run }}
     steps:
@@ -76,6 +79,7 @@ jobs:
         id: classify
         run: |
           node .github/scripts/latest-workflow-update.mjs \
+            --carry-forward-workflow=index-time.yml \
             --include=.github/workflows/index-time.yml \
             --include=.github/scripts/latest-workflow-update.mjs \
             --include=config/** \
@@ -88,6 +92,8 @@ jobs:
             --include=tests/benchmark/** \
             --include=tests/experiment/** \
             --exclude=tests/benchmark/results/**
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
 
   measure:
     needs: latest_update

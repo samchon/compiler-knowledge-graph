@@ -95,6 +95,35 @@ export const test_workflows_use_current_core_action_runtimes = () => {
         releaseJob.indexOf("pnpm exec changelogithub"),
   );
 
+  for (const workflow of ["experiment.yml", "index-time.yml"]) {
+    const text = fs.readFileSync(path.join(directory, workflow), "utf8");
+    for (const input of [
+      "config/**",
+      "package.json",
+      "packages/graph/**",
+      "packages/graph-sitter/**",
+      "pnpm-lock.yaml",
+      "pnpm-workspace.yaml",
+      "sidecars/**",
+      "tests/experiment/**",
+    ]) {
+      TestValidator.predicate(
+        `${workflow} triggers and classifies the runtime build input ${input}`,
+        text.includes(`- "${input}"`) &&
+          text.includes(`--include=${input}`),
+      );
+    }
+  }
+  const indexTime = fs.readFileSync(
+    path.join(directory, "index-time.yml"),
+    "utf8",
+  );
+  TestValidator.predicate(
+    "a result-only index update runs when its predecessor has no verdict",
+    indexTime.includes("--carry-forward-workflow=index-time.yml") &&
+      indexTime.includes("GITHUB_TOKEN: ${{ github.token }}"),
+  );
+
   const releasePack = fs.readFileSync(
     path.join(GraphPaths.repositoryRoot, "build", "release-pack.mjs"),
     "utf8",

@@ -35,13 +35,35 @@ export function latestWorkflowUpdateDecision({
   return { run: true, reason: "latest-update diff could not be classified" };
 }
 
-function main() {
+/**
+ * An irrelevant update may inherit a completed predecessor's evidence.
+ *
+ * GitHub concurrency preserves the running measurement but keeps only one
+ * pending run. If a relevant pending head is replaced by a later result-only
+ * push, that later run must measure unless the predecessor already completed
+ * successfully; otherwise the classifier would skip the replacement and lose
+ * the only run that covered the relevant change.
+ */
+export function carryForwardWorkflowDecision(
+  decision,
+  previousRunSucceeded,
+) {
+  if (decision.run || previousRunSucceeded) return decision;
+  return {
+    run: true,
+    reason: "previous head has no successful workflow evidence to carry forward",
+  };
+}
+
+async function main() {
   let decision = {
     run: true,
     reason: "latest-update classification failed open",
   };
   try {
-    const patterns = parsePatterns(process.argv.slice(2));
+    const { patterns, carryForwardWorkflow } = parseArguments(
+      process.argv.slice(2),
+    );
     const eventName = process.env.GITHUB_EVENT_NAME ?? "";
     const event = JSON.parse(
       fs.readFileSync(requiredEnvironment("GITHUB_EVENT_PATH"), "utf8"),
@@ -92,6 +114,15 @@ function main() {
           `::warning::git diff exited ${String(diff.status)}; running the workflow fail-open\n`,
         );
       }
+      if (!decision.run && carryForwardWorkflow !== undefined) {
+        decision = carryForwardWorkflowDecision(
+          decision,
+          await previousWorkflowRunSucceeded(
+            carryForwardWorkflow,
+            before,
+          ),
+        );
+      }
     } else {
       decision = boundary;
       if (
@@ -105,6 +136,10 @@ function main() {
     }
   } catch (error) {
     const message = errorMessage(error);
+    decision = {
+      run: true,
+      reason: "latest-update classification failed open",
+    };
     process.stdout.write(
       "::warning::latest-update classification failed; " +
         `running the workflow fail-open: ${message}\n`,
@@ -118,6 +153,35 @@ function main() {
   process.stdout.write(
     `[latest-workflow-update] run=${String(decision.run)}; ${decision.reason}\n`,
   );
+}
+
+function parseArguments(args) {
+  const carryForward = args.filter((argument) =>
+    argument.startsWith("--carry-forward-workflow="),
+  );
+  if (carryForward.length > 1) {
+    throw new Error("--carry-forward-workflow may be specified only once");
+  }
+  const carryForwardWorkflow = carryForward[0]?.slice(
+    "--carry-forward-workflow=".length,
+  );
+  if (
+    carryForwardWorkflow !== undefined &&
+    !/^[A-Za-z0-9_.-]+\.ya?ml$/.test(carryForwardWorkflow)
+  ) {
+    throw new Error(
+      `unsafe carry-forward workflow name: ${carryForwardWorkflow}`,
+    );
+  }
+  return {
+    patterns: parsePatterns(
+      args.filter(
+        (argument) =>
+          !argument.startsWith("--carry-forward-workflow="),
+      ),
+    ),
+    carryForwardWorkflow,
+  };
 }
 
 function parsePatterns(args) {
@@ -149,6 +213,46 @@ function parsePatterns(args) {
   ];
 }
 
+async function previousWorkflowRunSucceeded(workflow, headSha) {
+  const repository = requiredEnvironment("GITHUB_REPOSITORY").split("/");
+  if (
+    repository.length !== 2 ||
+    repository.some((component) => !/^[A-Za-z0-9_.-]+$/.test(component))
+  ) {
+    throw new Error("GITHUB_REPOSITORY is not an owner/name pair");
+  }
+  const api = (
+    process.env.GITHUB_API_URL ?? "https://api.github.com"
+  ).replace(/\/+$/, "");
+  const url = new URL(
+    `${api}/repos/${encodeURIComponent(repository[0])}/${encodeURIComponent(repository[1])}` +
+      `/actions/workflows/${encodeURIComponent(workflow)}/runs`,
+  );
+  url.searchParams.set("head_sha", headSha);
+  url.searchParams.set("event", "pull_request");
+  url.searchParams.set("status", "success");
+  url.searchParams.set("per_page", "1");
+  const response = await fetch(url, {
+    headers: {
+      Accept: "application/vnd.github+json",
+      Authorization: `Bearer ${requiredEnvironment("GITHUB_TOKEN")}`,
+      "X-GitHub-Api-Version": "2022-11-28",
+    },
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (!response.ok) {
+    throw new Error(
+      `GitHub workflow evidence query returned HTTP ${String(response.status)}`,
+    );
+  }
+  const body = await response.json();
+  const count = body?.total_count;
+  if (!Number.isSafeInteger(count) || count < 0) {
+    throw new Error("GitHub workflow evidence query returned no valid count");
+  }
+  return count > 0;
+}
+
 function requiredEnvironment(name) {
   const value = process.env[name];
   if (value === undefined || value.length === 0) {
@@ -163,4 +267,4 @@ function errorMessage(error) {
 
 const invokedPath =
   process.argv[1] === undefined ? "" : path.resolve(process.argv[1]);
-if (invokedPath === fileURLToPath(import.meta.url)) main();
+if (invokedPath === fileURLToPath(import.meta.url)) await main();

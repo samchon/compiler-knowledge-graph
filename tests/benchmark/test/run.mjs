@@ -7,6 +7,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
+  carryForwardWorkflowDecision,
   latestWorkflowUpdateDecision,
 } from "../../../.github/scripts/latest-workflow-update.mjs";
 import { CORPUS, PROJECTS, projectDir } from "../graph/corpus.mjs";
@@ -2424,6 +2425,29 @@ function testLatestWorkflowUpdateClassifier() {
     }).run,
     true,
     "manual dispatch always runs",
+  );
+  const irrelevant = latestWorkflowUpdateDecision({
+    ...synchronize,
+    diffStatus: 0,
+  });
+  assert.equal(
+    carryForwardWorkflowDecision(irrelevant, true).run,
+    false,
+    "a successful predecessor carries evidence across a result-only update",
+  );
+  assert.equal(
+    carryForwardWorkflowDecision(irrelevant, false).run,
+    true,
+    "a replaced relevant predecessor is measured by the result-only successor",
+  );
+  const relevant = latestWorkflowUpdateDecision({
+    ...synchronize,
+    diffStatus: 1,
+  });
+  assert.equal(
+    carryForwardWorkflowDecision(relevant, true).run,
+    true,
+    "predecessor evidence never hides a relevant update",
   );
 }
 

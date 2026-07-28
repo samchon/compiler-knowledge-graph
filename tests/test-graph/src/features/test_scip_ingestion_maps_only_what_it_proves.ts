@@ -25,6 +25,8 @@ export const test_scip_ingestion_maps_only_what_it_proves = async () => {
   assertTranslationUnitsFoldIntoOneDocument();
   assertSparseTranslationUnitsPreserveOptionalEvidence();
   assertDisagreeingUnitsAreNamed();
+  assertTranslationUnitFactsAreNotConflated();
+  assertIrreconcilableTranslationUnitFactsAreRefused();
   assertDisagreeingTextIsRefused();
   assertMapping();
   assertAnUnreliableProducerLanguageCanYieldToTheFile();
@@ -2040,6 +2042,243 @@ function assertDisagreeingUnitsAreNamed(): void {
         warning.includes("posix-impl") && warning.includes("win32-impl"),
     ),
   );
+}
+
+/**
+ * A shared coordinate is not a complete occurrence or document identity.
+ *
+ * Conditional compilation can change a token's role or scope while leaving its
+ * spelling and coordinates untouched. Each unit can also contribute its own
+ * diagnostics and relationships. Folding those records by range and symbol
+ * alone silently erased valid facts from every unit after the first.
+ */
+function assertTranslationUnitFactsAreNotConflated(): void {
+  const warnings: string[] = [];
+  const documents = [
+    {
+      relative_path: "conditional.c",
+      language: "C",
+      position_encoding: "UTF16CodeUnitOffsetFromLineStart",
+      diagnostics: [{ message: "left-document" }],
+      occurrences: [
+        {
+          range: [1, 0, 4],
+          symbol: "shared",
+          symbol_roles: 1,
+          diagnostics: [{ message: "shared-finding" }],
+        },
+        {
+          range: [2, 0, 4],
+          symbol: "same-core",
+          diagnostics: [{ message: "left-occurrence" }],
+        },
+        { range: [3, 0, 4], symbol: "default-role" },
+      ],
+      symbols: [
+        {
+          symbol: "shared",
+          display_name: "shared",
+          kind: "Function",
+          documentation: ["left-doc"],
+          relationships: [
+            { symbol: "left-target", is_type_definition: true },
+          ],
+        },
+      ],
+    },
+    {
+      relative_path: "conditional.c",
+      language: "C",
+      position_encoding: "UTF16CodeUnitOffsetFromLineStart",
+      diagnostics: [
+        { message: "left-document" },
+        { message: "right-document" },
+      ],
+      occurrences: [
+        {
+          range: [1, 0, 4],
+          symbol: "shared",
+          symbol_roles: 0,
+          enclosing_range: [0, 0, 3, 0],
+        },
+        {
+          range: [2, 0, 4],
+          symbol: "same-core",
+          diagnostics: [
+            { message: "left-occurrence" },
+            { message: "right-occurrence" },
+          ],
+        },
+        {
+          range: [3, 0, 4],
+          symbol: "default-role",
+          symbol_roles: 0,
+        },
+      ],
+      symbols: [
+        {
+          symbol: "shared",
+          kind: "Function",
+          documentation: ["right-doc"],
+          enclosing_symbol: "owner",
+          relationships: [
+            { symbol: "right-target", is_type_definition: true },
+          ],
+        },
+      ],
+    },
+  ];
+  const index = parseScipIndex(
+    {
+      metadata: { projectRoot: "file:///r" },
+      documents,
+    },
+    "scip-clang",
+    warnings,
+  );
+  const document = index.documents[0]!;
+  TestValidator.equals(
+    "same coordinates with different semantic fields remain distinct",
+    document.occurrences?.map((occurrence) => ({
+      symbol: occurrence.symbol,
+      roles: occurrence.symbolRoles,
+      enclosing: occurrence.enclosingRange,
+      diagnostics: occurrence.diagnostics?.map(
+        (diagnostic) => diagnostic.message,
+      ),
+    })),
+    [
+      {
+        symbol: "shared",
+        roles: 0,
+        enclosing: [0, 0, 3, 0],
+        diagnostics: undefined,
+      },
+      {
+        symbol: "shared",
+        roles: 1,
+        enclosing: undefined,
+        diagnostics: ["shared-finding"],
+      },
+      {
+        symbol: "same-core",
+        roles: undefined,
+        enclosing: undefined,
+        diagnostics: ["left-occurrence", "right-occurrence"],
+      },
+      {
+        symbol: "default-role",
+        roles: 0,
+        enclosing: undefined,
+        diagnostics: undefined,
+      },
+    ],
+  );
+  TestValidator.equals(
+    "document diagnostics and symbol relationships are exact unions",
+    {
+      diagnostics: document.diagnostics?.map(
+        (diagnostic) => diagnostic.message,
+      ),
+      relationships: document.symbols?.[0]?.relationships?.map(
+        (relationship) => relationship.symbol,
+      ),
+      symbol: {
+        displayName: document.symbols?.[0]?.displayName,
+        kind: document.symbols?.[0]?.kind,
+        documentation: document.symbols?.[0]?.documentation,
+        enclosingSymbol: document.symbols?.[0]?.enclosingSymbol,
+      },
+    },
+    {
+      diagnostics: ["left-document", "right-document"],
+      relationships: ["left-target", "right-target"],
+      symbol: {
+        displayName: "shared",
+        kind: "Function",
+        documentation: ["left-doc", "right-doc"],
+        enclosingSymbol: "owner",
+      },
+    },
+  );
+  const reverseWarnings: string[] = [];
+  const reversed = parseScipIndex(
+    {
+      metadata: { projectRoot: "file:///r" },
+      documents: [...documents].reverse(),
+    },
+    "scip-clang",
+    reverseWarnings,
+  );
+  TestValidator.equals(
+    "translation-unit scheduling cannot change the normalized document",
+    [reversed.documents, reverseWarnings],
+    [index.documents, warnings],
+  );
+  TestValidator.predicate(
+    "role ambiguity is reported",
+    warnings.some(
+      (warning) =>
+        warning.includes("different roles") &&
+        warning.includes("shared"),
+    ),
+  );
+}
+
+/**
+ * Some duplicate-document fields have one public slot and no truthful union.
+ *
+ * Text, coordinate encoding, document language, and one symbol's scalar
+ * identity cannot be selected by translation-unit schedule. A disagreement
+ * rejects the index instead of publishing an arbitrary first reading.
+ */
+function assertIrreconcilableTranslationUnitFactsAreRefused(): void {
+  const cases: Array<[string, Record<string, unknown>, Record<string, unknown>]> =
+    [
+      [
+        "language",
+        { language: "C" },
+        { language: "CPP" },
+      ],
+      [
+        "position encoding",
+        { position_encoding: "UTF8CodeUnitOffsetFromLineStart" },
+        { position_encoding: "UTF16CodeUnitOffsetFromLineStart" },
+      ],
+      [
+        "displayName",
+        { symbols: [{ symbol: "s", display_name: "left" }] },
+        { symbols: [{ symbol: "s", display_name: "right" }] },
+      ],
+      [
+        "kind",
+        { symbols: [{ symbol: "s", kind: "Class" }] },
+        { symbols: [{ symbol: "s", kind: "Function" }] },
+      ],
+      [
+        "enclosingSymbol",
+        { symbols: [{ symbol: "s", enclosing_symbol: "left" }] },
+        { symbols: [{ symbol: "s", enclosing_symbol: "right" }] },
+      ],
+    ];
+  for (const [field, left, right] of cases) {
+    let message = "";
+    try {
+      parseScipIndex({
+        metadata: { projectRoot: "file:///r" },
+        documents: [
+          { relative_path: "ambiguous.c", ...left },
+          { relative_path: "ambiguous.c", ...right },
+        ],
+      });
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+    TestValidator.predicate(
+      `translation units that disagree about ${field} are refused`,
+      message.includes(field) && message.includes("ambiguous.c"),
+    );
+  }
 }
 
 /**

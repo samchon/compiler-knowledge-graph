@@ -131,11 +131,14 @@ if (
     provenance.producer.version === "" ||
     // A tool that did not answer answers the shape of the question and not the
     // question, and a row that accepted it would go green on a provenance
-    // saying nothing about which runtime resolved its facts. Both spellings,
+    // saying nothing about which runtime resolved its facts. All three states,
     // because a provider that declines when its toolchain is absent can still
     // publish a toolchain that resolved and then said nothing — and a check for
-    // only the first is a check that can no longer fail.
-    /=(?:unavailable|unreported)(?:;|$)/.test(provenance.producer.compiler) ||
+    // only the first is a check that can no longer fail. `unasked` is the
+    // transient fourth state: it establishes even less than either one.
+    /=(?:unavailable|unreported|unasked)(?:;|$)/.test(
+      provenance.producer.compiler,
+    ) ||
     experiment.requiredCapabilities.some(
       (capability) => !provenance.capabilities.includes(capability),
     ))

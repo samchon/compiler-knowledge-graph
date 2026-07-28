@@ -27,6 +27,7 @@ export const test_scip_ingestion_maps_only_what_it_proves = async () => {
   assertDisagreeingUnitsAreNamed();
   assertTranslationUnitFactsAreNotConflated();
   assertTranslationUnitWarningsAreOrderIndependent();
+  assertTranslationUnitDocumentationIsPartiallyOrdered();
   assertIrreconcilableTranslationUnitFactsAreRefused();
   assertDisagreeingTextIsRefused();
   assertMapping();
@@ -2071,7 +2072,21 @@ function assertTranslationUnitFactsAreNotConflated(): void {
         {
           range: [2, 0, 4],
           symbol: "same-core",
+          syntax_kind: 6,
+          enclosing_range: [2, 0, 2, 4],
           diagnostics: [{ message: "left-occurrence" }],
+        },
+        {
+          range: [4, 0, 4],
+          symbol: "right-diagnostic-only",
+        },
+        {
+          range: [5, 0, 5],
+          symbol: "short-range",
+        },
+        {
+          range: [5, 0, 5, 6],
+          symbol: "long-range",
         },
         { range: [3, 0, 4], symbol: "default-role" },
       ],
@@ -2088,6 +2103,9 @@ function assertTranslationUnitFactsAreNotConflated(): void {
         {
           symbol: "z-left-documentation",
           documentation: ["left-only"],
+        },
+        {
+          symbol: "z-right-relationship",
         },
         { symbol: "z-right-documentation" },
       ],
@@ -2110,10 +2128,17 @@ function assertTranslationUnitFactsAreNotConflated(): void {
         {
           range: [2, 0, 4],
           symbol: "same-core",
+          syntax_kind: 6,
+          enclosing_range: [2, 0, 2, 4],
           diagnostics: [
             { message: "left-occurrence" },
             { message: "right-occurrence" },
           ],
+        },
+        {
+          range: [4, 0, 4],
+          symbol: "right-diagnostic-only",
+          diagnostics: [{ message: "right-only-occurrence" }],
         },
         {
           range: [3, 0, 4],
@@ -2136,6 +2161,12 @@ function assertTranslationUnitFactsAreNotConflated(): void {
           symbol: "z-right-documentation",
           documentation: ["right-only"],
         },
+        {
+          symbol: "z-right-relationship",
+          relationships: [
+            { symbol: "right-only-target", is_type_definition: true },
+          ],
+        },
       ],
     },
   ];
@@ -2153,6 +2184,7 @@ function assertTranslationUnitFactsAreNotConflated(): void {
     document.occurrences?.map((occurrence) => ({
       symbol: occurrence.symbol,
       roles: occurrence.symbolRoles,
+      syntax: occurrence.syntaxKind,
       enclosing: occurrence.enclosingRange,
       diagnostics: occurrence.diagnostics?.map(
         (diagnostic) => diagnostic.message,
@@ -2162,24 +2194,49 @@ function assertTranslationUnitFactsAreNotConflated(): void {
       {
         symbol: "shared",
         roles: 0,
+        syntax: undefined,
         enclosing: [0, 0, 3, 0],
         diagnostics: undefined,
       },
       {
         symbol: "shared",
         roles: 1,
+        syntax: undefined,
         enclosing: undefined,
         diagnostics: ["shared-finding"],
       },
       {
         symbol: "same-core",
         roles: undefined,
-        enclosing: undefined,
+        syntax: "Identifier",
+        enclosing: [2, 0, 2, 4],
         diagnostics: ["left-occurrence", "right-occurrence"],
       },
       {
         symbol: "default-role",
         roles: 0,
+        syntax: undefined,
+        enclosing: undefined,
+        diagnostics: undefined,
+      },
+      {
+        symbol: "right-diagnostic-only",
+        roles: undefined,
+        syntax: undefined,
+        enclosing: undefined,
+        diagnostics: ["right-only-occurrence"],
+      },
+      {
+        symbol: "short-range",
+        roles: undefined,
+        syntax: undefined,
+        enclosing: undefined,
+        diagnostics: undefined,
+      },
+      {
+        symbol: "long-range",
+        roles: undefined,
+        syntax: undefined,
         enclosing: undefined,
         diagnostics: undefined,
       },
@@ -2204,6 +2261,9 @@ function assertTranslationUnitFactsAreNotConflated(): void {
         symbol: symbol.symbol,
         documentation: symbol.documentation,
       })),
+      oneSidedRelationship: document.symbols
+        ?.find((symbol) => symbol.symbol === "z-right-relationship")
+        ?.relationships?.map((relationship) => relationship.symbol),
     },
     {
       diagnostics: ["left-document", "right-document"],
@@ -2223,7 +2283,12 @@ function assertTranslationUnitFactsAreNotConflated(): void {
           symbol: "z-right-documentation",
           documentation: ["right-only"],
         },
+        {
+          symbol: "z-right-relationship",
+          documentation: undefined,
+        },
       ],
+      oneSidedRelationship: ["right-only-target"],
     },
   );
   const reverseWarnings: string[] = [];
@@ -2247,6 +2312,121 @@ function assertTranslationUnitFactsAreNotConflated(): void {
         warning.includes("different roles") &&
         warning.includes("shared"),
     ),
+  );
+}
+
+/**
+ * Documentation contributes ordering constraints rather than one opaque scalar.
+ *
+ * Translation units can report subsets of one symbol's Markdown, and
+ * scip-clang does so in the benchmark corpus. Every producer-local order must
+ * survive, unrelated lines need one canonical tie-break, and a later unit must
+ * not inherit an artificial order chosen while folding two earlier units.
+ */
+function assertTranslationUnitDocumentationIsPartiallyOrdered(): void {
+  const documents: Record<string, unknown>[] = [
+    {
+      relative_path: "documentation.c",
+      symbols: [
+        { symbol: "empty", documentation: [] },
+        {
+          symbol: "diamond",
+          documentation: ["Start", "Left branch", "Tail"],
+        },
+        {
+          symbol: "ordered",
+          documentation: ["Summary", "Shared", "Left detail"],
+        },
+        { symbol: "later-order", documentation: ["Alpha"] },
+      ],
+    },
+    {
+      relative_path: "documentation.c",
+      symbols: [
+        {
+          symbol: "diamond",
+          documentation: ["Start", "Right branch", "Tail"],
+        },
+        {
+          symbol: "ordered",
+          documentation: ["Summary", "Shared", "Right detail"],
+        },
+        { symbol: "later-order", documentation: ["Beta"] },
+      ],
+    },
+    {
+      relative_path: "documentation.c",
+      symbols: [
+        {
+          symbol: "ordered",
+          documentation: [
+            "Right detail",
+            "Repeated",
+            "Repeated",
+            "Tail",
+          ],
+        },
+        {
+          symbol: "later-order",
+          documentation: ["Beta", "Alpha"],
+        },
+      ],
+    },
+  ];
+  const permutations = [
+    [0, 1, 2],
+    [0, 2, 1],
+    [1, 0, 2],
+    [1, 2, 0],
+    [2, 0, 1],
+    [2, 1, 0],
+  ];
+  const results = permutations.map((order) => {
+    const index = parseScipIndex({
+      metadata: { projectRoot: "file:///r" },
+      documents: order.map((at) => documents[at]!),
+    });
+    return index.documents[0]?.symbols?.map((symbol) => ({
+      symbol: symbol.symbol,
+      documentation: symbol.documentation,
+    }));
+  });
+  for (let index = 1; index < results.length; ++index) {
+    TestValidator.equals(
+      `documentation constraint permutation ${String(index)} is canonical`,
+      results[index],
+      results[0],
+    );
+  }
+  TestValidator.equals(
+    "documentation preserves source orders and canonically orders unrelated lines",
+    results[0],
+    [
+      {
+        symbol: "diamond",
+        documentation: ["Start", "Left branch", "Right branch", "Tail"],
+      },
+      {
+        symbol: "empty",
+        documentation: [],
+      },
+      {
+        symbol: "later-order",
+        documentation: ["Beta", "Alpha"],
+      },
+      {
+        symbol: "ordered",
+        documentation: [
+          "Summary",
+          "Shared",
+          "Left detail",
+          "Right detail",
+          "Repeated",
+          "Repeated",
+          "Tail",
+        ],
+      },
+    ],
   );
 }
 
@@ -2328,10 +2508,10 @@ function assertTranslationUnitWarningsAreOrderIndependent(): void {
 /**
  * Some duplicate-document fields have one public slot and no truthful union.
  *
- * Text, coordinate encoding, document language, ordered documentation, and one
- * symbol's scalar identity cannot be selected by translation-unit schedule. A
- * disagreement rejects the index instead of publishing an arbitrary first
- * reading.
+ * Text, coordinate encoding, document language, contradictory documentation
+ * order, and one symbol's scalar identity cannot be selected by
+ * translation-unit schedule. A disagreement rejects the index instead of
+ * publishing an arbitrary first reading.
  */
 function assertIrreconcilableTranslationUnitFactsAreRefused(): void {
   const cases: Array<[string, Record<string, unknown>, Record<string, unknown>]> =
@@ -2376,25 +2556,6 @@ function assertIrreconcilableTranslationUnitFactsAreRefused(): void {
             {
               symbol: "s",
               documentation: ["Details second", "Summary first"],
-            },
-          ],
-        },
-      ],
-      [
-        "documentation",
-        {
-          symbols: [
-            {
-              symbol: "s",
-              documentation: ["Summary only"],
-            },
-          ],
-        },
-        {
-          symbols: [
-            {
-              symbol: "s",
-              documentation: ["Summary only", "Details added"],
             },
           ],
         },

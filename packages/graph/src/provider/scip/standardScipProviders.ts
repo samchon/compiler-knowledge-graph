@@ -51,9 +51,13 @@ const clangScipProvider = createScipProvider({
   // database.
   derivedInputs: compilationDatabaseInputs,
   validateConfiguration: (_root, configuration) => {
-    if (configuration.includes("cc=unavailable")) {
+    if (
+      configuration
+        .slice(2)
+        .some((row) => row.endsWith("=unavailable"))
+    ) {
       throw new Error(
-        "scip-clang: the current compilation database is invalid or names no available compiler command",
+        "scip-clang: the current compilation database is invalid or names an unavailable compiler command",
       );
     }
   },
@@ -370,7 +374,7 @@ interface IStandardScipProvider {
   producerConfiguration?: (
     root: string,
     env: NodeJS.ProcessEnv,
-    executable: string | undefined,
+    attempt: resolveProviderCommand.IAttempt,
   ) => string;
 
   /** Where a producer that takes no output flag writes, relative to the root. */
@@ -475,7 +479,7 @@ function createScipProvider(
       if (
         indexer === undefined ||
         decoder === undefined ||
-        toolchain.length === 0 ||
+        toolchain.some((tool) => tool.resolved === undefined) ||
         (props.resolveArgs !== undefined && resolvedArgs === undefined)
       ) {
         return undefined;
@@ -531,7 +535,7 @@ function createScipProvider(
               resolveProviderCommand.attempt(root, env, {
                 command: props.command,
                 override: props.override,
-              }).executable,
+              }),
             );
       return [
         producerRow,
@@ -587,14 +591,19 @@ function rubyScipIndexArgs(artifact: string, root: string): string[] {
 function phpProducerConfiguration(
   root: string,
   _env: NodeJS.ProcessEnv,
-  executable: string | undefined,
+  attempt: resolveProviderCommand.IAttempt,
 ): string {
   const label = "scip-php";
+  if (!attempt.asked) return `${label}${toolchainVersion.UNASKED}`;
+  const executable = attempt.executable;
+  if (executable === undefined) return `${label}=unavailable`;
   // A Composer lock identifies only the project-local binary that Composer
   // installed. An override, private development build, npm shim, or PATH binary
   // may be different bytes even when this checkout happens to contain a lock;
   // attributing the lock's commit to it would make the build universe lie.
-  if (!isComposerScipPhp(root, executable)) return `${label}=unreported`;
+  if (!isComposerScipPhp(root, executable)) {
+    return phpExecutableConfiguration(label, executable);
+  }
   try {
     const lock = JSON.parse(
       fs.readFileSync(path.join(root, "composer.lock"), "utf8"),
@@ -632,6 +641,38 @@ function phpProducerConfiguration(
   }
 }
 
+/**
+ * Identify an executable that has no safe version command.
+ *
+ * Both the selected path and its bytes decide the program: two equal wrappers
+ * in different installations can target different dependency trees, while an
+ * in-place replacement keeps the path and changes the implementation. Hashing
+ * both avoids publishing a machine path while still moving the build universe
+ * for either change. A read that cannot complete is inconclusive, not evidence
+ * that the resolved binary has no identity.
+ */
+function phpExecutableConfiguration(
+  label: string,
+  executable: string,
+): string {
+  try {
+    const selected = path.resolve(executable);
+    const digest = createHash("sha256")
+      .update(selected, "utf8")
+      .update("\0", "utf8")
+      .update(fs.readFileSync(selected))
+      .digest("hex");
+    return `${label}=sha256:${digest}`;
+    /* c8 ignore start -- resolution stat'd this exact regular file immediately
+     * before the callback; only a synchronous removal or permission race can
+     * make this read fail, and no deterministic cross-platform fixture can
+     * enter between those two calls. */
+  } catch {
+    return `${label}${toolchainVersion.UNASKED}`;
+  }
+  /* c8 ignore stop */
+}
+
 function isComposerScipPhp(
   root: string,
   executable: string | undefined,
@@ -658,18 +699,21 @@ function standardCompilerVersion(
 }
 
 /**
- * Every program the toolchain names that this machine actually has.
+ * Every program the toolchain names, carrying both answers and non-answers.
  *
- * Empty means the provider cannot say what its index would mean. An `aliases`
- * toolchain stops at the first spelling that resolves, because the alternatives
- * are one program; a `fromProject` toolchain keeps every driver the project
- * named that resolves, because they are several.
+ * An `aliases` toolchain stops at the first spelling that resolves, because the
+ * alternatives are one program; if none resolves, its one entry records whether
+ * every lookup actually ran. A `fromProject` toolchain keeps one entry for every
+ * driver the project named, including an absent or unasked one, because omitting
+ * one compiler would publish only part of the program's semantic identity.
  */
 function resolveToolchain(
   root: string,
   env: NodeJS.ProcessEnv,
   toolchain: IToolchain,
 ): IToolchainTool[] {
+  const triedAliases = new Set<string>();
+  let aliasesAsked = true;
   // The override selects one absolute program, so it is consulted once under
   // the toolchain's own label. Offering it to each alias in turn would make the
   // first spelling always resolve, and the row would name `python3` for a
@@ -684,27 +728,47 @@ function resolveToolchain(
       command: toolchain.label,
       override: toolchain.override,
     });
-    if (overridden !== undefined) return [overridden];
+    triedAliases.add(toolchain.label);
+    aliasesAsked &&= overridden.asked;
+    if (overridden.resolved !== undefined) return [overridden];
   }
   for (const command of toolchain.aliases ?? []) {
+    if (triedAliases.has(command)) continue;
     const alias = resolved(root, env, { command });
-    if (alias !== undefined) return [alias];
+    aliasesAsked &&= alias.asked;
+    if (alias.resolved !== undefined) return [alias];
   }
-  const found: IToolchainTool[] = [];
-  for (const named of toolchain.fromProject?.(root) ?? []) {
+  if (toolchain.aliases !== undefined) {
+    return [
+      {
+        command: toolchain.label,
+        label: toolchain.label,
+        asked: aliasesAsked,
+      },
+    ];
+  }
+  const namedTools = toolchain.fromProject?.(root) ?? [];
+  if (namedTools.length === 0) {
+    return [
+      {
+        command: toolchain.label,
+        label: toolchain.label,
+        asked: true,
+      },
+    ];
+  }
+  return namedTools.map((named) => {
     // An absolute driver is probed exactly as recorded. The build named that
     // file, and another program of the same basename on this machine's `PATH`
     // is not the one those translation units were compiled with.
-    const driver = resolved(
+    return resolved(
       root,
       env,
       path.isAbsolute(named)
         ? { command: named, label: driverLabel(named), executable: named }
         : { command: named, label: driverLabel(named) },
     );
-    if (driver !== undefined) found.push(driver);
-  }
-  return found;
+  });
 }
 
 /**
@@ -719,15 +783,19 @@ function resolveToolchain(
 function resolved(
   root: string,
   env: NodeJS.ProcessEnv,
-  tool: IToolchainTool,
-): IToolchainTool | undefined {
-  const command = toolchainVersion.resolve({
+  tool: Omit<IToolchainTool, "asked">,
+): IToolchainTool {
+  const attempt = toolchainVersion.attempt({
     root,
     env,
     args: VERSION_ARGS,
     ...tool,
   });
-  return command === undefined ? undefined : { ...tool, resolved: command };
+  return {
+    ...tool,
+    asked: attempt.asked,
+    ...(attempt.command === undefined ? {} : { resolved: attempt.command }),
+  };
 }
 
 function toolchainVersions(
@@ -736,17 +804,20 @@ function toolchainVersions(
   toolchain: IToolchain,
 ): string[] {
   const tools = resolveToolchain(root, env, toolchain);
-  // A toolchain that resolves nothing still owes the configuration a row.
-  // Naming what it looked for keeps the row stable across runs, and
-  // `unavailable` is what a reader has to see rather than an absent field.
-  if (tools.length === 0) return [`${toolchain.label}=unavailable`];
-  return tools.map((tool) =>
-    toolchainVersion({ root, env, args: VERSION_ARGS, ...tool }),
-  );
+  return tools.map((tool) => {
+    const label = tool.label ?? tool.command;
+    if (tool.resolved === undefined) {
+      return tool.asked
+        ? `${label}=unavailable`
+        : `${label}${toolchainVersion.UNASKED}`;
+    }
+    return toolchainVersion({ root, env, args: VERSION_ARGS, ...tool });
+  });
 }
 
 interface IToolchainTool {
   command: string;
+  asked: boolean;
   label?: string;
   override?: string;
   executable?: string;

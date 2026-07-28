@@ -57,6 +57,7 @@ export const test_experiment_corpora_are_commit_pinned = () => {
       runner.includes("experiment.compilerLimitation.trim()") &&
       runner.includes('typeof provenance.producer.compiler === "string"') &&
       runner.includes("provenance.producer.compiler.trim()") &&
+      runner.includes("unavailable|unreported|unasked") &&
       runner.includes("compilerLimitation: experiment.compilerLimitation"),
   );
   TestValidator.predicate(

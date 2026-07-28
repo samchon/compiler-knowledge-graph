@@ -923,29 +923,23 @@ function foldDocumentsByPath(
   documents: readonly IScipIndex.IDocument[],
   warnings: string[],
 ): IScipIndex.IDocument[] {
-  const byPath = new Map<string, IScipIndex.IDocument>();
-  const folded = new Map<string, number>();
+  const byPath = new Map<string, IScipIndex.IDocument[]>();
   const foldWarnings: string[] = [];
   for (const document of documents) {
-    const existing = byPath.get(document.relativePath);
-    if (existing === undefined) {
-      byPath.set(document.relativePath, document);
-      continue;
-    }
-    folded.set(
-      document.relativePath,
-      (folded.get(document.relativePath) ?? 1) + 1,
-    );
-    byPath.set(document.relativePath, mergeDocuments(existing, document));
+    const units = byPath.get(document.relativePath) ?? [];
+    units.push(document);
+    byPath.set(document.relativePath, units);
   }
-  for (const [relativePath, count] of folded) {
+  const merged = [...byPath].map(([relativePath, units]) => {
+    const document =
+      units.length === 1 ? units[0]! : mergeDocuments(units);
+    if (units.length === 1) return document;
     foldWarnings.push(
-      `scip: ${relativePath} was indexed as ${String(count)} translation units; their occurrences are folded into one document`,
+      `scip: ${relativePath} was indexed as ${String(units.length)} translation units; their occurrences are folded into one document`,
     );
-    foldWarnings.push(
-      ...translationUnitAmbiguityWarnings(byPath.get(relativePath)!),
-    );
-  }
+    foldWarnings.push(...translationUnitAmbiguityWarnings(document));
+    return document;
+  });
   warnings.push(...[...new Set(foldWarnings)].sort(compareText));
   // Sorted, because an indexer's document order is its own business and at
   // least one producer's varies between runs of an unchanged project.
@@ -954,7 +948,7 @@ function foldDocumentsByPath(
   // came back in — a difference the graph then reported as the project having
   // moved. Ordering here makes every downstream digest a function of the facts
   // rather than of the schedule that produced them.
-  return [...byPath.values()].sort((left, right) =>
+  return merged.sort((left, right) =>
     left.relativePath < right.relativePath
       ? -1
       : left.relativePath > right.relativePath
@@ -965,63 +959,64 @@ function foldDocumentsByPath(
 }
 
 function mergeDocuments(
-  left: IScipIndex.IDocument,
-  right: IScipIndex.IDocument,
+  documents: readonly IScipIndex.IDocument[],
 ): IScipIndex.IDocument {
+  const first = documents[0]!;
   // Text is per-file, not per-unit: two units compile the same bytes. A
   // disagreement means they did not, which is a moved source rather than a
   // merge to attempt.
-  if (
-    left.text !== undefined &&
-    right.text !== undefined &&
-    left.text !== right.text
-  ) {
-    throw new Error(
-      `scip: two translation units disagree about the text of ${left.relativePath}`,
+  let text: string | undefined;
+  let language: string | undefined;
+  let positionEncoding: string | undefined;
+  for (const document of documents) {
+    if (
+      text !== undefined &&
+      document.text !== undefined &&
+      text !== document.text
+    ) {
+      throw new Error(
+        `scip: two translation units disagree about the text of ${first.relativePath}`,
+      );
+    }
+    text ??= document.text;
+    language = compatibleDocumentScalar(
+      first.relativePath,
+      "language",
+      language,
+      document.language,
+    );
+    positionEncoding = compatibleDocumentScalar(
+      first.relativePath,
+      "position encoding",
+      positionEncoding,
+      document.positionEncoding,
     );
   }
-  const language = compatibleDocumentScalar(
-    left.relativePath,
-    "language",
-    left.language,
-    right.language,
-  );
-  const positionEncoding = compatibleDocumentScalar(
-    left.relativePath,
-    "position encoding",
-    left.positionEncoding,
-    right.positionEncoding,
-  );
   const occurrences = mergeOccurrences(
-    left.occurrences ?? [],
-    right.occurrences ?? [],
+    ...documents.map((document) => document.occurrences ?? []),
   );
   const symbols = mergeSymbols(
-    left.relativePath,
-    left.symbols ?? [],
-    right.symbols ?? [],
+    first.relativePath,
+    ...documents.map((document) => document.symbols ?? []),
   );
   const diagnostics = mergeExact(
-    left.diagnostics ?? [],
-    right.diagnostics ?? [],
+    ...documents.map((document) => document.diagnostics ?? []),
   );
   return {
     ...(language === undefined ? {} : { language }),
-    relativePath: left.relativePath,
-    ...(left.occurrences === undefined && right.occurrences === undefined
+    relativePath: first.relativePath,
+    ...(documents.every((document) => document.occurrences === undefined)
       ? {}
       : { occurrences }),
-    ...(left.symbols === undefined && right.symbols === undefined
+    ...(documents.every((document) => document.symbols === undefined)
       ? {}
       : { symbols }),
-    ...(left.text === undefined && right.text === undefined
-      ? {}
-      : { text: left.text ?? right.text }),
+    ...(text === undefined ? {} : { text }),
     ...(positionEncoding === undefined ? {} : { positionEncoding }),
     // Preserve presence as well as contents. An omitted repeated field and an
     // explicitly empty one encode the same proto value, but retaining the wire
     // distinction here costs nothing and prevents the fold from erasing data.
-    ...(left.diagnostics === undefined && right.diagnostics === undefined
+    ...(documents.every((document) => document.diagnostics === undefined)
       ? {}
       : { diagnostics }),
   };
@@ -1038,23 +1033,26 @@ function mergeDocuments(
  * not doubled merely because one unit attached another finding.
  */
 function mergeOccurrences(
-  left: readonly IScipIndex.IOccurrence[],
-  right: readonly IScipIndex.IOccurrence[],
+  ...groups: readonly (readonly IScipIndex.IOccurrence[])[]
 ): IScipIndex.IOccurrence[] {
-  const occurrences: IScipIndex.IOccurrence[] = [];
-  const byCore = new Map<string, number>();
-  for (const occurrence of [...left, ...right]) {
-    const core = occurrenceCoreKey(occurrence);
-
-    const prior = byCore.get(core);
-    if (prior === undefined) {
-      byCore.set(core, occurrences.length);
-      occurrences.push(occurrence);
-      continue;
+  const byCore = new Map<string, IScipIndex.IOccurrence[]>();
+  for (const group of groups) {
+    for (const occurrence of group) {
+      const core = occurrenceCoreKey(occurrence);
+      const readings = byCore.get(core) ?? [];
+      readings.push(occurrence);
+      byCore.set(core, readings);
     }
-    const existing = occurrences[prior]!;
-    const symbolRoles = existing.symbolRoles ?? occurrence.symbolRoles;
-    occurrences[prior] = {
+  }
+  return [...byCore.values()].map((readings) => {
+    const existing = readings[0]!;
+    const symbolRoles = readings.find(
+      (occurrence) => occurrence.symbolRoles !== undefined,
+    )?.symbolRoles;
+    const diagnostics = mergeExact(
+      ...readings.map((occurrence) => occurrence.diagnostics ?? []),
+    );
+    return {
       range: existing.range,
       ...(existing.symbol === undefined ? {} : { symbol: existing.symbol }),
       ...(symbolRoles === undefined ? {} : { symbolRoles }),
@@ -1064,18 +1062,11 @@ function mergeOccurrences(
       ...(existing.enclosingRange === undefined
         ? {}
         : { enclosingRange: existing.enclosingRange }),
-      ...(existing.diagnostics === undefined &&
-      occurrence.diagnostics === undefined
+      ...(readings.every((occurrence) => occurrence.diagnostics === undefined)
         ? {}
-        : {
-            diagnostics: mergeExact(
-              existing.diagnostics ?? [],
-              occurrence.diagnostics ?? [],
-            ),
-          }),
+        : { diagnostics }),
     };
-  }
-  return occurrences.sort(compareOccurrence);
+  }).sort(compareOccurrence);
 }
 
 /**
@@ -1140,72 +1131,71 @@ function occurrenceCoreKey(occurrence: IScipIndex.IOccurrence): string {
 /**
  * Merge one symbol's additive evidence while refusing irreconcilable scalars.
  *
- * Relationships are a fact union. Documentation is an ordered Markdown
- * sequence, while a display name, kind, or enclosing symbol has one public
- * slot. When conditional compilations disagree on any of those ordered or
- * scalar values, no stable selection is more truthful than another, so the
- * index is refused rather than silently dropping or reordering evidence.
+ * Relationships are a fact union. Documentation contributes producer-local
+ * order constraints to one Markdown sequence, while a display name, kind, or
+ * enclosing symbol has one public slot. The documentation constraints merge
+ * deterministically unless they form a cycle; scalar disagreements and cyclic
+ * orders are refused rather than silently dropping or reordering evidence.
  */
 function mergeSymbols(
   file: string,
-  left: readonly IScipIndex.ISymbolInformation[],
-  right: readonly IScipIndex.ISymbolInformation[],
+  ...groups: readonly (readonly IScipIndex.ISymbolInformation[])[]
 ): IScipIndex.ISymbolInformation[] {
-  const symbols: IScipIndex.ISymbolInformation[] = [];
-  const bySymbol = new Map<string, number>();
-  for (const symbol of [...left, ...right]) {
-    const prior = bySymbol.get(symbol.symbol);
-    if (prior === undefined) {
-      bySymbol.set(symbol.symbol, symbols.length);
-      symbols.push(symbol);
-      continue;
+  const bySymbol = new Map<string, IScipIndex.ISymbolInformation[]>();
+  for (const group of groups) {
+    for (const symbol of group) {
+      const records = bySymbol.get(symbol.symbol) ?? [];
+      records.push(symbol);
+      bySymbol.set(symbol.symbol, records);
     }
-    const existing = symbols[prior]!;
-    const displayName = compatibleSymbolScalar(
-      file,
-      symbol.symbol,
-      "displayName",
-      existing.displayName,
-      symbol.displayName,
-    );
-    const kind = compatibleSymbolScalar(
-      file,
-      symbol.symbol,
-      "kind",
-      existing.kind,
-      symbol.kind,
-    );
-    const enclosingSymbol = compatibleSymbolScalar(
-      file,
-      symbol.symbol,
-      "enclosingSymbol",
-      existing.enclosingSymbol,
-      symbol.enclosingSymbol,
-    );
+  }
+  return [...bySymbol.values()].map((records) => {
+    const first = records[0]!;
+    let displayName: string | undefined;
+    let kind: string | undefined;
+    let enclosingSymbol: string | undefined;
+    for (const record of records) {
+      displayName = compatibleSymbolScalar(
+        file,
+        first.symbol,
+        "displayName",
+        displayName,
+        record.displayName,
+      );
+      kind = compatibleSymbolScalar(
+        file,
+        first.symbol,
+        "kind",
+        kind,
+        record.kind,
+      );
+      enclosingSymbol = compatibleSymbolScalar(
+        file,
+        first.symbol,
+        "enclosingSymbol",
+        enclosingSymbol,
+        record.enclosingSymbol,
+      );
+    }
     const documentation = compatibleSymbolDocumentation(
       file,
-      symbol.symbol,
-      existing.documentation,
-      symbol.documentation,
+      first.symbol,
+      records.map((record) => record.documentation),
     );
-    symbols[prior] = {
-      symbol: existing.symbol,
+    const relationships = mergeExact(
+      ...records.map((record) => record.relationships ?? []),
+    );
+    return {
+      symbol: first.symbol,
       ...(displayName === undefined ? {} : { displayName }),
       ...(kind === undefined ? {} : { kind }),
       ...(documentation === undefined ? {} : { documentation }),
-      ...(existing.relationships === undefined &&
-      symbol.relationships === undefined
+      ...(records.every((record) => record.relationships === undefined)
         ? {}
-        : {
-            relationships: mergeExact(
-              existing.relationships ?? [],
-              symbol.relationships ?? [],
-            ),
-          }),
+        : { relationships }),
       ...(enclosingSymbol === undefined ? {} : { enclosingSymbol }),
     };
-  }
-  return symbols.sort((leftSymbol, rightSymbol) =>
+  }).sort((leftSymbol, rightSymbol) =>
     compareText(leftSymbol.symbol, rightSymbol.symbol),
   );
 }
@@ -1213,19 +1203,75 @@ function mergeSymbols(
 function compatibleSymbolDocumentation(
   file: string,
   symbol: string,
-  left: string[] | undefined,
-  right: string[] | undefined,
+  sequences: readonly (readonly string[] | undefined)[],
 ): string[] | undefined {
-  if (left === undefined) return right;
-  if (right === undefined) return left;
-  if (
-    left.length === right.length &&
-    left.every((line, index) => line === right[index])
-  )
-    return left;
-  throw new Error(
-    `scip: translation units disagree about documentation for ${JSON.stringify(symbol)} in ${file}`,
-  );
+  if (sequences.every((sequence) => sequence === undefined)) return undefined;
+
+  interface IToken {
+    key: string;
+    line: string;
+    sortKey: string;
+  }
+  const nodes = new Map<string, IToken>();
+  const outgoing = new Map<string, Set<string>>();
+  const incoming = new Map<string, number>();
+  for (const sequence of sequences) {
+    if (sequence === undefined) continue;
+    const ordinals = new Map<string, number>();
+    let previous: string | undefined;
+    for (const line of sequence) {
+      const ordinal = ordinals.get(line) ?? 0;
+      ordinals.set(line, ordinal + 1);
+      const key = JSON.stringify([line, ordinal]);
+      if (!nodes.has(key)) {
+        nodes.set(key, {
+          key,
+          line,
+          sortKey: JSON.stringify([
+            line,
+            String(ordinal).padStart(16, "0"),
+          ]),
+        });
+        outgoing.set(key, new Set());
+        incoming.set(key, 0);
+      }
+      if (previous !== undefined) {
+        const targets = outgoing.get(previous)!;
+        if (!targets.has(key)) {
+          targets.add(key);
+          incoming.set(key, incoming.get(key)! + 1);
+        }
+      }
+      previous = key;
+    }
+  }
+
+  const compareToken = (left: IToken, right: IToken): number =>
+    compareText(left.sortKey, right.sortKey);
+  const available = [...nodes.values()]
+    .filter((token) => incoming.get(token.key) === 0)
+    .sort(compareToken);
+  const documentation: string[] = [];
+  while (available.length !== 0) {
+    const token = available.shift()!;
+    documentation.push(token.line);
+    for (const target of [...outgoing.get(token.key)!].sort((left, right) =>
+      compareToken(nodes.get(left)!, nodes.get(right)!),
+    )) {
+      const remaining = incoming.get(target)! - 1;
+      incoming.set(target, remaining);
+      if (remaining === 0) {
+        available.push(nodes.get(target)!);
+        available.sort(compareToken);
+      }
+    }
+  }
+  if (documentation.length !== nodes.size) {
+    throw new Error(
+      `scip: translation units disagree about documentation order for ${JSON.stringify(symbol)} in ${file}`,
+    );
+  }
+  return documentation;
 }
 
 function compatibleDocumentScalar(
@@ -1258,11 +1304,13 @@ function compatibleSymbolScalar(
 }
 
 /** Exact, stable union for already-validated records. */
-function mergeExact<T>(left: readonly T[], right: readonly T[]): T[] {
+function mergeExact<T>(...groups: readonly (readonly T[])[]): T[] {
   const merged = new Map<string, T>();
-  for (const value of [...left, ...right]) {
-    const key = JSON.stringify(value);
-    if (!merged.has(key)) merged.set(key, value);
+  for (const group of groups) {
+    for (const value of group) {
+      const key = JSON.stringify(value);
+      if (!merged.has(key)) merged.set(key, value);
+    }
   }
   return [...merged].sort(([leftKey], [rightKey]) =>
     compareText(leftKey, rightKey),
@@ -1278,11 +1326,13 @@ function compareOccurrence(
   left: IScipIndex.IOccurrence,
   right: IScipIndex.IOccurrence,
 ): number {
-  const length = Math.max(left.range.length, right.range.length);
+  const length = Math.min(left.range.length, right.range.length);
   for (let index = 0; index < length; index++) {
-    const difference = (left.range[index] ?? -1) - (right.range[index] ?? -1);
+    const difference = left.range[index]! - right.range[index]!;
     if (difference !== 0) return difference;
   }
+  if (left.range.length !== right.range.length)
+    return left.range.length - right.range.length;
   return compareText(occurrenceCoreKey(left), occurrenceCoreKey(right));
 }
 

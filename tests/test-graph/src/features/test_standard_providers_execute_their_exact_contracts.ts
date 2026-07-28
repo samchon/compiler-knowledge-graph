@@ -108,7 +108,9 @@ export const test_standard_providers_execute_their_exact_contracts =
         TestValidator.predicate(
           `${provider.name} records indexer, decoder, and toolchain versions`,
           sameArray(configuration, [
-            producerRowOf(provider.name),
+            provider.name === "scip-php"
+              ? (configuration?.[0] ?? "")
+              : producerRowOf(provider.name),
             "scip=scip v1.0.0",
             ...toolchainRowsOf(provider.name),
           ]),
@@ -403,6 +405,98 @@ export const test_standard_providers_execute_their_exact_contracts =
         ["scip-clang=unreported", "scip=unreported", "cc=unavailable"],
       );
 
+      const vanished = path.join(emptyRoot, "vanished");
+      const java = standardScipProviders.find(
+        (provider) => provider.name === "scip-java",
+      )!;
+      TestValidator.equals(
+        "standard provider lookup failures remain unasked through the toolchain row",
+        [...(java.configuration?.(vanished, emptyPath()) ?? [])],
+        ["scip-java=unasked", "scip=unasked", "java=unasked"],
+      );
+      const python = standardScipProviders.find(
+        (provider) => provider.name === "scip-python",
+      )!;
+      const lateAlias = platformExecutable(
+        path.join(emptyRoot, ".samchon-graph", "bin"),
+        "python",
+      );
+      fs.mkdirSync(path.dirname(lateAlias), { recursive: true });
+      writeShim(lateAlias, "python");
+      TestValidator.equals(
+        "a stale override can fall through to a later installed alias without re-asking its label",
+        [
+          ...(python.configuration?.(emptyRoot, {
+            ...emptyPath(),
+            SAMCHON_GRAPH_PYTHON_TOOLCHAIN: path.join(
+              emptyRoot,
+              "missing-python",
+            ),
+          }) ?? []),
+        ],
+        [
+          "scip-python=unavailable",
+          "scip=unavailable",
+          "python=python v1.0.0",
+        ],
+      );
+
+      const partialRoot = path.join(emptyRoot, "partial-compilers");
+      fs.mkdirSync(partialRoot, { recursive: true });
+      const presentCompiler = platformExecutable(partialRoot, "present-cc");
+      const missingCompiler = platformExecutable(partialRoot, "missing-cc");
+      writeShim(presentCompiler, "present-cc");
+      fs.writeFileSync(
+        path.join(partialRoot, "compile_commands.json"),
+        `${JSON.stringify([
+          {
+            directory: partialRoot,
+            arguments: [presentCompiler, "-c", "a.c"],
+            file: "a.c",
+          },
+          {
+            directory: partialRoot,
+            arguments: [missingCompiler, "-c", "b.c"],
+            file: "b.c",
+          },
+        ])}\n`,
+      );
+      const partialEnv = {
+        ...emptyPath(),
+        SAMCHON_GRAPH_SCIP_CLANG: failingIndexer,
+        SAMCHON_GRAPH_SCIP: failingDecoder,
+      };
+      const partialConfiguration =
+        clang.configuration?.(partialRoot, partialEnv) ?? [];
+      TestValidator.predicate(
+        "every compilation-database driver has a configuration row",
+        partialConfiguration.includes("missing-cc=unavailable") &&
+          partialConfiguration.includes("present-cc=present-cc v1.0.0"),
+      );
+      TestValidator.equals(
+        "one missing compiler makes the strict C provider decline the whole program",
+        clang.resolve(partialRoot, partialEnv),
+        undefined,
+      );
+      const invalidSession = clang.open({
+        root: partialRoot,
+        command: { command: failingIndexer, args: [] },
+        languages: clang.languages,
+        options: { cwd: partialRoot },
+      });
+      let invalidMessage = "";
+      try {
+        await invalidSession.refresh();
+      } catch (error) {
+        invalidMessage = error instanceof Error ? error.message : String(error);
+      } finally {
+        await invalidSession.close();
+      }
+      TestValidator.predicate(
+        "a serving C session refuses a compiler that became unavailable",
+        invalidMessage.includes("unavailable compiler command"),
+      );
+
       const decoder = process.env.SAMCHON_GRAPH_SCIP;
       const searchPath = process.env.PATH;
       const searchPathAlias = process.env.Path;
@@ -574,18 +668,41 @@ function assertPhpConfigurationContracts(root: string): void {
       }),
     );
     process.env.SAMCHON_GRAPH_SCIP_PHP = unrelated;
-    TestValidator.equals(
-      "scip-php never attributes a Composer lock to a different override",
-      provider.configuration(project, process.env)[0],
-      "scip-php=unreported",
+    const unrelatedRow = provider.configuration(project, process.env)[0]!;
+    TestValidator.predicate(
+      "scip-php fingerprints a non-Composer override instead of attributing the lock",
+      /^scip-php=sha256:[0-9a-f]{64}$/.test(unrelatedRow),
+    );
+    writeShim(unrelated, "changed-scip-php");
+    const changedBytesRow = provider.configuration(project, process.env)[0]!;
+    TestValidator.predicate(
+      "scip-php moves its producer identity when override bytes move in place",
+      /^scip-php=sha256:[0-9a-f]{64}$/.test(changedBytesRow) &&
+        changedBytesRow !== unrelatedRow,
+    );
+    const equivalent = platformExecutable(vendorBin, "equivalent-indexer");
+    fs.copyFileSync(unrelated, equivalent);
+    fs.chmodSync(equivalent, 0o755);
+    process.env.SAMCHON_GRAPH_SCIP_PHP = equivalent;
+    const changedPathRow = provider.configuration(project, process.env)[0]!;
+    TestValidator.predicate(
+      "scip-php includes the selected path in an otherwise equal-byte identity",
+      /^scip-php=sha256:[0-9a-f]{64}$/.test(changedPathRow) &&
+        changedPathRow !== changedBytesRow,
     );
     delete process.env.SAMCHON_GRAPH_SCIP_PHP;
     fs.rmSync(vendorIndexer);
     const unresolved = { ...process.env, PATH: "", Path: "" };
     TestValidator.equals(
-      "scip-php reports an unresolved producer honestly",
+      "scip-php distinguishes an absent producer from a silent one",
       provider.configuration(project, unresolved)[0],
-      "scip-php=unreported",
+      "scip-php=unavailable",
+    );
+    const vanished = path.join(project, "vanished");
+    TestValidator.equals(
+      "scip-php preserves a producer lookup that could not run",
+      provider.configuration(vanished, unresolved)[0],
+      "scip-php=unasked",
     );
   } finally {
     if (priorOverride === undefined) {
@@ -1176,9 +1293,7 @@ function producerOf(provider: string): string {
 }
 
 function producerRowOf(provider: string): string {
-  return provider === "scip-php"
-    ? "scip-php=unreported"
-    : `${producerOf(provider)}=${producerOf(provider)} v1.0.0`;
+  return `${producerOf(provider)}=${producerOf(provider)} v1.0.0`;
 }
 
 function toolchainRowsOf(provider: string): string[] {

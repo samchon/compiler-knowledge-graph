@@ -49,6 +49,24 @@ function assertExporterTemporaryParentKeepsOnePathNamespace(): void {
     "D:\\work",
   );
   TestValidator.equals(
+    "a repo-local Windows temp directory also falls back to a sibling",
+    exporterTemporaryParent(
+      "D:\\work\\project",
+      "D:\\work\\project\\.tmp",
+      path.win32,
+    ),
+    "D:\\work",
+  );
+  TestValidator.equals(
+    "a repo-local POSIX temp directory also falls back to a sibling",
+    exporterTemporaryParent(
+      "/work/project",
+      "/work/project/.tmp",
+      path.posix,
+    ),
+    "/work",
+  );
+  TestValidator.equals(
     "a different UNC namespace also falls back to a sibling",
     exporterTemporaryParent(
       "\\\\server\\share\\project",
@@ -65,6 +83,10 @@ function assertExporterTemporaryParentKeepsOnePathNamespace(): void {
         "C:\\temp",
         path.win32,
       ),
+  );
+  TestValidator.error(
+    "a POSIX root project is declined even when temp is in its namespace",
+    () => exporterTemporaryParent("/", "/tmp", path.posix),
   );
 }
 

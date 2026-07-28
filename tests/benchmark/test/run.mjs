@@ -668,6 +668,17 @@ function testIndexPublicationRefusesMalformedJson() {
       },
     ],
     [
+      "missing report and cell toolchain evidence",
+      {
+        ...validReportDocument,
+        toolchain: undefined,
+        cells: validReportDocument.cells.map((cell) => ({
+          ...cell,
+          toolchain: undefined,
+        })),
+      },
+    ],
+    [
       "cell toolchain mismatch",
       {
         ...validReportDocument,

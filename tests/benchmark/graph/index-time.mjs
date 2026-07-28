@@ -706,6 +706,11 @@ function publishWebsiteIndex(currentReport) {
  * runs. The scope metadata makes absence authoritative instead.
  */
 function assertIncomingReportScope(incoming) {
+  if (incoming.toolchain === undefined) {
+    throw new TypeError(
+      "incoming index-time result.toolchain is required",
+    );
+  }
   if (
     incoming.measurementId !== undefined &&
     (typeof incoming.measurementId !== "string" ||

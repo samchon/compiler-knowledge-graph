@@ -1,5 +1,5 @@
 import { TestValidator } from "@nestia/e2e";
-import { ChildProcess, spawn } from "node:child_process";
+import { ChildProcess, spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -404,6 +404,38 @@ const assertRequestTraceFormatting = async (): Promise<void> => {
   TestValidator.predicate(
     "a cutoff observer cannot change abort behavior",
     resilientCutoff.signal.aborted,
+  );
+
+  const traceModule = pathToFileURL(
+    path.join(
+      GraphPaths.graphPackageRoot,
+      "lib",
+      "lsp",
+      "lspRequestTrace.js",
+    ),
+  ).href;
+  const immediateExit = spawnSync(
+    process.execPath,
+    [
+      "--input-type=module",
+      "--eval",
+      [
+        `const { lspRequestTrace } = await import(${JSON.stringify(traceModule)});`,
+        "const cutoff = new AbortController();",
+        `lspRequestTrace({ ${LSP_REQUEST_TRACE_ENV}: "1" }, undefined, cutoff.signal);`,
+        "cutoff.abort();",
+        "process.exit(0);",
+      ].join("\n"),
+    ],
+    {
+      encoding: "utf8",
+      windowsHide: true,
+    },
+  );
+  TestValidator.equals(
+    "the default cutoff writer survives an immediate process exit",
+    [immediateExit.status, immediateExit.signal, immediateExit.stderr],
+    [0, null, "@samchon/graph: lsp-request phase=cutoff\n"],
   );
 };
 

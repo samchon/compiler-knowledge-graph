@@ -364,6 +364,49 @@ export const test_standard_providers_execute_their_exact_contracts =
           } finally {
             await gradleSession.close();
           }
+          const settingsRoot = path.join(root, "gradle-settings-jvm");
+          writeProject(settingsRoot);
+          fs.rmSync(path.join(settingsRoot, "pom.xml"));
+          fs.mkdirSync(path.join(settingsRoot, "app"), {
+            recursive: true,
+          });
+          fs.writeFileSync(
+            path.join(settingsRoot, "settings.gradle.kts"),
+            'include("app")\n',
+          );
+          fs.writeFileSync(
+            path.join(settingsRoot, "app", "build.gradle.kts"),
+            "plugins { java }\n",
+          );
+          const settingsCommand = provider.resolve(
+            settingsRoot,
+            process.env,
+          );
+          TestValidator.predicate(
+            "scip-java resolves a settings-only Gradle workspace",
+            settingsCommand !== undefined,
+          );
+          if (settingsCommand === undefined) {
+            throw new Error(
+              "scip-java: settings-only Gradle fixture command did not resolve",
+            );
+          }
+          const settingsSession = provider.open({
+            root: settingsRoot,
+            command: settingsCommand,
+            languages: provider.languages,
+            options: { cwd: settingsRoot },
+          });
+          try {
+            const settingsSnapshot = await settingsSession.refresh();
+            TestValidator.predicate(
+              "a Kotlin settings script alone selects the guarded Gradle command",
+              settingsSnapshot.mode === "initial" &&
+                settingsSnapshot.snapshot.provenance.provider === "scip-java",
+            );
+          } finally {
+            await settingsSession.close();
+          }
         }
         await assertHeuristicTwinFails(provider, command, root);
       }

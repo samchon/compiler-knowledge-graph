@@ -131,6 +131,7 @@ function jvmScipIndexArgs(artifact: string, root: string): string[] {
   const output = ["index", "--output", artifact];
   const gradle = [
     "settings.gradle",
+    "settings.gradle.kts",
     "gradlew",
     "build.gradle",
     "build.gradle.kts",

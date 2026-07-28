@@ -86,6 +86,7 @@ const contracts = {
   "scip-java": (args) => {
     const gradle = [
       "settings.gradle",
+      "settings.gradle.kts",
       "gradlew",
       "build.gradle",
       "build.gradle.kts",

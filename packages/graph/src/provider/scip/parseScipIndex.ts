@@ -936,14 +936,14 @@ function foldDocumentsByPath(
       document.relativePath,
       (folded.get(document.relativePath) ?? 1) + 1,
     );
-    byPath.set(
-      document.relativePath,
-      mergeDocuments(existing, document, foldWarnings),
-    );
+    byPath.set(document.relativePath, mergeDocuments(existing, document));
   }
   for (const [relativePath, count] of folded) {
     foldWarnings.push(
       `scip: ${relativePath} was indexed as ${String(count)} translation units; their occurrences are folded into one document`,
+    );
+    foldWarnings.push(
+      ...translationUnitAmbiguityWarnings(byPath.get(relativePath)!),
     );
   }
   warnings.push(...[...new Set(foldWarnings)].sort(compareText));
@@ -967,7 +967,6 @@ function foldDocumentsByPath(
 function mergeDocuments(
   left: IScipIndex.IDocument,
   right: IScipIndex.IDocument,
-  warnings: string[],
 ): IScipIndex.IDocument {
   // Text is per-file, not per-unit: two units compile the same bytes. A
   // disagreement means they did not, which is a moved source rather than a
@@ -994,10 +993,8 @@ function mergeDocuments(
     right.positionEncoding,
   );
   const occurrences = mergeOccurrences(
-    left.relativePath,
     left.occurrences ?? [],
     right.occurrences ?? [],
-    warnings,
   );
   const symbols = mergeSymbols(
     left.relativePath,
@@ -1041,33 +1038,13 @@ function mergeDocuments(
  * not doubled merely because one unit attached another finding.
  */
 function mergeOccurrences(
-  file: string,
   left: readonly IScipIndex.IOccurrence[],
   right: readonly IScipIndex.IOccurrence[],
-  warnings: string[],
 ): IScipIndex.IOccurrence[] {
   const occurrences: IScipIndex.IOccurrence[] = [];
   const byCore = new Map<string, number>();
-  const claims = new Map<
-    string,
-    { range: string; symbol: string; cores: Set<string> }
-  >();
-  const symbolsByRange = new Map<string, Set<string>>();
   for (const occurrence of [...left, ...right]) {
-    const range = rangeKey(occurrence.range);
-    const symbol = occurrence.symbol ?? "";
     const core = occurrenceCoreKey(occurrence);
-    const claimKey = JSON.stringify([range, symbol]);
-    const claim = claims.get(claimKey) ?? {
-      range,
-      symbol,
-      cores: new Set<string>(),
-    };
-    claim.cores.add(core);
-    claims.set(claimKey, claim);
-    const rangeSymbols = symbolsByRange.get(range) ?? new Set<string>();
-    rangeSymbols.add(symbol);
-    symbolsByRange.set(range, rangeSymbols);
 
     const prior = byCore.get(core);
     if (prior === undefined) {
@@ -1098,10 +1075,44 @@ function mergeOccurrences(
           }),
     };
   }
+  return occurrences.sort(compareOccurrence);
+}
+
+/**
+ * Name translation-unit ambiguity from the completed union, not from an
+ * intermediate pairwise fold. Three or more units can arrive in any order;
+ * deriving these warnings once makes their text a function of the final facts
+ * rather than of which partial union happened first.
+ */
+function translationUnitAmbiguityWarnings(
+  document: IScipIndex.IDocument,
+): string[] {
+  const warnings: string[] = [];
+  const claims = new Map<
+    string,
+    { range: string; symbol: string; cores: Set<string> }
+  >();
+  const symbolsByRange = new Map<string, Set<string>>();
+  for (const occurrence of document.occurrences ?? []) {
+    const range = rangeKey(occurrence.range);
+    const symbol = occurrence.symbol ?? "";
+    const core = occurrenceCoreKey(occurrence);
+    const claimKey = JSON.stringify([range, symbol]);
+    const claim = claims.get(claimKey) ?? {
+      range,
+      symbol,
+      cores: new Set<string>(),
+    };
+    claim.cores.add(core);
+    claims.set(claimKey, claim);
+    const rangeSymbols = symbolsByRange.get(range) ?? new Set<string>();
+    rangeSymbols.add(symbol);
+    symbolsByRange.set(range, rangeSymbols);
+  }
   for (const symbols of symbolsByRange.values()) {
     if (symbols.size <= 1) continue;
     warnings.push(
-      `scip: ${file} resolves one range to ${[...symbols]
+      `scip: ${document.relativePath} resolves one range to ${[...symbols]
         .sort(compareText)
         .map((symbol) => JSON.stringify(symbol))
         .join(", ")} across translation units; every reading is published`,
@@ -1110,10 +1121,10 @@ function mergeOccurrences(
   for (const claim of claims.values()) {
     if (claim.cores.size <= 1) continue;
     warnings.push(
-      `scip: ${file} reports ${JSON.stringify(claim.symbol)} at range ${claim.range} with different roles, syntax, or scopes across translation units; every reading is published`,
+      `scip: ${document.relativePath} reports ${JSON.stringify(claim.symbol)} at range ${claim.range} with different roles, syntax, or scopes across translation units; every reading is published`,
     );
   }
-  return occurrences.sort(compareOccurrence);
+  return warnings.sort(compareText);
 }
 
 function occurrenceCoreKey(occurrence: IScipIndex.IOccurrence): string {
@@ -1129,10 +1140,11 @@ function occurrenceCoreKey(occurrence: IScipIndex.IOccurrence): string {
 /**
  * Merge one symbol's additive evidence while refusing irreconcilable scalars.
  *
- * Relationships and documentation are unions. A display name, kind, or
- * enclosing symbol has one public slot; when conditional compilations disagree
- * no stable selection is more truthful than another, so the index is refused
- * rather than silently dropping the later symbol record whole.
+ * Relationships are a fact union. Documentation is an ordered Markdown
+ * sequence, while a display name, kind, or enclosing symbol has one public
+ * slot. When conditional compilations disagree on any of those ordered or
+ * scalar values, no stable selection is more truthful than another, so the
+ * index is refused rather than silently dropping or reordering evidence.
  */
 function mergeSymbols(
   file: string,
@@ -1170,21 +1182,17 @@ function mergeSymbols(
       existing.enclosingSymbol,
       symbol.enclosingSymbol,
     );
+    const documentation = compatibleSymbolDocumentation(
+      file,
+      symbol.symbol,
+      existing.documentation,
+      symbol.documentation,
+    );
     symbols[prior] = {
       symbol: existing.symbol,
       ...(displayName === undefined ? {} : { displayName }),
       ...(kind === undefined ? {} : { kind }),
-      ...(existing.documentation === undefined &&
-      symbol.documentation === undefined
-        ? {}
-        : {
-            documentation: [
-              ...new Set([
-                ...(existing.documentation ?? []),
-                ...(symbol.documentation ?? []),
-              ]),
-            ].sort(compareText),
-          }),
+      ...(documentation === undefined ? {} : { documentation }),
       ...(existing.relationships === undefined &&
       symbol.relationships === undefined
         ? {}
@@ -1199,6 +1207,24 @@ function mergeSymbols(
   }
   return symbols.sort((leftSymbol, rightSymbol) =>
     compareText(leftSymbol.symbol, rightSymbol.symbol),
+  );
+}
+
+function compatibleSymbolDocumentation(
+  file: string,
+  symbol: string,
+  left: string[] | undefined,
+  right: string[] | undefined,
+): string[] | undefined {
+  if (left === undefined) return right;
+  if (right === undefined) return left;
+  if (
+    left.length === right.length &&
+    left.every((line, index) => line === right[index])
+  )
+    return left;
+  throw new Error(
+    `scip: translation units disagree about documentation for ${JSON.stringify(symbol)} in ${file}`,
   );
 }
 

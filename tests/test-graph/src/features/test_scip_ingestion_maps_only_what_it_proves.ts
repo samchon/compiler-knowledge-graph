@@ -26,6 +26,7 @@ export const test_scip_ingestion_maps_only_what_it_proves = async () => {
   assertSparseTranslationUnitsPreserveOptionalEvidence();
   assertDisagreeingUnitsAreNamed();
   assertTranslationUnitFactsAreNotConflated();
+  assertTranslationUnitWarningsAreOrderIndependent();
   assertIrreconcilableTranslationUnitFactsAreRefused();
   assertDisagreeingTextIsRefused();
   assertMapping();
@@ -1932,7 +1933,7 @@ function assertTranslationUnitsFoldIntoOneDocument(): void {
   TestValidator.equals(
     "and their symbol tables merge by symbol",
     (index.documents[0]?.symbols ?? []).map((entry) => entry.symbol),
-    ["shared", "second-only-symbol"],
+    ["second-only-symbol", "shared"],
   );
   TestValidator.predicate(
     "the fold is reported rather than performed silently",
@@ -1991,7 +1992,7 @@ function assertSparseTranslationUnitsPreserveOptionalEvidence(): void {
     {
       text: "x\n",
       occurrences: [undefined, undefined],
-      symbols: ["shared", "right-only"],
+      symbols: ["right-only", "shared"],
     },
   );
   TestValidator.equals(
@@ -2079,11 +2080,16 @@ function assertTranslationUnitFactsAreNotConflated(): void {
           symbol: "shared",
           display_name: "shared",
           kind: "Function",
-          documentation: ["left-doc"],
+          documentation: ["Summary first", "Details second"],
           relationships: [
             { symbol: "left-target", is_type_definition: true },
           ],
         },
+        {
+          symbol: "z-left-documentation",
+          documentation: ["left-only"],
+        },
+        { symbol: "z-right-documentation" },
       ],
     },
     {
@@ -2119,11 +2125,16 @@ function assertTranslationUnitFactsAreNotConflated(): void {
         {
           symbol: "shared",
           kind: "Function",
-          documentation: ["right-doc"],
+          documentation: ["Summary first", "Details second"],
           enclosing_symbol: "owner",
           relationships: [
             { symbol: "right-target", is_type_definition: true },
           ],
+        },
+        { symbol: "z-left-documentation" },
+        {
+          symbol: "z-right-documentation",
+          documentation: ["right-only"],
         },
       ],
     },
@@ -2189,6 +2200,10 @@ function assertTranslationUnitFactsAreNotConflated(): void {
         documentation: document.symbols?.[0]?.documentation,
         enclosingSymbol: document.symbols?.[0]?.enclosingSymbol,
       },
+      oneSidedDocumentation: document.symbols?.slice(1).map((symbol) => ({
+        symbol: symbol.symbol,
+        documentation: symbol.documentation,
+      })),
     },
     {
       diagnostics: ["left-document", "right-document"],
@@ -2196,9 +2211,19 @@ function assertTranslationUnitFactsAreNotConflated(): void {
       symbol: {
         displayName: "shared",
         kind: "Function",
-        documentation: ["left-doc", "right-doc"],
+        documentation: ["Summary first", "Details second"],
         enclosingSymbol: "owner",
       },
+      oneSidedDocumentation: [
+        {
+          symbol: "z-left-documentation",
+          documentation: ["left-only"],
+        },
+        {
+          symbol: "z-right-documentation",
+          documentation: ["right-only"],
+        },
+      ],
     },
   );
   const reverseWarnings: string[] = [];
@@ -2226,11 +2251,87 @@ function assertTranslationUnitFactsAreNotConflated(): void {
 }
 
 /**
+ * Ambiguity belongs to the completed translation-unit union.
+ *
+ * Pairwise warning accumulation made a three-unit index remember which two
+ * units happened to merge first: the final facts matched, but a warning for
+ * that intermediate subset survived. Every permutation must instead publish
+ * the same complete warning set.
+ */
+function assertTranslationUnitWarningsAreOrderIndependent(): void {
+  const documents: Record<string, unknown>[] = [
+    {
+      relative_path: "three-units.c",
+      occurrences: [
+        {
+          range: [1, 0, 4],
+          symbol: "shared",
+          symbol_roles: 1,
+        },
+      ],
+    },
+    {
+      relative_path: "three-units.c",
+      occurrences: [
+        {
+          range: [1, 0, 4],
+          symbol: "shared",
+          symbol_roles: 0,
+          enclosing_range: [0, 0, 2, 0],
+        },
+      ],
+    },
+    {
+      relative_path: "three-units.c",
+      occurrences: [
+        {
+          range: [1, 0, 4],
+          symbol: "alternative",
+        },
+      ],
+    },
+  ];
+  const permutations = [
+    [0, 1, 2],
+    [0, 2, 1],
+    [1, 0, 2],
+    [1, 2, 0],
+    [2, 0, 1],
+    [2, 1, 0],
+  ];
+  const normalized = permutations.map((order) => {
+    const warnings: string[] = [];
+    const index = parseScipIndex(
+      {
+        metadata: { projectRoot: "file:///r" },
+        documents: order.map((at) => documents[at]!),
+      },
+      "scip-clang",
+      warnings,
+    );
+    return { documents: index.documents, warnings };
+  });
+  for (let i = 1; i < normalized.length; ++i)
+    TestValidator.equals(
+      `translation-unit permutation ${String(i)} has canonical facts and warnings`,
+      normalized[i],
+      normalized[0],
+    );
+  TestValidator.predicate(
+    "the complete three-unit ambiguity is reported exactly once",
+    normalized[0]!.warnings.filter((warning) =>
+      warning.includes('"alternative", "shared"'),
+    ).length === 1,
+  );
+}
+
+/**
  * Some duplicate-document fields have one public slot and no truthful union.
  *
- * Text, coordinate encoding, document language, and one symbol's scalar
- * identity cannot be selected by translation-unit schedule. A disagreement
- * rejects the index instead of publishing an arbitrary first reading.
+ * Text, coordinate encoding, document language, ordered documentation, and one
+ * symbol's scalar identity cannot be selected by translation-unit schedule. A
+ * disagreement rejects the index instead of publishing an arbitrary first
+ * reading.
  */
 function assertIrreconcilableTranslationUnitFactsAreRefused(): void {
   const cases: Array<[string, Record<string, unknown>, Record<string, unknown>]> =
@@ -2259,6 +2360,44 @@ function assertIrreconcilableTranslationUnitFactsAreRefused(): void {
         "enclosingSymbol",
         { symbols: [{ symbol: "s", enclosing_symbol: "left" }] },
         { symbols: [{ symbol: "s", enclosing_symbol: "right" }] },
+      ],
+      [
+        "documentation",
+        {
+          symbols: [
+            {
+              symbol: "s",
+              documentation: ["Summary first", "Details second"],
+            },
+          ],
+        },
+        {
+          symbols: [
+            {
+              symbol: "s",
+              documentation: ["Details second", "Summary first"],
+            },
+          ],
+        },
+      ],
+      [
+        "documentation",
+        {
+          symbols: [
+            {
+              symbol: "s",
+              documentation: ["Summary only"],
+            },
+          ],
+        },
+        {
+          symbols: [
+            {
+              symbol: "s",
+              documentation: ["Summary only", "Details added"],
+            },
+          ],
+        },
       ],
     ];
   for (const [field, left, right] of cases) {

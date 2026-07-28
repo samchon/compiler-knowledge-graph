@@ -28,6 +28,9 @@ export function assertIndexReport(value, label) {
     );
   }
   assertHost(value.host, `${label}.host`);
+  if (value.toolchain !== undefined) {
+    assertToolchainEvidence(value.toolchain, `${label}.toolchain`);
+  }
   assertScale(value.scale, `${label}.scale`);
   const fixtures =
     schemaVersion === 2
@@ -195,6 +198,9 @@ function assertIndexCells(value, label, fixtures) {
       );
     }
     assertHost(cell.host, `${cellLabel}.host`);
+    if (cell.toolchain !== undefined) {
+      assertToolchainEvidence(cell.toolchain, `${cellLabel}.toolchain`);
+    }
     if (cell.quietWait !== undefined && cell.quietWait !== null) {
       assertRecord(cell.quietWait, `${cellLabel}.quietWait`);
     }
@@ -203,6 +209,44 @@ function assertIndexCells(value, label, fixtures) {
       throw new TypeError(`${cellLabel} duplicates an earlier index cell identity`);
     }
     identities.add(identity);
+  }
+}
+
+function assertToolchainEvidence(value, label) {
+  assertRecord(value, label);
+  if (value.status !== "recorded" && value.status !== "unreported") {
+    throw new TypeError(
+      `${label}.status must be recorded or unreported`,
+    );
+  }
+  if (!Array.isArray(value.tools)) {
+    throw new TypeError(`${label}.tools must be an array`);
+  }
+  if (
+    (value.status === "recorded" && value.tools.length === 0) ||
+    (value.status === "unreported" && value.tools.length !== 0)
+  ) {
+    throw new TypeError(
+      `${label}.status must agree with whether tools were recorded`,
+    );
+  }
+  const identities = new Set();
+  for (const [index, tool] of value.tools.entries()) {
+    const toolLabel = `${label}.tools[${String(index)}]`;
+    assertRecord(tool, toolLabel);
+    for (const field of ["tool", "version", "source", "digest"]) {
+      if (typeof tool[field] !== "string" || tool[field].trim() === "") {
+        throw new TypeError(
+          `${toolLabel}.${field} must be a nonempty string`,
+        );
+      }
+    }
+    if (identities.has(tool.tool)) {
+      throw new TypeError(
+        `${toolLabel}.tool duplicates an earlier tool identity`,
+      );
+    }
+    identities.add(tool.tool);
   }
 }
 

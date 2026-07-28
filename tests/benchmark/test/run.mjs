@@ -295,6 +295,17 @@ function testIndexPublicationRefusesMalformedJson() {
   const validReport = JSON.stringify({
     schemaVersion: 2,
     host: FIXTURE_HOST,
+    toolchain: {
+      status: "recorded",
+      tools: [
+        {
+          tool: "fixture-indexer",
+          version: "1.0.0",
+          source: "fixture",
+          digest: "sha256:fixture",
+        },
+      ],
+    },
     projects: [INDEX_PROJECT],
     tools: ["samchon-graph"],
     fixtures: { [INDEX_PROJECT]: FIXTURE_COMMIT },
@@ -305,6 +316,17 @@ function testIndexPublicationRefusesMalformedJson() {
         tool: "samchon-graph",
         buildMs: 1,
         fixtureCommit: FIXTURE_COMMIT,
+        toolchain: {
+          status: "recorded",
+          tools: [
+            {
+              tool: "fixture-indexer",
+              version: "1.0.0",
+              source: "fixture",
+              digest: "sha256:fixture",
+            },
+          ],
+        },
         host: FIXTURE_HOST,
       },
     ],
@@ -638,6 +660,67 @@ function testIndexPublicationRefusesMalformedJson() {
         ],
       },
     ],
+    [
+      "missing toolchain evidence",
+      {
+        ...validReportDocument,
+        toolchain: undefined,
+      },
+    ],
+    [
+      "cell toolchain mismatch",
+      {
+        ...validReportDocument,
+        cells: [
+          {
+            ...validReportDocument.cells[0],
+            toolchain: {
+              status: "unreported",
+              tools: [],
+            },
+          },
+        ],
+      },
+    ],
+    [
+      "empty recorded toolchain",
+      {
+        ...validReportDocument,
+        toolchain: {
+          status: "recorded",
+          tools: [],
+        },
+      },
+    ],
+    [
+      "duplicate toolchain identity",
+      {
+        ...validReportDocument,
+        toolchain: {
+          status: "recorded",
+          tools: [
+            ...validReportDocument.toolchain.tools,
+            ...validReportDocument.toolchain.tools,
+          ],
+        },
+      },
+    ],
+    [
+      "incomplete toolchain row",
+      {
+        ...validReportDocument,
+        toolchain: {
+          status: "recorded",
+          tools: [
+            {
+              tool: "fixture-indexer",
+              version: "1.0.0",
+              source: "fixture",
+            },
+          ],
+        },
+      },
+    ],
   ]) {
     fs.writeFileSync(publication, validPublication);
     fs.writeFileSync(report, JSON.stringify(invalidScope));
@@ -916,6 +999,15 @@ function testIndexCellIsolationContract() {
           'node tests/benchmark/graph/index-time.mjs --publish="$report"',
         ),
     "a complete matrix must discard stale index cells before folding current reports",
+  );
+  assert.ok(
+    workflow.includes(
+      '--toolchain-manifest="$GITHUB_WORKSPACE/tests/experiment/.work/tools/manifest-${{ matrix.language }}.json"',
+    ) &&
+      source.includes("toolchain: loadToolchainEvidence(toolchainManifest)") &&
+      source.includes("toolchain: report.toolchain") &&
+      source.includes("does not match its toolchain evidence"),
+    "each measured cell must preserve and bind the exact provisioned toolchain manifest",
   );
 }
 

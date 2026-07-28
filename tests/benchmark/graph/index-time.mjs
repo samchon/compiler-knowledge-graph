@@ -65,6 +65,7 @@ const workDir = resolveWorkDir(repoRoot);
 const websiteJson =
   process.env.SAMCHON_BENCH_INDEX_JSON ??
   path.join(repoRoot, "tests", "benchmark", "results", "graph.json");
+const toolchainManifest = parsedToolchainManifest(process.argv.slice(2));
 
 // Above every top-level statement that can reach it, deliberately. The project
 // loop below calls `measureScale`, which reads this table, and a `const`
@@ -194,6 +195,7 @@ const report = {
     selected.map((project) => [project, PROJECTS[project].commit]),
   ),
   host: hostSpec(),
+  toolchain: loadToolchainEvidence(toolchainManifest),
   scale: {},
   cells: [],
 };
@@ -218,6 +220,11 @@ for (const project of selected) {
     indexDir(spec, repoDir),
   );
 }
+// Refuse malformed provisioning evidence before the first stopwatch starts.
+// A one-shot cell without the exact tools that produced it cannot be repaired
+// afterwards, and spending the measurement before discovering that would turn
+// an avoidable harness error into another hour-long missing result.
+assertIndexReport(report, "new index-time result");
 writeJson(reportPath, report);
 
 for (const project of selected) {
@@ -279,6 +286,7 @@ for (const project of selected) {
           measuredAt: new Date().toISOString(),
           cacheIsolation: cellCache.kind,
           host: report.host,
+          toolchain: report.toolchain,
           quietWait,
         });
         writeJson(reportPath, report);
@@ -779,7 +787,59 @@ function assertIncomingReportScope(incoming) {
         `incoming index-time result cell ${cell.project}/${cell.tool} does not match its measurement`,
       );
     }
+    if (
+      JSON.stringify(cell.toolchain) !==
+      JSON.stringify(incoming.toolchain)
+    ) {
+      throw new TypeError(
+        `incoming index-time result cell ${cell.project}/${cell.tool} does not match its toolchain evidence`,
+      );
+    }
   }
+}
+
+/**
+ * Preserve the setup manifest in every cell that its tools produced.
+ *
+ * CI supplies this file from the real-language provisioner. A manual run may
+ * use a machine-owned toolchain instead; that is represented explicitly as
+ * unreported rather than by an empty array a reader could mistake for a proof
+ * that no external tools participated.
+ */
+function loadToolchainEvidence(manifest) {
+  if (manifest === undefined) {
+    return {
+      status: "unreported",
+      tools: [],
+    };
+  }
+  const tools = loadJson(path.resolve(manifest));
+  return {
+    status: "recorded",
+    tools,
+  };
+}
+
+/**
+ * Read this one option before the ordinary parser is needed.
+ *
+ * Declaration order matters in this module: publication and list modes exit
+ * before measurement state is built, so merely adding a top-level reference to
+ * `parsed` above its declaration would put the file back in the temporal dead
+ * zone that once made the finished runner unexecutable.
+ */
+function parsedToolchainManifest(argv) {
+  const prefix = "--toolchain-manifest=";
+  const values = argv
+    .filter((argument) => argument.startsWith(prefix))
+    .map((argument) => argument.slice(prefix.length));
+  if (values.length > 1) {
+    throw new Error("index-time accepts one --toolchain-manifest");
+  }
+  if (values[0] === "") {
+    throw new Error("--toolchain-manifest must name a file");
+  }
+  return values[0];
 }
 
 /**

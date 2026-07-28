@@ -44,6 +44,9 @@ export class LuaGraphSession implements IBulkGraphSession {
       artifactName: LuaGraphSession.ARTIFACT,
       indexArgs: options.indexArgs,
       inputs: options.inputs,
+      ...(options.temporaryParent === undefined
+        ? {}
+        : { temporaryParent: options.temporaryParent }),
       ...(options.configuration === undefined
         ? {}
         : { configuration: options.configuration }),
@@ -203,6 +206,7 @@ export namespace LuaGraphSession {
     command: IGraphProvider.ICommand;
     indexArgs: (artifact: string) => string[];
     inputs: () => string[];
+    temporaryParent?: string;
     configuration?: BatchGraphSession.IOptions["configuration"];
   }
   /* c8 ignore start -- declaration merging emits an unreachable namespace

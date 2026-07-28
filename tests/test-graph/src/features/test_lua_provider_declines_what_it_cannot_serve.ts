@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { luaGraphProvider } from "@samchon/graph";
+import { exporterTemporaryParent } from "../../../../packages/graph/src/provider/lua/exporterTemporaryParent";
 import { LuaGraphSession } from "../../../../packages/graph/src/provider/lua/LuaGraphSession";
 import { GraphPaths } from "../internal/GraphPaths";
 
@@ -21,11 +22,51 @@ export const test_lua_provider_declines_what_it_cannot_serve =
     assertTheProviderWatchesLuaBuildInputs();
     assertTheProviderResolvesTheServerItDrives();
     assertAnInstallationWithoutItsExporterDeclines();
+    assertExporterTemporaryParentKeepsOnePathNamespace();
     await assertExporterConfigurationIsIsolatedAndVersioned();
     await assertTheServerVersionIsPublished();
     await assertAnUnreadableSourceIsNotPublishedAround();
     await assertAnOutsideSourceIsNotReadBack();
   };
+
+function assertExporterTemporaryParentKeepsOnePathNamespace(): void {
+  TestValidator.equals(
+    "a Windows temp directory on the project volume remains the parent",
+    exporterTemporaryParent(
+      "D:\\work\\project",
+      "D:\\temp",
+      path.win32,
+    ),
+    "D:\\temp",
+  );
+  TestValidator.equals(
+    "a Windows temp directory on another volume falls back to a sibling",
+    exporterTemporaryParent(
+      "D:\\work\\project",
+      "C:\\temp",
+      path.win32,
+    ),
+    "D:\\work",
+  );
+  TestValidator.equals(
+    "a different UNC namespace also falls back to a sibling",
+    exporterTemporaryParent(
+      "\\\\server\\share\\project",
+      "\\\\other\\share\\temp",
+      path.win32,
+    ),
+    "\\\\server\\share\\",
+  );
+  TestValidator.error(
+    "a volume-root project is declined rather than written into",
+    () =>
+      exporterTemporaryParent(
+        "D:\\",
+        "C:\\temp",
+        path.win32,
+      ),
+  );
+}
 
 /**
  * Every option the exporter cannot honour is named in the refusal.
@@ -221,6 +262,20 @@ async function assertExporterConfigurationIsIsolatedAndVersioned(): Promise<void
         !fs.existsSync(first.script) &&
         !fs.existsSync(second.script) &&
         !fs.existsSync(third.script),
+    );
+    TestValidator.predicate(
+      "generation directories are reachable without entering the project",
+      [first, second, third].every(
+        (entry) => {
+          const relative = path.relative(root, entry.config);
+          return (
+            !path.isAbsolute(relative) &&
+            relative.split(path.sep)[0] === ".." &&
+            path.parse(entry.config).root === path.parse(root).root &&
+            !fs.existsSync(path.dirname(entry.config))
+          );
+        },
+      ),
     );
     TestValidator.equals(
       "the server reads the exact exporter bytes that moved each universe",
@@ -531,12 +586,19 @@ function assertAnInstallationWithoutItsExporterDeclines(): void {
       message.includes("exporter script is missing"),
     );
     process.env.SAMCHON_GRAPH_LUA_EXPORTER = root;
+    const unreadableEnv = {
+      PATH: "",
+      Path: "",
+      PATHEXT: ".EXE;.CMD;.BAT",
+      SystemRoot: process.env.SystemRoot,
+      SAMCHON_GRAPH_LUA_EXPORTER: root,
+    };
     TestValidator.predicate(
       "an unreadable exporter is distinguished in configuration evidence",
       luaGraphProvider
-        .configuration?.(root, process.env)
+        .configuration?.(root, unreadableEnv)
         .includes("lua-exporter=unreadable") === true &&
-        luaGraphProvider.resolve(root, process.env) === undefined,
+        luaGraphProvider.resolve(root, unreadableEnv) === undefined,
     );
   } finally {
     if (previous === undefined) delete process.env.SAMCHON_GRAPH_LUA_EXPORTER;

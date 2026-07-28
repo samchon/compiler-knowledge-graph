@@ -195,7 +195,10 @@ export class BatchGraphSession implements IBulkGraphSession {
     signal: AbortSignal | undefined,
   ): Promise<IBulkGraphSession.ISnapshot> {
     const output = fs.mkdtempSync(
-      path.join(os.tmpdir(), `samchon-graph-${this.options.provider}-`),
+      path.join(
+        this.options.temporaryParent ?? os.tmpdir(),
+        `samchon-graph-${this.options.provider}-`,
+      ),
     );
     try {
       const artifact = path.join(output, this.options.artifactName);
@@ -556,6 +559,16 @@ export namespace BatchGraphSession {
     command: IGraphProvider.ICommand;
     artifactName: string;
     indexArgs: (artifact: string) => string[];
+
+    /**
+     * Existing directory that owns this session's unique generation children.
+     *
+     * Most producers use the OS temporary directory. A producer whose config
+     * accepts only a project-relative path may need a same-volume parent
+     * instead. The session still creates the unique child and removes the
+     * complete generation on every exit path.
+     */
+    temporaryParent?: string;
 
     /**
      * Where a producer that cannot be told an output path writes instead.

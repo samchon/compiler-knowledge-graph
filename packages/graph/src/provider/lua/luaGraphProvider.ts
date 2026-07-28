@@ -6,6 +6,7 @@ import { providerInputFiles } from "../providerInputFiles";
 import { resolveProviderCommand } from "../resolveProviderCommand";
 import { toolchainVersion } from "../toolchainVersion";
 import { IGraphProvider } from "../IGraphProvider";
+import { exporterTemporaryParent } from "./exporterTemporaryParent";
 import { LuaGraphSession } from "./LuaGraphSession";
 
 const BUILD_FILES = [".luarc.json", ".luarc.jsonc"] as const;
@@ -82,6 +83,11 @@ export const luaGraphProvider: IGraphProvider = {
       languages: props.languages,
       provider: "samchon-graph-lua",
       command: props.command,
+      // LuaLS concatenates `Lua.docScriptPath` onto the project root instead of
+      // accepting an absolute path. Keep the generation outside the indexed
+      // tree but in the same Windows path namespace, falling back to a sibling
+      // only when `%TEMP%` is on another volume.
+      temporaryParent: exporterTemporaryParent(props.root),
       // `--doc` names the project, `--doc_out_path` the directory the exporter
       // writes into — which is the artifact's own directory, so the file lands
       // exactly where the session looks for it.

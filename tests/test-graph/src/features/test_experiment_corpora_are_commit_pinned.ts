@@ -73,12 +73,17 @@ export const test_experiment_corpora_are_commit_pinned = () => {
       setup.includes("await installGradle()"),
   );
   TestValidator.predicate(
-    "Kotlin uses one checksum-pinned upstream generation that supports its fixture",
-    kotlin.includes("2aec6906503790dfeba3975da2b1ab259340e482") &&
+    "Kotlin uses one checksum-pinned 2.3.20 producer and fixture generation",
+    kotlin.includes("e940c1889767a81347387067a375320dc6f5d83e") &&
+      kotlin.includes("built with Kotlin 2.3.20") &&
       setup.includes("const SCIP_JAVA_KOTLIN_COMMIT") &&
-      setup.includes('"2aec6906503790dfeba3975da2b1ab259340e482"') &&
+      setup.includes('"e940c1889767a81347387067a375320dc6f5d83e"') &&
+      setup.includes('const SCIP_JAVA_KOTLIN_VERSION = "2.3.20"') &&
       setup.includes(
-        "895af11b6682074e42b5398868bba3232fe6d74f727b938c8d9727b7e156d1cf",
+        "985eb03ef165864dbae3db4453d4566e699f78761bace3e4614bf67d38ce76cf",
+      ) &&
+      setup.includes(
+        "`${SCIP_JAVA_KOTLIN_COMMIT}+kotlin-${SCIP_JAVA_KOTLIN_VERSION}`",
       ) &&
       setup.includes('":scip-java:installDist"') &&
       javaSetup.includes("await installScipJava()") &&

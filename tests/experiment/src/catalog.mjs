@@ -274,11 +274,12 @@ export const LANGUAGE_EXPERIMENTS = [
   },
   {
     language: "kotlin",
-    // A current Gradle fixture from the pinned producer keeps ten clean
-    // lifecycle builds bounded. Language setup supplies one verified Gradle
-    // distribution because this fixture intentionally carries no wrapper.
+    // The producer's exact Kotlin 2.3.20 fixture keeps ten clean lifecycle
+    // builds bounded and exercises the same compiler minor as Koin. Language
+    // setup builds the producer from this same commit and supplies one verified
+    // Gradle distribution because the fixture intentionally carries no wrapper.
     repository: "https://github.com/scip-code/scip-java.git",
-    commit: "2aec6906503790dfeba3975da2b1ab259340e482",
+    commit: "e940c1889767a81347387067a375320dc6f5d83e",
     projectRoot:
       "scip-java/src/test/resources/fixtures/gradle/kotlin2",
     strictProvider: "scip-java",
@@ -287,11 +288,11 @@ export const LANGUAGE_EXPERIMENTS = [
     requiredCapabilities: ["universe", "diskDigests"],
     semanticEdges: ["references"],
     crossFileEdge: "references",
-    // scip-java publishes its own version and the Java runtime that launches
-    // it, but exposes no Kotlin compiler revision. Naming Java here would be
-    // false provenance, so the empty field is allowed only with this statement.
+    // This source snapshot and its setup manifest pin the plugin build to Kotlin
+    // 2.3.20. scip-java still does not publish the compiler revision selected by
+    // the indexed build itself, so the empty runtime field remains explicit.
     compilerLimitation:
-      "scip-java 2aec6906503790dfeba3975da2b1ab259340e482 does not expose the Kotlin compiler revision driven by its Gradle plugin, so Kotlin strict provenance cannot name that compiler without guessing",
+      "scip-java e940c1889767a81347387067a375320dc6f5d83e is built with Kotlin 2.3.20 but does not expose the compiler revision selected by the indexed Gradle build, so runtime compiler provenance cannot name it without guessing",
     lifecycle: {
       sourceFile: "src/main/kotlin/foo/Example.kt",
       editSuffix: "\n// samchon-graph lifecycle edit\n",

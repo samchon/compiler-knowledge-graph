@@ -328,12 +328,15 @@ const installScipJava = () =>
   });
 
 // scip-java v0.13.1 predates Kotlin 2.3's CompilerPluginRegistrar.pluginId
-// contract, so it cannot index current Koin. Upstream's merged #973 is the
-// first generation that explicitly supports Kotlin 2.3.20 and passed its
-// JDK 17/21/25 plus real-repository CI. Until that code has a release asset,
-// build that exact source with the exact Gradle generation upstream used.
+// contract, so it cannot index current Koin. Compiler plugins are also coupled
+// to the compiler minor that loads them: #973's merged 2.4.0 tree builds but
+// fails inside Koin's 2.3.20 compiler with NoClassDefFoundError. Pin the exact
+// upstream #973 commit that completed the 2.3.20 port, before its next commit
+// moved the plugin and fixture to 2.4.0. The source archive, compiler minor and
+// fixture revision are then one reviewable generation instead of a local patch.
 const SCIP_JAVA_KOTLIN_COMMIT =
-  "2aec6906503790dfeba3975da2b1ab259340e482";
+  "e940c1889767a81347387067a375320dc6f5d83e";
+const SCIP_JAVA_KOTLIN_VERSION = "2.3.20";
 const installScipJavaKotlinSnapshot = async (gradle) => {
   const url =
     `https://codeload.github.com/scip-code/scip-java/tar.gz/${SCIP_JAVA_KOTLIN_COMMIT}`;
@@ -348,7 +351,7 @@ const installScipJavaKotlinSnapshot = async (gradle) => {
   await downloadFile(url, archive);
   verifySha256(
     archive,
-    "895af11b6682074e42b5398868bba3232fe6d74f727b938c8d9727b7e156d1cf",
+    "985eb03ef165864dbae3db4453d4566e699f78761bace3e4614bf67d38ce76cf",
   );
   fs.rmSync(source, { force: true, recursive: true });
   ensureDir(source);
@@ -376,10 +379,11 @@ const installScipJavaKotlinSnapshot = async (gradle) => {
   run(link, ["--version"]);
   record({
     tool: "scip-java",
-    version: SCIP_JAVA_KOTLIN_COMMIT,
+    version:
+      `${SCIP_JAVA_KOTLIN_COMMIT}+kotlin-${SCIP_JAVA_KOTLIN_VERSION}`,
     source: url,
     digest:
-      "sha256:895af11b6682074e42b5398868bba3232fe6d74f727b938c8d9727b7e156d1cf",
+      "sha256:985eb03ef165864dbae3db4453d4566e699f78761bace3e4614bf67d38ce76cf",
   });
 };
 

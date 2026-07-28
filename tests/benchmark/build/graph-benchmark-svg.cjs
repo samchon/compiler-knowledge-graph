@@ -28,6 +28,7 @@ const COLORS = {
   title: "#f8fafc",
   legend: "#111827",
   legendBorder: "#334155",
+  track: "#111827",
   muted: "#94a3b8",
   worse: "#fb7185",
   // Winner treatment, mirroring the React chart: a cyan crown glyph left of the

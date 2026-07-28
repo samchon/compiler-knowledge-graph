@@ -2334,6 +2334,7 @@ function testReferenceRenderer() {
     const svg = fs.readFileSync(path.join(out, relative), "utf8");
     assert.match(svg, /<svg\b/);
     assert.match(svg, /DejaVu Sans, Arial/);
+    assert.doesNotMatch(svg, /\b(?:undefined|NaN|Infinity)\b/);
     const width = Number(svg.match(/<svg[^>]*width="([\d.]+)"/)?.[1]);
     const height = Number(svg.match(/<svg[^>]*height="([\d.]+)"/)?.[1]);
     const png = fs.readFileSync(

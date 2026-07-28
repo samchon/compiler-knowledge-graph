@@ -830,7 +830,10 @@ function assertIncomingReportScope(incoming) {
 
 function sameHostEvidence(left, right) {
   return ["cpu", "cores", "ramGB", "os", "kernel", "node"].every(
-    (field) => left?.[field] === right?.[field],
+    (field) =>
+      Object.hasOwn(left, field) &&
+      Object.hasOwn(right, field) &&
+      left[field] === right[field],
   );
 }
 

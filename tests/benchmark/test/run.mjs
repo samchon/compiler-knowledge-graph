@@ -53,6 +53,8 @@ const FIXTURE_HOST = Object.freeze({
   cpu: "fixture",
   cores: 4,
   ramGB: 16,
+  kernel: "fixture-kernel",
+  node: "v22.0.0",
 });
 const INDEX_PROJECT = "excalidraw";
 const FIXTURE_COMMIT = PROJECTS[INDEX_PROJECT].commit;
@@ -564,6 +566,10 @@ function testIndexPublicationRefusesMalformedJson() {
     );
   }
   const validReportDocument = JSON.parse(validReport);
+  const withoutHostField = (host, field) =>
+    Object.fromEntries(
+      Object.entries(host).filter(([name]) => name !== field),
+    );
   for (const [label, invalidScope] of [
     [
       "missing project scope",
@@ -701,6 +707,35 @@ function testIndexPublicationRefusesMalformedJson() {
       },
     ],
     [
+      "jointly missing kernel evidence",
+      {
+        ...validReportDocument,
+        host: withoutHostField(validReportDocument.host, "kernel"),
+        cells: validReportDocument.cells.map((cell) => ({
+          ...cell,
+          host: withoutHostField(cell.host, "kernel"),
+        })),
+      },
+    ],
+    [
+      "jointly missing Node evidence",
+      {
+        ...validReportDocument,
+        host: withoutHostField(validReportDocument.host, "node"),
+        cells: validReportDocument.cells.map((cell) => ({
+          ...cell,
+          host: withoutHostField(cell.host, "node"),
+        })),
+      },
+    ],
+    [
+      "report-only missing kernel evidence",
+      {
+        ...validReportDocument,
+        host: withoutHostField(validReportDocument.host, "kernel"),
+      },
+    ],
+    [
       "unknown tool scope",
       {
         ...validReportDocument,
@@ -729,6 +764,30 @@ function testIndexPublicationRefusesMalformedJson() {
         cells: validReportDocument.cells.map((cell) => ({
           ...cell,
           strict: false,
+        })),
+      },
+    ],
+    [
+      "missing fallback-provider intent",
+      {
+        ...validReportDocument,
+        tools: ["samchon-graph-fallback"],
+        cells: validReportDocument.cells.map((cell) => ({
+          ...cell,
+          tool: "samchon-graph-fallback",
+          strict: undefined,
+        })),
+      },
+    ],
+    [
+      "reversed fallback-provider intent",
+      {
+        ...validReportDocument,
+        tools: ["samchon-graph-fallback"],
+        cells: validReportDocument.cells.map((cell) => ({
+          ...cell,
+          tool: "samchon-graph-fallback",
+          strict: true,
         })),
       },
     ],
@@ -821,6 +880,39 @@ function testIndexPublicationRefusesMalformedJson() {
       fs.readFileSync(publication, "utf8"),
       validPublication,
       `a report with ${label} must not change the publication`,
+    );
+  }
+  for (const [tool, strict] of [
+    ["samchon-graph-fallback", false],
+    ["codegraph", undefined],
+  ]) {
+    const measurementId = `fixture-${tool}`;
+    const intentReport = {
+      ...validReportDocument,
+      measurementId,
+      tools: [tool],
+      cells: validReportDocument.cells.map((cell) => ({
+        ...cell,
+        tool,
+        strict,
+        measurementId,
+      })),
+    };
+    fs.writeFileSync(publication, validPublication);
+    fs.writeFileSync(report, JSON.stringify(intentReport));
+    const acceptedIntent = cp.spawnSync(
+      process.execPath,
+      [runner, `--publish=${report}`],
+      {
+        encoding: "utf8",
+        env: { ...process.env, SAMCHON_BENCH_INDEX_JSON: publication },
+        windowsHide: true,
+      },
+    );
+    assert.equal(
+      acceptedIntent.status,
+      0,
+      `${tool} with ${String(strict)} strict intent must publish: ${acceptedIntent.stderr ?? ""}`,
     );
   }
   const partialPrior = {

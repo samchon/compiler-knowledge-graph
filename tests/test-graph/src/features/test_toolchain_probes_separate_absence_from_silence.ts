@@ -448,11 +448,8 @@ function assertOnlyAKnownRowCanBeRestored(): void {
     "bare-tool",
   );
   TestValidator.equals(
-    "legacy derivations normalize to aligned empty private identities",
-    toolchainVersion.normalize({
-      rows: ["legacy=1"],
-      inconclusive: [],
-    }).identities,
+    "public string configuration normalizes to empty private identities",
+    toolchainVersion.normalize(["SETTING=legacy"]).identities,
     [undefined],
   );
 }

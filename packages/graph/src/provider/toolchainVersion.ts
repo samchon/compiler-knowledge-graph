@@ -85,13 +85,8 @@ export namespace toolchainVersion {
   export interface IDerivation {
     rows: readonly string[];
     inconclusive: readonly number[];
-    /**
-     * Optional stable identities aligned with {@link rows}.
-     *
-     * Optional for compatibility with custom providers that implemented the
-     * earlier evidence contract. Namespace helpers always return it.
-     */
-    identities?: readonly (string | undefined)[];
+    /** Stable private identities aligned with {@link rows}. */
+    identities: readonly (string | undefined)[];
   }
 
   export type Input = string | IObservation;
@@ -232,7 +227,7 @@ export namespace toolchainVersion {
    * accepts arbitrary strings, and no spelling inside that public value space
    * is reserved for internal control flow.
    */
-  export function derive(entries: readonly Input[]): Required<IDerivation> {
+  export function derive(entries: readonly Input[]): IDerivation {
     const rows: string[] = [];
     const inconclusive: number[] = [];
     const identities: (string | undefined)[] = [];
@@ -255,19 +250,17 @@ export namespace toolchainVersion {
   /** Treat legacy string-only configuration as fully established evidence. */
   export function normalize(
     value: readonly string[] | IDerivation,
-  ): Required<IDerivation> {
+  ): IDerivation {
     if (!isDerivation(value)) return derive(value);
     return {
       rows: [...value.rows],
       inconclusive: [...value.inconclusive],
-      identities: value.rows.map((_, index) => value.identities?.[index]),
+      identities: [...value.identities],
     };
   }
 
   /** Sort visible rows without detaching their evidence metadata. */
-  export function sort(
-    value: readonly string[] | IDerivation,
-  ): Required<IDerivation> {
+  export function sort(value: readonly string[] | IDerivation): IDerivation {
     const normalized = normalize(value);
     const unresolved = new Set(normalized.inconclusive);
     return derive(
@@ -316,7 +309,7 @@ export namespace toolchainVersion {
   export function reestablish(
     live: IDerivation,
     established: IDerivation | undefined,
-  ): Required<IDerivation> {
+  ): IDerivation {
     const current = normalize(live);
     if (established === undefined || !inconclusive(current)) return current;
     const previousEvidence = normalize(established);

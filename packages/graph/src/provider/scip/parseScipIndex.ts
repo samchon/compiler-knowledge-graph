@@ -1,8 +1,9 @@
 import { IScipIndex } from "./IScipIndex";
 
 const MAX_INVALID_ENCLOSING_RANGE_WARNING_EXAMPLES = 10;
+const MAX_TRANSLATION_UNIT_WARNING_EXAMPLES = 10;
 
-interface IRangeWarning {
+interface IPathWarning {
   relativePath: string;
   message: string;
 }
@@ -63,7 +64,7 @@ export function parseScipIndex(
         ).map((symbol, at) =>
           symbolInformationOf(symbol, `${label}.externalSymbols[${at}]`),
         );
-  const rangeWarnings: IRangeWarning[] = [];
+  const rangeWarnings: IPathWarning[] = [];
   const parsedDocuments = documents.map((document, index) =>
     documentOf(document, `${label}.documents[${index}]`, rangeWarnings),
   );
@@ -126,7 +127,7 @@ export function parseScipIndex(
 function documentOf(
   value: unknown,
   label: string,
-  warnings: IRangeWarning[],
+  warnings: IPathWarning[],
 ): IScipIndex.IDocument {
   const document = objectOf(value, label);
   const rawPath = stringOf(
@@ -219,7 +220,7 @@ function occurrenceOf(
   value: unknown,
   label: string,
   relativePath: string,
-  warnings: IRangeWarning[],
+  warnings: IPathWarning[],
 ): IScipIndex.IOccurrence {
   const occurrence = objectOf(value, label);
   const range = occurrenceRangeOf(occurrence, label, false)!;
@@ -985,7 +986,8 @@ function foldDocumentsByPath(
   warnings: string[],
 ): IScipIndex.IDocument[] {
   const byPath = new Map<string, IScipIndex.IDocument[]>();
-  const foldWarnings: string[] = [];
+  const foldWarnings: IPathWarning[] = [];
+  const ambiguityWarnings: IPathWarning[] = [];
   for (const document of documents) {
     const units = byPath.get(document.relativePath) ?? [];
     units.push(document);
@@ -995,13 +997,25 @@ function foldDocumentsByPath(
     const document =
       units.length === 1 ? units[0]! : mergeDocuments(units);
     if (units.length === 1) return document;
-    foldWarnings.push(
-      `scip: ${relativePath} was indexed as ${String(units.length)} translation units; their occurrences are folded into one document`,
-    );
-    foldWarnings.push(...translationUnitAmbiguityWarnings(document));
+    foldWarnings.push({
+      relativePath,
+      message: `scip: ${relativePath} was indexed as ${String(units.length)} translation units; their occurrences are folded into one document`,
+    });
+    ambiguityWarnings.push(...translationUnitAmbiguityWarnings(document));
     return document;
   });
-  warnings.push(...[...new Set(foldWarnings)].sort(compareText));
+  pushBoundedPathWarnings(
+    warnings,
+    foldWarnings,
+    (count) =>
+      `scip: ${String(count)} files were indexed as multiple translation units; their occurrences were folded into one document per file; first ${String(MAX_TRANSLATION_UNIT_WARNING_EXAMPLES)} examples follow`,
+  );
+  pushBoundedPathWarnings(
+    warnings,
+    ambiguityWarnings,
+    (count, affectedFiles) =>
+      `scip: ${String(count)} ranges or symbol readings disagreed across translation units; every reading is published; affected files: ${String(affectedFiles)}; first ${String(MAX_TRANSLATION_UNIT_WARNING_EXAMPLES)} examples follow`,
+  );
   // Sorted, because an indexer's document order is its own business and at
   // least one producer's varies between runs of an unchanged project.
   // rust-analyzer walks crates in parallel, and two indexes of one source have
@@ -1138,8 +1152,8 @@ function mergeOccurrences(
  */
 function translationUnitAmbiguityWarnings(
   document: IScipIndex.IDocument,
-): string[] {
-  const warnings: string[] = [];
+): IPathWarning[] {
+  const warnings: IPathWarning[] = [];
   const claims = new Map<
     string,
     { range: string; symbol: string; cores: Set<string> }
@@ -1163,20 +1177,51 @@ function translationUnitAmbiguityWarnings(
   }
   for (const symbols of symbolsByRange.values()) {
     if (symbols.size <= 1) continue;
-    warnings.push(
-      `scip: ${document.relativePath} resolves one range to ${[...symbols]
+    warnings.push({
+      relativePath: document.relativePath,
+      message: `scip: ${document.relativePath} resolves one range to ${[...symbols]
         .sort(compareText)
         .map((symbol) => JSON.stringify(symbol))
         .join(", ")} across translation units; every reading is published`,
-    );
+    });
   }
   for (const claim of claims.values()) {
     if (claim.cores.size <= 1) continue;
-    warnings.push(
-      `scip: ${document.relativePath} reports ${JSON.stringify(claim.symbol)} at range ${claim.range} with different roles, syntax, or scopes across translation units; every reading is published`,
-    );
+    warnings.push({
+      relativePath: document.relativePath,
+      message: `scip: ${document.relativePath} reports ${JSON.stringify(claim.symbol)} at range ${claim.range} with different roles, syntax, or scopes across translation units; every reading is published`,
+    });
   }
-  return warnings.sort(compareText);
+  return warnings.sort((left, right) =>
+    compareText(left.message, right.message),
+  );
+}
+
+function pushBoundedPathWarnings(
+  warnings: string[],
+  examples: readonly IPathWarning[],
+  summary: (count: number, affectedFiles: number) => string,
+): void {
+  // Warnings ride every public dump. Keep the complete folded facts above, but
+  // do not make one warning string per ambiguous range in a large C build.
+  const unique = [
+    ...new Map(
+      examples.map((example) => [example.message, example] as const),
+    ).values(),
+  ].sort((left, right) => compareText(left.message, right.message));
+  if (unique.length <= MAX_TRANSLATION_UNIT_WARNING_EXAMPLES) {
+    warnings.push(...unique.map((example) => example.message));
+    return;
+  }
+  warnings.push(
+    summary(
+      unique.length,
+      new Set(unique.map((example) => example.relativePath)).size,
+    ),
+    ...unique
+      .slice(0, MAX_TRANSLATION_UNIT_WARNING_EXAMPLES)
+      .map((example) => example.message),
+  );
 }
 
 function occurrenceCoreKey(occurrence: IScipIndex.IOccurrence): string {

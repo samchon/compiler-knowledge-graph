@@ -1985,6 +1985,53 @@ function assertRelationshipsAndExternals(): void {
     "…and says which definition it kept",
     duplicated.warnings.some((warning) => warning.includes("keeping the first")),
   );
+
+  const repeatedFiles = Array.from(
+    { length: 13 },
+    (_, at) => `duplicate-${String(at).padStart(2, "0")}.go`,
+  );
+  const repeatedDefinitions = (files: string[]) => {
+    const result = adaptScipIndex({
+      index: parseScipIndex({
+        metadata: { projectRoot: "file:///r" },
+        documents: files.map((relativePath) => ({
+          relativePath,
+          symbols: [{ symbol: iface, displayName: "Reader", kind: "Interface" }],
+        })),
+      }),
+      root: "/r",
+      provider: "scip-go",
+      languages: ["go"],
+      languageOf: () => "go",
+    });
+    return { nodes: result.nodes, warnings: result.warnings };
+  };
+  const boundedDuplicates = repeatedDefinitions(repeatedFiles);
+  TestValidator.equals(
+    "amplified duplicate definitions keep their complete canonical result",
+    repeatedDefinitions([...repeatedFiles].reverse()),
+    boundedDuplicates,
+  );
+  TestValidator.equals(
+    "…and still keep exactly one declaration",
+    boundedDuplicates.nodes.length,
+    1,
+  );
+  TestValidator.predicate(
+    "…while their warnings are summarized with ten deterministic examples",
+    boundedDuplicates.warnings.length === 11 &&
+      boundedDuplicates.warnings[0]?.includes(
+        "12 symbol definition(s) were repeated",
+      ) === true &&
+      boundedDuplicates.warnings.filter((warning) =>
+        warning.includes("is defined in both"),
+      ).length === 10 &&
+      boundedDuplicates.warnings.every(
+        (warning) =>
+          !warning.includes("duplicate-11.go") &&
+          !warning.includes("duplicate-12.go"),
+      ),
+  );
 }
 
 function rawIndex(
@@ -2669,6 +2716,69 @@ function assertTranslationUnitWarningsAreOrderIndependent(): void {
     normalized[0]!.warnings.filter((warning) =>
       warning.includes('"alternative", "shared"'),
     ).length === 1,
+  );
+
+  const amplified = Array.from({ length: 12 }, (_, at) => {
+    const relativePath = `bounded-${String(at).padStart(2, "0")}.c`;
+    return [
+      {
+        relativePath,
+        occurrences: [{ range: [0, 0, 1], symbol: `left-${String(at)}` }],
+      },
+      {
+        relativePath,
+        occurrences: [{ range: [0, 0, 1], symbol: `right-${String(at)}` }],
+      },
+    ];
+  }).flat();
+  const fold = (input: Record<string, unknown>[]) => {
+    const warnings: string[] = [];
+    const index = parseScipIndex(
+      {
+        metadata: { projectRoot: "file:///r" },
+        documents: input,
+      },
+      "scip-clang",
+      warnings,
+    );
+    return { documents: index.documents, warnings };
+  };
+  const bounded = fold(amplified);
+  TestValidator.equals(
+    "amplified translation-unit input has canonical facts and warnings",
+    fold([...amplified].reverse()),
+    bounded,
+  );
+  TestValidator.predicate(
+    "…and warning bounds never discard an occurrence",
+    bounded.documents.length === 12 &&
+      bounded.documents.reduce(
+        (count, document) => count + (document.occurrences?.length ?? 0),
+        0,
+      ) === 24,
+  );
+  TestValidator.predicate(
+    "…while each warning class carries one summary and ten examples",
+    bounded.warnings.length === 22 &&
+      bounded.warnings.some((warning) =>
+        warning.includes("12 files were indexed as multiple translation units"),
+      ) &&
+      bounded.warnings.some((warning) =>
+        warning.includes(
+          "12 ranges or symbol readings disagreed across translation units",
+        ),
+      ) &&
+      bounded.warnings.filter((warning) =>
+        warning.includes("was indexed as 2 translation units"),
+      ).length === 10 &&
+      bounded.warnings.filter((warning) =>
+        warning.includes("resolves one range"),
+      ).length === 10 &&
+      bounded.warnings.every(
+        (warning) =>
+          !warning.includes("bounded-10.c") &&
+          !warning.includes("bounded-11.c"),
+      ),
   );
 }
 

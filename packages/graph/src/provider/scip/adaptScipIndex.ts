@@ -11,6 +11,8 @@ import { IGraphSemanticIdentity, semanticGraphNodeId } from "../semanticIdentity
 import { IScipIndex } from "./IScipIndex";
 import { scipSymbol } from "./scipSymbol";
 
+const MAX_DUPLICATE_DEFINITION_WARNING_EXAMPLES = 10;
+
 /**
  * The edge families a bare SCIP index can prove.
  *
@@ -93,6 +95,7 @@ export function adaptScipIndex(
   const diagnostics: ISamchonGraphDiagnostic[] = [];
   const warnings: string[] = [];
   const unsupportedRoles = new Set<string>();
+  const duplicateDefinitionWarnings: string[] = [];
   const ownedDocuments = new Set<
     (typeof props.index.documents)[number]
   >();
@@ -148,7 +151,7 @@ export function adaptScipIndex(
       const symbolKey = definitionKey(parsed, file);
       const definition = definitions.get(symbolKey);
       if (definition !== undefined) {
-        warnings.push(
+        duplicateDefinitionWarnings.push(
           `${props.provider}: ${parsed.key} is defined in both ${definition.file} and ${file}; keeping the first`,
         );
         continue;
@@ -448,6 +451,12 @@ export function adaptScipIndex(
       `${props.provider}: ${String(unscopedLocalReferences)} reference(s) named a document-scoped local this index does not resolve, so they are omitted rather than attached to an invented declaration`,
     );
   }
+  warnings.push(
+    ...boundedDuplicateDefinitionWarnings(
+      duplicateDefinitionWarnings,
+      props.provider,
+    ),
+  );
 
   return {
     nodes: [...nodes.values()],
@@ -462,6 +471,21 @@ export function adaptScipIndex(
     warnings,
     files,
   };
+}
+
+function boundedDuplicateDefinitionWarnings(
+  examples: readonly string[],
+  provider: string,
+): string[] {
+  // The first declaration still wins for every duplicate. The public warning
+  // payload carries the total and representative evidence rather than one
+  // string per translation-unit definition.
+  const unique = [...new Set(examples)].sort();
+  if (unique.length <= MAX_DUPLICATE_DEFINITION_WARNING_EXAMPLES) return unique;
+  return [
+    `${provider}: ${String(unique.length)} symbol definition(s) were repeated across files; keeping the first definition of each symbol; first ${String(MAX_DUPLICATE_DEFINITION_WARNING_EXAMPLES)} examples follow`,
+    ...unique.slice(0, MAX_DUPLICATE_DEFINITION_WARNING_EXAMPLES),
+  ];
 }
 
 function documentLanguage(

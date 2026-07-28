@@ -53,10 +53,25 @@ export function assertBothIndexColumnsAreMeasured() {
     path.join(repoRoot, "tests", "benchmark", "graph", "index-time.mjs"),
     "utf8",
   );
+  const cellContract = fs.readFileSync(
+    path.join(
+      repoRoot,
+      "tests",
+      "benchmark",
+      "graph",
+      "index-time-cell.mjs",
+    ),
+    "utf8",
+  );
+  assert.match(
+    cellContract,
+    /export const TOOL_SAMCHON_FALLBACK\s*=\s*"samchon-graph-fallback"/,
+    "the cell contract no longer defines the fallback column the workflow asks for",
+  );
   assert.match(
     runner,
-    /TOOL_SAMCHON_FALLBACK\s*=\s*"samchon-graph-fallback"/,
-    "the runner no longer defines the fallback column the workflow asks for",
+    /import\s*\{[^}]*\bTOOL_SAMCHON_FALLBACK\b[^}]*\}\s*from\s*"\.\/index-time-cell\.mjs";/,
+    "the runner no longer imports the fallback column the workflow asks for",
   );
   assert.match(
     runner,

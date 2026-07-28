@@ -18,16 +18,9 @@ on:
       - "pnpm-lock.yaml"
       - "pnpm-workspace.yaml"
 
-# Sixteen jobs per run, so a branch under active review can hold most of the
-# available runners in superseded work. Only the current head's real-server
-# result is usable — the earlier ones describe code that has already been
-# replaced — and keeping them alive delays the one verdict that can gate a
-# merge.
-#
-# A manual dispatch is left alone: somebody asked for that specific run.
-concurrency:
-  group: experiment-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+# Cancellation belongs to the real-language jobs below, after latest_update has
+# classified this push. A result-only synchronize must not cancel valid evidence
+# and then skip its own replacement matrix.
 
 jobs:
   latest_update:
@@ -60,6 +53,12 @@ jobs:
     needs: latest_update
     if: ${{ needs.latest_update.outputs.run == 'true' }}
     name: ${{ matrix.language }} LSP
+    # Sixteen jobs per run can hold most available runners in superseded work.
+    # Only current-head evidence is usable, so each relevant PR push replaces
+    # the older job for the same language. Manual dispatches remain uncancelled.
+    concurrency:
+      group: experiment-${{ github.event.pull_request.number || github.ref }}-${{ matrix.language }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     strategy:

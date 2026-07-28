@@ -1,5 +1,12 @@
 import { IScipIndex } from "./IScipIndex";
 
+const MAX_INVALID_ENCLOSING_RANGE_WARNING_EXAMPLES = 10;
+
+interface IRangeWarning {
+  relativePath: string;
+  message: string;
+}
+
 /**
  * Validate one decoded SCIP index before any of it is believed.
  *
@@ -56,12 +63,33 @@ export function parseScipIndex(
         ).map((symbol, at) =>
           symbolInformationOf(symbol, `${label}.externalSymbols[${at}]`),
         );
-  const rangeWarnings: string[] = [];
+  const rangeWarnings: IRangeWarning[] = [];
   const parsedDocuments = documents.map((document, index) =>
     documentOf(document, `${label}.documents[${index}]`, rangeWarnings),
   );
   const foldedDocuments = foldDocumentsByPath(parsedDocuments, warnings);
-  warnings.push(...[...new Set(rangeWarnings)].sort(compareText));
+  const uniqueRangeWarningMessages = [
+    ...new Set(rangeWarnings.map((warning) => warning.message)),
+  ].sort(compareText);
+  if (
+    uniqueRangeWarningMessages.length <=
+    MAX_INVALID_ENCLOSING_RANGE_WARNING_EXAMPLES
+  ) {
+    warnings.push(...uniqueRangeWarningMessages);
+  } else {
+    const affectedFileCount = new Set(
+      rangeWarnings.map((warning) => warning.relativePath),
+    ).size;
+    warnings.push(
+      `scip: ${String(uniqueRangeWarningMessages.length)} occurrences across ${String(affectedFileCount)} ${
+        affectedFileCount === 1 ? "file" : "files"
+      } carry enclosing ranges that do not enclose them; optional scopes were omitted; first ${String(MAX_INVALID_ENCLOSING_RANGE_WARNING_EXAMPLES)} examples follow`,
+      ...uniqueRangeWarningMessages.slice(
+        0,
+        MAX_INVALID_ENCLOSING_RANGE_WARNING_EXAMPLES,
+      ),
+    );
+  }
   return {
     metadata: {
       ...optionalProtocolVersion(
@@ -100,7 +128,7 @@ export function parseScipIndex(
 function documentOf(
   value: unknown,
   label: string,
-  warnings: string[],
+  warnings: IRangeWarning[],
 ): IScipIndex.IDocument {
   const document = objectOf(value, label);
   const rawPath = stringOf(
@@ -193,7 +221,7 @@ function occurrenceOf(
   value: unknown,
   label: string,
   relativePath: string,
-  warnings: string[],
+  warnings: IRangeWarning[],
 ): IScipIndex.IOccurrence {
   const occurrence = objectOf(value, label);
   const range = occurrenceRangeOf(occurrence, label, false)!;
@@ -222,13 +250,14 @@ function occurrenceOf(
   const invalidEnclosingRange =
     enclosingRange !== undefined && !rangeContains(enclosingRange, range);
   if (invalidEnclosingRange) {
-    warnings.push(
-      `scip: ${relativePath} occurrence ${
+    warnings.push({
+      relativePath,
+      message: `scip: ${relativePath} occurrence ${
         parsedSymbol.symbol === undefined
           ? "without a symbol"
           : JSON.stringify(parsedSymbol.symbol)
       } at ${JSON.stringify(range)} carries an enclosing range that does not enclose it; the optional scope was omitted`,
-    );
+    });
   }
   return {
     range,

@@ -887,6 +887,50 @@ function assertIndexValidation(): void {
       "scip: a.go occurrence without a symbol at [8,4,10] carries an enclosing range that does not enclose it; the optional scope was omitted",
     ],
   );
+  const amplifiedWarnings: string[] = [];
+  const amplified = parseScipIndex(
+    withDocument({
+      relativePath: "flood.go",
+      occurrences: Array.from({ length: 12 }, (_, at) => 11 - at).map(
+        (line) => ({
+          range: [line, 10, 11],
+          enclosingRange: [line, 0, 5],
+          symbol: `s${String(line).padStart(2, "0")}`,
+        }),
+      ),
+    }),
+    "scip",
+    amplifiedWarnings,
+  );
+  TestValidator.equals(
+    "every occurrence survives an amplified malformed optional-scope report",
+    [
+      amplified.documents[0]?.occurrences?.length,
+      amplified.documents[0]?.occurrences?.every(
+        (occurrence) => occurrence.enclosingRange === undefined,
+      ),
+    ],
+    [12, true],
+  );
+  TestValidator.equals(
+    "amplified malformed optional-scope warnings are capped and deterministic",
+    [
+      amplifiedWarnings.length,
+      amplifiedWarnings[0],
+      amplifiedWarnings[1],
+      amplifiedWarnings[10],
+      amplifiedWarnings.some(
+        (warning) => warning.includes('"s10"') || warning.includes('"s11"'),
+      ),
+    ],
+    [
+      11,
+      "scip: 12 occurrences across 1 file carry enclosing ranges that do not enclose them; optional scopes were omitted; first 10 examples follow",
+      'scip: flood.go occurrence "s00" at [0,10,11] carries an enclosing range that does not enclose it; the optional scope was omitted',
+      'scip: flood.go occurrence "s09" at [9,10,11] carries an enclosing range that does not enclose it; the optional scope was omitted',
+      false,
+    ],
+  );
   // Optional records the graph does not read are still validated, because a
   // malformed one is evidence the index was not produced the way it claims.
   const documented = parseScipIndex(

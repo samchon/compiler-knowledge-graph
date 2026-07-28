@@ -7,7 +7,7 @@ import fs from "node:fs";
  *
  * The "how" is not decoration. A C# corpus fixture failed this check three
  * bounded attempts running, twice in a row, and the message it produced —
- * `<file> changed after this build consumed it` — could not distinguish three
+ * `<file> changed after this build consumed it` — could not distinguish four
  * quite different situations:
  *
  *   * the file genuinely changed on disk while the build was running,

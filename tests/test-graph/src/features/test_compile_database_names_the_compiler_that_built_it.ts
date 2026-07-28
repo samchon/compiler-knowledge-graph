@@ -29,6 +29,7 @@ export const test_compile_database_names_the_compiler_that_built_it =
     assertTheDatabaseDecidesTheToolchain();
     assertALauncherIsNotTheCompiler();
     assertEnvExecutionContextIsCompilerContext();
+    assertEnvPlatformAndSplitRules();
     assertMemoizedDatabaseUsesTheCurrentEnvironment();
     assertAQuotedOrEscapedDriverSurvives();
     assertADriverWithAPathIsTakenLiterally();
@@ -85,6 +86,7 @@ function assertALauncherIsNotTheCompiler(): void {
         "-i",
         "-u",
         "CPATH",
+        "PATH=.samchon-graph/bin",
         "SOURCE_DATE_EPOCH=0",
         "ccache",
         "gcc",
@@ -94,16 +96,69 @@ function assertALauncherIsNotTheCompiler(): void {
     },
     // GNU env's split-string inserts command tokens back into its argv. The
     // option terminator also has to disappear rather than becoming a driver.
-    { command: "env -S'ccache gcc' -c d.c" },
-    { command: "env -vS'ccache gcc' -c d0.c" },
     {
-      arguments: ["env", "--split-string", "ccache clang", "-c", "d1.c"],
+      command:
+        "env -S'PATH=.samchon-graph/bin ccache gcc' -c d.c",
     },
-    { command: "env --split-string='ccache gcc' -c d2.c" },
-    { arguments: ["env", "-S", "ccache\\_gcc", "-c", "d3.c"] },
-    { arguments: ["env", "--unset=CPATH", "clang", "-c", "d3.c"] },
-    { arguments: ["env", "-a", "compiler", "1=X", "clang", "-c", "d4.c"] },
-    { arguments: ["env", "--ignore-environment", "--", "clang", "-c", "e.c"] },
+    {
+      command:
+        "env -vS'PATH=.samchon-graph/bin ccache gcc' -c d0.c",
+    },
+    {
+      arguments: [
+        "env",
+        "--split-string",
+        "PATH=.samchon-graph/bin ccache clang",
+        "-c",
+        "d1.c",
+      ],
+    },
+    {
+      command:
+        "env --split-string='PATH=.samchon-graph/bin ccache gcc' -c d2.c",
+    },
+    {
+      arguments: [
+        "env",
+        "-S",
+        "PATH=.samchon-graph/bin ccache\\_gcc",
+        "-c",
+        "d3.c",
+      ],
+    },
+    {
+      arguments: [
+        "env",
+        "--unset=CPATH",
+        "PATH=.samchon-graph/bin",
+        "clang",
+        "-c",
+        "d3.c",
+      ],
+    },
+    {
+      arguments: [
+        "env",
+        "-a",
+        "compiler",
+        "1=X",
+        "PATH=.samchon-graph/bin",
+        "clang",
+        "-c",
+        "d4.c",
+      ],
+    },
+    {
+      arguments: [
+        "env",
+        "--ignore-environment",
+        "--",
+        "PATH=.samchon-graph/bin",
+        "clang",
+        "-c",
+        "e.c",
+      ],
+    },
   ]);
   writeShims(root, ["gcc", "clang", "ccache", "env"]);
   TestValidator.equals(
@@ -292,6 +347,103 @@ function assertEnvExecutionContextIsCompilerContext(): void {
   );
 }
 
+function assertEnvPlatformAndSplitRules(): void {
+  const root = GraphPaths.createTempDirectory("graph-compdb-env-rules-");
+  const searched = path.join(root, "searched");
+  for (const name of [
+    "--",
+    "casecc",
+    "escaped cc",
+    "spacecc",
+    "unsetcc",
+  ]) {
+    shim(searched, name);
+  }
+  writeShims(root, []);
+  fs.writeFileSync(
+    path.join(root, "compile_commands.json"),
+    JSON.stringify([
+      {
+        directory: root,
+        file: "a.c",
+        arguments: ["env", `Path=${searched}`, "casecc", "-c", "a.c"],
+      },
+      {
+        directory: root,
+        file: "b.c",
+        arguments: [
+          "env",
+          `PATH=${searched}`,
+          "env",
+          "-u",
+          "Path",
+          "unsetcc",
+          "-c",
+          "b.c",
+        ],
+      },
+      {
+        directory: root,
+        file: "c.c",
+        arguments: [
+          "env",
+          "-S",
+          `PATH=${envSplitQuoted(searched)} \t\n\v\f\rspacecc`,
+          "-c",
+          "c.c",
+        ],
+      },
+      {
+        directory: root,
+        file: "d.c",
+        arguments: [
+          "env",
+          "-S",
+          `PATH=${envSplitQuoted(searched)} escaped\\ cc`,
+          "-c",
+          "d.c",
+        ],
+      },
+      {
+        directory: root,
+        file: "e.c",
+        arguments: [
+          "env",
+          "-S",
+          `PATH=${envSplitQuoted(searched)} escaped\\\tcc`,
+          "-c",
+          "e.c",
+        ],
+      },
+      {
+        directory: root,
+        file: "f.c",
+        arguments: ["env", `PATH=${searched}`, "--", "-c", "f.c"],
+      },
+    ]),
+  );
+  TestValidator.equals(
+    "env follows native name casing, complete split whitespace, and post-assignment utility rules",
+    drivers(root),
+    process.platform === "win32"
+      ? [
+          "--=-- v1.0.0",
+          "casecc=casecc v1.0.0",
+          "escaped\tcc=unavailable",
+          "escaped cc=escaped cc v1.0.0",
+          "spacecc=spacecc v1.0.0",
+        ]
+      : [
+          "casecc=unavailable",
+          "--=-- v1.0.0",
+          "escaped\tcc=unavailable",
+          "escaped cc=escaped cc v1.0.0",
+          "spacecc=spacecc v1.0.0",
+          "unsetcc=unsetcc v1.0.0",
+        ],
+  );
+}
+
 function assertMemoizedDatabaseUsesTheCurrentEnvironment(): void {
   const root = GraphPaths.createTempDirectory("graph-compdb-env-memo-");
   const first = path.join(root, "first");
@@ -320,7 +472,9 @@ function assertMemoizedDatabaseUsesTheCurrentEnvironment(): void {
   TestValidator.equals(
     "a later environment resolves the same parsed command from Path",
     rows({ PATH: undefined, Path: second }),
-    ["cc=second v1.0.0"],
+    process.platform === "win32"
+      ? ["cc=second v1.0.0"]
+      : ["cc=unavailable"],
   );
   TestValidator.equals(
     "an inherited environment without a search path declines a bare command",

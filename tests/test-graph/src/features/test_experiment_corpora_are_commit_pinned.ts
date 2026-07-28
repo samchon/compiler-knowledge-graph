@@ -34,6 +34,8 @@ export const test_experiment_corpora_are_commit_pinned = () => {
   const php = region(catalog, 'language: "php"', 'language: "lua"');
   const lua = region(catalog, 'language: "lua"', 'language: "dart"');
   const dart = region(catalog, 'language: "dart"', "\n];");
+  const javaSetup = region(setup, 'case "java"', 'case "csharp"');
+  const kotlinSetup = region(setup, 'case "kotlin"', 'case "swift"');
   TestValidator.equals(
     "every registered strict-provider language has a lifecycle row",
     [...catalog.matchAll(/strictProvider:\s*"[^"]+"/g)].length,
@@ -62,13 +64,28 @@ export const test_experiment_corpora_are_commit_pinned = () => {
   );
   TestValidator.predicate(
     "every setup path installs, persists, and records one verified Gradle",
-    setup.includes('const version = "8.14.3"') &&
+    setup.includes('const version = "9.4.1"') &&
       setup.includes("services.gradle.org/distributions/gradle-") &&
       setup.includes(
-        "bd71102213493060956ec229d946beee57158dbd89d0e62b91bca0fa2c5f3531",
+        "2ab2958f2a1e51120c326cad6f385153bb11ee93b3c216c5fccebfdfbb7ec6cb",
       ) &&
       setup.includes('path.join(binRoot, "gradle")') &&
       setup.includes("await installGradle()"),
+  );
+  TestValidator.predicate(
+    "Kotlin uses one checksum-pinned upstream generation that supports its fixture",
+    kotlin.includes("2aec6906503790dfeba3975da2b1ab259340e482") &&
+      setup.includes("const SCIP_JAVA_KOTLIN_COMMIT") &&
+      setup.includes('"2aec6906503790dfeba3975da2b1ab259340e482"') &&
+      setup.includes(
+        "895af11b6682074e42b5398868bba3232fe6d74f727b938c8d9727b7e156d1cf",
+      ) &&
+      setup.includes('":scip-java:installDist"') &&
+      javaSetup.includes("await installScipJava()") &&
+      !javaSetup.includes("installScipJavaKotlinSnapshot") &&
+      kotlinSetup.includes("await installScipJavaKotlinSnapshot(gradle)") &&
+      !kotlinSetup.includes("await installScipJava();") &&
+      setup.includes('run(link, ["--version"])'),
   );
   TestValidator.predicate(
     "a local start process reactivates the complete environment from setup",

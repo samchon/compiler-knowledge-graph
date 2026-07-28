@@ -186,7 +186,7 @@ export const CORPUS = [
     // Koin already declares its complete Google and Maven Central repository
     // set in settings and has no project-level repositories. The pinned fork
     // preserves that centralized boundary against scip-java's repository
-    // injection. It also disables only scip-java 0.13.1's optional dependency
+    // injection. It also disables only scip-java's optional dependency
     // metadata task in Android modules, where resolving a live Gradle
     // configuration container throws ConcurrentModificationException; the
     // compiler-backed scipCompileAll task still indexes every module.

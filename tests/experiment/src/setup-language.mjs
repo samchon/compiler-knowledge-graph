@@ -186,14 +186,14 @@ const installKotlinLanguageServer = async () => {
 };
 
 const installGradle = async () => {
-  const version = "8.14.3";
+  const version = "9.4.1";
   const url = `https://services.gradle.org/distributions/gradle-${version}-bin.zip`;
   const archive = path.join(toolsRoot, `gradle-${version}-bin.zip`);
   const target = path.join(toolsRoot, `gradle-${version}`);
   await downloadFile(url, archive);
   verifySha256(
     archive,
-    "bd71102213493060956ec229d946beee57158dbd89d0e62b91bca0fa2c5f3531",
+    "2ab2958f2a1e51120c326cad6f385153bb11ee93b3c216c5fccebfdfbb7ec6cb",
   );
   fs.rmSync(target, { force: true, recursive: true });
   run("unzip", ["-q", archive, "-d", toolsRoot]);
@@ -217,8 +217,9 @@ const installGradle = async () => {
     version,
     source: url,
     digest:
-      "sha256:bd71102213493060956ec229d946beee57158dbd89d0e62b91bca0fa2c5f3531",
+      "sha256:2ab2958f2a1e51120c326cad6f385153bb11ee93b3c216c5fccebfdfbb7ec6cb",
   });
+  return executable;
 };
 
 const installZls = async () => {
@@ -325,6 +326,62 @@ const installScipJava = () =>
     digest:
       "a694cae143c32c5b6226362fb4bd268a8d13d3cd9b482819b3b0029a9a97b8fe",
   });
+
+// scip-java v0.13.1 predates Kotlin 2.3's CompilerPluginRegistrar.pluginId
+// contract, so it cannot index current Koin. Upstream's merged #973 is the
+// first generation that explicitly supports Kotlin 2.3.20 and passed its
+// JDK 17/21/25 plus real-repository CI. Until that code has a release asset,
+// build that exact source with the exact Gradle generation upstream used.
+const SCIP_JAVA_KOTLIN_COMMIT =
+  "2aec6906503790dfeba3975da2b1ab259340e482";
+const installScipJavaKotlinSnapshot = async (gradle) => {
+  const url =
+    `https://codeload.github.com/scip-code/scip-java/tar.gz/${SCIP_JAVA_KOTLIN_COMMIT}`;
+  const archive = path.join(
+    toolsRoot,
+    `scip-java-${SCIP_JAVA_KOTLIN_COMMIT}.tar.gz`,
+  );
+  const source = path.join(
+    toolsRoot,
+    `scip-java-${SCIP_JAVA_KOTLIN_COMMIT}`,
+  );
+  await downloadFile(url, archive);
+  verifySha256(
+    archive,
+    "895af11b6682074e42b5398868bba3232fe6d74f727b938c8d9727b7e156d1cf",
+  );
+  fs.rmSync(source, { force: true, recursive: true });
+  ensureDir(source);
+  run(
+    "tar",
+    ["-xzf", archive, "--strip-components=1", "-C", source],
+  );
+  run(gradle, ["--no-daemon", ":scip-java:installDist"], { cwd: source });
+  const launcher = path.join(
+    source,
+    "scip-java",
+    "build",
+    "install",
+    "scip-java",
+    "bin",
+    "scip-java",
+  );
+  if (!fs.statSync(launcher, { throwIfNoEntry: false })?.isFile()) {
+    throw new Error(`scip-java snapshot launcher not found at ${launcher}`);
+  }
+  fs.chmodSync(launcher, 0o755);
+  const link = path.join(binRoot, "scip-java");
+  fs.rmSync(link, { force: true });
+  fs.symlinkSync(launcher, link);
+  run(link, ["--version"]);
+  record({
+    tool: "scip-java",
+    version: SCIP_JAVA_KOTLIN_COMMIT,
+    source: url,
+    digest:
+      "sha256:895af11b6682074e42b5398868bba3232fe6d74f727b938c8d9727b7e156d1cf",
+  });
+};
 
 // Needs a compilation database, which is why the provider carries
 // `--compdb-path` and the corpus fixtures for redis and leveldb have to produce
@@ -594,7 +651,7 @@ switch (experiment.language) {
   }
   case "kotlin":
     await installKotlinLanguageServer();
-    await installGradle();
+    const gradle = await installGradle();
     // scip-java covers Kotlin through semanticdb-kotlinc, and it needs a JDK to
     // run the Gradle build it indexes through. koin is the worst lane measured
     // at 1349 s, almost all of it kotlin-language-server's Gradle sync before it
@@ -612,7 +669,7 @@ switch (experiment.language) {
       );
     }
     appendGithubPath(path.join(javaHome, "bin"));
-    await installScipJava();
+    await installScipJavaKotlinSnapshot(gradle);
     await installScip();
     break;
   case "swift":

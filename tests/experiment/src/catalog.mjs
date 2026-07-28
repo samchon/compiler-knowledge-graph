@@ -278,7 +278,7 @@ export const LANGUAGE_EXPERIMENTS = [
     // lifecycle builds bounded. Language setup supplies one verified Gradle
     // distribution because this fixture intentionally carries no wrapper.
     repository: "https://github.com/scip-code/scip-java.git",
-    commit: "a609ba1adaf630292df5a73ec4ba06c170caba93",
+    commit: "2aec6906503790dfeba3975da2b1ab259340e482",
     projectRoot:
       "scip-java/src/test/resources/fixtures/gradle/kotlin2",
     strictProvider: "scip-java",
@@ -291,7 +291,7 @@ export const LANGUAGE_EXPERIMENTS = [
     // it, but exposes no Kotlin compiler revision. Naming Java here would be
     // false provenance, so the empty field is allowed only with this statement.
     compilerLimitation:
-      "scip-java 0.13.1 does not expose the Kotlin compiler revision driven by its Gradle plugin, so Kotlin strict provenance cannot name that compiler without guessing",
+      "scip-java 2aec6906503790dfeba3975da2b1ab259340e482 does not expose the Kotlin compiler revision driven by its Gradle plugin, so Kotlin strict provenance cannot name that compiler without guessing",
     lifecycle: {
       sourceFile: "src/main/kotlin/foo/Example.kt",
       editSuffix: "\n// samchon-graph lifecycle edit\n",

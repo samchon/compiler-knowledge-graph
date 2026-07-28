@@ -887,7 +887,7 @@ interface IToolchainTool {
  * of its location.
  */
 function driverLabel(named: string): string {
-  return lastSegment(named).replace(/\.(?:exe|cmd|bat)$/i, "");
+  return lastSegment(named).replace(WINDOWS_EXECUTABLE_SUFFIX, "");
 }
 
 /** Stable private identity for one project-selected compiler driver. */
@@ -1124,7 +1124,7 @@ function compilerToken(
       if (isEnvironmentVariable(assignment.name, "PATHEXT")) {
         environmentPathext = assignment.value;
         if (!envWrapped && environmentPath === undefined) {
-          environmentPath = inheritedSearchPath(env);
+          environmentPath = pathextSearchPath(env);
         }
       }
       continue;
@@ -1280,6 +1280,24 @@ function inheritedSearchPath(
         value,
         delimiter: path.delimiter,
       };
+}
+
+/**
+ * The inherited command search that a leading shell `PATHEXT=` assignment
+ * makes relevant.
+ *
+ * POSIX shells accept that assignment as ordinary environment data: it does
+ * not turn a bare utility into a historical PATH lookup. Windows command
+ * resolution does need the inherited PATH to apply the assigned executable
+ * extensions to the utility that follows.
+ */
+function pathextSearchPath(
+  env: NodeJS.ProcessEnv,
+): IEnvSearchPath | null | undefined {
+  /* c8 ignore next -- each CI operating system exercises its native answer. */
+  return process.platform === "win32"
+    ? inheritedSearchPath(env)
+    : undefined;
 }
 
 function inheritedPathext(env: NodeJS.ProcessEnv): string {
@@ -1460,14 +1478,27 @@ function envDriverSpellings(
   environmentPathext: string | null | undefined,
   env: NodeJS.ProcessEnv,
 ): string[] {
-  /* c8 ignore start -- each CI operating system exercises its native arm. */
-  if (process.platform !== "win32") return [driver];
-  if (/\.(?:exe|cmd|bat)$/i.test(driver)) return [driver];
   const configured =
     environmentPathext === undefined
-      ? (environmentValue(env, "PATHEXT") ??
-        DEFAULT_WINDOWS_EXECUTABLE_EXTENSIONS)
+      ? inheritedPathext(env)
       : environmentPathext;
+  const windows = windowsEnvDriverSpellings(driver, configured);
+  /* c8 ignore next -- each CI operating system exercises its native answer. */
+  return process.platform === "win32" ? windows : [driver];
+}
+
+/**
+ * The Windows spellings implied by one PATHEXT state.
+ *
+ * Calculated on every platform so the extension grammar is covered
+ * deterministically; only choosing whether the host uses it is platform
+ * specific. A driver that already carries either a configured extension or a
+ * native executable suffix is exact and must never become `driver.com.com`.
+ */
+function windowsEnvDriverSpellings(
+  driver: string,
+  configured: string | null,
+): string[] {
   if (configured === null) return [driver];
   const extensions = configured
     .split(";")
@@ -1476,8 +1507,16 @@ function envDriverSpellings(
       extension.startsWith(".") ? extension : `.${extension}`,
     );
   if (extensions.length === 0) return [driver];
+  const normalized = driver.toLowerCase();
+  if (
+    extensions.some((extension) =>
+      normalized.endsWith(extension.toLowerCase()),
+    ) ||
+    WINDOWS_EXECUTABLE_SUFFIX.test(driver)
+  ) {
+    return [driver];
+  }
   return extensions.map((extension) => `${driver}${extension.toLowerCase()}`);
-  /* c8 ignore stop */
 }
 
 /**
@@ -1610,7 +1649,8 @@ const ENV_SPLIT_ESCAPES: Readonly<Record<string, string>> = {
   "'": "'",
   "\\": "\\",
 };
-const DEFAULT_WINDOWS_EXECUTABLE_EXTENSIONS = ".EXE;.CMD;.BAT";
+const DEFAULT_WINDOWS_EXECUTABLE_EXTENSIONS = ".COM;.EXE;.BAT;.CMD";
+const WINDOWS_EXECUTABLE_SUFFIX = /\.(?:com|exe|cmd|bat)$/i;
 
 /** A separator no path can contain. */
 const SEPARATOR = String.fromCharCode(0);

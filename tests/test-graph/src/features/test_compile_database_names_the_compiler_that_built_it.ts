@@ -358,8 +358,8 @@ function assertEnvExecutionContextIsCompilerContext(): void {
     ],
   );
   TestValidator.predicate(
-    "the exact env-selected drivers keep scip-clang eligible",
-    clang.resolve(root, environment(root)) !== undefined,
+    "an unresolved env-selected driver keeps scip-clang ineligible",
+    clang.resolve(root, environment(root)) === undefined,
   );
 }
 
@@ -375,10 +375,10 @@ function assertEnvPlatformAndSplitRules(): void {
     shim(searched, name);
   }
   exactShim(searched, "pathext.cmd", "cmd");
-  exactShim(searched, "pathext.exe", "exe");
+  exactShim(searched, "pathext.bat", "bat");
   exactShim(root, "leading.cmd", "leading-cmd");
-  exactShim(root, "leading.exe", "leading-exe");
-  writeShims(root, []);
+  exactShim(root, "leading.bat", "leading-bat");
+  writeShims(root, ["leading"]);
   fs.writeFileSync(
     path.join(root, "compile_commands.json"),
     JSON.stringify([
@@ -418,7 +418,7 @@ function assertEnvPlatformAndSplitRules(): void {
         arguments: [
           "env",
           `PATH=${searched}`,
-          "PATHEXT=.CMD",
+          "PATHEXT=CMD",
           "pathext",
           "-c",
           "d.c",
@@ -430,7 +430,7 @@ function assertEnvPlatformAndSplitRules(): void {
         arguments: [
           "env",
           `PATH=${searched}`,
-          "Pathext=.EXE",
+          "Pathext=.BAT",
           "pathext",
           "-c",
           "e.c",
@@ -509,27 +509,66 @@ function assertEnvPlatformAndSplitRules(): void {
       {
         directory: root,
         file: "l.c",
-        arguments: ["PATHEXT=.CMD", "leading", "-c", "l.c"],
+        arguments: ["PATHEXT=.BAT", "leading", "-c", "l.c"],
+      },
+      {
+        directory: root,
+        file: "m.c",
+        arguments: ["leading", "-c", "m.c"],
+      },
+      {
+        directory: root,
+        file: "n.c",
+        arguments: [
+          "env",
+          `PATH=${searched}`,
+          "PATHEXT=.COM",
+          "configured.com",
+          "-c",
+          "n.c",
+        ],
+      },
+      {
+        directory: root,
+        file: "o.c",
+        arguments: [
+          "env",
+          `PATH=${searched}`,
+          "PATHEXT=.CMD",
+          "native.exe",
+          "-c",
+          "o.c",
+        ],
+      },
+      {
+        directory: root,
+        file: "p.c",
+        arguments: [`PATH=${searched}`, "pathext", "-c", "p.c"],
       },
     ]),
   );
   TestValidator.equals(
     "env follows native name casing, complete split whitespace, and post-assignment utility rules",
-    drivers(root),
+    drivers(root).sort(),
     process.platform === "win32"
       ? [
-          "leading=leading-cmd v1.0.0",
           "--=-- v1.0.0",
           "casecc=casecc v1.0.0",
-          "pathext=unavailable",
+          "configured=unavailable",
+          "leading=leading v1.0.0",
+          "leading=leading-bat v1.0.0",
+          "native=unavailable",
+          "pathext=bat v1.0.0",
           "pathext=cmd v1.0.0",
-          "pathext=exe v1.0.0",
+          "pathext=unavailable",
           "spacecc=spacecc v1.0.0",
         ]
       : [
-          "casecc=unavailable",
-          "leading=unavailable",
           "--=-- v1.0.0",
+          "casecc=unavailable",
+          "configured=unavailable",
+          "leading=leading v1.0.0",
+          "native=unavailable",
           "pathext=unavailable",
           "spacecc=spacecc v1.0.0",
           "unsetcc=unsetcc v1.0.0",

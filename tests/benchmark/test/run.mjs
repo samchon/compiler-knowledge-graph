@@ -792,6 +792,7 @@ function testIndexPublicationRefusesMalformedJson() {
   const incompletePairReport = {
     schemaVersion: 2,
     host: FIXTURE_HOST,
+    toolchain: validReportDocument.toolchain,
     projects: [INDEX_PROJECT],
     tools: ["samchon-graph", "samchon-graph-fallback"],
     fixtures: { [INDEX_PROJECT]: FIXTURE_COMMIT },
@@ -802,6 +803,7 @@ function testIndexPublicationRefusesMalformedJson() {
         tool: "samchon-graph",
         buildMs: 4,
         fixtureCommit: FIXTURE_COMMIT,
+        toolchain: validReportDocument.toolchain,
         host: FIXTURE_HOST,
       },
     ],

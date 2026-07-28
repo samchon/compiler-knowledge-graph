@@ -3,6 +3,7 @@ import { ChildProcess, spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { Worker } from "node:worker_threads";
 
 import { GraphPaths } from "../internal/GraphPaths";
 
@@ -436,6 +437,43 @@ const assertRequestTraceFormatting = async (): Promise<void> => {
     "the default cutoff writer survives an immediate process exit",
     [immediateExit.status, immediateExit.signal, immediateExit.stderr],
     [0, null, "@samchon/graph: lsp-request phase=cutoff\n"],
+  );
+
+  const worker = new Worker(
+    [
+      "(async () => {",
+      `  const { lspRequestTrace } = await import(${JSON.stringify(traceModule)});`,
+      "  const cutoff = new AbortController();",
+      `  lspRequestTrace({ ${LSP_REQUEST_TRACE_ENV}: "1" }, undefined, cutoff.signal);`,
+      "  cutoff.abort();",
+      "})().catch((error) => { throw error; });",
+    ].join("\n"),
+    {
+      eval: true,
+      stderr: true,
+    },
+  );
+  worker.stderr.setEncoding("utf8");
+  let workerStderr = "";
+  worker.stderr.on("data", (chunk: string) => {
+    workerStderr += chunk;
+  });
+  const workerExitPromise = new Promise<number>((resolve, reject) => {
+    worker.once("error", reject);
+    worker.once("exit", resolve);
+  });
+  const workerStderrEnd = new Promise<void>((resolve, reject) => {
+    worker.stderr.once("error", reject);
+    worker.stderr.once("end", resolve);
+  });
+  const [workerExit] = await Promise.all([
+    workerExitPromise,
+    workerStderrEnd,
+  ]);
+  TestValidator.equals(
+    "a Worker without process.stderr.fd preserves its redirected trace",
+    [workerExit, workerStderr],
+    [0, "@samchon/graph: lsp-request phase=cutoff\n"],
   );
 };
 

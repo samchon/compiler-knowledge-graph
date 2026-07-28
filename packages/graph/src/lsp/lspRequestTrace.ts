@@ -16,7 +16,9 @@ let nextTraceClientId = 1;
 export function lspRequestTrace(
   env: NodeJS.ProcessEnv = process.env,
   write: (line: string) => unknown = (line) =>
-    fs.writeSync(process.stderr.fd, line),
+    typeof process.stderr.fd === "number"
+      ? fs.writeSync(process.stderr.fd, line)
+      : process.stderr.write(line),
   signal?: AbortSignal,
 ): LspClient.IRequestObserver | undefined {
   if (env[LSP_REQUEST_TRACE_ENV] !== "1") return undefined;

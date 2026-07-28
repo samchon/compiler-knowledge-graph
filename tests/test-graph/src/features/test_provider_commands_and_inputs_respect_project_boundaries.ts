@@ -75,6 +75,34 @@ export const test_provider_commands_and_inputs_respect_project_boundaries =
         ),
         ["sorbet/config"],
       );
+      fs.mkdirSync(path.join(root, ".mvn"), { recursive: true });
+      fs.mkdirSync(path.join(root, "gradle", "conventions"), {
+        recursive: true,
+      });
+      for (const [file, contents] of [
+        [".mvn/maven.config", "-Pfixture\n"],
+        ["mvnw", "#!/bin/sh\n"],
+        ["gradle.lockfile", "empty=1\n"],
+        ["gradle/libs.versions.toml", "[versions]\n"],
+        ["gradle/conventions/java.gradle", "allprojects {}\n"],
+        ["gradle/conventions/kotlin.gradle.kts", "allprojects {}\n"],
+      ] as const) {
+        const absolute = path.join(root, file);
+        fs.mkdirSync(path.dirname(absolute), { recursive: true });
+        fs.writeFileSync(absolute, contents);
+      }
+      const javaBuildInputs = languageBuildInputs(root, ["java"]);
+      TestValidator.predicate(
+        "generic JVM lanes watch Maven and Gradle build-universe inputs",
+        [
+          ".mvn/maven.config",
+          "mvnw",
+          "gradle.lockfile",
+          "gradle/libs.versions.toml",
+          "gradle/conventions/java.gradle",
+          "gradle/conventions/kotlin.gradle.kts",
+        ].every((input) => javaBuildInputs.includes(input)),
+      );
       fs.mkdirSync(path.join(root, "vendor"), { recursive: true });
       fs.mkdirSync(path.join(root, "vendor", "example.com", "dep"), {
         recursive: true,

@@ -253,15 +253,48 @@ export const test_standard_providers_execute_their_exact_contracts =
           }
         }
         if (provider.name === "scip-java") {
+          const jvmInputRoot = path.join(root, "jvm-inputs");
+          fs.mkdirSync(path.join(jvmInputRoot, ".mvn", "wrapper"), {
+            recursive: true,
+          });
+          fs.mkdirSync(path.join(jvmInputRoot, "gradle", "conventions"), {
+            recursive: true,
+          });
+          for (const [file, contents] of [
+            ["pom.xml", "<project />\n"],
+            [".mvn/maven.config", "-Pfixture\n"],
+            [".mvn/wrapper/maven-wrapper.properties", "distributionUrl=x\n"],
+            ["mvnw", "#!/bin/sh\n"],
+            ["gradle.lockfile", "empty=1\n"],
+            ["gradle/libs.versions.toml", "[versions]\n"],
+            ["gradle/conventions/java.gradle", "allprojects {}\n"],
+            ["gradle/conventions/kotlin.gradle.kts", "allprojects {}\n"],
+          ] as const) {
+            const absolute = path.join(jvmInputRoot, file);
+            fs.mkdirSync(path.dirname(absolute), { recursive: true });
+            fs.writeFileSync(absolute, contents);
+          }
           fs.writeFileSync(
-            path.join(root, "build.sbt"),
+            path.join(jvmInputRoot, "build.sbt"),
             "scalaVersion := \"3\"\n",
           );
-          fs.writeFileSync(path.join(root, "build.sc"), "import mill._\n");
-          const jvmInputs = buildInputs(provider, root);
+          fs.writeFileSync(
+            path.join(jvmInputRoot, "build.sc"),
+            "import mill._\n",
+          );
+          const jvmInputs = buildInputs(provider, jvmInputRoot);
           TestValidator.predicate(
-            "scip-java watches Maven but not withdrawn Scala build roots",
-            jvmInputs.includes("pom.xml") &&
+            "scip-java watches its Maven and Gradle universe but not withdrawn Scala roots",
+            [
+              "pom.xml",
+              ".mvn/maven.config",
+              ".mvn/wrapper/maven-wrapper.properties",
+              "mvnw",
+              "gradle.lockfile",
+              "gradle/libs.versions.toml",
+              "gradle/conventions/java.gradle",
+              "gradle/conventions/kotlin.gradle.kts",
+            ].every((input) => jvmInputs.includes(input)) &&
               jvmInputs.includes("build.sbt") === false &&
               jvmInputs.includes("build.sc") === false,
           );

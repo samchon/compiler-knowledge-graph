@@ -11,15 +11,16 @@ import { resolveProviderCommand } from "./resolveProviderCommand";
  * A toolchain observation has four outcomes. Resolution ran and found nothing
  * (`unavailable`), the command ran and printed no usable version
  * (`unreported`), the command answered with a version, or the lookup/probe
- * process itself could not run (`unasked`). The first three are conclusive
- * configuration facts. The fourth says nothing about the tool and stays typed
- * as inconclusive evidence instead of pretending absence or silence.
+ * observation did not complete conclusively (`unasked`). The first three are
+ * conclusive configuration facts. The fourth says nothing about the tool and
+ * stays typed as inconclusive evidence instead of pretending absence or
+ * silence.
  *
  * Both process seams preserve that distinction.
- * {@link resolveProviderCommand} reports whether its `PATH` lookup actually
- * ran, and {@link probe} distinguishes an executed command from `spawnSync`
- * error, signal, or timeout. A transient launch failure therefore cannot move a
- * build universe by changing an installed tool into an absent one.
+ * {@link resolveProviderCommand} reports whether its `PATH` lookup completed,
+ * and {@link probe} distinguishes normal completion from a `spawnSync` error,
+ * signal, or timeout. A transient launch failure therefore cannot move a build
+ * universe by changing an installed tool into an absent one.
  *
  * {@link toolchainVersion.reestablish} restores an unasked row only from the
  * last conclusive row with the same private identity. It does not restore a
@@ -86,7 +87,7 @@ export namespace toolchainVersion {
     if (observed.version !== undefined) {
       return conclusive(`${label}=${observed.version}`, identity);
     }
-    return observed.ran
+    return observed.completed
       ? conclusive(`${label}=unreported`, identity)
       : unasked(label, identity);
   }
@@ -383,16 +384,16 @@ export namespace toolchainVersion {
 /**
  * Run the probe and say which of three things happened.
  *
- * A program that ran and printed a version answered. One that ran and printed
- * nothing is silent. One that never started — `spawnSync` sets `error`, or
- * reports a null status for a signal or the timeout — said nothing about the
- * toolchain at all, and reading only "the exit was not zero" made those last
- * two the same fact.
+ * A program that completed and printed a version answered. One that completed
+ * and printed nothing is silent. An observation that did not complete normally
+ * — `spawnSync` sets `error`, or reports a null status for a signal or timeout —
+ * said nothing about the toolchain at all. Reading only "the exit was not zero"
+ * made that inconclusive state the same fact as a conclusive silent answer.
  */
 function probe(
   resolved: IGraphProvider.ICommand,
   props: toolchainVersion.IProps,
-): { ran: boolean; version?: string } {
+): { completed: boolean; version?: string } {
   const spawnable = spawnableCommand.append(
     { ...resolved, args: [...resolved.args] },
     props.args,
@@ -411,11 +412,11 @@ function probe(
   const output = oneLine(String(result.stdout ?? ""));
   /* c8 ignore stop */
   if (result.error !== undefined || result.status === null) {
-    return { ran: false };
+    return { completed: false };
   }
   return result.status === 0 && output !== ""
-    ? { ran: true, version: output }
-    : { ran: true };
+    ? { completed: true, version: output }
+    : { completed: true };
 }
 
 /**

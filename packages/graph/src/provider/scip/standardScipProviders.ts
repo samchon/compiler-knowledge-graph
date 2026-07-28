@@ -89,14 +89,26 @@ const jvmScipProvider = createScipProvider({
   command: "scip-java",
   override: "SAMCHON_GRAPH_SCIP_JAVA",
   buildFiles: [
+    ".mvn/extensions.xml",
+    ".mvn/jvm.config",
+    ".mvn/maven.config",
+    ".mvn/wrapper/maven-wrapper.jar",
+    ".mvn/wrapper/maven-wrapper.properties",
     "pom.xml",
+    "mvnw",
     "build.gradle",
     "build.gradle.kts",
     "settings.gradle",
     "settings.gradle.kts",
     "gradle.properties",
+    "gradle.lockfile",
     "gradle-wrapper.properties",
+    "gradle/verification-metadata.xml",
+    "gradle/wrapper/gradle-wrapper.jar",
+    "gradlew",
+    "libs.versions.toml",
   ],
+  buildExtensions: [".gradle", ".kts"],
   // scip-java's injected Gradle tasks are not compatible with a project's
   // configuration cache in the released producer. The build command after
   // `--` replaces its defaults, so retain those exact tasks while disabling

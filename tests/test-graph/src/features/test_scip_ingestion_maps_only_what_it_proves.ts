@@ -2014,6 +2014,43 @@ function assertRelationshipsAndExternals(): void {
         warning.includes("is defined in both"),
       ),
   );
+  const sortedDuplicateWarnings = adaptScipIndex({
+    index: parseScipIndex({
+      metadata: { projectRoot: "file:///r" },
+      documents: [
+        {
+          relativePath: "order-00.go",
+          symbols: [
+            { symbol: iface, displayName: "Reader", kind: "Interface" },
+          ],
+        },
+        {
+          relativePath: "order-01.go",
+          symbols: [
+            { symbol: iface, displayName: "Reader", kind: "Interface" },
+          ],
+        },
+        {
+          relativePath: "order-02.go",
+          symbols: [{ symbol: impl, displayName: "File", kind: "Struct" }],
+        },
+        {
+          relativePath: "order-03.go",
+          symbols: [{ symbol: impl, displayName: "File", kind: "Struct" }],
+        },
+      ],
+    }),
+    root: "/r",
+    provider: "scip-go",
+    languages: ["go"],
+    languageOf: () => "go",
+  }).warnings;
+  TestValidator.predicate(
+    "duplicate warnings are sorted independently of producer traversal",
+    sortedDuplicateWarnings.length === 2 &&
+      sortedDuplicateWarnings[0]?.includes("/File#") === true &&
+      sortedDuplicateWarnings[1]?.includes("/Reader#") === true,
+  );
   const boundedDuplicates = repeatedDefinitions(repeatedFiles);
   TestValidator.equals(
     "amplified duplicate definitions keep their complete canonical result",

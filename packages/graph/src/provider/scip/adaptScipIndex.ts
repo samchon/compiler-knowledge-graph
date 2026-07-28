@@ -480,14 +480,17 @@ function boundedDuplicateDefinitionWarnings(
   // The first declaration still wins for every duplicate. The public warning
   // payload carries the total and representative evidence rather than one
   // string per translation-unit definition.
-  const unique = [...new Set(examples)].sort((left, right) =>
-    left < right ? -1 : left > right ? 1 : 0,
-  );
+  const unique = [...new Set(examples)].sort(compareWarningText);
   if (unique.length <= MAX_DUPLICATE_DEFINITION_WARNING_EXAMPLES) return unique;
   return [
     `${provider}: ${String(unique.length)} symbol definition(s) were repeated across files; keeping the first definition of each symbol; first ${String(MAX_DUPLICATE_DEFINITION_WARNING_EXAMPLES)} examples follow`,
     ...unique.slice(0, MAX_DUPLICATE_DEFINITION_WARNING_EXAMPLES),
   ];
+}
+
+function compareWarningText(left: string, right: string): number {
+  /* c8 ignore next 2 -- warning examples are distinct set members. */
+  return left < right ? -1 : left > right ? 1 : 0;
 }
 
 function documentLanguage(

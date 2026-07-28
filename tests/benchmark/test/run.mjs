@@ -494,6 +494,15 @@ function testIndexPublicationRefusesMalformedJson() {
       },
     ],
     [
+      "zero-timeout",
+      {
+        project: INDEX_PROJECT,
+        tool: "samchon-graph",
+        timedOutMs: 0,
+        host: FIXTURE_HOST,
+      },
+    ],
+    [
       "hostless",
       {
         project: INDEX_PROJECT,

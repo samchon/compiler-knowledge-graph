@@ -151,18 +151,27 @@ function assertIndexCells(value, label, fixtures) {
         `${cellLabel}.fixtureCommit must be a full lowercase Git commit`,
       );
     }
-    for (const field of ["buildMs", "timedOutMs"]) {
-      if (
-        cell[field] !== undefined &&
-        cell[field] !== null &&
-        (typeof cell[field] !== "number" ||
-          !Number.isFinite(cell[field]) ||
-          cell[field] < 0)
-      ) {
-        throw new TypeError(
-          `${cellLabel}.${field} must be null or a nonnegative finite number`,
-        );
-      }
+    if (
+      cell.buildMs !== undefined &&
+      cell.buildMs !== null &&
+      (typeof cell.buildMs !== "number" ||
+        !Number.isFinite(cell.buildMs) ||
+        cell.buildMs < 0)
+    ) {
+      throw new TypeError(
+        `${cellLabel}.buildMs must be null or a nonnegative finite number`,
+      );
+    }
+    if (
+      cell.timedOutMs !== undefined &&
+      cell.timedOutMs !== null &&
+      (typeof cell.timedOutMs !== "number" ||
+        !Number.isFinite(cell.timedOutMs) ||
+        cell.timedOutMs <= 0)
+    ) {
+      throw new TypeError(
+        `${cellLabel}.timedOutMs must be null or a positive finite number`,
+      );
     }
     for (const field of ["hasBuildStep", "strict"]) {
       if (cell[field] !== undefined && typeof cell[field] !== "boolean") {

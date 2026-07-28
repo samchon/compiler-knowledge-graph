@@ -75,7 +75,6 @@ const workDir = resolveWorkDir(repoRoot);
 const websiteJson =
   process.env.SAMCHON_BENCH_INDEX_JSON ??
   path.join(repoRoot, "tests", "benchmark", "results", "graph.json");
-const toolchainManifest = parsedToolchainManifest(process.argv.slice(2));
 
 // Above every top-level statement that can reach it, deliberately. The project
 // loop below calls `measureScale`, which reads this table, and a `const`
@@ -129,6 +128,8 @@ const SOURCE_EXTENSIONS = {
 const SERENA_DECLINE_ALL = "n\n".repeat(80);
 
 const parsed = parseArgs(process.argv.slice(2));
+const toolchainManifest = parsed.values["toolchain-manifest"];
+assertToolchainManifestOption(process.argv.slice(2));
 const selected = selectProjects(parsed);
 const tools = selectTools(parsed.values.tools ?? parsed.values.tool ?? "all");
 const outDir = path.resolve(
@@ -845,14 +846,13 @@ function loadToolchainEvidence(manifest) {
 }
 
 /**
- * Read this one option before the ordinary parser is needed.
+ * Keep the ordinary parser authoritative while rejecting ambiguous evidence.
  *
- * Declaration order matters in this module: publication and list modes exit
- * before measurement state is built, so merely adding a top-level reference to
- * `parsed` above its declaration would put the file back in the temporal dead
- * zone that once made the finished runner unexecutable.
+ * Generic valued options retain their last spelling. A toolchain manifest is
+ * provenance for a one-shot measurement, so two spellings cannot silently let
+ * the latter replace the former, and an empty path cannot mean unreported.
  */
-function parsedToolchainManifest(argv) {
+function assertToolchainManifestOption(argv) {
   const prefix = "--toolchain-manifest=";
   const values = argv
     .filter((argument) => argument.startsWith(prefix))
@@ -863,7 +863,6 @@ function parsedToolchainManifest(argv) {
   if (values[0] === "") {
     throw new Error("--toolchain-manifest must name a file");
   }
-  return values[0];
 }
 
 /**

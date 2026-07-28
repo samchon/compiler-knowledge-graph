@@ -164,8 +164,9 @@ for (const row of rows) {
 //
 // The point of the whole table, and until both cells were measured in one run
 // it could only be guessed at across runs on different machines. A ratio is
-// printed only where both cells finished: a timeout bounds a duration from
-// below, so dividing by one would understate the very gap it is meant to show.
+// printed only where both cells finished semantic work: a timeout bounds a
+// duration from below, while a static fallback measures a different product,
+// so dividing by either would understate or misdescribe the comparison.
 const paired = rows
   .map((row) => {
     const of = (tool) => (row.tools.find(([name]) => name === tool) ?? [])[1];
@@ -187,9 +188,14 @@ if (paired.length > 0) {
     const served =
       typeof strict.servedBy === "string" &&
       !/no strict provider/.test(strict.servedBy);
-    const verdict = served
-      ? `${(fallback.buildMs / strict.buildMs).toFixed(1)}x`
-      : "no strict provider served, so both cells measured the same lane";
+    const fallbackSemantic =
+      typeof fallback.servedBy === "string" &&
+      fallback.servedBy.startsWith("lsp ");
+    const verdict = !served
+      ? "no strict provider served, so both cells measured the same lane"
+      : !fallbackSemantic
+        ? "strict-off cell produced no semantic index; times are not comparable"
+        : `${(fallback.buildMs / strict.buildMs).toFixed(1)}x`;
     const strictTime = `${(strict.buildMs / 1000).toFixed(1)} s`;
     const fallbackTime = `${(fallback.buildMs / 1000).toFixed(1)} s`;
     process.stdout.write(

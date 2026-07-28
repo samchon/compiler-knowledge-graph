@@ -72,10 +72,12 @@ node tests/benchmark/build/graph-benchmark-svg.cjs --png
 Cold readiness runs sequentially on a quiet host. Every published cold-index
 cell carries its full fixture commit and its own host block; a stored cell whose
 revision no longer matches `corpus.mjs` is not summarized or preserved by a
-later fold. `results/graph.json` keeps the raw samples, while medians and savings
-are derived by the renderer. The renderer writes grouped, per-repository, and
-cold-time SVGs plus pixel-checked 2x PNG siblings under `results/svg` and
-`results/png`.
+later fold. `results/graph.json` keeps the raw samples. The summary reports a
+strict-provider time ratio only when both the strict cell and its strict-off LSP
+cell produced semantic indexes; a completed static fallback remains visible as
+raw time and is explicitly non-comparable. Medians and savings are derived by
+the renderer. The renderer writes grouped, per-repository, and cold-time SVGs
+plus pixel-checked 2x PNG siblings under `results/svg` and `results/png`.
 
 See [`graph/README.md`](graph/README.md) for the reference runner's detailed
 flags and validity semantics.

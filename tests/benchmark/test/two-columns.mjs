@@ -112,7 +112,13 @@ export function assertStrictComparisonArithmetic() {
   const servedProject = "excalidraw";
   const absentProject = "flask";
   const timeoutProject = "gin";
-  const projects = [servedProject, absentProject, timeoutProject];
+  const staticProject = "gson";
+  const projects = [
+    servedProject,
+    absentProject,
+    timeoutProject,
+    staticProject,
+  ];
   const fixture = {
     schemaVersion: 1,
     index: {
@@ -155,6 +161,17 @@ export function assertStrictComparisonArithmetic() {
           timedOutMs: 3_600_000,
           servedBy: "attempted no strict provider selected",
         }),
+        // A static fallback finished, but it did not build a semantic graph.
+        // Its duration is useful raw evidence, not a divisor for provider
+        // savings because the cells performed materially different work.
+        cell(staticProject, "samchon-graph", {
+          buildMs: 30_000,
+          servedBy: "lsp scip-fake(java)",
+        }),
+        cell(staticProject, "samchon-graph-fallback", {
+          buildMs: 3_000,
+          servedBy: "static no strict provider served",
+        }),
       ],
     },
   };
@@ -192,5 +209,17 @@ export function assertStrictComparisonArithmetic() {
     out,
     new RegExp(`${timeoutProject}[^\\n]*x$`, "m"),
     "a project with an unfinished cell must not be given a ratio",
+  );
+  assert.match(
+    out,
+    new RegExp(
+      `${staticProject}[^\\n]*no semantic index; times are not comparable`,
+    ),
+    "a static strict-off cell must be reported as non-comparable",
+  );
+  assert.doesNotMatch(
+    out,
+    new RegExp(`${staticProject}[^\\n]*x$`, "m"),
+    "a static strict-off cell must not be given a semantic savings ratio",
   );
 }

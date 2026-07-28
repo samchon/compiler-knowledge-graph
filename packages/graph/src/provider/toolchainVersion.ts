@@ -78,12 +78,20 @@ export namespace toolchainVersion {
   export interface IObservation {
     row: string;
     inconclusive: boolean;
+    identity?: string;
   }
 
   /** Visible configuration rows plus the exact rows that established nothing. */
   export interface IDerivation {
     rows: readonly string[];
     inconclusive: readonly number[];
+    /**
+     * Optional stable identities aligned with {@link rows}.
+     *
+     * Optional for compatibility with custom providers that implemented the
+     * earlier evidence contract. Namespace helpers always return it.
+     */
+    identities?: readonly (string | undefined)[];
   }
 
   export type Input = string | IObservation;
@@ -91,22 +99,23 @@ export namespace toolchainVersion {
   /** Derive one toolchain row without discarding its evidence state. */
   export function observe(props: IProps): IObservation {
     const label = props.label ?? props.command;
+    const identity = props.identity ?? label;
     const resolution =
       props.resolved === undefined
         ? attempt(props)
         : { command: props.resolved, asked: true };
     if (resolution.command === undefined) {
       return resolution.asked
-        ? conclusive(`${label}=unavailable`)
-        : unasked(label);
+        ? conclusive(`${label}=unavailable`, identity)
+        : unasked(label, identity);
     }
     const observed = probe(resolution.command, props);
     if (observed.version !== undefined) {
-      return conclusive(`${label}=${observed.version}`);
+      return conclusive(`${label}=${observed.version}`, identity);
     }
     return observed.ran
-      ? conclusive(`${label}=unreported`)
-      : unasked(label);
+      ? conclusive(`${label}=unreported`, identity)
+      : unasked(label, identity);
   }
 
   export interface IProps {
@@ -124,6 +133,15 @@ export namespace toolchainVersion {
 
     /** What the row is called, when that differs from the command's name. */
     label?: string;
+
+    /**
+     * Stable private identity used to match this tool across derivations.
+     *
+     * Distinct compiler paths can deliberately share one portable display
+     * label. Their path-derived identities stay internal while preventing one
+     * driver's failed probe from restoring a sibling driver's version.
+     */
+    identity?: string;
 
     /**
      * Probe exactly this file rather than resolving `command`.
@@ -188,13 +206,23 @@ export namespace toolchainVersion {
   export const UNASKED = "=unasked";
 
   /** Mark a visible row as an ordinary, established configuration fact. */
-  export function conclusive(row: string): IObservation {
-    return { row, inconclusive: false };
+  export function conclusive(
+    row: string,
+    identity: string = label(row),
+  ): IObservation {
+    return { row, inconclusive: false, identity };
   }
 
   /** Mark a toolchain question as one that could not be put. */
-  export function unasked(label: string): IObservation {
-    return { row: `${label}${UNASKED}`, inconclusive: true };
+  export function unasked(
+    label: string,
+    identity: string = label,
+  ): IObservation {
+    return {
+      row: `${label}${UNASKED}`,
+      inconclusive: true,
+      identity,
+    };
   }
 
   /**
@@ -204,37 +232,52 @@ export namespace toolchainVersion {
    * accepts arbitrary strings, and no spelling inside that public value space
    * is reserved for internal control flow.
    */
-  export function derive(entries: readonly Input[]): IDerivation {
+  export function derive(entries: readonly Input[]): Required<IDerivation> {
     const rows: string[] = [];
     const inconclusive: number[] = [];
+    const identities: (string | undefined)[] = [];
     for (const entry of entries) {
       const observation =
-        typeof entry === "string" ? conclusive(entry) : entry;
+        typeof entry === "string"
+          ? {
+              row: entry,
+              inconclusive: false,
+              identity: undefined,
+            }
+          : entry;
       if (observation.inconclusive) inconclusive.push(rows.length);
       rows.push(observation.row);
+      identities.push(observation.identity);
     }
-    return { rows, inconclusive };
+    return { rows, inconclusive, identities };
   }
 
   /** Treat legacy string-only configuration as fully established evidence. */
   export function normalize(
     value: readonly string[] | IDerivation,
-  ): IDerivation {
+  ): Required<IDerivation> {
     if (!isDerivation(value)) return derive(value);
     return {
       rows: [...value.rows],
       inconclusive: [...value.inconclusive],
+      identities: value.rows.map((_, index) => value.identities?.[index]),
     };
   }
 
   /** Sort visible rows without detaching their evidence metadata. */
-  export function sort(value: readonly string[] | IDerivation): IDerivation {
+  export function sort(
+    value: readonly string[] | IDerivation,
+  ): Required<IDerivation> {
     const normalized = normalize(value);
     const unresolved = new Set(normalized.inconclusive);
     return derive(
       normalized.rows
         .map((row, index) =>
-          unresolved.has(index) ? unaskedObservation(row) : conclusive(row),
+          observation(
+            row,
+            unresolved.has(index),
+            normalized.identities[index],
+          ),
         )
         .sort((left, right) => compareOrdinal(left.row, right.row)),
     );
@@ -264,28 +307,54 @@ export namespace toolchainVersion {
    * settings they had changed. On a host where that probe always fails to
    * start, the session would never notice a configuration change again.
    *
-   * A row's identity is its label — everything before the first `=` — because
-   * the value can contain one, as `GOFLAGS=-tags=x` does. A row with no prior
-   * stays unasked rather than being invented.
+   * A tool observation carries a stable private identity independent of its
+   * visible label. This matters for compilation databases: two distinct driver
+   * paths can both publish `clang=...`, and a failed probe must restore only
+   * the same driver. A row with no matching established identity stays unasked
+   * rather than being invented.
    */
   export function reestablish(
     live: IDerivation,
-    established: readonly string[] | undefined,
-  ): IDerivation {
-    if (established === undefined || !inconclusive(live)) return live;
-    const prior = new Map(established.map((row) => [label(row), row]));
-    const unresolved = new Set(live.inconclusive);
+    established: IDerivation | undefined,
+  ): Required<IDerivation> {
+    const current = normalize(live);
+    if (established === undefined || !inconclusive(current)) return current;
+    const previousEvidence = normalize(established);
+    const priorUnresolved = new Set(previousEvidence.inconclusive);
+    const prior = new Map<string, string[]>();
+    previousEvidence.rows.forEach((row, index) => {
+      const identity = previousEvidence.identities[index];
+      if (identity === undefined || priorUnresolved.has(index)) return;
+      const rows = prior.get(identity) ?? [];
+      rows.push(row);
+      prior.set(identity, rows);
+    });
+    const liveUnresolved = new Set(current.inconclusive);
     return derive(
-      live.rows.map((row, index) => {
-        if (!unresolved.has(index)) return row;
-        const restored = prior.get(label(row));
-        return restored === undefined ? unaskedObservation(row) : restored;
+      current.rows.map((row, index) => {
+        const identity = current.identities[index];
+        const previous =
+          identity === undefined ? undefined : prior.get(identity)?.shift();
+        if (!liveUnresolved.has(index)) {
+          return observation(row, false, identity);
+        }
+        return previous === undefined
+          ? observation(row, true, identity)
+          : conclusive(previous, identity);
       }),
     );
   }
 
-  function unaskedObservation(row: string): IObservation {
-    return { row, inconclusive: true };
+  function observation(
+    row: string,
+    inconclusive: boolean,
+    identity: string | undefined,
+  ): IObservation {
+    return {
+      row,
+      inconclusive,
+      ...(identity === undefined ? {} : { identity }),
+    };
   }
 
   function isDerivation(
@@ -300,7 +369,7 @@ export namespace toolchainVersion {
   }
 
   function compareOrdinal(left: string, right: string): number {
-    /* c8 ignore next 2 -- configuration rows are distinct identities. */
+    /* c8 ignore next 2 -- sort outcomes are exhausted by caller fixtures. */
     return left < right ? -1 : left > right ? 1 : 0;
   }
   /* c8 ignore start -- declaration merging emits an unreachable namespace

@@ -36,8 +36,8 @@ export class BatchGraphSession implements IBulkGraphSession {
   private snapshot: IBulkGraphSession.ISnapshot | undefined;
   private universe = "";
 
-  /** The last configuration rows that established anything. */
-  private established: readonly string[] | undefined;
+  /** The last configuration derivation that produced a strict snapshot. */
+  private established: toolchainVersion.IDerivation | undefined;
   private version = 0;
   private closed = false;
   private closing: Promise<void> | undefined;
@@ -135,6 +135,7 @@ export class BatchGraphSession implements IBulkGraphSession {
         const established = evidence.rows;
         const universe = this.fingerprint(established);
         if (universe === this.universe && this.snapshot !== undefined) {
+          this.established = evidence;
           return {
             changed: false,
             generation: this.version,
@@ -146,7 +147,7 @@ export class BatchGraphSession implements IBulkGraphSession {
         this.assertOpen();
         this.snapshot = next;
         this.universe = universe;
-        this.established = established;
+        this.established = evidence;
         this.version += 1;
         return {
           changed: true,

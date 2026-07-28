@@ -145,6 +145,8 @@ export namespace IGraphProvider {
   export interface IConfigurationDerivation {
     rows: readonly string[];
     inconclusive: readonly number[];
+    /** Optional private row identities; legacy/custom providers may omit them. */
+    identities?: readonly (string | undefined)[];
   }
 
   /** A resolved executable and the arguments that precede the provider's own. */

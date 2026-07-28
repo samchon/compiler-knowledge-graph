@@ -44,6 +44,9 @@ export namespace providerTopology {
      * so topology remains the same public string snapshot it has always been.
      */
     configurationInconclusive?: number[];
+
+    /** Stable private identities aligned with {@link configuration}. */
+    configurationIdentities?: (string | undefined)[];
   }
 
   /**
@@ -91,6 +94,15 @@ export namespace providerTopology {
           ? {}
           : {
               configuration: [...derivation.rows],
+              ...(derivation.identities.some(
+                (identity) => identity !== undefined,
+              )
+                ? {
+                    configurationIdentities: [
+                      ...derivation.identities,
+                    ],
+                  }
+                : {}),
               ...(derivation.inconclusive.length === 0
                 ? {}
                 : {
@@ -106,7 +118,11 @@ export namespace providerTopology {
   export function serialize(available: readonly IRow[]): string {
     return JSON.stringify(
       available.map(
-        ({ configurationInconclusive: _inconclusive, ...row }) => row,
+        ({
+          configurationInconclusive: _inconclusive,
+          configurationIdentities: _identities,
+          ...row
+        }) => row,
       ),
     );
   }
@@ -139,22 +155,49 @@ export namespace providerTopology {
     if (established === undefined) return [...live];
     const prior = new Map(established.map((row) => [row.provider, row]));
     return live.map((row) => {
-      const before = prior.get(row.provider)?.configuration;
-      if (row.configuration === undefined || before === undefined) return row;
-      const derivation = toolchainVersion.reestablish(
-        {
-          rows: row.configuration,
-          inconclusive: row.configurationInconclusive ?? [],
-        },
-        before,
+      const previous = prior.get(row.provider);
+      if (
+        row.configuration === undefined ||
+        previous?.configuration === undefined
+      ) {
+        return row;
+      }
+      const derivation = toolchainVersion.sort(
+        toolchainVersion.reestablish(
+          {
+            rows: row.configuration,
+            inconclusive: row.configurationInconclusive ?? [],
+            identities:
+              row.configurationIdentities ??
+              row.configuration.map(() => undefined),
+          },
+          {
+            rows: previous.configuration,
+            inconclusive:
+              previous.configurationInconclusive ?? [],
+            identities:
+              previous.configurationIdentities ??
+              previous.configuration.map(() => undefined),
+          },
+        ),
       );
       const {
         configurationInconclusive: _inconclusive,
+        configurationIdentities: _identities,
         ...visible
       } = row;
       return {
         ...visible,
         configuration: [...derivation.rows],
+        ...(derivation.identities.some(
+          (identity) => identity !== undefined,
+        )
+          ? {
+              configurationIdentities: [
+                ...derivation.identities,
+              ],
+            }
+          : {}),
         ...(derivation.inconclusive.length === 0
           ? {}
           : {

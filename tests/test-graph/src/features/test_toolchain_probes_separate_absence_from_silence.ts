@@ -34,6 +34,7 @@ export const test_toolchain_probes_separate_absence_from_silence = async () => {
   assertAFailedProbeIsTheSameFactEveryTime();
   assertEveryProbedLineSurvivesOnOneLine();
   assertOnlyAKnownRowCanBeRestored();
+  assertDuplicateCompilerLabelsKeepDistinctIdentities();
   assertGoPathCanLiterallyEqualUnasked();
   assertPublicConfigurationKeepsEvidenceInternal();
   assertATopologyRestoresPerProviderRow();
@@ -47,7 +48,59 @@ export const test_toolchain_probes_separate_absence_from_silence = async () => {
   await assertAnUnaskedQuestionDoesNotMoveTheUniverse();
   await assertAServingProviderIsNotAskedTwice();
   await assertANonServingCandidateStillReportsItsRepair();
+  await assertResidentTopologyKeepsFreshPrivateIdentity();
 };
+
+function assertDuplicateCompilerLabelsKeepDistinctIdentities(): void {
+  const root = GraphPaths.createTempDirectory(
+    "graph-toolchain-duplicate-drivers-",
+  );
+  const firstBin = path.join(root, "toolchains", "first");
+  const secondBin = path.join(root, "toolchains", "second");
+  fs.mkdirSync(firstBin, { recursive: true });
+  fs.mkdirSync(secondBin, { recursive: true });
+  const first = shim(firstBin, "clang");
+  const second = shim(secondBin, "clang");
+  fs.writeFileSync(
+    path.join(root, "compile_commands.json"),
+    JSON.stringify([
+      { directory: root, file: "a.c", arguments: [first, "-c", "a.c"] },
+      { directory: root, file: "b.c", arguments: [second, "-c", "b.c"] },
+    ]),
+  );
+  const indexer = shim(root, "scip-clang");
+  const decoder = shim(root, "scip");
+  const clang = standardScipProviders.find(
+    (provider) => provider.name === "scip-clang",
+  )!;
+  const reported = clang.configurationDerivation?.(root, {
+    PATH: "",
+    Path: "",
+    PATHEXT: ".EXE;.CMD;.BAT",
+    SystemRoot: process.env.SystemRoot,
+    SAMCHON_GRAPH_SCIP_CLANG: indexer,
+    SAMCHON_GRAPH_SCIP: decoder,
+  });
+  const derivation =
+    reported === undefined
+      ? undefined
+      : toolchainVersion.normalize(reported);
+  const identities =
+    derivation?.rows.flatMap((row, index) =>
+      row.startsWith("clang=")
+        ? [derivation.identities[index]]
+        : [],
+    ) ?? [];
+  TestValidator.predicate(
+    "same-label compilation drivers keep distinct private identities",
+    identities.length === 2 &&
+      identities.every(
+        (identity): identity is string =>
+          identity !== undefined,
+      ) &&
+      new Set(identities).size === 2,
+  );
+}
 
 function assertGoPathCanLiterallyEqualUnasked(): void {
   const root = GraphPaths.createTempDirectory(
@@ -206,6 +259,20 @@ function assertResolutionRatherThanTheProbeDecidesAbsence(): void {
     "missing-toolchain=unavailable",
   );
   TestValidator.equals("deciding absence probes nothing", launches(log), 0);
+  TestValidator.equals(
+    "the resolution helper exposes the same absent precondition",
+    toolchainVersion.resolve({
+      root,
+      env: probeEnvironment(
+        log,
+        binary,
+        "SAMCHON_GRAPH_FIXTURE_UNUSED",
+      ),
+      command: "missing-toolchain",
+      args: ["--version"],
+    }),
+    undefined,
+  );
 
   fs.writeFileSync(path.join(root, "toolchain-refuse"), "");
   TestValidator.equals(
@@ -269,7 +336,10 @@ function assertOnlyAKnownRowCanBeRestored(): void {
         toolchainVersion.unasked("newcomer"),
         "bare-token",
       ]),
-      ["tool=1.0.0", "bare-token"],
+      toolchainVersion.derive([
+        toolchainVersion.conclusive("tool=1.0.0"),
+        "bare-token",
+      ]),
     ).rows,
     ["tool=1.0.0", "newcomer=unasked", "bare-token"],
   );
@@ -281,7 +351,10 @@ function assertOnlyAKnownRowCanBeRestored(): void {
         "moved=2.0.0",
         toolchainVersion.unasked("unknown"),
       ]),
-      ["held=1.0.0", "moved=1.0.0"],
+      toolchainVersion.derive([
+        toolchainVersion.conclusive("held=1.0.0"),
+        toolchainVersion.conclusive("moved=1.0.0"),
+      ]),
     ).rows,
     ["held=1.0.0", "moved=2.0.0", "unknown=unasked"],
   );
@@ -291,7 +364,11 @@ function assertOnlyAKnownRowCanBeRestored(): void {
       toolchainVersion.derive([
         toolchainVersion.unasked("GOFLAGS"),
       ]),
-      ["GOFLAGS=-tags=integration"],
+      toolchainVersion.derive([
+        toolchainVersion.conclusive(
+          "GOFLAGS=-tags=integration",
+        ),
+      ]),
     ).rows,
     ["GOFLAGS=-tags=integration"],
   );
@@ -299,7 +376,9 @@ function assertOnlyAKnownRowCanBeRestored(): void {
     "a derivation with nothing unasked is returned untouched",
     toolchainVersion.reestablish(
       toolchainVersion.derive(["tool=2.0.0"]),
-      ["tool=1.0.0"],
+      toolchainVersion.derive([
+        toolchainVersion.conclusive("tool=1.0.0"),
+      ]),
     ).rows,
     ["tool=2.0.0"],
   );
@@ -307,9 +386,74 @@ function assertOnlyAKnownRowCanBeRestored(): void {
     "a public setting that literally ends in unasked remains its own value",
     toolchainVersion.reestablish(
       toolchainVersion.derive(["PATH=unasked"]),
-      ["PATH=old"],
+      toolchainVersion.derive(["PATH=old"]),
     ).rows,
     ["PATH=unasked"],
+  );
+  TestValidator.equals(
+    "duplicate labels restore by private driver identity",
+    toolchainVersion.reestablish(
+      toolchainVersion.derive([
+        toolchainVersion.unasked(
+          "clang",
+          "driver:/usr/bin/clang",
+        ),
+        toolchainVersion.conclusive(
+          "clang=18",
+          "driver:/opt/clang",
+        ),
+      ]),
+      toolchainVersion.derive([
+        toolchainVersion.conclusive(
+          "clang=17",
+          "driver:/usr/bin/clang",
+        ),
+        toolchainVersion.conclusive(
+          "clang=18",
+          "driver:/opt/clang",
+        ),
+      ]),
+    ).rows,
+    ["clang=17", "clang=18"],
+  );
+  TestValidator.equals(
+    "an inconclusive prior row cannot establish a later answer",
+    toolchainVersion.reestablish(
+      toolchainVersion.derive([
+        toolchainVersion.unasked("tool"),
+      ]),
+      toolchainVersion.derive([
+        toolchainVersion.unasked("tool"),
+      ]),
+    ).inconclusive,
+    [0],
+  );
+  TestValidator.equals(
+    "repeated stable identities restore in their established order",
+    toolchainVersion.reestablish(
+      toolchainVersion.derive([
+        toolchainVersion.unasked("tool", "shared"),
+        toolchainVersion.unasked("tool", "shared"),
+      ]),
+      toolchainVersion.derive([
+        toolchainVersion.conclusive("tool=first", "shared"),
+        toolchainVersion.conclusive("tool=second", "shared"),
+      ]),
+    ).rows,
+    ["tool=first", "tool=second"],
+  );
+  TestValidator.equals(
+    "a bare tool observation uses its whole row as private identity",
+    toolchainVersion.conclusive("bare-tool").identity,
+    "bare-tool",
+  );
+  TestValidator.equals(
+    "legacy derivations normalize to aligned empty private identities",
+    toolchainVersion.normalize({
+      rows: ["legacy=1"],
+      inconclusive: [],
+    }).identities,
+    [undefined],
   );
 }
 
@@ -395,8 +539,13 @@ function assertTopologySortsRowsWithTheirEvidence(): void {
     [
       rows[0]?.configuration,
       rows[0]?.configurationInconclusive,
+      rows[0]?.configurationIdentities,
     ],
-    [["SETTING=unasked", "tool=unasked"], [1]],
+    [
+      ["SETTING=unasked", "tool=unasked"],
+      [1],
+      [undefined, "tool"],
+    ],
   );
 }
 
@@ -480,6 +629,51 @@ async function assertANonServingCandidateStillReportsItsRepair(): Promise<void> 
     2,
   );
   await source.close();
+}
+
+async function assertResidentTopologyKeepsFreshPrivateIdentity(): Promise<void> {
+  const root = GraphPaths.createTempDirectory(
+    "graph-toolchain-resident-identity-",
+  );
+  const file = path.join(root, "a.ts");
+  fs.writeFileSync(file, "export const value = 1;\n");
+
+  let identity = "tool:first";
+  let unasked = false;
+  const provider: IGraphProvider = {
+    ...ProviderFixtures.provider({ name: "identity-provider" }),
+    configurationDerivation: () =>
+      toolchainVersion.derive([
+        unasked
+          ? toolchainVersion.unasked("tool", identity)
+          : toolchainVersion.conclusive("tool=1.0.0", identity),
+      ]),
+  };
+  let builds = 0;
+  const source = createResidentGraphSource(
+    { cwd: root },
+    {
+      providers: [provider],
+      buildLspGraph: async () => {
+        builds += 1;
+        return { ...resultOf(root, file), providers: new Map() };
+      },
+    },
+  );
+  try {
+    await source.load();
+    identity = "tool:second";
+    await source.load();
+    unasked = true;
+    await source.load();
+    TestValidator.equals(
+      "equal visible topology keeps fresh identity for the next failed probe",
+      builds,
+      1,
+    );
+  } finally {
+    await source.close();
+  }
 }
 
 function assertALaunchThatNeverRanSaysNothing(): void {
@@ -633,9 +827,10 @@ async function assertAnUnaskedQuestionDoesNotMoveTheUniverse(): Promise<void> {
   fs.writeFileSync(source, "export const value = 1;\n");
   const artifact = path.join(root, "index.json");
 
-  let rows: readonly string[] | toolchainVersion.IDerivation = [
-    "tool=1.0.0",
-  ];
+  let rows: readonly string[] | toolchainVersion.IDerivation =
+    toolchainVersion.derive([
+      toolchainVersion.conclusive("tool=1.0.0"),
+    ]);
   const session = new BatchGraphSession({
     root,
     languages: ["typescript"],
@@ -676,7 +871,9 @@ async function assertAnUnaskedQuestionDoesNotMoveTheUniverse(): Promise<void> {
         session.generation === 0,
     );
 
-    rows = ["tool=1.0.0"];
+    rows = toolchainVersion.derive([
+      toolchainVersion.conclusive("tool=1.0.0"),
+    ]);
     const cold = await session.refresh();
     // The question could not be put this time. Nothing was established, so
     // nothing changed — the row that would have moved the universe is exactly
@@ -703,7 +900,9 @@ async function assertAnUnaskedQuestionDoesNotMoveTheUniverse(): Promise<void> {
     );
 
     // And a genuine change is believed as soon as it can be established.
-    rows = ["tool=2.0.0"];
+    rows = toolchainVersion.derive([
+      toolchainVersion.conclusive("tool=2.0.0"),
+    ]);
     const upgraded = await session.refresh();
     TestValidator.equals(
       "a toolchain change is believed once the question can be put again",
@@ -717,7 +916,10 @@ async function assertAnUnaskedQuestionDoesNotMoveTheUniverse(): Promise<void> {
     // refresh that lost the toolchain probe: standing in the previous rows
     // wholesale would restore the old setting too, report `unchanged`, and go
     // on serving an index built with flags the project no longer uses.
-    rows = ["tool=2.0.0", "SETTING=old"];
+    rows = toolchainVersion.derive([
+      toolchainVersion.conclusive("tool=2.0.0"),
+      "SETTING=old",
+    ]);
     await session.refresh();
     rows = toolchainVersion.derive([
       toolchainVersion.unasked("tool"),
@@ -861,6 +1063,7 @@ function assertATopologyRestoresPerProviderRow(): void {
     provider: string,
     configuration?: string[],
     configurationInconclusive?: number[],
+    configurationIdentities?: (string | undefined)[],
   ): providerTopology.IRow => ({
     provider,
     languages: ["lua"],
@@ -872,6 +1075,9 @@ function assertATopologyRestoresPerProviderRow(): void {
     ...(configurationInconclusive === undefined
       ? {}
       : { configurationInconclusive }),
+    ...(configurationIdentities === undefined
+      ? {}
+      : { configurationIdentities }),
   });
 
   TestValidator.equals(
@@ -883,28 +1089,77 @@ function assertATopologyRestoresPerProviderRow(): void {
   TestValidator.equals(
     "an unasked row is restored while a changed sibling is kept",
     providerTopology.reestablish(
-      [row("a", ["tool=unasked", "SETTING=new"], [0])],
-      [row("a", ["tool=1.0.0", "SETTING=old"])],
+      [
+        row(
+          "a",
+          ["tool=unasked", "SETTING=new"],
+          [0],
+          ["tool", undefined],
+        ),
+      ],
+      [
+        row(
+          "a",
+          ["tool=1.0.0", "SETTING=old"],
+          undefined,
+          ["tool", undefined],
+        ),
+      ],
     ),
-    [row("a", ["tool=1.0.0", "SETTING=new"])],
+    [
+      row(
+        "a",
+        ["SETTING=new", "tool=1.0.0"],
+        undefined,
+        [undefined, "tool"],
+      ),
+    ],
   );
 
   TestValidator.equals(
     "a provider with no prior entry is left alone",
     providerTopology.reestablish(
-      [row("fresh", ["tool=unasked"], [0])],
-      [row("other", ["tool=1.0.0"])],
+      [row("fresh", ["tool=unasked"], [0], ["tool"])],
+      [
+        row(
+          "other",
+          ["tool=1.0.0"],
+          undefined,
+          ["tool"],
+        ),
+      ],
     ),
-    [row("fresh", ["tool=unasked"], [0])],
+    [row("fresh", ["tool=unasked"], [0], ["tool"])],
   );
 
   TestValidator.equals(
     "a new unasked row keeps its evidence beside known provider history",
     providerTopology.reestablish(
-      [row("a", ["newcomer=unasked"], [0])],
-      [row("a", ["tool=1.0.0"])],
+      [
+        row(
+          "a",
+          ["newcomer=unasked"],
+          [0],
+          ["newcomer"],
+        ),
+      ],
+      [
+        row(
+          "a",
+          ["tool=1.0.0"],
+          undefined,
+          ["tool"],
+        ),
+      ],
     ),
-    [row("a", ["newcomer=unasked"], [0])],
+    [
+      row(
+        "a",
+        ["newcomer=unasked"],
+        [0],
+        ["newcomer"],
+      ),
+    ],
   );
 
   TestValidator.equals(
@@ -917,9 +1172,48 @@ function assertATopologyRestoresPerProviderRow(): void {
   );
 
   TestValidator.equals(
+    "topology restores and re-sorts duplicate compiler labels by identity",
+    providerTopology.reestablish(
+      [
+        row(
+          "clang",
+          ["clang=18", "clang=unasked"],
+          [1],
+          [
+            "driver:/opt/clang",
+            "driver:/usr/bin/clang",
+          ],
+        ),
+      ],
+      [
+        row(
+          "clang",
+          ["clang=17", "clang=18"],
+          undefined,
+          [
+            "driver:/usr/bin/clang",
+            "driver:/opt/clang",
+          ],
+        ),
+      ],
+    ),
+    [
+      row(
+        "clang",
+        ["clang=17", "clang=18"],
+        undefined,
+        [
+          "driver:/usr/bin/clang",
+          "driver:/opt/clang",
+        ],
+      ),
+    ],
+  );
+
+  TestValidator.equals(
     "internal evidence is not added to serialized topology",
     providerTopology.serialize([
-      row("a", ["tool=unasked"], [0]),
+      row("a", ["tool=unasked"], [0], ["tool"]),
     ]),
     providerTopology.serialize([row("a", ["tool=unasked"])]),
   );

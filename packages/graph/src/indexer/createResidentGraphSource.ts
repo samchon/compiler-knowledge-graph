@@ -70,9 +70,10 @@ interface IResidentState {
    * The rows behind {@link providerTopology}, kept so an unasked configuration
    * entry can be restored instead of moving the topology.
    *
-   * The serialized form alone cannot do that: substituting requires matching a
-   * provider's entries against the last ones that established something, and a
-   * string has no rows.
+   * The serialized form deliberately omits private tool identities. Substituting
+   * requires matching a provider's live observations against the exact prior
+   * tools that established something, so the resident keeps those rows and
+   * identities beside the public fingerprint.
    */
   providerTopologyRows: readonly providerTopology.IRow[];
   /** An available strict candidate fell back while this state was built. */
@@ -518,6 +519,11 @@ export function createResidentGraphSource(
         await replaceLanguages(current, signal);
         return;
       }
+      // A stable private tool identity can move while its public version row
+      // remains equal. Keep the fresh evidence even when serialized topology
+      // did not move, or the next transient failure would be matched against a
+      // tool path the provider no longer uses.
+      current.providerTopologyRows = liveRows;
       if (!sameStringArray(current.buildInputs, liveBuildInputs)) {
         await replaceLanguages(current, signal);
         return;

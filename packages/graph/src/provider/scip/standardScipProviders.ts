@@ -408,22 +408,25 @@ interface IStandardScipProvider {
  * is the compiler whose semantics the index carries; it may be `gcc`, `cl.exe`,
  * or several at once, and no fixed name can stand in for it.
  */
-interface IToolchain {
-  aliases?: readonly string[];
-  fromProject?: (root: string) => readonly string[];
+type IToolchain =
+  | {
+      aliases: readonly string[];
+      fromProject?: never;
 
-  /**
-   * Environment variable selecting an absolute development build.
-   *
-   * Only meaningful for `aliases`, which name one program. A `fromProject`
-   * toolchain has no single program to redirect, and one override would answer
-   * for every driver the database named.
-   */
-  override?: string;
+      /** Absolute development build selected for this one alias family. */
+      override?: string;
 
-  /** What the row calls this toolchain when nothing resolved. */
-  label: string;
-}
+      /** What the row calls this toolchain when nothing resolved. */
+      label: string;
+    }
+  | {
+      aliases?: never;
+      fromProject: (root: string) => readonly string[];
+      override?: never;
+
+      /** What the rows call this toolchain when the project names none. */
+      label: string;
+    };
 
 /** One deduplicated, ordinally sorted input list, derived entries included. */
 function withDerived(
@@ -681,9 +684,8 @@ function phpExecutableConfiguration(
 
 function isComposerScipPhp(
   root: string,
-  executable: string | undefined,
+  executable: string,
 ): boolean {
-  if (executable === undefined) return false;
   const vendorBin = path.resolve(root, "vendor", "bin");
   const relative = path.relative(vendorBin, path.resolve(executable));
   return (
@@ -718,46 +720,55 @@ function resolveToolchain(
   env: NodeJS.ProcessEnv,
   toolchain: IToolchain,
 ): IToolchainTool[] {
-  const triedAliases = new Set<string>();
-  let aliasesAsked = true;
-  // The override selects one absolute program, so it is consulted once under
-  // the toolchain's own label. Offering it to each alias in turn would make the
-  // first spelling always resolve, and the row would name `python3` for a
-  // binary the developer pointed at deliberately.
-  //
-  // Consulted, not obeyed: `resolveProviderCommand` rejects an override that no
-  // longer points at a program and then continues its ordinary search, so a
-  // stale one resolves to whatever the label finds anyway. The aliases below
-  // then only run on a machine where that spelling is absent too.
-  if (toolchain.override !== undefined && env[toolchain.override] !== undefined) {
-    const overridden = resolved(root, env, {
-      command: toolchain.label,
-      override: toolchain.override,
-    });
-    triedAliases.add(toolchain.label);
-    aliasesAsked &&= overridden.asked;
-    if (overridden.resolved !== undefined) return [overridden];
-  }
-  for (const command of toolchain.aliases ?? []) {
-    if (triedAliases.has(command)) continue;
-    const alias = resolved(root, env, { command });
-    aliasesAsked &&= alias.asked;
-    if (alias.resolved !== undefined) return [alias];
-  }
   if (toolchain.aliases !== undefined) {
+    const triedAliases = new Set<string>();
+    let aliasesAsked = true;
+    // The override selects one absolute program, so it is consulted once under
+    // the toolchain's own label. Offering it to each alias in turn would make
+    // the first spelling always resolve, and the row would name `python3` for a
+    // binary the developer pointed at deliberately.
+    //
+    // Consulted, not obeyed: `resolveProviderCommand` rejects an override that
+    // no longer points at a program and then continues its ordinary search, so
+    // a stale one resolves to whatever the label finds anyway. The aliases
+    // below then only run on a machine where that spelling is absent too.
+    if (
+      toolchain.override !== undefined &&
+      env[toolchain.override] !== undefined
+    ) {
+      const overridden = resolved(root, env, {
+        command: toolchain.label,
+        identity: `toolchain:${toolchain.label}`,
+        override: toolchain.override,
+      });
+      triedAliases.add(toolchain.label);
+      aliasesAsked &&= overridden.asked;
+      if (overridden.resolved !== undefined) return [overridden];
+    }
+    for (const command of toolchain.aliases) {
+      if (triedAliases.has(command)) continue;
+      const alias = resolved(root, env, {
+        command,
+        identity: `toolchain:${toolchain.label}`,
+      });
+      aliasesAsked &&= alias.asked;
+      if (alias.resolved !== undefined) return [alias];
+    }
     return [
       {
         command: toolchain.label,
+        identity: `toolchain:${toolchain.label}`,
         label: toolchain.label,
         asked: aliasesAsked,
       },
     ];
   }
-  const namedTools = toolchain.fromProject?.(root) ?? [];
+  const namedTools = toolchain.fromProject(root);
   if (namedTools.length === 0) {
     return [
       {
         command: toolchain.label,
+        identity: `toolchain:${toolchain.label}`,
         label: toolchain.label,
         asked: true,
       },
@@ -771,8 +782,17 @@ function resolveToolchain(
       root,
       env,
       path.isAbsolute(named)
-        ? { command: named, label: driverLabel(named), executable: named }
-        : { command: named, label: driverLabel(named) },
+        ? {
+            command: named,
+            identity: driverIdentity(named),
+            label: driverLabel(named),
+            executable: named,
+          }
+        : {
+            command: named,
+            identity: driverIdentity(named),
+            label: driverLabel(named),
+          },
     );
   });
 }
@@ -814,8 +834,11 @@ function toolchainVersions(
     const label = tool.label ?? tool.command;
     if (tool.resolved === undefined) {
       return tool.asked
-        ? toolchainVersion.conclusive(`${label}=unavailable`)
-        : toolchainVersion.unasked(label);
+        ? toolchainVersion.conclusive(
+            `${label}=unavailable`,
+            tool.identity,
+          )
+        : toolchainVersion.unasked(label, tool.identity);
     }
     return toolchainVersion.observe({
       root,
@@ -828,6 +851,7 @@ function toolchainVersions(
 
 interface IToolchainTool {
   command: string;
+  identity: string;
   asked: boolean;
   label?: string;
   override?: string;
@@ -848,6 +872,13 @@ interface IToolchainTool {
  */
 function driverLabel(named: string): string {
   return lastSegment(named).replace(/\.(?:exe|cmd|bat)$/i, "");
+}
+
+/** Stable private identity for one project-selected compiler driver. */
+function driverIdentity(named: string): string {
+  return `toolchain-driver:sha256:${createHash("sha256")
+    .update(named.replaceAll("\\", "/"), "utf8")
+    .digest("hex")}`;
 }
 
 /**

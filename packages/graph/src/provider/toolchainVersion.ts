@@ -252,13 +252,14 @@ export namespace toolchainVersion {
     value: readonly string[] | IDerivation,
   ): IDerivation {
     if (!isDerivation(value)) return derive(value);
+    const inconclusive = [...value.inconclusive];
     const derivation: IDerivation = {
       rows: [...value.rows],
-      inconclusive: [...value.inconclusive],
+      inconclusive,
       identities: [...value.identities],
     };
     validate(derivation);
-    derivation.inconclusive.sort((left, right) => left - right);
+    inconclusive.sort((left, right) => left - right);
     return derivation;
   }
 

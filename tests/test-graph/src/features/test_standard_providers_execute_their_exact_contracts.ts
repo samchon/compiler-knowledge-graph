@@ -215,8 +215,9 @@ export const test_standard_providers_execute_their_exact_contracts =
           }
           TestValidator.predicate(
             "an open scip-clang session revalidates its compilation database",
-            rejected?.message.includes("no available compiler command") ===
-              true &&
+            rejected?.message.includes(
+              "current compilation database is invalid or names an unavailable compiler command",
+            ) === true &&
               session.generation === 4 &&
               session.current === implementationHeaderChanged.snapshot,
           );

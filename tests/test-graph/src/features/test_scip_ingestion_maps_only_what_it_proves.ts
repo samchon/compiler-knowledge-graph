@@ -21,6 +21,7 @@ import {
 export const test_scip_ingestion_maps_only_what_it_proves = async () => {
   assertSymbolParsing();
   assertIndexValidation();
+  assertExternalSymbolsAreCanonical();
   assertDocumentOrderIsDecidedHere();
   assertTranslationUnitsFoldIntoOneDocument();
   assertSparseTranslationUnitsPreserveOptionalEvidence();
@@ -1231,6 +1232,75 @@ function assertLongLineScopeSelection(): void {
           edge.from === id("outer") &&
           edge.to === id("target"),
       ),
+  );
+}
+
+/**
+ * The protocol does not promise that `external_symbols` is unique or ordered.
+ *
+ * The adapter indexes it by symbol, so leaving duplicates in producer order
+ * made its last record silently win. External evidence follows the same merge
+ * contract as document symbols before that map can discard anything.
+ */
+function assertExternalSymbolsAreCanonical(): void {
+  const externalSymbols = [
+    {
+      symbol: "z",
+      display_name: "external",
+      documentation: ["Summary", "Left detail"],
+      relationships: [{ symbol: "left", is_reference: true }],
+    },
+    { symbol: "a" },
+    {
+      symbol: "z",
+      kind: "Function",
+      documentation: ["Summary", "Right detail"],
+      relationships: [{ symbol: "right", is_reference: true }],
+    },
+  ];
+  const parse = (symbols: readonly Record<string, unknown>[]) =>
+    parseScipIndex({
+      metadata: { projectRoot: "file:///r" },
+      documents: [],
+      external_symbols: symbols,
+    }).externalSymbols;
+  const canonical = parse(externalSymbols);
+  TestValidator.equals(
+    "duplicate external symbol evidence is merged and sorted",
+    canonical,
+    [
+      { symbol: "a" },
+      {
+        symbol: "z",
+        displayName: "external",
+        kind: "Function",
+        documentation: ["Summary", "Left detail", "Right detail"],
+        relationships: [
+          { symbol: "left", isReference: true },
+          { symbol: "right", isReference: true },
+        ],
+      },
+    ],
+  );
+  TestValidator.equals(
+    "external symbol producer order cannot change normalized evidence",
+    parse([...externalSymbols].reverse()),
+    canonical,
+  );
+
+  let conflict = "";
+  try {
+    parse([
+      { symbol: "s", display_name: "left" },
+      { symbol: "s", display_name: "right" },
+    ]);
+  } catch (error) {
+    conflict = error instanceof Error ? error.message : String(error);
+  }
+  TestValidator.predicate(
+    "conflicting external symbol identity is refused instead of selecting the last record",
+    conflict.includes("displayName") &&
+      conflict.includes("the external symbol table"),
   );
 }
 

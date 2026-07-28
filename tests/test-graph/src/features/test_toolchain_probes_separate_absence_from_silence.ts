@@ -489,6 +489,22 @@ async function assertAnUnaskedQuestionDoesNotMoveTheUniverse(): Promise<void> {
       ),
   });
   try {
+    rows = [`tool${toolchainVersion.UNASKED}`, "SETTING=initial"];
+    let initialMessage = "";
+    try {
+      await session.refresh();
+    } catch (error) {
+      initialMessage = error instanceof Error ? error.message : String(error);
+    }
+    TestValidator.predicate(
+      "an initial unasked row cannot become a strict build universe",
+      initialMessage.includes("inconclusive configuration rows") &&
+        initialMessage.includes("tool=unasked") &&
+        session.current === undefined &&
+        session.generation === 0,
+    );
+
+    rows = ["tool=1.0.0"];
     const cold = await session.refresh();
     // The question could not be put this time. Nothing was established, so
     // nothing changed — the row that would have moved the universe is exactly

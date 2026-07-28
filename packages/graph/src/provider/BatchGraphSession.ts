@@ -117,6 +117,19 @@ export class BatchGraphSession implements IBulkGraphSession {
           configuration,
           this.established,
         );
+        // Reestablishment can repair only a row this session proved before. On
+        // generation zero, or for a newly introduced row, `unasked` survives
+        // and says no configuration fact at all. Hashing and publishing that
+        // marker would give a strict snapshot an intentionally inconclusive
+        // compiler identity. Later transient failures still reach here as
+        // their established values and retain the current universe.
+        if (toolchainVersion.inconclusive(established)) {
+          throw new Error(
+            `${this.options.provider}: cannot build from inconclusive configuration rows: ${established
+              .filter((row) => row.endsWith(toolchainVersion.UNASKED))
+              .join("; ")}`,
+          );
+        }
         const universe = this.fingerprint(established);
         if (universe === this.universe && this.snapshot !== undefined) {
           return {

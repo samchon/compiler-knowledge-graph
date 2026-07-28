@@ -46,6 +46,15 @@ export function parseScipIndex(
     "external_symbols",
     label,
   );
+  const parsedExternalSymbols =
+    externalSymbols === undefined
+      ? undefined
+      : arrayOf(
+          externalSymbols,
+          `${label}.externalSymbols`,
+        ).map((symbol, at) =>
+          symbolInformationOf(symbol, `${label}.externalSymbols[${at}]`),
+        );
   return {
     metadata: {
       ...optionalProtocolVersion(
@@ -72,14 +81,15 @@ export function parseScipIndex(
       ),
       warnings,
     ),
-    ...(externalSymbols === undefined
+    ...(parsedExternalSymbols === undefined
       ? {}
       : {
-          externalSymbols: arrayOf(
-            externalSymbols,
-            `${label}.externalSymbols`,
-          ).map((symbol, at) =>
-            symbolInformationOf(symbol, `${label}.externalSymbols[${at}]`),
+          // The protocol calls this a repeated field and does not promise
+          // uniqueness. Normalize it before the adapter's symbol map can make
+          // producer order choose the last duplicate.
+          externalSymbols: mergeSymbols(
+            "the external symbol table",
+            parsedExternalSymbols,
           ),
         }),
   };

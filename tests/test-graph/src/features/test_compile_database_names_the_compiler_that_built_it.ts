@@ -133,9 +133,9 @@ function assertADriverWithAPathIsTakenLiterally(): void {
         file: "b.c",
         command: `toolchain/${path.basename(absolute)} -c b.c`,
       },
-      // A driver the machine does not have contributes nothing rather than
-      // failing the whole database — whether it was named bare, named by a
-      // path that leads nowhere, or named as a directory.
+      // A driver the machine does not have remains explicit rather than being
+      // omitted from the program's semantic identity, whether it was named
+      // bare, named by a path that leads nowhere, or named as a directory.
       { directory: root, file: "c.c", arguments: ["missing-driver", "-c"] },
       {
         directory: root,
@@ -175,9 +175,16 @@ function assertADriverWithAPathIsTakenLiterally(): void {
   writeShims(root, []);
   exactShim(path.join(root, ".samchon-graph", "bin"), suffixed("gxx"), "gxx");
   TestValidator.equals(
-    "an absolute and a directory-relative driver name one program, an absent one is dropped",
+    "an absolute and a directory-relative driver name one program, and every absent driver remains explicit",
     drivers(root),
-    ["gcc=gcc v1.0.0", "gpp=gpp v1.0.0", "gxx=gxx v1.0.0"],
+    [
+      "toolchain=unavailable",
+      "absent-driver=unavailable",
+      "gcc=gcc v1.0.0",
+      "gpp=gpp v1.0.0",
+      "gxx=gxx v1.0.0",
+      "missing-driver=unavailable",
+    ],
   );
 }
 

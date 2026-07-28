@@ -322,14 +322,19 @@ function render(rows, title) {
           const isBest = hasData && value.value === lowest;
           const dataW = hasData ? Math.max(3, (value.value / max) * barFull) : 0;
           const rx = (barHeight / 2).toFixed(1);
-          const saved = hasData ? pctSaved(row.baseline, value.value) : 0;
+          const saved =
+            hasData && row.baseline > 0
+              ? pctSaved(row.baseline, value.value)
+              : null;
           const label = isBaseline
             ? `${formatTick(value.value)} tokens`
             : !hasData
               ? "no data"
-              : saved >= 0
-                ? `${saved}% saved`
-                : `${-saved}% over`;
+              : saved === null
+                ? `${formatTick(value.value)} tokens`
+                : saved >= 0
+                  ? `${saved}% saved`
+                  : `${-saved}% over`;
           const nameColor = isBaseline ? "#9aa3b2" : value.color;
           const valueColor = isBaseline
             ? COLORS.label
@@ -337,7 +342,7 @@ function render(rows, title) {
               ? COLORS.muted
               : isBest
                 ? COLORS.crown
-                : saved >= 0
+                : saved === null || saved >= 0
                   ? COLORS.label
                   : COLORS.worse;
           const glow = isBest

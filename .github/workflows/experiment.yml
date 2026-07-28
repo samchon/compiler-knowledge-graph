@@ -11,6 +11,7 @@ on:
     branches: [master]
     paths:
       - ".github/workflows/experiment.yml"
+      - ".github/scripts/latest-workflow-update.mjs"
       - "packages/graph/**"
       - "sidecars/**"
       - "tests/experiment/**"
@@ -29,7 +30,35 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  latest_update:
+    name: latest update
+    runs-on: ubuntu-latest
+    outputs:
+      run: ${{ steps.classify.outputs.run }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      # Pull-request path filters see the whole base-to-topic diff. The event's
+      # before/after pair identifies whether this particular push changed the
+      # real-language experiment surface.
+      - name: Classify the exact pushed update
+        id: classify
+        run: |
+          node .github/scripts/latest-workflow-update.mjs \
+            --include=.github/workflows/experiment.yml \
+            --include=.github/scripts/latest-workflow-update.mjs \
+            --include=packages/graph/** \
+            --include=sidecars/** \
+            --include=tests/experiment/** \
+            --include=pnpm-lock.yaml \
+            --include=pnpm-workspace.yaml
+
   experiment:
+    needs: latest_update
+    if: ${{ needs.latest_update.outputs.run == 'true' }}
     name: ${{ matrix.language }} LSP
     runs-on: ubuntu-latest
     timeout-minutes: 45

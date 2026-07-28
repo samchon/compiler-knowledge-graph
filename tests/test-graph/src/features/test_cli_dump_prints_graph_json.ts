@@ -168,6 +168,7 @@ async function assertTimedOutDumpRetiresItsLanguageServer(): Promise<void> {
         ...process.env,
         SAMCHON_GRAPH_FAKE_LSP_PID_FILE: pidFile,
         SAMCHON_GRAPH_FAKE_LSP_SIGTERM_FILE: sigtermFile,
+        SAMCHON_GRAPH_LSP_REQUEST_TRACE: "1",
       },
       stdio: ["ignore", "ignore", "pipe"],
       windowsHide: true,
@@ -192,6 +193,13 @@ async function assertTimedOutDumpRetiresItsLanguageServer(): Promise<void> {
     TestValidator.predicate(
       "the dump reports its aborted build",
       stderr.includes("aborted"),
+    );
+    const cutoffAt = stderr.indexOf(
+      "@samchon/graph: lsp-request phase=cutoff",
+    );
+    TestValidator.predicate(
+      "the dump records its request cutoff before abort cleanup",
+      cutoffAt >= 0 && cutoffAt < stderr.indexOf("aborted"),
     );
     TestValidator.equals(
       "the dump asks the owned language server to terminate",

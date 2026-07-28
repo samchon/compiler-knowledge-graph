@@ -6,6 +6,9 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import {
+  latestWorkflowUpdateDecision,
+} from "../../../.github/scripts/latest-workflow-update.mjs";
 import { CORPUS, PROJECTS, projectDir } from "../graph/corpus.mjs";
 import currentIndex from "../graph/current-index.cjs";
 import {
@@ -85,6 +88,7 @@ testWebsiteCellValidityGate();
 testPublicationRequiresMatchingCodexTraceAudit();
 testFixtureAndPreflightIntegrity();
 testReferenceRenderer();
+testLatestWorkflowUpdateClassifier();
 assertBothIndexColumnsAreMeasured();
 assertStrictComparisonArithmetic();
 assertDeclarationsPrecedeExecution(graphDir, ["index-time.mjs"]);
@@ -1988,6 +1992,36 @@ function testReferenceRenderer() {
     "the reference crown geometry marks the winner",
   );
 
+  const zeroBaselineReport = sampleReport();
+  const zeroBaseline = zeroBaselineReport.agent.cells.find(
+    (cell) => cell.repo === "excalidraw" && cell.tool === "baseline",
+  );
+  zeroBaseline.samples.baseline[0].tokens = 0;
+  const zeroBaselineOut = path.join(root, "zero-baseline-out");
+  fs.writeFileSync(input, JSON.stringify(zeroBaselineReport));
+  run(
+    process.execPath,
+    [path.join(benchmarkDir, "build", "graph-benchmark-svg.cjs")],
+    {
+      ...env,
+      SAMCHON_GRAPH_BENCH_RENDER_OUT: zeroBaselineOut,
+    },
+  );
+  const zeroBaselineGrouped = fs.readFileSync(
+    path.join(zeroBaselineOut, "svg", `${chartNames[0]}.svg`),
+    "utf8",
+  );
+  assert.match(
+    zeroBaselineGrouped,
+    /3k tokens/,
+    "a zero baseline preserves the measured token value without inventing a percentage",
+  );
+  assert.doesNotMatch(
+    zeroBaselineGrouped,
+    /\b(?:undefined|NaN|Infinity)\b/,
+    "a zero baseline cannot publish a non-finite comparison",
+  );
+
   const index = fs.readFileSync(
     path.join(out, "svg", "graph-index-time.svg"),
     "utf8",
@@ -2345,6 +2379,52 @@ function testReferenceRenderer() {
     assert.equal(png.readUInt32BE(20), height * 2);
   }
   fs.rmSync(root, { recursive: true, force: true });
+}
+
+function testLatestWorkflowUpdateClassifier() {
+  const before = "a".repeat(40);
+  const after = "b".repeat(40);
+  const synchronize = {
+    eventName: "pull_request",
+    action: "synchronize",
+    before,
+    after,
+  };
+  assert.equal(
+    latestWorkflowUpdateDecision({ ...synchronize, diffStatus: 0 }).run,
+    false,
+    "a result-only synchronize update skips an expensive workflow",
+  );
+  assert.equal(
+    latestWorkflowUpdateDecision({ ...synchronize, diffStatus: 1 }).run,
+    true,
+    "a relevant synchronize update runs an expensive workflow",
+  );
+  assert.equal(
+    latestWorkflowUpdateDecision({ ...synchronize, diffStatus: 2 }).run,
+    true,
+    "a git failure fails open",
+  );
+  assert.equal(
+    latestWorkflowUpdateDecision({
+      ...synchronize,
+      before: "not-a-commit",
+      diffStatus: 0,
+    }).run,
+    true,
+    "an invalid event boundary fails open",
+  );
+  assert.equal(
+    latestWorkflowUpdateDecision({
+      eventName: "workflow_dispatch",
+      action: undefined,
+      before: undefined,
+      after: undefined,
+      diffStatus: undefined,
+    }).run,
+    true,
+    "manual dispatch always runs",
+  );
 }
 
 function sampleReport() {

@@ -25,6 +25,7 @@ export const test_lua_provider_declines_what_it_cannot_serve =
     assertExporterTemporaryParentKeepsOnePathNamespace();
     await assertExporterConfigurationIsIsolatedAndVersioned();
     await assertTheServerVersionIsPublished();
+    await assertLuaArtifactsAreBoundedBeforeTheyAreRead();
     await assertAnUnreadableSourceIsNotPublishedAround();
     await assertAnOutsideSourceIsNotReadBack();
   };
@@ -178,6 +179,89 @@ async function assertTheServerVersionIsPublished(): Promise<void> {
       await session.close();
     }
   }
+}
+
+/**
+ * A producer artifact is untrusted process output and is bounded before read.
+ *
+ * The other batch provider protocols apply the same 256 MiB default. This
+ * fixture supplies a smaller seam so the rejecting branch is deterministic
+ * without creating a large file.
+ */
+async function assertLuaArtifactsAreBoundedBeforeTheyAreRead(): Promise<void> {
+  const root = GraphPaths.createTempDirectory("samchon-graph-lua-bounded-");
+  for (const [label, maxArtifactBytes] of [
+    ["zero", 0],
+    ["fractional", 1.5],
+  ] as const) {
+    let message = "";
+    try {
+      new LuaGraphSession({
+        root,
+        languages: ["lua"],
+        provider: "samchon-graph-lua",
+        command: { command: process.execPath, args: ["-e", ""] },
+        indexArgs: (produced) => [produced],
+        inputs: () => [],
+        maxArtifactBytes,
+      });
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+    TestValidator.predicate(
+      `a ${label} artifact bound is refused by name`,
+      message.includes("maxArtifactBytes must be a positive safe integer"),
+    );
+  }
+
+  const artifact = JSON.stringify({
+    schemaVersion: 2,
+    compilerVersion: "Lua 5.4",
+    files: [],
+    nodes: [],
+    edges: [],
+    skipped: { unnamed: 0, outsideRoot: 0, refsFailed: 0 },
+    warnings: [],
+  });
+  const session = new LuaGraphSession({
+    root,
+    languages: ["lua"],
+    provider: "samchon-graph-lua",
+    command: {
+      command: process.execPath,
+      args: [
+        "-e",
+        `require("node:fs").writeFileSync(process.argv[1], ${JSON.stringify(
+          artifact,
+        )})`,
+      ],
+    },
+    indexArgs: (produced) => [produced],
+    inputs: () => [],
+    maxArtifactBytes: 1,
+  });
+  let message = "";
+  let unpublished: readonly [number, typeof session.current] = [
+    session.generation,
+    session.current,
+  ];
+  try {
+    await session.refresh();
+  } catch (error) {
+    message = error instanceof Error ? error.message : String(error);
+  } finally {
+    unpublished = [session.generation, session.current];
+    await session.close();
+  }
+  TestValidator.predicate(
+    "an oversized Lua artifact is refused before publication",
+    message.includes("Lua export artifact exceeded the 1 byte artifact limit"),
+  );
+  TestValidator.equals(
+    "an oversized first generation publishes no snapshot",
+    unpublished,
+    [0, undefined],
+  );
 }
 
 /**

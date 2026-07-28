@@ -296,22 +296,6 @@ function assertAMalformedArtifactIsRefused(): void {
       "runtime version",
     ],
     [
-      "an artifact whose exporter could not complete workspace analysis",
-      {
-        schemaVersion: 2,
-        compilerVersion: "Lua 5.4",
-        files: ["a.lua"],
-        nodes: [],
-        edges: [],
-        skipped: { unnamed: 0, outsideRoot: 0, refsFailed: 0 },
-        warnings: [
-          "could not parse file:///workspace/a.lua",
-          "could not parse file:///workspace/b.lua",
-        ],
-      },
-      "reported 2 operational warnings",
-    ],
-    [
       "an artifact with failed reference queries",
       {
         schemaVersion: 2,
@@ -319,12 +303,43 @@ function assertAMalformedArtifactIsRefused(): void {
         files: ["a.lua"],
         nodes: [],
         edges: [],
-        skipped: { unnamed: 0, outsideRoot: 0, refsFailed: 2 },
+        skipped: { unnamed: 0, outsideRoot: 0, refsFailed: 1 },
         warnings: [],
       },
-      "reference collection failed for 2 declarations",
+      "reference collection failed for 1 declaration(s)",
+    ],
+    [
+      "an artifact with no reference completion evidence",
+      {
+        schemaVersion: 2,
+        compilerVersion: "Lua 5.4",
+        files: [],
+        nodes: [],
+        edges: [],
+        warnings: [],
+      },
+      "no valid refsFailed count",
     ],
   ];
+  for (const [label, refsFailed] of [
+    ["negative", -1],
+    ["fractional", 0.5],
+    ["string", "0"],
+  ] as const) {
+    refusals.push([
+      `an artifact with a ${label} reference failure count`,
+      {
+        schemaVersion: 2,
+        compilerVersion: "Lua 5.4",
+        files: [],
+        nodes: [],
+        edges: [],
+        skipped: { unnamed: 0, outsideRoot: 0, refsFailed },
+        warnings: [],
+      },
+      "no valid refsFailed count",
+    ]);
+  }
   for (const [reason, artifact, expected] of refusals) {
     let message = "";
     try {
@@ -338,13 +353,35 @@ function assertAMalformedArtifactIsRefused(): void {
     );
   }
 
-  // Counters that are absent or nonsensical read as zero rather than throwing:
-  // a producer that forgot to count is still usable, and inventing a number
-  // would be worse than reporting none.
-  // A negative count is as unusable as an absent one, and inventing a number
-  // from it would be worse than reporting none.
+  const warningPayload = `could not parse ${"untrusted-exporter-output".repeat(400)}`;
+  let warningMessage = "";
+  try {
+    adaptLuaExport.parse(
+      {
+        schemaVersion: 2,
+        compilerVersion: "Lua 5.4",
+        files: ["a.lua"],
+        nodes: [],
+        edges: [],
+        skipped: { unnamed: 0, outsideRoot: 0, refsFailed: 0 },
+        warnings: [warningPayload],
+      },
+      "samchon-graph-lua",
+    );
+  } catch (error) {
+    warningMessage = error instanceof Error ? error.message : String(error);
+  }
+  TestValidator.predicate(
+    "one operational warning refuses the snapshot without echoing its payload",
+    warningMessage.includes("reported 1 operational warnings") &&
+      !warningMessage.includes(warningPayload) &&
+      warningMessage.length < 300,
+  );
+
+  // Only reference failures need explicit completion evidence. These two
+  // counters describe declarations deliberately omitted from the graph.
   TestValidator.equals(
-    "a nonsensical skip counter reads as zero",
+    "benign positive skip counters are preserved",
     adaptLuaExport.parse(
       {
         schemaVersion: 2,
@@ -353,14 +390,30 @@ function assertAMalformedArtifactIsRefused(): void {
         nodes: [],
         edges: [],
         warnings: [],
-        skipped: { unnamed: -3, outsideRoot: 1.5, refsFailed: -2 },
+        skipped: { unnamed: 3, outsideRoot: 2, refsFailed: 0 },
+      },
+      "samchon-graph-lua",
+    ).skipped,
+    { unnamed: 3, outsideRoot: 2, refsFailed: 0 },
+  );
+  TestValidator.equals(
+    "malformed benign skip counters read as zero",
+    adaptLuaExport.parse(
+      {
+        schemaVersion: 2,
+        compilerVersion: "Lua 5.4",
+        files: [],
+        nodes: [],
+        edges: [],
+        warnings: [],
+        skipped: { unnamed: -3, outsideRoot: 1.5, refsFailed: 0 },
       },
       "samchon-graph-lua",
     ).skipped,
     { unnamed: 0, outsideRoot: 0, refsFailed: 0 },
   );
   TestValidator.equals(
-    "absent skip counters read as zero",
+    "absent benign skip counters read as zero",
     adaptLuaExport.parse(
       {
         schemaVersion: 2,
@@ -369,6 +422,7 @@ function assertAMalformedArtifactIsRefused(): void {
         nodes: [],
         edges: [],
         warnings: [],
+        skipped: { refsFailed: 0 },
       },
       "samchon-graph-lua",
     ).skipped,

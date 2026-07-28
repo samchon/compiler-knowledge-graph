@@ -29,10 +29,19 @@ export class LuaGraphSession implements IBulkGraphSession {
   public readonly languages: readonly GraphLanguage[];
   public readonly root: string;
 
+  private readonly maxArtifactBytes: number;
   private readonly batch: BatchGraphSession;
 
   public constructor(options: LuaGraphSession.IOptions) {
     const provider = options.provider;
+    const maxArtifactBytes =
+      options.maxArtifactBytes ?? DEFAULT_MAX_ARTIFACT_BYTES;
+    if (!Number.isSafeInteger(maxArtifactBytes) || maxArtifactBytes < 1) {
+      throw new TypeError(
+        `${provider}: maxArtifactBytes must be a positive safe integer`,
+      );
+    }
+    this.maxArtifactBytes = maxArtifactBytes;
     this.batch = new BatchGraphSession({
       root: options.root,
       languages: options.languages,
@@ -91,6 +100,12 @@ export class LuaGraphSession implements IBulkGraphSession {
     root: string,
     provider: string,
   ): Promise<IBulkGraphSession.ISnapshot> {
+    const size = fs.statSync(props.artifact).size;
+    if (size > this.maxArtifactBytes) {
+      throw new Error(
+        `${provider}: Lua export artifact exceeded the ${String(this.maxArtifactBytes)} byte artifact limit`,
+      );
+    }
     const report = adaptLuaExport.parse(
       JSON.parse(fs.readFileSync(props.artifact, "utf8")),
       provider,
@@ -208,8 +223,11 @@ export namespace LuaGraphSession {
     inputs: () => string[];
     temporaryParent?: string;
     configuration?: BatchGraphSession.IOptions["configuration"];
+    maxArtifactBytes?: number;
   }
   /* c8 ignore start -- declaration merging emits an unreachable namespace
    * creation arm after the class object already exists. */
 }
 /* c8 ignore stop */
+
+const DEFAULT_MAX_ARTIFACT_BYTES = 256 * 1024 * 1024;

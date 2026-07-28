@@ -232,14 +232,15 @@ export namespace adaptLuaExport {
         `${provider}: the exporter reported ${String(operationalWarnings.length)} operational warnings, so its workspace snapshot is incomplete`,
       );
     }
-    const skipped = countsOf(report.skipped);
+    const refsFailed = refsFailedOf(report.skipped, provider);
+    const skipped = countsOf(report.skipped, refsFailed);
     // `vm.getRefs` is the only relationship channel this provider has. One
     // failed query means the advertised `references` fact family is incomplete,
     // and absence in that partial result is indistinguishable from "no
     // references exist" unless the strict candidate fails closed.
     if (skipped.refsFailed !== 0) {
       throw new Error(
-        `${provider}: reference collection failed for ${String(skipped.refsFailed)} declarations, so its references snapshot is incomplete`,
+        `${provider}: reference collection failed for ${String(skipped.refsFailed)} declaration(s), so its references snapshot is incomplete`,
       );
     }
     return {
@@ -314,20 +315,41 @@ function assertLocation(
 }
 
 /**
- * The three skip counters, whatever the producer managed to report.
+ * The two benign skip counters, plus proven reference-completion evidence.
  *
- * One place rather than three optional chains: a producer that omitted the
- * block and one that omitted a field are the same situation, and reading it as
- * zero keeps a miscount from becoming an invented number.
+ * A producer that omitted a benign field and one that malformed it are the
+ * same situation: reading either as zero keeps a miscount from becoming an
+ * invented number. `refsFailed` has already passed the stricter check below.
  */
 function countsOf(
   skipped: adaptLuaExport.IReport["skipped"] | undefined,
+  refsFailed: number,
 ): adaptLuaExport.IReport["skipped"] {
   return {
     unnamed: countOf(skipped?.unnamed),
     outsideRoot: countOf(skipped?.outsideRoot),
-    refsFailed: countOf(skipped?.refsFailed),
+    refsFailed,
   };
+}
+
+/**
+ * Evidence that the exporter completed every reference query.
+ *
+ * The shipped exporter always initializes this counter before visiting a
+ * declaration. Missing or malformed is therefore not another spelling of
+ * zero: it is an artifact that cannot prove whether reference collection ran.
+ */
+function refsFailedOf(
+  skipped: adaptLuaExport.IReport["skipped"] | undefined,
+  provider: string,
+): number {
+  const value = skipped?.refsFailed;
+  if (!Number.isSafeInteger(value) || (value as number) < 0) {
+    throw new Error(
+      `${provider}: the export artifact has no valid refsFailed count`,
+    );
+  }
+  return value as number;
 }
 
 function countOf(value: unknown): number {

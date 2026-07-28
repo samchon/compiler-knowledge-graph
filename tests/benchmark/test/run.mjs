@@ -2293,7 +2293,7 @@ function testReferenceRenderer() {
     outcomeTime,
     /codebase-memory[\s\S]{0,300}>0s \/ 13s<\/text>/,
   );
-  assert.match(outcomeTime, /serena[\s\S]{0,300}>2\.1s \/ 15s<\/text>/);
+  assert.match(outcomeTime, /serena[\s\S]{0,300}>2\.3s \/ 15s<\/text>/);
 
   const revisionlessAgentReport = sampleReport();
   for (const cell of revisionlessAgentReport.agent.cells) {

@@ -114,6 +114,16 @@ export const test_workflows_use_current_core_action_runtimes = () => {
       );
     }
   }
+  const experiment = fs.readFileSync(
+    path.join(directory, "experiment.yml"),
+    "utf8",
+  );
+  TestValidator.predicate(
+    "the serialized C++ lifecycle has its own bounded real-tool budget",
+    experiment.includes(
+      "timeout-minutes: ${{ matrix.language == 'cpp' && 90 || 45 }}",
+    ),
+  );
   const indexTime = fs.readFileSync(
     path.join(directory, "index-time.yml"),
     "utf8",

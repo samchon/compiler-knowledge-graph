@@ -61,7 +61,11 @@ jobs:
     if: ${{ needs.latest_update.outputs.run == 'true' }}
     name: ${{ matrix.language }} LSP
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    # scip-clang's deterministic mode does not schedule work deterministically,
+    # so C++ also runs with one worker. The fmt lifecycle's first cold generation
+    # alone reached the old 45-minute job limit; keep every other language's
+    # tighter hang boundary while giving that serialized real-tool lane room.
+    timeout-minutes: ${{ matrix.language == 'cpp' && 90 || 45 }}
     strategy:
       fail-fast: false
       matrix:

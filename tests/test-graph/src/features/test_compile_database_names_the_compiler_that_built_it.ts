@@ -545,6 +545,20 @@ function assertEnvPlatformAndSplitRules(): void {
         file: "p.c",
         arguments: [`PATH=${searched}`, "pathext", "-c", "p.c"],
       },
+      {
+        directory: root,
+        file: "q.c",
+        arguments: [
+          "env",
+          `PATH=${searched}`,
+          "PATHEXT=.CMD",
+          "env",
+          "-uPATHEXT",
+          "pathext",
+          "-c",
+          "q.c",
+        ],
+      },
     ]),
   );
   TestValidator.equals(

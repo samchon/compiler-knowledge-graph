@@ -52,6 +52,16 @@ import {
   assertIndexReport,
   assertWebsitePublication,
 } from "./publication-document.mjs";
+import {
+  ALL_TOOLS,
+  TOOL_CODEBASE_MEMORY,
+  TOOL_CODEGRAPH,
+  TOOL_SAMCHON,
+  TOOL_SAMCHON_FALLBACK,
+  TOOL_SERENA,
+  strictIntentOfTool,
+  timedOutIndexCell,
+} from "./index-time-cell.mjs";
 import { javaSystemProperty } from "./java-tool-options.mjs";
 import { removeTree } from "./remove-tree.mjs";
 
@@ -106,23 +116,11 @@ const SOURCE_EXTENSIONS = {
   dart: [".dart"],
 };
 
-const TOOL_SAMCHON = "samchon-graph";
 // The same tool on the same project with every strict provider stood down.
 // What a strict provider is worth cannot be read off one number: redis went
 // from 263 s to 15.6 s when scip-clang finally served, and that was only
 // visible by comparing two runs days apart on different machines. Two cells in
 // one run, one host, one clock is the comparison the table was missing.
-const TOOL_SAMCHON_FALLBACK = "samchon-graph-fallback";
-const TOOL_CODEGRAPH = "codegraph";
-const TOOL_CODEBASE_MEMORY = "codebase-memory";
-const TOOL_SERENA = "serena";
-const ALL_TOOLS = [
-  TOOL_SAMCHON,
-  TOOL_SAMCHON_FALLBACK,
-  TOOL_CODEGRAPH,
-  TOOL_CODEBASE_MEMORY,
-  TOOL_SERENA,
-];
 
 // `serena project create` interviews the operator about every language it
 // detects, one prompt each, and VS Code detects twenty-two of them. Decline them
@@ -255,20 +253,17 @@ for (const project of selected) {
           // and has to stop the lane, or a genuine defect would publish as a
           // number.
           if (typeof error?.timedOutMs !== "number") throw error;
-          const strict = strictIntentOfTool(tool);
-          cell = {
+          cell = timedOutIndexCell({
             project,
             tool,
-            buildMs: null,
             timedOutMs: error.timedOutMs,
-            ...(strict === undefined ? {} : { strict }),
             // The process was killed before it could write its provenance line,
             // so this cannot say what produced the graph — there is none. It can
             // say what was being attempted, because that is announced before
             // the first candidate runs, and "timed out running scip-ruby" is a
             // finding where "timed out" alone is a mystery.
             servedBy: servedBy(error.logStem ?? ""),
-          };
+          });
         }
         assertPinnedCheckout(spec, cellRepoDir);
         // The machine and its quietness travel with the cell, not with the
@@ -819,14 +814,6 @@ function assertIncomingReportScope(incoming) {
       );
     }
   }
-}
-
-function strictIntentOfTool(tool) {
-  return tool === TOOL_SAMCHON
-    ? true
-    : tool === TOOL_SAMCHON_FALLBACK
-      ? false
-      : undefined;
 }
 
 function sameHostEvidence(left, right) {

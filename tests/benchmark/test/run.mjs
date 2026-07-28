@@ -13,6 +13,10 @@ import {
   pubspecRequiresFlutter,
   assertPinnedCheckout,
 } from "../graph/language.mjs";
+import {
+  ALL_TOOLS,
+  timedOutIndexCell,
+} from "../graph/index-time-cell.mjs";
 import { javaSystemProperty } from "../graph/java-tool-options.mjs";
 import {
   assertLspRequestDiagnosisEvidence,
@@ -90,6 +94,7 @@ assertWorkflowOptionForms(
 );
 testPublishedIndexCellsNameTheirMachine();
 testAgentPublicationPreservesIndexResults();
+testTimedOutIndexCellsPreserveToolIntent();
 testIndexPublicationRefusesMalformedJson();
 testIndexCellIsolationContract();
 testLspRequestDiagnosisSummary();
@@ -275,6 +280,32 @@ function testAgentPublicationPreservesIndexResults() {
       JSON.stringify(invalidPrior),
       before,
       `rejecting an ${label} must not mutate it`,
+    );
+  }
+}
+
+function testTimedOutIndexCellsPreserveToolIntent() {
+  const common = {
+    project: INDEX_PROJECT,
+    timedOutMs: 3_600_000,
+    servedBy: "attempted fixture indexer",
+  };
+  for (const tool of ALL_TOOLS) {
+    const cell = timedOutIndexCell({ ...common, tool });
+    assert.deepEqual(cell, {
+      ...common,
+      tool,
+      buildMs: null,
+      ...(tool === "samchon-graph"
+        ? { strict: true }
+        : tool === "samchon-graph-fallback"
+          ? { strict: false }
+          : {}),
+    });
+    assert.equal(
+      Object.hasOwn(cell, "strict"),
+      tool === "samchon-graph" || tool === "samchon-graph-fallback",
+      `${tool} timeout strict intent must match its measured lane`,
     );
   }
 }

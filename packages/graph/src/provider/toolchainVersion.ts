@@ -61,24 +61,54 @@ import { resolveProviderCommand } from "./resolveProviderCommand";
  * inputs.
  */
 export function toolchainVersion(props: toolchainVersion.IProps): string {
-  const label = props.label ?? props.command;
-  const attempt =
-    props.resolved === undefined
-      ? toolchainVersion.attempt(props)
-      : { command: props.resolved, asked: true };
-  if (attempt.command === undefined) {
-    return attempt.asked
-      ? `${label}=unavailable`
-      : `${label}${toolchainVersion.UNASKED}`;
-  }
-  const observed = probe(attempt.command, props);
-  if (observed.version !== undefined) return `${label}=${observed.version}`;
-  return observed.ran
-    ? `${label}=unreported`
-    : `${label}${toolchainVersion.UNASKED}`;
+  return toolchainVersion.observe(props).row;
 }
 
 export namespace toolchainVersion {
+  /**
+   * One visible configuration row together with whether its derivation
+   * established a fact.
+   *
+   * The row deliberately remains a string for fingerprints and provenance.
+   * Inconclusiveness is separate metadata: configuration values are public and
+   * arbitrary, so a literal setting such as `PATH=unasked` must never be
+   * mistaken for an internal probe outcome merely because its spelling
+   * resembles one.
+   */
+  export interface IObservation {
+    row: string;
+    inconclusive: boolean;
+  }
+
+  /** Visible configuration rows plus the exact rows that established nothing. */
+  export interface IDerivation {
+    rows: readonly string[];
+    inconclusive: readonly number[];
+  }
+
+  export type Input = string | IObservation;
+
+  /** Derive one toolchain row without discarding its evidence state. */
+  export function observe(props: IProps): IObservation {
+    const label = props.label ?? props.command;
+    const resolution =
+      props.resolved === undefined
+        ? attempt(props)
+        : { command: props.resolved, asked: true };
+    if (resolution.command === undefined) {
+      return resolution.asked
+        ? conclusive(`${label}=unavailable`)
+        : unasked(label);
+    }
+    const observed = probe(resolution.command, props);
+    if (observed.version !== undefined) {
+      return conclusive(`${label}=${observed.version}`);
+    }
+    return observed.ran
+      ? conclusive(`${label}=unreported`)
+      : unasked(label);
+  }
+
   export interface IProps {
     root: string;
     env: NodeJS.ProcessEnv;
@@ -154,18 +184,70 @@ export namespace toolchainVersion {
     });
   }
 
-  /**
-   * The suffix a row carries when its question could not be put.
-   *
-   * Exported so a reader names the state instead of sniffing a string. A build
-   * universe has to know that a derivation established nothing, and it should
-   * learn that from a contract rather than from row grammar.
-   */
+  /** The visible value used when a toolchain question could not be put. */
   export const UNASKED = "=unasked";
 
+  /** Mark a visible row as an ordinary, established configuration fact. */
+  export function conclusive(row: string): IObservation {
+    return { row, inconclusive: false };
+  }
+
+  /** Mark a toolchain question as one that could not be put. */
+  export function unasked(label: string): IObservation {
+    return { row: `${label}${UNASKED}`, inconclusive: true };
+  }
+
+  /**
+   * Preserve the evidence state of each row in one configuration derivation.
+   *
+   * Plain strings are intentionally conclusive. Public provider configuration
+   * accepts arbitrary strings, and no spelling inside that public value space
+   * is reserved for internal control flow.
+   */
+  export function derive(entries: readonly Input[]): IDerivation {
+    const rows: string[] = [];
+    const inconclusive: number[] = [];
+    for (const entry of entries) {
+      const observation =
+        typeof entry === "string" ? conclusive(entry) : entry;
+      if (observation.inconclusive) inconclusive.push(rows.length);
+      rows.push(observation.row);
+    }
+    return { rows, inconclusive };
+  }
+
+  /** Treat legacy string-only configuration as fully established evidence. */
+  export function normalize(
+    value: readonly string[] | IDerivation,
+  ): IDerivation {
+    if (!isDerivation(value)) return derive(value);
+    return {
+      rows: [...value.rows],
+      inconclusive: [...value.inconclusive],
+    };
+  }
+
+  /** Sort visible rows without detaching their evidence metadata. */
+  export function sort(value: readonly string[] | IDerivation): IDerivation {
+    const normalized = normalize(value);
+    const unresolved = new Set(normalized.inconclusive);
+    return derive(
+      normalized.rows
+        .map((row, index) =>
+          unresolved.has(index) ? unaskedObservation(row) : conclusive(row),
+        )
+        .sort((left, right) => compareOrdinal(left.row, right.row)),
+    );
+  }
+
   /** Whether any row in this derivation failed to establish anything. */
-  export function inconclusive(rows: readonly string[]): boolean {
-    return rows.some((row) => row.endsWith(UNASKED));
+  export function inconclusive(derivation: IDerivation): boolean {
+    return derivation.inconclusive.length !== 0;
+  }
+
+  /** The visible rows whose derivations established nothing. */
+  export function unresolved(derivation: IDerivation): readonly string[] {
+    return derivation.inconclusive.map((index) => derivation.rows[index]!);
   }
 
   /**
@@ -187,19 +269,39 @@ export namespace toolchainVersion {
    * stays unasked rather than being invented.
    */
   export function reestablish(
-    rows: readonly string[],
+    live: IDerivation,
     established: readonly string[] | undefined,
-  ): readonly string[] {
-    if (established === undefined || !inconclusive(rows)) return rows;
+  ): IDerivation {
+    if (established === undefined || !inconclusive(live)) return live;
     const prior = new Map(established.map((row) => [label(row), row]));
-    return rows.map((row) =>
-      row.endsWith(UNASKED) ? (prior.get(label(row)) ?? row) : row,
+    const unresolved = new Set(live.inconclusive);
+    return derive(
+      live.rows.map((row, index) => {
+        if (!unresolved.has(index)) return row;
+        const restored = prior.get(label(row));
+        return restored === undefined ? unaskedObservation(row) : restored;
+      }),
     );
+  }
+
+  function unaskedObservation(row: string): IObservation {
+    return { row, inconclusive: true };
+  }
+
+  function isDerivation(
+    value: readonly string[] | IDerivation,
+  ): value is IDerivation {
+    return !Array.isArray(value);
   }
 
   function label(row: string): string {
     const at = row.indexOf("=");
     return at === -1 ? row : row.slice(0, at);
+  }
+
+  function compareOrdinal(left: string, right: string): number {
+    /* c8 ignore next 2 -- configuration rows are distinct identities. */
+    return left < right ? -1 : left > right ? 1 : 0;
   }
   /* c8 ignore start -- declaration merging emits an unreachable namespace
    * creation arm after the function object already exists. */

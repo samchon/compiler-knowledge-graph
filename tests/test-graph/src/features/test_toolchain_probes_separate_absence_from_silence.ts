@@ -6,6 +6,8 @@ import { createResidentGraphSource } from "../../../../packages/graph/src/indexe
 import type { IIndexerResult } from "../../../../packages/graph/src/indexer/IIndexerResult";
 import type { IGraphProvider } from "../../../../packages/graph/src/provider/IGraphProvider";
 import { BatchGraphSession } from "../../../../packages/graph/src/provider/BatchGraphSession";
+import { goGraphProvider } from "../../../../packages/graph/src/provider/go/goGraphProvider";
+import { luaGraphProvider } from "../../../../packages/graph/src/provider/lua/luaGraphProvider";
 import { providerTopology } from "../../../../packages/graph/src/provider/providerTopology";
 import { standardScipProviders } from "../../../../packages/graph/src/provider/scip/standardScipProviders";
 import { toolchainVersion } from "../../../../packages/graph/src/provider/toolchainVersion";
@@ -32,16 +34,72 @@ export const test_toolchain_probes_separate_absence_from_silence = async () => {
   assertAFailedProbeIsTheSameFactEveryTime();
   assertEveryProbedLineSurvivesOnOneLine();
   assertOnlyAKnownRowCanBeRestored();
+  assertGoPathCanLiterallyEqualUnasked();
+  assertPublicConfigurationKeepsEvidenceInternal();
   assertATopologyRestoresPerProviderRow();
   assertTopologyAsksOnlyTheProvidersWithoutASession();
+  assertTopologySortsRowsWithTheirEvidence();
   assertAStaleOverrideFallsThroughToTheAliases();
   assertALaunchThatNeverRanSaysNothing();
   assertAProbeThatCouldNotStartIsNotSilence();
   assertALookupThatCouldNotRunIsNotAnAbsentTool();
+  await assertLiteralUnaskedSettingsAreNotControlState();
   await assertAnUnaskedQuestionDoesNotMoveTheUniverse();
   await assertAServingProviderIsNotAskedTwice();
   await assertANonServingCandidateStillReportsItsRepair();
 };
+
+function assertGoPathCanLiterallyEqualUnasked(): void {
+  const root = GraphPaths.createTempDirectory(
+    "graph-toolchain-go-literal-unasked-",
+  );
+  const go = shim(root, "go");
+  const scipGo = shim(root, "scip-go");
+  const env = {
+    PATH: "unasked",
+    Path: "unasked",
+    PATHEXT: ".EXE;.CMD;.BAT",
+    SystemRoot: process.env.SystemRoot,
+    SAMCHON_GRAPH_GO_TOOLCHAIN: go,
+    SAMCHON_GRAPH_SCIP_GO: scipGo,
+  };
+  const visible = goGraphProvider.configuration?.(root, env);
+  const derivation =
+    goGraphProvider.configurationDerivation?.(root, env);
+  TestValidator.predicate(
+    "Go PATH=unasked is visible configuration, not probe control state",
+    visible !== undefined &&
+      derivation !== undefined &&
+      JSON.stringify(visible) === JSON.stringify(derivation.rows) &&
+      derivation.rows.includes("PATH=unasked") &&
+      derivation.inconclusive.length === 0,
+  );
+}
+
+function assertPublicConfigurationKeepsEvidenceInternal(): void {
+  const root = GraphPaths.createTempDirectory(
+    "graph-toolchain-public-evidence-",
+  );
+  const server = shim(root, "lua-language-server");
+  const env = {
+    PATH: "",
+    Path: "",
+    PATHEXT: ".EXE;.CMD;.BAT",
+    SystemRoot: process.env.SystemRoot,
+    SAMCHON_GRAPH_LUA: server,
+  };
+  const visible = luaGraphProvider.configuration?.(root, env);
+  const evidence =
+    luaGraphProvider.configurationDerivation?.(root, env);
+  TestValidator.predicate(
+    "public configuration remains rows while internal evidence stays parallel",
+    visible !== undefined &&
+      evidence !== undefined &&
+      visible.length === 1 &&
+      JSON.stringify(visible) === JSON.stringify(evidence.rows) &&
+      evidence.inconclusive.length === 0,
+  );
+}
 
 function assertAStaleOverrideFallsThroughToTheAliases(): void {
   const root = GraphPaths.createTempDirectory("graph-toolchain-alias-");
@@ -51,7 +109,7 @@ function assertAStaleOverrideFallsThroughToTheAliases(): void {
   const python = standardScipProviders.find(
     (provider) => provider.name === "scip-python",
   )!;
-  const rows = python.configuration?.(root, {
+  const environment = {
     PATH: "",
     Path: "",
     PATHEXT: ".EXE;.CMD;.BAT",
@@ -62,13 +120,23 @@ function assertAStaleOverrideFallsThroughToTheAliases(): void {
     // aliases is the decision, not an accident: the row then names the
     // interpreter that answered rather than the one that was asked for.
     SAMCHON_GRAPH_PYTHON_TOOLCHAIN: path.join(bin, "absent-python"),
-  });
+  };
+  const rows = python.configuration?.(root, environment);
+  const derivation =
+    python.configurationDerivation?.(root, environment);
   TestValidator.equals(
     "a stale override falls through and the row names what answered",
     rows?.filter((row) => !row.startsWith("scip")),
     [
       "python=fake-toolchain 1.2.3 | Runtime Environment (build 1.2.3+7) | 64-Bit Server VM",
     ],
+  );
+  TestValidator.predicate(
+    "SCIP public configuration preserves the parallel evidence derivation",
+    rows !== undefined &&
+      derivation !== undefined &&
+      JSON.stringify(rows) === JSON.stringify(derivation.rows) &&
+      derivation.inconclusive.length === 0,
   );
 
   // And when no spelling resolves at all, the row still names what was looked
@@ -196,35 +264,52 @@ function assertOnlyAKnownRowCanBeRestored(): void {
   TestValidator.equals(
     "a row that has never been established stays unasked",
     toolchainVersion.reestablish(
-      ["tool=1.0.0", `newcomer${toolchainVersion.UNASKED}`, "bare-token"],
+      toolchainVersion.derive([
+        "tool=1.0.0",
+        toolchainVersion.unasked("newcomer"),
+        "bare-token",
+      ]),
       ["tool=1.0.0", "bare-token"],
-    ),
-    ["tool=1.0.0", `newcomer${toolchainVersion.UNASKED}`, "bare-token"],
+    ).rows,
+    ["tool=1.0.0", "newcomer=unasked", "bare-token"],
   );
   TestValidator.equals(
     "every unasked row with a prior is restored, and only those",
     toolchainVersion.reestablish(
-      [
-        `held${toolchainVersion.UNASKED}`,
+      toolchainVersion.derive([
+        toolchainVersion.unasked("held"),
         "moved=2.0.0",
-        `unknown${toolchainVersion.UNASKED}`,
-      ],
+        toolchainVersion.unasked("unknown"),
+      ]),
       ["held=1.0.0", "moved=1.0.0"],
-    ),
-    ["held=1.0.0", "moved=2.0.0", `unknown${toolchainVersion.UNASKED}`],
+    ).rows,
+    ["held=1.0.0", "moved=2.0.0", "unknown=unasked"],
   );
   TestValidator.equals(
     "a value containing the separator is restored whole",
     toolchainVersion.reestablish(
-      [`GOFLAGS${toolchainVersion.UNASKED}`],
+      toolchainVersion.derive([
+        toolchainVersion.unasked("GOFLAGS"),
+      ]),
       ["GOFLAGS=-tags=integration"],
-    ),
+    ).rows,
     ["GOFLAGS=-tags=integration"],
   );
   TestValidator.equals(
     "a derivation with nothing unasked is returned untouched",
-    toolchainVersion.reestablish(["tool=2.0.0"], ["tool=1.0.0"]),
+    toolchainVersion.reestablish(
+      toolchainVersion.derive(["tool=2.0.0"]),
+      ["tool=1.0.0"],
+    ).rows,
     ["tool=2.0.0"],
+  );
+  TestValidator.equals(
+    "a public setting that literally ends in unasked remains its own value",
+    toolchainVersion.reestablish(
+      toolchainVersion.derive(["PATH=unasked"]),
+      ["PATH=old"],
+    ).rows,
+    ["PATH=unasked"],
   );
 }
 
@@ -283,6 +368,35 @@ function assertTopologyAsksOnlyTheProvidersWithoutASession(): void {
     "a candidate that did not serve carries its configuration",
     rows(new Set())[0]?.configuration,
     ["toolchain=1.0.0"],
+  );
+}
+
+function assertTopologySortsRowsWithTheirEvidence(): void {
+  const root = GraphPaths.createTempDirectory(
+    "graph-toolchain-topology-evidence-",
+  );
+  const provider: IGraphProvider = {
+    ...ProviderFixtures.provider({ name: "evidence-provider" }),
+    configurationDerivation: () =>
+      toolchainVersion.derive([
+        toolchainVersion.unasked("tool"),
+        "SETTING=unasked",
+      ]),
+  };
+  const rows = providerTopology.available(
+    root,
+    ["typescript"],
+    { cwd: root },
+    { PATH: "", Path: "" },
+    [provider],
+  );
+  TestValidator.equals(
+    "topology sorting keeps the explicit unasked marker on its own row",
+    [
+      rows[0]?.configuration,
+      rows[0]?.configurationInconclusive,
+    ],
+    [["SETTING=unasked", "tool=unasked"], [1]],
   );
 }
 
@@ -460,13 +574,68 @@ function assertALookupThatCouldNotRunIsNotAnAbsentTool(): void {
   );
 }
 
+/**
+ * Public configuration strings have no reserved values.
+ *
+ * Environment and provider settings are arbitrary strings. A literal value
+ * ending in `=unasked` must therefore be fingerprinted like any other setting,
+ * both before the session has history and after a prior value exists.
+ */
+async function assertLiteralUnaskedSettingsAreNotControlState(): Promise<void> {
+  const root = GraphPaths.createTempDirectory(
+    "graph-toolchain-literal-unasked-",
+  );
+  fs.writeFileSync(path.join(root, "a.ts"), "export const value = 1;\n");
+  let rows = ["SETTING=unasked"];
+  const session = new BatchGraphSession({
+    root,
+    languages: ["typescript"],
+    provider: "literal-unasked-fixture",
+    command: {
+      command: process.execPath,
+      args: [
+        "-e",
+        "require('node:fs').writeFileSync(process.argv[1], '{}')",
+      ],
+    },
+    artifactName: "index.json",
+    indexArgs: (produced) => [produced],
+    inputs: () => ["a.ts"],
+    configuration: () => rows,
+    load: () =>
+      Promise.resolve(
+        ProviderFixtures.snapshot({
+          root,
+          provider: "literal-unasked-fixture",
+          languages: ["typescript"],
+        }),
+      ),
+  });
+  try {
+    const initial = await session.refresh();
+    rows = ["SETTING=old"];
+    const old = await session.refresh();
+    rows = ["SETTING=unasked"];
+    const literal = await session.refresh();
+    TestValidator.equals(
+      "a literal unasked setting is established initially and after a change",
+      [initial.mode, old.mode, literal.mode, literal.generation],
+      ["initial", "rebuild", "rebuild", 3],
+    );
+  } finally {
+    await session.close();
+  }
+}
+
 async function assertAnUnaskedQuestionDoesNotMoveTheUniverse(): Promise<void> {
   const root = GraphPaths.createTempDirectory("graph-toolchain-universe-");
   const source = path.join(root, "a.ts");
   fs.writeFileSync(source, "export const value = 1;\n");
   const artifact = path.join(root, "index.json");
 
-  let rows = ["tool=1.0.0"];
+  let rows: readonly string[] | toolchainVersion.IDerivation = [
+    "tool=1.0.0",
+  ];
   const session = new BatchGraphSession({
     root,
     languages: ["typescript"],
@@ -489,7 +658,10 @@ async function assertAnUnaskedQuestionDoesNotMoveTheUniverse(): Promise<void> {
       ),
   });
   try {
-    rows = [`tool${toolchainVersion.UNASKED}`, "SETTING=initial"];
+    rows = toolchainVersion.derive([
+      toolchainVersion.unasked("tool"),
+      "SETTING=initial",
+    ]);
     let initialMessage = "";
     try {
       await session.refresh();
@@ -509,7 +681,9 @@ async function assertAnUnaskedQuestionDoesNotMoveTheUniverse(): Promise<void> {
     // The question could not be put this time. Nothing was established, so
     // nothing changed — the row that would have moved the universe is exactly
     // the one that says it learned nothing.
-    rows = [`tool${toolchainVersion.UNASKED}`];
+    rows = toolchainVersion.derive([
+      toolchainVersion.unasked("tool"),
+    ]);
     const inconclusive = await session.refresh();
     TestValidator.equals(
       "a derivation that established nothing does not move the build universe",
@@ -545,7 +719,10 @@ async function assertAnUnaskedQuestionDoesNotMoveTheUniverse(): Promise<void> {
     // on serving an index built with flags the project no longer uses.
     rows = ["tool=2.0.0", "SETTING=old"];
     await session.refresh();
-    rows = [`tool${toolchainVersion.UNASKED}`, "SETTING=new"];
+    rows = toolchainVersion.derive([
+      toolchainVersion.unasked("tool"),
+      "SETTING=new",
+    ]);
     const partial = await session.refresh();
     TestValidator.equals(
       "an established change is kept even when a sibling row went unasked",
@@ -555,7 +732,10 @@ async function assertAnUnaskedQuestionDoesNotMoveTheUniverse(): Promise<void> {
 
     // And the unasked row itself is still held to its last known value rather
     // than moving the universe on its own.
-    rows = [`tool${toolchainVersion.UNASKED}`, "SETTING=new"];
+    rows = toolchainVersion.derive([
+      toolchainVersion.unasked("tool"),
+      "SETTING=new",
+    ]);
     const quiet = await session.refresh();
     TestValidator.equals(
       "the unasked row alone still does not move the universe",
@@ -680,6 +860,7 @@ function assertATopologyRestoresPerProviderRow(): void {
   const row = (
     provider: string,
     configuration?: string[],
+    configurationInconclusive?: number[],
   ): providerTopology.IRow => ({
     provider,
     languages: ["lua"],
@@ -688,6 +869,9 @@ function assertATopologyRestoresPerProviderRow(): void {
     windowsVerbatimArguments: false,
     windowsDoubleEscapeArguments: false,
     ...(configuration === undefined ? {} : { configuration }),
+    ...(configurationInconclusive === undefined
+      ? {}
+      : { configurationInconclusive }),
   });
 
   TestValidator.equals(
@@ -699,7 +883,7 @@ function assertATopologyRestoresPerProviderRow(): void {
   TestValidator.equals(
     "an unasked row is restored while a changed sibling is kept",
     providerTopology.reestablish(
-      [row("a", [`tool${toolchainVersion.UNASKED}`, "SETTING=new"])],
+      [row("a", ["tool=unasked", "SETTING=new"], [0])],
       [row("a", ["tool=1.0.0", "SETTING=old"])],
     ),
     [row("a", ["tool=1.0.0", "SETTING=new"])],
@@ -708,10 +892,36 @@ function assertATopologyRestoresPerProviderRow(): void {
   TestValidator.equals(
     "a provider with no prior entry is left alone",
     providerTopology.reestablish(
-      [row("fresh", [`tool${toolchainVersion.UNASKED}`])],
+      [row("fresh", ["tool=unasked"], [0])],
       [row("other", ["tool=1.0.0"])],
     ),
-    [row("fresh", [`tool${toolchainVersion.UNASKED}`])],
+    [row("fresh", ["tool=unasked"], [0])],
+  );
+
+  TestValidator.equals(
+    "a new unasked row keeps its evidence beside known provider history",
+    providerTopology.reestablish(
+      [row("a", ["newcomer=unasked"], [0])],
+      [row("a", ["tool=1.0.0"])],
+    ),
+    [row("a", ["newcomer=unasked"], [0])],
+  );
+
+  TestValidator.equals(
+    "a literal unasked setting is not restored from topology history",
+    providerTopology.reestablish(
+      [row("a", ["SETTING=unasked"])],
+      [row("a", ["SETTING=old"])],
+    ),
+    [row("a", ["SETTING=unasked"])],
+  );
+
+  TestValidator.equals(
+    "internal evidence is not added to serialized topology",
+    providerTopology.serialize([
+      row("a", ["tool=unasked"], [0]),
+    ]),
+    providerTopology.serialize([row("a", ["tool=unasked"])]),
   );
 
   TestValidator.equals(

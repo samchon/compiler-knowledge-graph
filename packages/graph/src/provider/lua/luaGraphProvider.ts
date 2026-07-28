@@ -33,6 +33,9 @@ export const luaGraphProvider: IGraphProvider = {
 
   buildInputs: (root) =>
     providerInputFiles(root, [], BUILD_FILES, BUILD_EXTENSIONS),
+  configuration: (root, env) => [...luaConfiguration(root, env).rows],
+  configurationDerivation: (root, env) =>
+    luaConfiguration(root, env),
 
   /**
    * The options this producer cannot honour, said out loud.
@@ -117,17 +120,27 @@ export const luaGraphProvider: IGraphProvider = {
           BUILD_FILES,
           BUILD_EXTENSIONS,
         ),
-      configuration: () => [
-        toolchainVersion({
-          root: props.root,
-          env: process.env,
-          command: "lua-language-server",
-          override: "SAMCHON_GRAPH_LUA",
-          args: ["--version"],
-        }),
-      ],
+      configuration: () =>
+        luaConfiguration(props.root, process.env, props.command),
     }),
 };
+
+function luaConfiguration(
+  root: string,
+  env: NodeJS.ProcessEnv,
+  resolved?: IGraphProvider.ICommand,
+): toolchainVersion.IDerivation {
+  return toolchainVersion.derive([
+    toolchainVersion.observe({
+      root,
+      env,
+      command: "lua-language-server",
+      override: "SAMCHON_GRAPH_LUA",
+      args: ["--version"],
+      ...(resolved === undefined ? {} : { resolved }),
+    }),
+  ]);
+}
 
 /**
  * The exporter to inject, or nothing when the named one is not there.

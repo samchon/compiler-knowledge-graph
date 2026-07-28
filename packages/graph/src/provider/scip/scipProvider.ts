@@ -4,6 +4,7 @@ import {
   GraphProviderAuthority,
 } from "../../typings";
 import { IGraphProvider } from "../IGraphProvider";
+import { toolchainVersion } from "../toolchainVersion";
 import { adaptScipIndex } from "./adaptScipIndex";
 import { ScipSession } from "./ScipSession";
 import { ScipEnrichment } from "./ScipEnrichment";
@@ -67,8 +68,15 @@ export function scipProvider(props: scipProvider.IProps): IGraphProvider {
     ...(configuration === undefined
       ? {}
       : {
-          configuration: (root, env) =>
-            configuration(root, languages, env),
+          configuration: (root, env) => [
+            ...toolchainVersion.normalize(
+              configuration(root, languages, env),
+            ).rows,
+          ],
+          configurationDerivation: (root, env) =>
+            toolchainVersion.normalize(
+              configuration(root, languages, env),
+            ),
         }),
 
     // A SCIP indexer answers with a whole-workspace artifact and has no
@@ -112,11 +120,13 @@ export function scipProvider(props: scipProvider.IProps): IGraphProvider {
           ? {}
           : {
               configuration: () => {
-                const current = configuration(open.root, open.languages);
+                const current = toolchainVersion.normalize(
+                  configuration(open.root, open.languages),
+                );
                 validateConfiguration?.(
                   open.root,
                   open.languages,
-                  current,
+                  current.rows,
                 );
                 return current;
               },
@@ -185,7 +195,7 @@ export namespace scipProvider {
       root: string,
       languages: readonly GraphLanguage[],
       env?: NodeJS.ProcessEnv,
-    ) => readonly string[];
+    ) => readonly string[] | toolchainVersion.IDerivation;
 
     /** Refuse configuration rows that no longer meet provider selection. */
     validateConfiguration?: (

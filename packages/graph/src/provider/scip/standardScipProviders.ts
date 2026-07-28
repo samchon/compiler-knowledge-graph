@@ -375,7 +375,7 @@ interface IStandardScipProvider {
     root: string,
     env: NodeJS.ProcessEnv,
     attempt: resolveProviderCommand.IAttempt,
-  ) => string;
+  ) => toolchainVersion.IObservation;
 
   /** Where a producer that takes no output flag writes, relative to the root. */
   artifactFrom?: (root: string) => string;
@@ -537,11 +537,11 @@ function createScipProvider(
                 override: props.override,
               }),
             );
-      return [
+      return toolchainVersion.derive([
         producerRow,
         toolVersion(root, env, "scip", "SAMCHON_GRAPH_SCIP"),
         ...toolchainVersions(root, env, props.toolchain),
-      ];
+      ]);
     },
     // Selected from the configuration rather than re-derived, so the
     // published compiler is the one this universe was computed from. Labelled
@@ -592,11 +592,13 @@ function phpProducerConfiguration(
   root: string,
   _env: NodeJS.ProcessEnv,
   attempt: resolveProviderCommand.IAttempt,
-): string {
+): toolchainVersion.IObservation {
   const label = "scip-php";
-  if (!attempt.asked) return `${label}${toolchainVersion.UNASKED}`;
+  if (!attempt.asked) return toolchainVersion.unasked(label);
   const executable = attempt.executable;
-  if (executable === undefined) return `${label}=unavailable`;
+  if (executable === undefined) {
+    return toolchainVersion.conclusive(`${label}=unavailable`);
+  }
   // A Composer lock identifies only the project-local binary that Composer
   // installed. An override, private development build, npm shim, or PATH binary
   // may be different bytes even when this checkout happens to contain a lock;
@@ -625,7 +627,9 @@ function phpProducerConfiguration(
         entry !== null &&
         (entry as { name?: unknown }).name === "davidrjenni/scip-php",
     );
-    if (installed === undefined) return `${label}=unreported`;
+    if (installed === undefined) {
+      return toolchainVersion.conclusive(`${label}=unreported`);
+    }
     const version =
       typeof installed.version === "string" && installed.version.trim() !== ""
         ? installed.version.trim()
@@ -635,9 +639,11 @@ function phpProducerConfiguration(
       installed.source.reference.trim() !== ""
         ? `@${installed.source.reference.trim()}`
         : "";
-    return `${label}=${version}${reference}`;
+    return toolchainVersion.conclusive(
+      `${label}=${version}${reference}`,
+    );
   } catch {
-    return `${label}=unreported`;
+    return toolchainVersion.conclusive(`${label}=unreported`);
   }
 }
 
@@ -654,7 +660,7 @@ function phpProducerConfiguration(
 function phpExecutableConfiguration(
   label: string,
   executable: string,
-): string {
+): toolchainVersion.IObservation {
   try {
     const selected = path.resolve(executable);
     const digest = createHash("sha256")
@@ -662,13 +668,13 @@ function phpExecutableConfiguration(
       .update("\0", "utf8")
       .update(fs.readFileSync(selected))
       .digest("hex");
-    return `${label}=sha256:${digest}`;
+    return toolchainVersion.conclusive(`${label}=sha256:${digest}`);
     /* c8 ignore start -- resolution stat'd this exact regular file immediately
      * before the callback; only a synchronous removal or permission race can
      * make this read fail, and no deterministic cross-platform fixture can
      * enter between those two calls. */
   } catch {
-    return `${label}${toolchainVersion.UNASKED}`;
+    return toolchainVersion.unasked(label);
   }
   /* c8 ignore stop */
 }
@@ -802,16 +808,21 @@ function toolchainVersions(
   root: string,
   env: NodeJS.ProcessEnv,
   toolchain: IToolchain,
-): string[] {
+): toolchainVersion.IObservation[] {
   const tools = resolveToolchain(root, env, toolchain);
   return tools.map((tool) => {
     const label = tool.label ?? tool.command;
     if (tool.resolved === undefined) {
       return tool.asked
-        ? `${label}=unavailable`
-        : `${label}${toolchainVersion.UNASKED}`;
+        ? toolchainVersion.conclusive(`${label}=unavailable`)
+        : toolchainVersion.unasked(label);
     }
-    return toolchainVersion({ root, env, args: VERSION_ARGS, ...tool });
+    return toolchainVersion.observe({
+      root,
+      env,
+      args: VERSION_ARGS,
+      ...tool,
+    });
   });
 }
 
@@ -1066,8 +1077,14 @@ function toolVersion(
   env: NodeJS.ProcessEnv,
   command: string,
   override: string,
-): string {
-  return toolchainVersion({ root, env, command, override, args: ["--version"] });
+): toolchainVersion.IObservation {
+  return toolchainVersion.observe({
+    root,
+    env,
+    command,
+    override,
+    args: ["--version"],
+  });
 }
 
 function compilationDatabase(root: string): string | undefined {

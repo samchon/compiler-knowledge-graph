@@ -93,7 +93,9 @@ export class BatchGraphSession implements IBulkGraphSession {
         // exactly like a project that changed underneath the indexer. What that
         // check exists to catch is a source or build file edited while the
         // producer was running, and re-reading the files still catches it.
-        const configuration = [...(this.options.configuration?.() ?? [])];
+        const configuration = toolchainVersion.normalize(
+          this.options.configuration?.() ?? [],
+        );
         // A derivation that could not put its question establishes nothing, and
         // a universe computed from "nothing" is not a smaller universe — it is
         // a different one, which rebuilds an artifact the project never changed.
@@ -106,14 +108,14 @@ export class BatchGraphSession implements IBulkGraphSession {
         // user genuinely changed in the same refresh.
         //
         // This is not the version memory that was removed: it is one field on
-        // one session, it applies only to a row that explicitly says its
-        // question was unasked, and it never presents a stale answer as a fresh
-        // one.
+        // one session, it applies only to a row whose derivation explicitly
+        // marks its question as unasked, and it never presents a stale answer
+        // as a fresh one.
         //
         // The inputs are hashed separately and always read from disk, so a
         // source edited during that window still rebuilds. Declining to conclude
         // about the toolchain must not let the session claim a file did not move.
-        const established = toolchainVersion.reestablish(
+        const evidence = toolchainVersion.reestablish(
           configuration,
           this.established,
         );
@@ -123,13 +125,14 @@ export class BatchGraphSession implements IBulkGraphSession {
         // marker would give a strict snapshot an intentionally inconclusive
         // compiler identity. Later transient failures still reach here as
         // their established values and retain the current universe.
-        if (toolchainVersion.inconclusive(established)) {
+        if (toolchainVersion.inconclusive(evidence)) {
           throw new Error(
-            `${this.options.provider}: cannot build from inconclusive configuration rows: ${established
-              .filter((row) => row.endsWith(toolchainVersion.UNASKED))
+            `${this.options.provider}: cannot build from inconclusive configuration rows: ${toolchainVersion
+              .unresolved(evidence)
               .join("; ")}`,
           );
         }
+        const established = evidence.rows;
         const universe = this.fingerprint(established);
         if (universe === this.universe && this.snapshot !== undefined) {
           return {
@@ -565,7 +568,9 @@ export namespace BatchGraphSession {
     artifactFrom?: (root: string) => string;
     inputs: () => string[];
     /** Non-file build settings whose change invalidates the complete artifact. */
-    configuration?: () => readonly string[];
+    configuration?: () =>
+      | readonly string[]
+      | toolchainVersion.IDerivation;
     load: (props: ILoadProps) => Promise<IBulkGraphSession.ISnapshot>;
     /** Contract gate that must pass before this generation becomes current. */
     validate?: (snapshot: IBulkGraphSession.ISnapshot) => void;

@@ -321,7 +321,7 @@ export namespace ScipSession {
     indexArgs: (artifact: string) => string[];
     artifactFrom?: (root: string) => string;
     inputs: () => string[];
-    configuration?: () => readonly string[];
+    configuration?: BatchGraphSession.IOptions["configuration"];
     compilerVersion?: (configuration: readonly string[]) => string;
 
     /**

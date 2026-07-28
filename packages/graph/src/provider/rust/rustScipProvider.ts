@@ -134,15 +134,22 @@ function rustProviderConfiguration(
   root: string,
   _languages?: readonly GraphLanguage[],
   env: NodeJS.ProcessEnv = process.env,
-): readonly string[] {
-  return rustScipConfiguration(root, env);
+): toolchainVersion.IDerivation {
+  return rustScipConfigurationDerivation(root, env);
 }
 
 function rustScipConfiguration(
   root: string = process.cwd(),
   env: NodeJS.ProcessEnv = process.env,
 ): string[] {
-  return [
+  return [...rustScipConfigurationDerivation(root, env).rows];
+}
+
+function rustScipConfigurationDerivation(
+  root: string,
+  env: NodeJS.ProcessEnv,
+): toolchainVersion.IDerivation {
+  return toolchainVersion.derive([
     ...RUST_ENVIRONMENT_KEYS.map((key) => `${key}=${env[key] ?? ""}`),
     ...Object.entries(env)
       .filter(
@@ -167,17 +174,23 @@ function rustScipConfiguration(
             .digest("hex")}`,
       ),
     ...cargoConfigurationSnapshot(root, env),
-    toolVersion(
+    toolObservation(
       root,
       env,
       "rust-analyzer",
       "SAMCHON_GRAPH_RUST_ANALYZER",
       ["--version"],
     ),
-    toolVersion(root, env, "scip", "SAMCHON_GRAPH_SCIP", ["--version"]),
-    toolVersion(root, env, "rustc", "SAMCHON_GRAPH_RUSTC", ["-vV"]),
-    toolVersion(root, env, "cargo", "SAMCHON_GRAPH_CARGO", ["-V"]),
-  ];
+    toolObservation(
+      root,
+      env,
+      "scip",
+      "SAMCHON_GRAPH_SCIP",
+      ["--version"],
+    ),
+    toolObservation(root, env, "rustc", "SAMCHON_GRAPH_RUSTC", ["-vV"]),
+    toolObservation(root, env, "cargo", "SAMCHON_GRAPH_CARGO", ["-V"]),
+  ]);
 }
 
 function cargoConfigurationSnapshot(
@@ -264,6 +277,22 @@ function toolVersion(
   args: readonly string[],
 ): string {
   return toolchainVersion({ root, env, command, override, args });
+}
+
+function toolObservation(
+  root: string,
+  env: NodeJS.ProcessEnv,
+  command: string,
+  override: string,
+  args: readonly string[],
+): toolchainVersion.IObservation {
+  return toolchainVersion.observe({
+    root,
+    env,
+    command,
+    override,
+    args,
+  });
 }
 
 function resolveTool(

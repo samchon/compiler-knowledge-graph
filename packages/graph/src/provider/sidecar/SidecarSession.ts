@@ -191,7 +191,7 @@ export namespace SidecarSession {
     command: IGraphProvider.ICommand;
     indexArgs: (artifact: string) => string[];
     inputs: () => string[];
-    configuration?: () => readonly string[];
+    configuration?: BatchGraphSession.IOptions["configuration"];
     maxStdoutBytes?: number;
     maxArtifactBytes?: number;
     validate?: (snapshot: IBulkGraphSession.ISnapshot) => void;

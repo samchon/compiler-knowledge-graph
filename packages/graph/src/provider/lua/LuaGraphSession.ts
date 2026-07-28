@@ -203,7 +203,7 @@ export namespace LuaGraphSession {
     command: IGraphProvider.ICommand;
     indexArgs: (artifact: string) => string[];
     inputs: () => string[];
-    configuration?: () => readonly string[];
+    configuration?: BatchGraphSession.IOptions["configuration"];
   }
   /* c8 ignore start -- declaration merging emits an unreachable namespace
    * creation arm after the class object already exists. */

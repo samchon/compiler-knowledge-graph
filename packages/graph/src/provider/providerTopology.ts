@@ -28,14 +28,22 @@ export namespace providerTopology {
      * been repaired: a developer who fixes the toolchain and edits nothing
      * would otherwise stay on the generic lane until some unrelated file moved.
      *
-     * The cost of that is worth stating. A probe that fails for a reason
-     * unrelated to the project moves this row, and a moved row rebuilds every
-     * language rather than one artifact. It is accepted only because a
-     * non-serving candidate is already degraded, where one rebuild is cheaper
-     * than never retrying; for a serving provider, where it would be pure loss,
-     * the derivation is absent entirely.
+     * The probe cost is accepted because a non-serving candidate has no other
+     * way to report its repair. Its evidence metadata lets a transient launch
+     * failure retain the prior established row; only a newly established
+     * configuration change moves the topology and retries the candidate. For a
+     * serving provider, where even the probe would be duplicate work, the
+     * derivation is absent entirely.
      */
     configuration?: string[];
+
+    /**
+     * Exact configuration indexes whose derivation established nothing.
+     *
+     * Internal resident evidence only. {@link serialize} deliberately omits it
+     * so topology remains the same public string snapshot it has always been.
+     */
+    configurationInconclusive?: number[];
   }
 
   /**
@@ -61,12 +69,14 @@ export namespace providerTopology {
       registry,
       false,
     ).candidates.map((candidate) => {
-      const configuration =
+      const derivation =
         servedBy.has(candidate.provider.name) ||
-        candidate.provider.configuration === undefined
+        (candidate.provider.configurationDerivation === undefined &&
+          candidate.provider.configuration === undefined)
           ? undefined
-          : [...candidate.provider.configuration(root, env)].sort(
-              compareOrdinal,
+          : toolchainVersion.sort(
+              candidate.provider.configurationDerivation?.(root, env) ??
+                candidate.provider.configuration!(root, env),
             );
       return {
         provider: candidate.provider.name,
@@ -77,13 +87,28 @@ export namespace providerTopology {
           candidate.command.windowsVerbatimArguments === true,
         windowsDoubleEscapeArguments:
           candidate.command.windowsDoubleEscapeArguments === true,
-        ...(configuration === undefined ? {} : { configuration }),
+        ...(derivation === undefined
+          ? {}
+          : {
+              configuration: [...derivation.rows],
+              ...(derivation.inconclusive.length === 0
+                ? {}
+                : {
+                    configurationInconclusive: [
+                      ...derivation.inconclusive,
+                    ],
+                  }),
+            }),
       };
     });
   }
 
   export function serialize(available: readonly IRow[]): string {
-    return JSON.stringify(available);
+    return JSON.stringify(
+      available.map(
+        ({ configurationInconclusive: _inconclusive, ...row }) => row,
+      ),
+    );
   }
 
   /**
@@ -116,11 +141,27 @@ export namespace providerTopology {
     return live.map((row) => {
       const before = prior.get(row.provider)?.configuration;
       if (row.configuration === undefined || before === undefined) return row;
+      const derivation = toolchainVersion.reestablish(
+        {
+          rows: row.configuration,
+          inconclusive: row.configurationInconclusive ?? [],
+        },
+        before,
+      );
+      const {
+        configurationInconclusive: _inconclusive,
+        ...visible
+      } = row;
       return {
-        ...row,
-        configuration: [
-          ...toolchainVersion.reestablish(row.configuration, before),
-        ],
+        ...visible,
+        configuration: [...derivation.rows],
+        ...(derivation.inconclusive.length === 0
+          ? {}
+          : {
+              configurationInconclusive: [
+                ...derivation.inconclusive,
+              ],
+            }),
       };
     });
   }

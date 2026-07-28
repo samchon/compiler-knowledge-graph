@@ -51,7 +51,7 @@ export const goGraphProvider = Object.assign(
     resolve: resolveGoGraphCommand,
     indexArgs: goIndexArgs,
     inputs: goInputs,
-    configuration: goProviderConfiguration,
+    configuration: goProviderConfigurationDerivation,
   }),
   {
     indexArgs: goIndexArgs,
@@ -67,6 +67,14 @@ function goProviderConfiguration(
   env: NodeJS.ProcessEnv = process.env,
 ): string[] {
   return goConfiguration(root, env);
+}
+
+function goProviderConfigurationDerivation(
+  root: string,
+  _languages?: readonly GraphLanguage[],
+  env: NodeJS.ProcessEnv = process.env,
+): toolchainVersion.IDerivation {
+  return goConfigurationDerivation(root, env);
 }
 
 function resolveGoGraphCommand(
@@ -212,14 +220,21 @@ function goConfiguration(
   root: string = process.cwd(),
   env: NodeJS.ProcessEnv = process.env,
 ): string[] {
+  return [...goConfigurationDerivation(root, env).rows];
+}
+
+function goConfigurationDerivation(
+  root: string,
+  env: NodeJS.ProcessEnv,
+): toolchainVersion.IDerivation {
   const rows = GO_ENVIRONMENT_KEYS.map((key) => `${key}=${env[key] ?? ""}`);
-  return [
+  return toolchainVersion.derive([
     ...rows,
     // Through the shared probe like every other row. Its own `spawnSync` here
     // reported `go-env=unavailable` for any failure, and since a non-serving
     // candidate's configuration is part of the resident topology snapshot, one
     // transient launch failure moved that snapshot and rebuilt every language.
-    toolchainVersion({
+    toolchainVersion.observe({
       root,
       env,
       command: "go",
@@ -227,24 +242,30 @@ function goConfiguration(
       args: ["env", "-json", ...GO_PROBED_ENVIRONMENT_KEYS],
       label: "go-env",
     }),
-    toolVersion(
+    toolObservation(
       root,
       env,
       "scip-go",
       "SAMCHON_GRAPH_SCIP_GO",
       ["--version"],
     ),
-  ];
+  ]);
 }
 
-function toolVersion(
+function toolObservation(
   root: string,
   env: NodeJS.ProcessEnv,
   command: string,
   override: string,
   args: readonly string[],
-): string {
-  return toolchainVersion({ root, env, command, override, args });
+): toolchainVersion.IObservation {
+  return toolchainVersion.observe({
+    root,
+    env,
+    command,
+    override,
+    args,
+  });
 }
 
 const GO_BUILD_FILE_NAMES: readonly string[] = [

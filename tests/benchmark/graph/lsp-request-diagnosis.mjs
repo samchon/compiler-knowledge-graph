@@ -25,7 +25,10 @@ import {
   repoRoot,
   serverArgsForPreparedFixture,
 } from "./language.mjs";
-import { summarizeLspRequestTrace } from "./lsp-request-summary.mjs";
+import {
+  assertLspRequestDiagnosisEvidence,
+  summarizeLspRequestTrace,
+} from "./lsp-request-summary.mjs";
 import { removeTree } from "./remove-tree.mjs";
 
 const values = Object.fromEntries(
@@ -174,11 +177,7 @@ process.stdout.write(
     `${String(summary.inFlight.length)} in flight\n`,
 );
 if (result.error !== undefined && !timedOut) throw result.error;
-if (trace.requestCount === 0) {
-  throw new Error(
-    `${project}: diagnosis produced no LSP request trace; see ${logBase}.err.log`,
-  );
-}
+assertLspRequestDiagnosisEvidence(project, timedOut, trace);
 
 function positiveInteger(value) {
   const parsed = Number(value);

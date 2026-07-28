@@ -157,6 +157,28 @@ export function summarizeLspRequestTrace(log) {
   };
 }
 
+/**
+ * A timed-out diagnosis is useful only when it preserves the deadline boundary.
+ *
+ * Without the cutoff, cleanup errors can be mistaken for server progress and
+ * the outstanding requests are reconstructed from whichever writes happened
+ * to reach the pipe before process exit rather than from the actual deadline.
+ */
+export function assertLspRequestDiagnosisEvidence(
+  project,
+  timedOut,
+  trace,
+) {
+  if (trace.requestCount === 0) {
+    throw new Error(`${project}: diagnosis produced no LSP request trace`);
+  }
+  if (timedOut && !trace.cutoffObserved) {
+    throw new Error(
+      `${project}: timed-out diagnosis produced no LSP request cutoff`,
+    );
+  }
+}
+
 function safeTraceInteger(value, label) {
   const parsed = Number(value);
   if (!Number.isSafeInteger(parsed) || parsed < 1) {

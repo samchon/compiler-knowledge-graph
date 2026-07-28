@@ -14,7 +14,10 @@ import {
   assertPinnedCheckout,
 } from "../graph/language.mjs";
 import { javaSystemProperty } from "../graph/java-tool-options.mjs";
-import { summarizeLspRequestTrace } from "../graph/lsp-request-summary.mjs";
+import {
+  assertLspRequestDiagnosisEvidence,
+  summarizeLspRequestTrace,
+} from "../graph/lsp-request-summary.mjs";
 import { assertPublicationCandidates } from "../graph/publication-gate.mjs";
 import { agentPublicationDocument } from "../graph/publication-document.mjs";
 import { removeTree } from "../graph/remove-tree.mjs";
@@ -1224,6 +1227,28 @@ function testLspRequestDiagnosisSummary() {
       },
     },
     "request diagnosis must freeze in-flight identities before abort cleanup emits terminal errors",
+  );
+  assert.doesNotThrow(
+    () => assertLspRequestDiagnosisEvidence("sinatra", true, cutoff),
+    "a timed-out diagnosis with an exact cutoff is publishable evidence",
+  );
+  assert.throws(
+    () => assertLspRequestDiagnosisEvidence("sinatra", true, summary),
+    /sinatra: timed-out diagnosis produced no LSP request cutoff/,
+    "a timed-out diagnosis must not pass when its deadline cutoff is missing",
+  );
+  assert.doesNotThrow(
+    () => assertLspRequestDiagnosisEvidence("sinatra", false, summary),
+    "a completed diagnosis does not need an abort cutoff",
+  );
+  assert.throws(
+    () =>
+      assertLspRequestDiagnosisEvidence("sinatra", false, {
+        ...summary,
+        requestCount: 0,
+      }),
+    /sinatra: diagnosis produced no LSP request trace/,
+    "a diagnosis without any request evidence must not pass",
   );
 
   for (const [label, lines, pattern] of [

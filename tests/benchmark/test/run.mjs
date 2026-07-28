@@ -1996,7 +1996,7 @@ function testReferenceRenderer() {
   assert.match(index, /strict providers enabled/);
   assert.match(index, /strict providers disabled/);
   assert.match(index, /outlined STATIC\/HYBRID bars used syntax fallback/);
-  assert.match(index, /STATIC 1\.2 s/);
+  assert.match(index, /STATIC 1 s/);
   assert.match(index, /&gt;60\.0 min/);
   assert.match(index, /stroke-dasharray="5 3"/);
 

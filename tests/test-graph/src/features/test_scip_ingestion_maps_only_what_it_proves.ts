@@ -888,29 +888,46 @@ function assertIndexValidation(): void {
     ],
   );
   const amplifiedWarnings: string[] = [];
+  const repeatedMalformedScope = {
+    range: [0, 10, 11],
+    enclosingRange: [0, 0, 5],
+    symbol: "repeated",
+  };
   const amplified = parseScipIndex(
-    withDocument({
-      relativePath: "flood.go",
-      occurrences: Array.from({ length: 12 }, (_, at) => 11 - at).map(
-        (line) => ({
-          range: [line, 10, 11],
-          enclosingRange: [line, 0, 5],
-          symbol: `s${String(line).padStart(2, "0")}`,
-        }),
-      ),
-    }),
+    {
+      metadata: { projectRoot: "file:///r" },
+      documents: [
+        {
+          relativePath: "flood.go",
+          occurrences: Array.from({ length: 12 }, (_, at) => 11 - at).map(
+            (line) => ({
+              range: [line, 10, 11],
+              enclosingRange: [line, 0, 5],
+              symbol: `s${String(line).padStart(2, "0")}`,
+            }),
+          ),
+        },
+        {
+          relativePath: "second.go",
+          occurrences: [repeatedMalformedScope, repeatedMalformedScope],
+        },
+      ],
+    },
     "scip",
     amplifiedWarnings,
+  );
+  const amplifiedOccurrences = amplified.documents.flatMap(
+    (document) => document.occurrences ?? [],
   );
   TestValidator.equals(
     "every occurrence survives an amplified malformed optional-scope report",
     [
-      amplified.documents[0]?.occurrences?.length,
-      amplified.documents[0]?.occurrences?.every(
+      amplifiedOccurrences.length,
+      amplifiedOccurrences.every(
         (occurrence) => occurrence.enclosingRange === undefined,
       ),
     ],
-    [12, true],
+    [14, true],
   );
   TestValidator.equals(
     "amplified malformed optional-scope warnings are capped and deterministic",
@@ -925,7 +942,7 @@ function assertIndexValidation(): void {
     ],
     [
       11,
-      "scip: 12 occurrences across 1 file carry enclosing ranges that do not enclose them; optional scopes were omitted; first 10 examples follow",
+      "scip: 14 occurrences carry enclosing ranges that do not enclose them; optional scopes were omitted; affected files: 2; first 10 examples follow",
       'scip: flood.go occurrence "s00" at [0,10,11] carries an enclosing range that does not enclose it; the optional scope was omitted',
       'scip: flood.go occurrence "s09" at [9,10,11] carries an enclosing range that does not enclose it; the optional scope was omitted',
       false,

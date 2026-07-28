@@ -81,9 +81,7 @@ export function parseScipIndex(
       rangeWarnings.map((warning) => warning.relativePath),
     ).size;
     warnings.push(
-      `scip: ${String(uniqueRangeWarningMessages.length)} occurrences across ${String(affectedFileCount)} ${
-        affectedFileCount === 1 ? "file" : "files"
-      } carry enclosing ranges that do not enclose them; optional scopes were omitted; first ${String(MAX_INVALID_ENCLOSING_RANGE_WARNING_EXAMPLES)} examples follow`,
+      `scip: ${String(rangeWarnings.length)} occurrences carry enclosing ranges that do not enclose them; optional scopes were omitted; affected files: ${String(affectedFileCount)}; first ${String(MAX_INVALID_ENCLOSING_RANGE_WARNING_EXAMPLES)} examples follow`,
       ...uniqueRangeWarningMessages.slice(
         0,
         MAX_INVALID_ENCLOSING_RANGE_WARNING_EXAMPLES,

@@ -65,10 +65,16 @@ const TOOLS = [
 ];
 
 const INDEX_TOOLS = [
-  { key: "samchon-graph", label: "@samchon/graph", color: "#22d3ee" },
-  { key: "codegraph", label: "codegraph", color: "#f59e0b" },
-  { key: "codebase-memory", label: "codebase-memory", color: "#4ade80" },
-  { key: "serena", label: "serena", color: "#e879f9" },
+  {
+    key: "samchon-graph",
+    label: "strict providers enabled",
+    color: "#22d3ee",
+  },
+  {
+    key: "samchon-graph-fallback",
+    label: "strict providers disabled",
+    color: "#f59e0b",
+  },
 ];
 
 const REPO_LABELS = {
@@ -181,6 +187,9 @@ for (const combo of combos.values()) {
 }
 // The index axis: what readiness costs before a tool can answer anything. It
 // is not a token chart, so it renders on its own scale (wall clock).
+const indexSvg =
+  currentIndex.cells.length > 0 ? renderIndex(currentIndex) : null;
+if (indexSvg !== null) writeSvg("graph-index-time.svg", indexSvg);
 const timeSvg =
   currentIndex.cells.length > 0 ? renderTime(currentIndex, allCells) : null;
 if (timeSvg !== null) writeSvg("graph-time-to-answer.svg", timeSvg);
@@ -542,11 +551,10 @@ function escapeXml(value) {
     .replaceAll("'", "&apos;");
 }
 
-// Cold index build time, one bar per tool, repositories ordered by the size of
-// the program each index was built from — forty seconds on VS Code and one
-// second on a small backend are the same tool, not two. `serena` has no bar
-// because it has no build step: it starts a language server and resolves on
-// demand, and pays at query time instead.
+// Cold graph build time for the same checkout with strict providers enabled
+// and disabled. Every project pair comes from one matrix job and therefore one
+// recorded host. Repositories are ordered by the size of the program each
+// graph was built from.
 
 function renderIndex(index) {
   const rows = [...new Set(index.cells.map((cell) => cell.project))]
@@ -558,14 +566,27 @@ function renderIndex(index) {
         const cell = index.cells.find(
           (item) => item.project === project && item.tool === tool.key,
         );
-        return { ...tool, ms: cell?.buildMs ?? 0 };
+        const measured =
+          typeof cell?.buildMs === "number" &&
+          Number.isFinite(cell.buildMs) &&
+          cell.buildMs >= 0;
+        const timedOut =
+          !measured &&
+          typeof cell?.timedOutMs === "number" &&
+          Number.isFinite(cell.timedOutMs) &&
+          cell.timedOutMs > 0;
+        return {
+          ...tool,
+          ms: measured ? cell.buildMs : timedOut ? cell.timedOutMs : 0,
+          timedOut,
+        };
       }),
     }))
     .sort((a, b) => a.scale.lines - b.scale.lines);
 
   const width = 1040;
   const height = 760;
-  const chart = { left: 160, right: 990, top: 120, bottom: 690 };
+  const chart = { left: 160, right: 930, top: 120, bottom: 690 };
   const plotWidth = chart.right - chart.left;
   const plotHeight = chart.bottom - chart.top;
   const max = niceMax(
@@ -575,10 +596,10 @@ function renderIndex(index) {
   const rowHeight = plotHeight / rows.length;
   const barHeight = 11;
   const barStep = 15;
-  const title = "Cold index build time (lower is better)";
-  const host = index.host
-    ? `${index.host.cpu}, ${index.host.cores} cores, ${index.host.ramGB} GB — ${index.host.os}`
-    : "";
+  const title =
+    "Cold graph build time — strict providers enabled vs disabled";
+  const subtitle =
+    "Lower is better. Each project pair shares one recorded runner; dashed bars exceeded the displayed timeout.";
 
   const grid = ticks
     .map((tick) => {
@@ -601,12 +622,15 @@ function renderIndex(index) {
       row.values.forEach((value, i) => {
         const y = groupTop + i * barStep;
         const barWidth = value.ms > 0 ? (value.ms / max) * plotWidth : 0;
+        const outcome = value.timedOut
+          ? `>${fmtBuildMs(value.ms)}`
+          : fmtBuildMs(value.ms);
         lines.push(
-          `  <rect x="${chart.left}" y="${y.toFixed(1)}" width="${barWidth.toFixed(1)}" height="${barHeight}" fill="${value.color}" rx="2"/>`,
+          `  <rect x="${chart.left}" y="${y.toFixed(1)}" width="${barWidth.toFixed(1)}" height="${barHeight}" fill="${value.color}"${value.timedOut ? ` fill-opacity="0.45" stroke="${value.color}" stroke-width="1.5" stroke-dasharray="5 3"` : ""} rx="2"/>`,
         );
         if (value.ms > 0)
           lines.push(
-            `  <text x="${(chart.left + barWidth + 8).toFixed(1)}" y="${(y + barHeight - 1).toFixed(1)}" fill="${value.color}" font-size="11">${escapeXml(fmtBuildMs(value.ms))}</text>`,
+            `  <text x="${(chart.left + barWidth + 8).toFixed(1)}" y="${(y + barHeight - 1).toFixed(1)}" fill="${value.color}" font-size="11">${escapeXml(outcome)}</text>`,
           );
       });
       return lines.join("\n");
@@ -625,8 +649,8 @@ function renderIndex(index) {
     `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" version="1.1" role="img" aria-label="${escapeXml(title)}">`,
     ` <rect width="${width}" height="${height}" fill="#0b0f14"/>`,
     ` <text x="40" y="46" fill="#f8fafc" font-size="22" font-weight="bold" font-family="DejaVu Sans, Arial, sans-serif">${escapeXml(title)}</text>`,
-    ` <text x="40" y="68" fill="#64748b" font-size="13" font-family="DejaVu Sans, Arial, sans-serif">${escapeXml(host)}</text>`,
-    ` <text x="40" y="${height - 22}" fill="#64748b" font-size="11" font-family="DejaVu Sans, Arial, sans-serif">Every tool builds the index its own documentation prescribes; repositories are ordered by the size of the program each was built from.</text>`,
+    ` <text x="40" y="68" fill="#64748b" font-size="13" font-family="DejaVu Sans, Arial, sans-serif">${escapeXml(subtitle)}</text>`,
+    ` <text x="40" y="${height - 22}" fill="#64748b" font-size="11" font-family="DejaVu Sans, Arial, sans-serif">Repositories are ordered by source lines. Exact hosts, revisions, providers, and toolchains remain in graph.json.</text>`,
     legend,
     grid,
     bars,

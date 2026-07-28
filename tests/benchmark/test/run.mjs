@@ -1613,6 +1613,7 @@ function testReferenceRenderer() {
     "graph-common-codex-gpt-5.6-terra",
     "graph-excalidraw-common-codex-gpt-5.6-terra",
     "graph-gin-common-codex-gpt-5.6-terra",
+    "graph-index-time",
     "graph-time-to-answer",
   ];
   assert.deepEqual(
@@ -1647,6 +1648,16 @@ function testReferenceRenderer() {
     /M2\.5 5\.5 5\.4 8l2\.6-4/,
     "the reference crown geometry marks the winner",
   );
+
+  const index = fs.readFileSync(
+    path.join(out, "svg", "graph-index-time.svg"),
+    "utf8",
+  );
+  assert.match(index, /strict providers enabled vs disabled/);
+  assert.match(index, /strict providers enabled/);
+  assert.match(index, /strict providers disabled/);
+  assert.match(index, /&gt;60\.0 min/);
+  assert.match(index, /stroke-dasharray="5 3"/);
 
   const time = fs.readFileSync(
     path.join(out, "svg", "graph-time-to-answer.svg"),
@@ -1690,7 +1701,15 @@ function testReferenceRenderer() {
     "stale",
   );
   fs.writeFileSync(
+    path.join(legacyOut, "svg", "graph-index-time.svg"),
+    "stale",
+  );
+  fs.writeFileSync(
     path.join(legacyOut, "png", "graph-time-to-answer.png"),
+    "stale",
+  );
+  fs.writeFileSync(
+    path.join(legacyOut, "png", "graph-index-time.png"),
     "stale",
   );
   fs.writeFileSync(input, JSON.stringify(legacyReport));
@@ -1711,6 +1730,16 @@ function testReferenceRenderer() {
     fs.existsSync(path.join(legacyOut, "png", "graph-time-to-answer.png")),
     false,
     "the renderer removes revisionless PNG index-time evidence",
+  );
+  assert.equal(
+    fs.existsSync(path.join(legacyOut, "svg", "graph-index-time.svg")),
+    false,
+    "the renderer removes a revisionless cold-index SVG",
+  );
+  assert.equal(
+    fs.existsSync(path.join(legacyOut, "png", "graph-index-time.png")),
+    false,
+    "the renderer removes a revisionless cold-index PNG",
   );
 
   const staleAgentReport = sampleReport();
@@ -1747,8 +1776,10 @@ function testReferenceRenderer() {
     staleAgentFiles,
     [
       "png/graph-gin-common-codex-gpt-5.6-terra.png",
+      "png/graph-index-time.png",
       "svg/graph-common-codex-gpt-5.6-terra.svg",
       "svg/graph-gin-common-codex-gpt-5.6-terra.svg",
+      "svg/graph-index-time.svg",
       "svg/graph-time-to-answer.svg",
     ],
     "stale agent charts and same-name PNG pixels are removed while unchanged current PNGs survive",
@@ -1866,8 +1897,8 @@ function testReferenceRenderer() {
   );
   assert.deepEqual(
     [...snapshot(revisionlessAgentOut).keys()],
-    [],
-    "known and outside-manifest revisionless agent evidence cannot leave a token or time chart behind",
+    ["svg/graph-index-time.svg"],
+    "revisionless agent evidence removes token and time-to-answer charts without removing independent current cold-index evidence",
   );
 
   for (const [relative] of first) {
@@ -1937,14 +1968,24 @@ function sampleReport() {
         gin: { files: 80, lines: 12_000 },
       },
       cells: ["excalidraw", "gin"].flatMap((project, projectIndex) =>
-        ["samchon-graph", "codegraph", "codebase-memory", "serena"].map(
-          (tool, toolIndex) => ({
-            project,
-            tool,
-            fixtureCommit: PROJECTS[project].commit,
-            buildMs: 1_000 + projectIndex * 500 + toolIndex * 200,
-          }),
-        ),
+        [
+          "samchon-graph",
+          "samchon-graph-fallback",
+          "codegraph",
+          "codebase-memory",
+          "serena",
+        ].map((tool, toolIndex) => ({
+          project,
+          tool,
+          fixtureCommit: PROJECTS[project].commit,
+          ...(project === "gin" &&
+          tool === "samchon-graph-fallback"
+            ? { buildMs: null, timedOutMs: 3_600_000 }
+            : {
+                buildMs:
+                  1_000 + projectIndex * 500 + toolIndex * 200,
+              }),
+        })),
       ),
     },
   };

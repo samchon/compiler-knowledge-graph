@@ -255,6 +255,9 @@ jobs:
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
 
+      - name: Install renderer dependencies
+        run: pnpm install --frozen-lockfile
+
       - name: Download reports
         uses: actions/download-artifact@v8
         with:
@@ -302,9 +305,15 @@ jobs:
       - name: Show what was measured
         run: node tests/benchmark/graph/index-time-summary.mjs
 
+      - name: Render publication charts
+        run: pnpm --filter @samchon/graph-benchmark render:png
+
       - name: Upload publication
         uses: actions/upload-artifact@v7
         with:
           name: index-time-publication
-          path: tests/benchmark/results/graph.json
+          path: |
+            tests/benchmark/results/graph.json
+            tests/benchmark/results/svg
+            tests/benchmark/results/png
           if-no-files-found: error

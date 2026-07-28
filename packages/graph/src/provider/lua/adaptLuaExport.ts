@@ -3,6 +3,7 @@ import {
   ISamchonGraphNode,
 } from "../../structures";
 import { GraphNodeKind } from "../../typings";
+import { fileOfNodeId } from "../../utils/fileOfNodeId";
 
 /**
  * Turn the Lua exporter's raw report into graph nodes and edges.
@@ -453,7 +454,11 @@ function identityOf(
   node: adaptLuaExport.INode,
   kind: GraphNodeKind,
 ): string {
-  return `${node.location.file}#${node.name}@${String(node.location.startLine + 1)}:${String(node.location.startColumn + 1)}:${kind}`;
+  return fileOfNodeId.write(
+    node.location.file,
+    `${node.name}@${String(node.location.startLine + 1)}:${String(node.location.startColumn + 1)}`,
+    kind,
+  );
 }
 
 function evidenceOf(location: adaptLuaExport.ILocation) {

@@ -28,7 +28,15 @@ on:
     paths:
       - ".github/workflows/index-time.yml"
       - ".github/scripts/latest-workflow-update.mjs"
+      - "config/**"
+      - "package.json"
+      - "packages/graph/**"
+      - "packages/graph-sitter/**"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "sidecars/**"
       - "tests/benchmark/**"
+      - "tests/experiment/**"
       # This exclusion prevents a result-only topic branch from starting the
       # workflow. For a follow-up commit on this PR, GitHub still evaluates the
       # whole base-to-topic diff; the latest_update job therefore classifies the
@@ -70,7 +78,15 @@ jobs:
           node .github/scripts/latest-workflow-update.mjs \
             --include=.github/workflows/index-time.yml \
             --include=.github/scripts/latest-workflow-update.mjs \
+            --include=config/** \
+            --include=package.json \
+            --include=packages/graph/** \
+            --include=packages/graph-sitter/** \
+            --include=pnpm-lock.yaml \
+            --include=pnpm-workspace.yaml \
+            --include=sidecars/** \
             --include=tests/benchmark/** \
+            --include=tests/experiment/** \
             --exclude=tests/benchmark/results/**
 
   measure:

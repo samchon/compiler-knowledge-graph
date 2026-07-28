@@ -1,6 +1,7 @@
 import { TestValidator } from "@nestia/e2e";
 
 import { adaptLuaExport } from "../../../../packages/graph/src/provider/lua/adaptLuaExport";
+import { fileOfNodeId } from "../../../../packages/graph/src/utils/fileOfNodeId";
 
 /**
  * Every refusal this adapter can make, made.
@@ -12,6 +13,7 @@ import { adaptLuaExport } from "../../../../packages/graph/src/provider/lua/adap
  */
 export const test_lua_export_refuses_what_it_cannot_prove = (): void => {
   assertSameLineDeclarationsRemainDistinctAndExactDuplicatesAreNamed();
+  assertIdentityComponentsCannotCollide();
   assertAnEdgeWithNoDeclarationIsNamed();
   assertAUseAtFileScopeIsNotAttributed();
   assertAMalformedArtifactIsRefused();
@@ -21,6 +23,40 @@ export const test_lua_export_refuses_what_it_cannot_prove = (): void => {
   assertAUseInsideAnUnmappedDeclarationIsDropped();
   assertABodylessDeclarationCanBeDisplaced();
 };
+
+function assertIdentityComponentsCannotCollide(): void {
+  // Without escaping, these two declarations both flatten to
+  // `a.lua#b.lua#c@1:1:field`: one hash belongs to the first file name and the
+  // other belongs to the second declaration name. The graph must retain both
+  // and its legacy-id reader must recover the original ownership exactly.
+  const result = adaptLuaExport(
+    {
+      schemaVersion: 1,
+      files: ["a.lua#b.lua", "a.lua"],
+      nodes: [
+        node("c", "field", "setfield", "a.lua#b.lua", 0, 0),
+        node("b.lua#c", "field", "setfield", "a.lua", 0, 0),
+      ],
+      edges: [],
+      skipped: { unnamed: 0, outsideRoot: 0, refsFailed: 0 },
+      warnings: [],
+    },
+    "samchon-graph-lua",
+  );
+  TestValidator.equals(
+    "delimiter-bearing Lua declarations keep distinct identities",
+    new Set(result.nodes.map((entry) => entry.id)).size,
+    2,
+  );
+  TestValidator.equals(
+    "escaped Lua identities preserve file and declaration components",
+    result.nodes.map((entry) => fileOfNodeId.parseLegacy(entry.id)),
+    [
+      { file: "a.lua#b.lua", name: "c@1:1", kind: "field" },
+      { file: "a.lua", name: "b.lua#c@1:1", kind: "field" },
+    ],
+  );
+}
 
 function assertSameLineDeclarationsRemainDistinctAndExactDuplicatesAreNamed(): void {
   // A second `local same` on one line is a distinct variable. Only an exact

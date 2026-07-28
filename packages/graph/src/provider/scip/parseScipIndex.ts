@@ -8,11 +8,12 @@ import { IScipIndex } from "./IScipIndex";
  * index is the failure mode worth avoiding: the missing facts are silent, so a
  * consumer cannot distinguish "this symbol has no references" from "the record
  * carrying them was malformed and dropped", and the audit riding on the result
- * asserts the first. The one producer-compatibility exception is an enclosing
- * range on a non-definition occurrence: graph never consumes that field, and
- * stock rust-analyzer writes the referenced definition's body there. Such a
- * range is validated structurally and then omitted when it cannot enclose the
- * occurrence; definition scopes remain strict.
+ * asserts the first. The one producer-compatibility exception is an optional
+ * enclosing range. Stock rust-analyzer has written the referenced definition's
+ * body on a reference, and scip-java has written a definition scope that misses
+ * its own name. Such a range is validated structurally and then omitted with a
+ * warning when it cannot enclose the occurrence. The occurrence itself remains
+ * valid, while the adapter gets no scope from which it could invent containment.
  */
 export function parseScipIndex(
   value: unknown,
@@ -55,6 +56,12 @@ export function parseScipIndex(
         ).map((symbol, at) =>
           symbolInformationOf(symbol, `${label}.externalSymbols[${at}]`),
         );
+  const rangeWarnings: string[] = [];
+  const parsedDocuments = documents.map((document, index) =>
+    documentOf(document, `${label}.documents[${index}]`, rangeWarnings),
+  );
+  const foldedDocuments = foldDocumentsByPath(parsedDocuments, warnings);
+  warnings.push(...[...new Set(rangeWarnings)].sort(compareText));
   return {
     metadata: {
       ...optionalProtocolVersion(
@@ -75,12 +82,7 @@ export function parseScipIndex(
         TEXT_ENCODINGS,
       ),
     },
-    documents: foldDocumentsByPath(
-      documents.map((document, index) =>
-        documentOf(document, `${label}.documents[${index}]`),
-      ),
-      warnings,
-    ),
+    documents: foldedDocuments,
     ...(parsedExternalSymbols === undefined
       ? {}
       : {
@@ -95,7 +97,11 @@ export function parseScipIndex(
   };
 }
 
-function documentOf(value: unknown, label: string): IScipIndex.IDocument {
+function documentOf(
+  value: unknown,
+  label: string,
+  warnings: string[],
+): IScipIndex.IDocument {
   const document = objectOf(value, label);
   const rawPath = stringOf(
     fieldOf(document, "relativePath", "relative_path", label),
@@ -143,7 +149,12 @@ function documentOf(value: unknown, label: string): IScipIndex.IDocument {
             document.occurrences,
             `${label}.occurrences`,
           ).map((occurrence, at) =>
-            occurrenceOf(occurrence, `${label}.occurrences[${at}]`),
+            occurrenceOf(
+              occurrence,
+              `${label}.occurrences[${at}]`,
+              relativePath,
+              warnings,
+            ),
           ),
         }),
     ...(document.symbols === undefined
@@ -178,7 +189,12 @@ function documentOf(value: unknown, label: string): IScipIndex.IDocument {
   };
 }
 
-function occurrenceOf(value: unknown, label: string): IScipIndex.IOccurrence {
+function occurrenceOf(
+  value: unknown,
+  label: string,
+  relativePath: string,
+  warnings: string[],
+): IScipIndex.IOccurrence {
   const occurrence = objectOf(value, label);
   const range = occurrenceRangeOf(occurrence, label, false)!;
   const enclosingRange = occurrenceRangeOf(occurrence, label, true);
@@ -198,17 +214,25 @@ function occurrenceOf(value: unknown, label: string): IScipIndex.IOccurrence {
     symbolRoles === undefined
       ? undefined
       : roleMaskOf(symbolRoles, `${label}.symbolRoles`);
+  const parsedSymbol = optionalString(
+    occurrence.symbol,
+    `${label}.symbol`,
+    "symbol",
+  );
   const invalidEnclosingRange =
     enclosingRange !== undefined && !rangeContains(enclosingRange, range);
-  if (
-    invalidEnclosingRange &&
-    ((parsedSymbolRoles ?? 0) & IScipIndex.SymbolRole.Definition) !== 0
-  ) {
-    throw new Error(`scip: ${label}.enclosingRange does not enclose its range`);
+  if (invalidEnclosingRange) {
+    warnings.push(
+      `scip: ${relativePath} occurrence ${
+        parsedSymbol.symbol === undefined
+          ? "without a symbol"
+          : JSON.stringify(parsedSymbol.symbol)
+      } at ${JSON.stringify(range)} carries an enclosing range that does not enclose it; the optional scope was omitted`,
+    );
   }
   return {
     range,
-    ...optionalString(occurrence.symbol, `${label}.symbol`, "symbol"),
+    ...parsedSymbol,
     ...(parsedSymbolRoles === undefined
       ? {}
       : { symbolRoles: parsedSymbolRoles }),

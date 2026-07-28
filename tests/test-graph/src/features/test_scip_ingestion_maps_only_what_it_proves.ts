@@ -839,17 +839,32 @@ function assertIndexValidation(): void {
     [rustAnalyzerReference.range, rustAnalyzerReference.enclosingRange],
     [[8, 4, 10], undefined],
   );
-  TestValidator.error(
-    "a definition whose enclosing range does not enclose it is refused",
-    () =>
-      parseScipIndex(
-        withOccurrence({
-          range: [8, 4, 10],
-          symbol: "s",
-          symbolRoles: 1,
-          enclosingRange: [1, 0, 5, 1],
-        }),
-      ),
+  const definitionWarnings: string[] = [];
+  const malformedDefinition = parseScipIndex(
+    withOccurrence({
+      range: [8, 4, 10],
+      symbol: "s",
+      symbolRoles: 1,
+      enclosingRange: [1, 0, 5, 1],
+    }),
+    "scip-java",
+    definitionWarnings,
+  ).documents[0]!.occurrences![0]!;
+  TestValidator.equals(
+    "a malformed optional definition scope cannot poison the semantic occurrence",
+    [
+      malformedDefinition.symbol,
+      malformedDefinition.symbolRoles,
+      malformedDefinition.enclosingRange,
+    ],
+    ["s", 1, undefined],
+  );
+  TestValidator.equals(
+    "omitting a malformed optional definition scope is explicit",
+    definitionWarnings,
+    [
+      'scip: a.go occurrence "s" at [8,4,10] carries an enclosing range that does not enclose it; the optional scope was omitted',
+    ],
   );
   // Optional records the graph does not read are still validated, because a
   // malformed one is evidence the index was not produced the way it claims.

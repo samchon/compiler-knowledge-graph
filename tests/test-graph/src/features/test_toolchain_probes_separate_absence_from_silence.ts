@@ -37,6 +37,7 @@ export const test_toolchain_probes_separate_absence_from_silence = async () => {
   assertDuplicateCompilerLabelsKeepDistinctIdentities();
   assertGoPathCanLiterallyEqualUnasked();
   assertPublicConfigurationKeepsEvidenceInternal();
+  assertTypedEvidenceIsCanonical();
   assertATopologyRestoresPerProviderRow();
   assertTopologyAsksOnlyTheProvidersWithoutASession();
   assertTopologySortsRowsWithTheirEvidence();
@@ -151,6 +152,67 @@ function assertPublicConfigurationKeepsEvidenceInternal(): void {
       visible.length === 1 &&
       JSON.stringify(visible) === JSON.stringify(evidence.rows) &&
       evidence.inconclusive.length === 0,
+  );
+}
+
+function assertTypedEvidenceIsCanonical(): void {
+  const invalid: [string, toolchainVersion.IDerivation][] = [
+    [
+      "private identities align with visible rows",
+      { rows: ["tool=1"], inconclusive: [], identities: [] },
+    ],
+    [
+      "inconclusive evidence indexes an existing row",
+      { rows: ["tool=unasked"], inconclusive: [1], identities: ["tool"] },
+    ],
+    [
+      "inconclusive indexes are safe integers",
+      {
+        rows: ["tool=unasked"],
+        inconclusive: [0.5],
+        identities: ["tool"],
+      },
+    ],
+    [
+      "inconclusive indexes do not repeat",
+      {
+        rows: ["a=unasked", "b=unasked"],
+        inconclusive: [0, 0],
+        identities: ["a", "b"],
+      },
+    ],
+    [
+      "inconclusive indexes stay in canonical order",
+      {
+        rows: ["a=unasked", "b=unasked"],
+        inconclusive: [1, 0],
+        identities: ["a", "b"],
+      },
+    ],
+    [
+      "inconclusive evidence has a private identity",
+      {
+        rows: ["tool=unasked"],
+        inconclusive: [0],
+        identities: [undefined],
+      },
+    ],
+    [
+      "inconclusive identities are nonempty",
+      { rows: ["tool=unasked"], inconclusive: [0], identities: [""] },
+    ],
+  ];
+  for (const [label, derivation] of invalid)
+    TestValidator.error(label, () => toolchainVersion.normalize(derivation));
+
+  TestValidator.equals(
+    "public string rows remain valid without private identities",
+    toolchainVersion.normalize(["SETTING=unasked"]),
+    {
+      rows: ["SETTING=unasked"],
+      inconclusive: [],
+      identities: [undefined],
+    },
   );
 }
 

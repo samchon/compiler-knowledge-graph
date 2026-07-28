@@ -252,11 +252,13 @@ export namespace toolchainVersion {
     value: readonly string[] | IDerivation,
   ): IDerivation {
     if (!isDerivation(value)) return derive(value);
-    return {
+    const derivation: IDerivation = {
       rows: [...value.rows],
       inconclusive: [...value.inconclusive],
       identities: [...value.identities],
     };
+    validate(derivation);
+    return derivation;
   }
 
   /** Sort visible rows without detaching their evidence metadata. */
@@ -354,6 +356,34 @@ export namespace toolchainVersion {
     value: readonly string[] | IDerivation,
   ): value is IDerivation {
     return !Array.isArray(value);
+  }
+
+  function validate(derivation: IDerivation): void {
+    if (derivation.identities.length !== derivation.rows.length)
+      throw new Error(
+        "toolchain configuration identities must align with its rows",
+      );
+    let previous = -1;
+    for (const index of derivation.inconclusive) {
+      if (
+        !Number.isSafeInteger(index) ||
+        index < 0 ||
+        index >= derivation.rows.length
+      )
+        throw new Error(
+          "toolchain inconclusive evidence must index an existing row",
+        );
+      if (index <= previous)
+        throw new Error(
+          "toolchain inconclusive evidence must be strictly increasing",
+        );
+      const identity = derivation.identities[index];
+      if (typeof identity !== "string" || identity.length === 0)
+        throw new Error(
+          "toolchain inconclusive evidence must carry a stable identity",
+        );
+      previous = index;
+    }
   }
 
   function label(row: string): string {

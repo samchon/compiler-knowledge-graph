@@ -1987,7 +1987,7 @@ function assertRelationshipsAndExternals(): void {
   );
 
   const repeatedFiles = Array.from(
-    { length: 13 },
+    { length: 12 },
     (_, at) => `duplicate-${String(at).padStart(2, "0")}.go`,
   );
   const repeatedDefinitions = (files: string[]) => {
@@ -2006,6 +2006,14 @@ function assertRelationshipsAndExternals(): void {
     });
     return { nodes: result.nodes, warnings: result.warnings };
   };
+  const exactDuplicateLimit = repeatedDefinitions(repeatedFiles.slice(0, 11));
+  TestValidator.predicate(
+    "ten duplicate definitions need no summary",
+    exactDuplicateLimit.warnings.length === 10 &&
+      exactDuplicateLimit.warnings.every((warning) =>
+        warning.includes("is defined in both"),
+      ),
+  );
   const boundedDuplicates = repeatedDefinitions(repeatedFiles);
   TestValidator.equals(
     "amplified duplicate definitions keep their complete canonical result",
@@ -2021,15 +2029,13 @@ function assertRelationshipsAndExternals(): void {
     "…while their warnings are summarized with ten deterministic examples",
     boundedDuplicates.warnings.length === 11 &&
       boundedDuplicates.warnings[0]?.includes(
-        "12 symbol definition(s) were repeated",
+        "11 symbol definition(s) were repeated",
       ) === true &&
       boundedDuplicates.warnings.filter((warning) =>
         warning.includes("is defined in both"),
       ).length === 10 &&
       boundedDuplicates.warnings.every(
-        (warning) =>
-          !warning.includes("duplicate-11.go") &&
-          !warning.includes("duplicate-12.go"),
+        (warning) => !warning.includes("duplicate-11.go"),
       ),
   );
 }
@@ -2743,6 +2749,68 @@ function assertTranslationUnitWarningsAreOrderIndependent(): void {
     );
     return { documents: index.documents, warnings };
   };
+  const foldedFiles = (count: number): Record<string, unknown>[] =>
+    Array.from({ length: count }, (_, at) => {
+      const relativePath = `fold-${String(at).padStart(2, "0")}.c`;
+      return [{ relativePath }, { relativePath }];
+    }).flat();
+  const exactFoldLimit = fold(foldedFiles(10));
+  TestValidator.predicate(
+    "ten translation-unit folds need no summary",
+    exactFoldLimit.warnings.length === 10 &&
+      exactFoldLimit.warnings.every((warning) =>
+        warning.includes("was indexed as 2 translation units"),
+      ),
+  );
+  const firstFoldOverLimit = fold(foldedFiles(11));
+  TestValidator.predicate(
+    "the eleventh translation-unit fold adds one summary and keeps ten examples",
+    firstFoldOverLimit.warnings.length === 11 &&
+      firstFoldOverLimit.warnings[0]?.includes(
+        "11 files were indexed as multiple translation units",
+      ) === true &&
+      firstFoldOverLimit.warnings.slice(1).every((warning) =>
+        warning.includes("was indexed as 2 translation units"),
+      ),
+  );
+  const ambiguousFiles = (counts: readonly number[]) =>
+    counts.flatMap((count, fileAt) => {
+      const relativePath = `ambiguity-${String(fileAt)}.c`;
+      const occurrences = (side: "left" | "right") =>
+        Array.from({ length: count }, (_, line) => ({
+          range: [line, 0, 1],
+          symbol: `${side}-${String(line)}`,
+        }));
+      return [
+        { relativePath, occurrences: occurrences("left") },
+        { relativePath, occurrences: occurrences("right") },
+      ];
+    });
+  const exactAmbiguityLimit = fold(ambiguousFiles([10]));
+  TestValidator.predicate(
+    "ten translation-unit ambiguities need no summary",
+    exactAmbiguityLimit.warnings.filter((warning) =>
+      warning.includes("resolves one range"),
+    ).length === 10 &&
+      exactAmbiguityLimit.warnings.every(
+        (warning) =>
+          !warning.includes(
+            "ranges or symbol readings disagreed across translation units",
+          ),
+      ),
+  );
+  const firstAmbiguityOverLimit = fold(ambiguousFiles([10, 1]));
+  TestValidator.predicate(
+    "the eleventh ambiguity summarizes ten examples and distinct affected files",
+    firstAmbiguityOverLimit.warnings.some((warning) =>
+      warning.includes(
+        "11 ranges or symbol readings disagreed across translation units; every reading is published; affected files: 2;",
+      ),
+    ) &&
+      firstAmbiguityOverLimit.warnings.filter((warning) =>
+        warning.includes("resolves one range"),
+      ).length === 10,
+  );
   const bounded = fold(amplified);
   TestValidator.equals(
     "amplified translation-unit input has canonical facts and warnings",

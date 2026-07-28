@@ -75,8 +75,8 @@ export function assertBothIndexColumnsAreMeasured() {
   );
   assert.match(
     runner,
-    /"--no-strict"/,
-    "the fallback column no longer stands the strict providers down",
+    /if \(tool === TOOL_SAMCHON \|\| tool === TOOL_SAMCHON_FALLBACK\) \{[\s\S]*?const strict = tool === TOOL_SAMCHON;[\s\S]*?\.\.\.\(strict \? \[\] : \["--no-strict"\]\)/,
+    "the runner no longer dispatches the fallback column with strict providers stood down",
   );
   assert.match(
     runner,

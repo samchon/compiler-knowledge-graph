@@ -736,6 +736,66 @@ function testIndexPublicationRefusesMalformedJson() {
       },
     ],
     [
+      "zero-cell report missing Node evidence",
+      {
+        ...validReportDocument,
+        host: withoutHostField(validReportDocument.host, "node"),
+        cells: [],
+      },
+    ],
+    [
+      "zero-cell report missing RAM evidence",
+      {
+        ...validReportDocument,
+        host: withoutHostField(validReportDocument.host, "ramGB"),
+        cells: [],
+      },
+    ],
+    [
+      "jointly null kernel evidence",
+      {
+        ...validReportDocument,
+        host: { ...validReportDocument.host, kernel: null },
+        cells: validReportDocument.cells.map((cell) => ({
+          ...cell,
+          host: { ...cell.host, kernel: null },
+        })),
+      },
+    ],
+    [
+      "jointly nonintegral core evidence",
+      {
+        ...validReportDocument,
+        host: { ...validReportDocument.host, cores: 1.5 },
+        cells: validReportDocument.cells.map((cell) => ({
+          ...cell,
+          host: { ...cell.host, cores: 1.5 },
+        })),
+      },
+    ],
+    [
+      "jointly zero core evidence",
+      {
+        ...validReportDocument,
+        host: { ...validReportDocument.host, cores: 0 },
+        cells: validReportDocument.cells.map((cell) => ({
+          ...cell,
+          host: { ...cell.host, cores: 0 },
+        })),
+      },
+    ],
+    [
+      "jointly empty Node evidence",
+      {
+        ...validReportDocument,
+        host: { ...validReportDocument.host, node: "" },
+        cells: validReportDocument.cells.map((cell) => ({
+          ...cell,
+          host: { ...cell.host, node: "" },
+        })),
+      },
+    ],
+    [
       "unknown tool scope",
       {
         ...validReportDocument,
@@ -791,6 +851,18 @@ function testIndexPublicationRefusesMalformedJson() {
         })),
       },
     ],
+    ...[false, true].map((strict) => [
+      `comparator strict intent ${String(strict)}`,
+      {
+        ...validReportDocument,
+        tools: ["codegraph"],
+        cells: validReportDocument.cells.map((cell) => ({
+          ...cell,
+          tool: "codegraph",
+          strict,
+        })),
+      },
+    ]),
     [
       "missing toolchain evidence",
       {
@@ -2275,7 +2347,14 @@ function sampleReport() {
     agent: { cells },
     index: {
       schemaVersion: 2,
-      host: { cpu: "test", cores: 8, ramGB: 32, os: "test" },
+      host: {
+        cpu: "test",
+        cores: 8,
+        ramGB: 32,
+        os: "test",
+        kernel: "test",
+        node: "v22.0.0",
+      },
       fixtures: {
         excalidraw: PROJECTS.excalidraw.commit,
         gin: PROJECTS.gin.commit,

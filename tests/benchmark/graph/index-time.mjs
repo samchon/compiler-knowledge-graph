@@ -255,12 +255,13 @@ for (const project of selected) {
           // and has to stop the lane, or a genuine defect would publish as a
           // number.
           if (typeof error?.timedOutMs !== "number") throw error;
+          const strict = strictIntentOfTool(tool);
           cell = {
             project,
             tool,
             buildMs: null,
             timedOutMs: error.timedOutMs,
-            strict: tool !== TOOL_SAMCHON_FALLBACK,
+            ...(strict === undefined ? {} : { strict }),
             // The process was killed before it could write its provenance line,
             // so this cannot say what produced the graph — there is none. It can
             // say what was being attempted, because that is announced before
@@ -811,16 +812,8 @@ function assertIncomingReportScope(incoming) {
         `incoming index-time result cell ${cell.project}/${cell.tool} does not match its toolchain evidence`,
       );
     }
-    const expectedStrict =
-      cell.tool === TOOL_SAMCHON
-        ? true
-        : cell.tool === TOOL_SAMCHON_FALLBACK
-          ? false
-          : undefined;
-    if (
-      expectedStrict !== undefined &&
-      cell.strict !== expectedStrict
-    ) {
+    const expectedStrict = strictIntentOfTool(cell.tool);
+    if (cell.strict !== expectedStrict) {
       throw new TypeError(
         `incoming index-time result cell ${cell.project}/${cell.tool} does not match its strict-provider intent`,
       );
@@ -828,12 +821,17 @@ function assertIncomingReportScope(incoming) {
   }
 }
 
+function strictIntentOfTool(tool) {
+  return tool === TOOL_SAMCHON
+    ? true
+    : tool === TOOL_SAMCHON_FALLBACK
+      ? false
+      : undefined;
+}
+
 function sameHostEvidence(left, right) {
   return ["cpu", "cores", "ramGB", "os", "kernel", "node"].every(
-    (field) =>
-      Object.hasOwn(left, field) &&
-      Object.hasOwn(right, field) &&
-      left[field] === right[field],
+    (field) => left[field] === right[field],
   );
 }
 

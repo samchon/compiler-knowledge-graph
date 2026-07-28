@@ -282,13 +282,21 @@ function isCommit(value) {
 
 function assertHost(value, label) {
   assertRecord(value, label);
-  for (const field of ["cpu", "os"]) {
-    if (typeof value[field] !== "string" || value[field].trim() === "") {
+  for (const field of ["cpu", "os", "kernel", "node"]) {
+    if (
+      !Object.hasOwn(value, field) ||
+      typeof value[field] !== "string" ||
+      value[field].trim() === ""
+    ) {
       throw new TypeError(`${label}.${field} must be a nonempty string`);
     }
   }
   for (const field of ["cores", "ramGB"]) {
-    if (!Number.isSafeInteger(value[field]) || value[field] < 1) {
+    if (
+      !Object.hasOwn(value, field) ||
+      !Number.isSafeInteger(value[field]) ||
+      value[field] < 1
+    ) {
       throw new TypeError(
         `${label}.${field} must be a positive safe integer`,
       );

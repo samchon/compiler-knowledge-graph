@@ -100,7 +100,14 @@ export function assertBothIndexColumnsAreMeasured() {
  * strict cell's provider never served.
  */
 export function assertStrictComparisonArithmetic() {
-  const host = { cpu: "fixture", cores: 1, ramGB: 1, os: "fixture", node: "x" };
+  const host = {
+    cpu: "fixture",
+    cores: 1,
+    ramGB: 1,
+    os: "fixture",
+    kernel: "fixture",
+    node: "x",
+  };
   const cell = (project, tool, extra) => ({
     project,
     tool,

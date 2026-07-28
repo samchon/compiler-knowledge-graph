@@ -21,6 +21,7 @@ export const test_cli_dump_prints_graph_json = async () => {
   TestValidator.predicate("CLI dump has nodes", dump.nodes.length > 0);
 
   assertTheDumpSaysWhatProducedIt(root);
+  assertPrefixedWarningsRemainSingle();
   await assertTimedOutDumpRetiresItsLanguageServer();
 };
 
@@ -78,6 +79,54 @@ function assertTheDumpSaysWhatProducedIt(root: string): void {
   TestValidator.predicate(
     "and says what it is about to run before it runs it",
     summary.some((line) => line.includes("indexing with")),
+  );
+}
+
+/** A warning already scoped to this package is not scoped a second time. */
+function assertPrefixedWarningsRemainSingle(): void {
+  const root = GraphPaths.createTempDirectory("samchon-graph-cli-partial-");
+  fs.mkdirSync(path.join(root, "src"), { recursive: true });
+  fs.writeFileSync(
+    path.join(root, "src", "Service.cs"),
+    [
+      "namespace Demo;",
+      "partial class Service {}",
+      "partial class Service {}",
+      "partial class Service {}",
+      "",
+    ].join("\n"),
+  );
+  const ran = spawnSync(
+    process.execPath,
+    [
+      GraphPaths.graphBin,
+      "dump",
+      "--mode",
+      "lsp",
+      "--language",
+      "csharp",
+      "--cwd",
+      root,
+      "--server",
+      path.join(root, "no-such-language-server"),
+    ],
+    { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 },
+  );
+  const warning =
+    "@samchon/graph: generic semantic declaration has 3 locations";
+  const lines = (ran.stderr ?? "").split(/\r?\n/);
+  TestValidator.equals(
+    "a package-scoped warning is written with one prefix",
+    lines.filter((line) => line.startsWith(warning)).length,
+    1,
+  );
+  TestValidator.equals(
+    "a package-scoped warning is never double-prefixed",
+    lines.some(
+      (line) =>
+        line.startsWith(`@samchon/graph: ${warning}`),
+    ),
+    false,
   );
 }
 

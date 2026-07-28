@@ -997,5 +997,7 @@ function announceProviderSelection(
   // arrive only with the finished dump. A build killed before it finishes is
   // precisely the one whose reader most needs them.
   for (const warning of warnings)
-    process.stderr.write(`@samchon/graph: ${warning}\n`);
+    process.stderr.write(
+      `@samchon/graph: ${warning.replace(/^@samchon\/graph:\s*/, "")}\n`,
+    );
 }

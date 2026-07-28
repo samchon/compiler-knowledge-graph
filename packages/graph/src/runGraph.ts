@@ -117,7 +117,9 @@ function dumpSummary(dump: ISamchonGraphDump): string {
    * present in practice, so the empty-fallback arm guards a shape no producer
    * in this repository emits. */
   for (const warning of dump.warnings ?? [])
-    lines.push(`@samchon/graph: ${warning}`);
+    lines.push(
+      `@samchon/graph: ${warning.replace(/^@samchon\/graph:\s*/, "")}`,
+    );
   /* c8 ignore stop */
   return lines.join("\n");
 }

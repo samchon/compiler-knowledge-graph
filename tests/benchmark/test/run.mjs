@@ -290,21 +290,29 @@ function testTimedOutIndexCellsPreserveToolIntent() {
     timedOutMs: 3_600_000,
     servedBy: "attempted fixture indexer",
   };
-  for (const tool of ALL_TOOLS) {
+  const expectedTools = [
+    ["samchon-graph", true],
+    ["samchon-graph-fallback", false],
+    ["codegraph", undefined],
+    ["codebase-memory", undefined],
+    ["serena", undefined],
+  ];
+  assert.deepEqual(
+    ALL_TOOLS,
+    expectedTools.map(([tool]) => tool),
+    "the index-time tool universe must remain independently enumerated",
+  );
+  for (const [tool, strict] of expectedTools) {
     const cell = timedOutIndexCell({ ...common, tool });
     assert.deepEqual(cell, {
       ...common,
       tool,
       buildMs: null,
-      ...(tool === "samchon-graph"
-        ? { strict: true }
-        : tool === "samchon-graph-fallback"
-          ? { strict: false }
-          : {}),
+      ...(strict === undefined ? {} : { strict }),
     });
     assert.equal(
       Object.hasOwn(cell, "strict"),
-      tool === "samchon-graph" || tool === "samchon-graph-fallback",
+      strict !== undefined,
       `${tool} timeout strict intent must match its measured lane`,
     );
   }

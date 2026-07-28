@@ -755,6 +755,7 @@ function assertAnUnusableDatabaseNamesNoCompiler(): void {
         { arguments: ["env", "-S", "gcc\\"] },
         { arguments: ["env", "-S", '"gcc\\c"'] },
         { arguments: ["env", "-S", "gcc\\q"] },
+        { arguments: ["env", "--split-string", "gcc\\q"] },
         { arguments: ["env", "-S", "gcc\\ gcc"] },
         { arguments: ["env", "-S", "gcc\\\tgcc"] },
         { arguments: ["env", "-S", "gcc\\\ngcc"] },

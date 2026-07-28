@@ -67,6 +67,12 @@ const clangScipProvider = createScipProvider({
     return compdb === undefined ? undefined : [`--compdb-path=${compdb}`];
   },
   indexArgs: (artifact) => [
+    // scip-clang otherwise merges worker shards and emits each TU's hash maps
+    // in schedule-dependent order. Its deterministic mode sorts those facts,
+    // but upstream explicitly leaves work scheduling nondeterministic; one
+    // worker closes that remaining header-ownership boundary.
+    "--deterministic",
+    "--jobs=1",
     `--index-output-path=${artifact}`,
     `--temporary-output-dir=${path.join(path.dirname(artifact), "clang")}`,
   ],
@@ -1294,7 +1300,7 @@ function inheritedSearchPath(
 function pathextSearchPath(
   env: NodeJS.ProcessEnv,
 ): IEnvSearchPath | null | undefined {
-  /* c8 ignore next -- each CI operating system exercises its native answer. */
+  /* c8 ignore next 3 -- each CI operating system exercises its native answer. */
   return process.platform === "win32"
     ? inheritedSearchPath(env)
     : undefined;

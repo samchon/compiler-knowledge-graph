@@ -1099,6 +1099,8 @@ function assertTheFixtureRejectsAWrongInvocation(): void {
       "scip-clang",
       [
         "--compdb-path=compile_commands.json",
+        "--deterministic",
+        "--jobs=1",
         "--temporary-output-dir=tmp",
         "--index-output-path",
         "index.scip",
@@ -1108,7 +1110,44 @@ function assertTheFixtureRejectsAWrongInvocation(): void {
     // database would index a different program into the right file.
     [
       "scip-clang",
-      ["--index-output-path=index.scip", "--temporary-output-dir=tmp"],
+      [
+        "--deterministic",
+        "--jobs=1",
+        "--index-output-path=index.scip",
+        "--temporary-output-dir=tmp",
+      ],
+    ],
+    // Deterministic data structure emission alone does not fix parallel header
+    // ownership, and serial scheduling without it leaves hash-map order open.
+    [
+      "scip-clang",
+      [
+        "--compdb-path=compile_commands.json",
+        "--jobs=1",
+        "--index-output-path=index.scip",
+        "--temporary-output-dir=tmp",
+      ],
+    ],
+    // Omitting the worker limit restores the schedule-dependent default.
+    [
+      "scip-clang",
+      [
+        "--compdb-path=compile_commands.json",
+        "--deterministic",
+        "--index-output-path=index.scip",
+        "--temporary-output-dir=tmp",
+      ],
+    ],
+    // A larger worker pool would reopen the same scheduling boundary.
+    [
+      "scip-clang",
+      [
+        "--compdb-path=compile_commands.json",
+        "--deterministic",
+        "--jobs=2",
+        "--index-output-path=index.scip",
+        "--temporary-output-dir=tmp",
+      ],
     ],
     // The same for a rust-analyzer run that stopped excluding vendored crates.
     ["rust-analyzer", ["scip", ".", "--output", "index.scip"]],

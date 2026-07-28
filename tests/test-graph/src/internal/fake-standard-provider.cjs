@@ -74,10 +74,17 @@ const descriptions = {
  * changes its arguments fails here as well as in its real lane.
  */
 const contracts = {
-  // `scip-clang --compdb-path=… --index-output-path=… --temporary-output-dir=…`
+  // `scip-clang --compdb-path=… --deterministic --jobs=1
+  // --index-output-path=… --temporary-output-dir=…`
   "scip-clang": (args) => ({
     leading: [],
-    requires: ["--compdb-path=", "--temporary-output-dir="],
+    requires: [
+      "--compdb-path=",
+      "--deterministic",
+      "--jobs=1",
+      "--temporary-output-dir=",
+    ],
+    valueless: ["--deterministic", "--jobs=1"],
     output: valueOf(args, "--index-output-path="),
   }),
   // `scip-java index --output <path> [-- <build command>]`. The released

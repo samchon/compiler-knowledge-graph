@@ -481,6 +481,18 @@ export const runStrictLifecycle = async (experiment, pinnedRoot) => {
         `${experiment.language}: retry retained a removed lifecycle declaration`,
       );
     }
+    const coldProvenance = strictProvenance(cold, experiment);
+    const retryProvenance = strictProvenance(retried, experiment);
+    if (
+      coldProvenance.manifest !== retryProvenance.manifest ||
+      coldProvenance.content !== retryProvenance.content
+    ) {
+      throw new Error(
+        `${experiment.language}: restoring the original source manifest reproduced different graph facts ` +
+          `(cold ${String(cold.nodes.length)} nodes/${String(cold.edges.length)} edges, ` +
+          `retry ${String(retried.nodes.length)} nodes/${String(retried.edges.length)} edges)`,
+      );
+    }
     return { dump: cold, rows, project: lifecycleRoot };
   } finally {
     await resident.close();

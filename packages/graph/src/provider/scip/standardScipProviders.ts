@@ -96,8 +96,6 @@ const jvmScipProvider = createScipProvider({
     "settings.gradle.kts",
     "gradle.properties",
     "gradle-wrapper.properties",
-    "build.sbt",
-    "build.sc",
   ],
   // scip-java's injected Gradle tasks are not compatible with a project's
   // configuration cache in the released producer. The build command after

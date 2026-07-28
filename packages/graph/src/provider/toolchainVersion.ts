@@ -6,50 +6,28 @@ import { IGraphProvider } from "./IGraphProvider";
 import { resolveProviderCommand } from "./resolveProviderCommand";
 
 /**
- * The version of one toolchain, as a single configuration row.
+ * Observe one toolchain as a single configuration row.
  *
- * Three providers derived this separately, and each one collapsed two different
- * states into one word: a tool that is not installed and a tool whose probe
- * happened not to answer both came back `unavailable`. A build universe
- * computed from that value rebuilt itself over a spawn failure, and the
- * resident source went further and discarded its whole index.
+ * A toolchain observation has four outcomes. Resolution ran and found nothing
+ * (`unavailable`), the command ran and printed no usable version
+ * (`unreported`), the command answered with a version, or the lookup/probe
+ * process itself could not run (`unasked`). The first three are conclusive
+ * configuration facts. The fourth says nothing about the tool and stays typed
+ * as inconclusive evidence instead of pretending absence or silence.
  *
- * Three states replace the one word, and each is a constant for as long as it
- * holds. Absence is decided by {@link resolveProviderCommand} rather than by
- * the probe, so `unavailable` means the tool was not found. A probe that
- * answers is the version. A probe that resolves and does not answer is
- * `unreported`, because that is a third fact.
+ * Both process seams preserve that distinction.
+ * {@link resolveProviderCommand} reports whether its `PATH` lookup actually
+ * ran, and {@link probe} distinguishes an executed command from `spawnSync`
+ * error, signal, or timeout. A transient launch failure therefore cannot move a
+ * build universe by changing an installed tool into an absent one.
  *
- * Two seams remain, and they are the same seam twice. Resolution consults
- * `PATH` by launching `where.exe` or `command -v`, so a lookup that fails to
- * run reports absence; and {@link probe} reads a non-zero exit, which a launch
- * that failed to start also produces, so it reports silence. Either one moves a
- * row that nothing about the project moved. Both predate this design and both
- * need the same repair — `spawnSync` distinguishes "ran and answered" from
- * "could not run", and neither call site asks it.
- *
- * Being constants is what makes them safe to fingerprint. The row a failing
- * probe produces does not depend on *why* it failed or on how many times it
- * has, so a build universe computed from it moves once when a toolchain stops
- * answering and once when it starts again. The old `unavailable` was a constant
- * too; what it cost was the conflation above, not extra movement.
- *
- * A remembered answer used to stand in for a failed probe, so that a single
- * blip moved nothing at all. It is gone. It bought one rebuild per outage in
- * exchange for a value that depended on process history: the same code answered
- * differently depending on what else had run, which is how it passed in
- * isolation and failed on all three platforms in the full suite. The defect it
- * was reaching for — a failed probe discarding the whole resident index — is
- * fixed for a serving provider, in the topology snapshot that no longer
- * re-derives its configuration at all.
- *
- * And for a candidate that is not serving, whose rows `providerTopology.available`
- * still derives fresh on every refresh. Those go through `reestablish` too
- * before the resident source compares them, because it treats any topology
- * difference as structural: without it, a probe that failed to launch inside a
- * provider nothing was using reindexed every language in the project. The
- * exposure grows with the registry — each provider registered for a language a
- * project does not use is another toolchain probed for no other reason.
+ * {@link toolchainVersion.reestablish} restores an unasked row only from the
+ * last conclusive row with the same private identity. It does not restore a
+ * sibling compiler that happens to share a display label, and it does not roll
+ * back other rows that were freshly established in the same derivation. A
+ * serving provider avoids the question entirely because its topology snapshot
+ * no longer re-derives configuration; non-serving candidates are reestablished
+ * row by row before the resident source compares their freshly probed topology.
  *
  * The probe runs every time, and deliberately. A version is not a property of
  * the file: `rustc`, `python3`, `ruby`, `java`, and `dotnet` are all normally

@@ -253,6 +253,18 @@ export const test_standard_providers_execute_their_exact_contracts =
           }
         }
         if (provider.name === "scip-java") {
+          fs.writeFileSync(
+            path.join(root, "build.sbt"),
+            "scalaVersion := \"3\"\n",
+          );
+          fs.writeFileSync(path.join(root, "build.sc"), "import mill._\n");
+          const jvmInputs = buildInputs(provider, root);
+          TestValidator.predicate(
+            "scip-java watches Maven but not withdrawn Scala build roots",
+            jvmInputs.includes("pom.xml") &&
+              jvmInputs.includes("build.sbt") === false &&
+              jvmInputs.includes("build.sc") === false,
+          );
           const javaOnly = provider.open({
             root,
             command,

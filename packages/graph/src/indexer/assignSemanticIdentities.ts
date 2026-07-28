@@ -129,7 +129,11 @@ export function assignSemanticIdentities(
         MAX_AMBIGUOUS_EDGE_WARNING_EXAMPLES
       ) {
         omittedAmbiguousEdgeExamples.delete(
-          [...omittedAmbiguousEdgeExamples].sort().pop()!,
+          [...omittedAmbiguousEdgeExamples]
+            .sort(
+              (left, right) => Number(left > right) - Number(left < right),
+            )
+            .pop()!,
         );
       }
       edges.splice(index, 1);
@@ -146,7 +150,9 @@ export function assignSemanticIdentities(
   } else {
     warnings.push(
       `@samchon/graph: omitted ${String(omittedAmbiguousEdgeCount)} ambiguous generic edges without provider endpoint proof; up to ${String(MAX_AMBIGUOUS_EDGE_WARNING_EXAMPLES)} distinct examples follow`,
-      ...[...omittedAmbiguousEdgeExamples].sort(),
+      ...[...omittedAmbiguousEdgeExamples].sort(
+        (left, right) => Number(left > right) - Number(left < right),
+      ),
     );
   }
 }

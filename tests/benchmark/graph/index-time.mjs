@@ -31,6 +31,7 @@
  * this runner must not disturb.
  */
 import cp from "node:child_process";
+import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -185,6 +186,7 @@ if (!parsed.flags.has("--no-setup")) {
 const report = {
   schemaVersion: 2,
   date: new Date().toISOString(),
+  measurementId: randomUUID(),
   outDir,
   tools,
   projects: selected,
@@ -272,6 +274,7 @@ for (const project of selected) {
         // on is part of it.
         report.cells.push({
           ...cell,
+          measurementId: report.measurementId,
           fixtureCommit: spec.commit,
           measuredAt: new Date().toISOString(),
           cacheIsolation: cellCache.kind,
@@ -695,6 +698,15 @@ function publishWebsiteIndex(currentReport) {
  * runs. The scope metadata makes absence authoritative instead.
  */
 function assertIncomingReportScope(incoming) {
+  if (
+    incoming.measurementId !== undefined &&
+    (typeof incoming.measurementId !== "string" ||
+      incoming.measurementId.trim() === "")
+  ) {
+    throw new TypeError(
+      "incoming index-time result.measurementId must be a nonempty string",
+    );
+  }
   for (const field of ["projects", "tools"]) {
     const values = incoming[field];
     if (
@@ -760,6 +772,14 @@ function assertIncomingReportScope(incoming) {
     if (cell.fixtureCommit !== incoming.fixtures[cell.project]) {
       throw new TypeError(
         `incoming index-time result cell ${cell.project}/${cell.tool} does not match its scoped fixture revision`,
+      );
+    }
+    if (
+      incoming.measurementId !== undefined &&
+      cell.measurementId !== incoming.measurementId
+    ) {
+      throw new TypeError(
+        `incoming index-time result cell ${cell.project}/${cell.tool} does not match its measurement`,
       );
     }
   }

@@ -175,6 +175,15 @@ function assertIndexCells(value, label, fixtures) {
         `${cellLabel}.measuredAt must be an ISO-compatible date string`,
       );
     }
+    if (
+      cell.measurementId !== undefined &&
+      (typeof cell.measurementId !== "string" ||
+        cell.measurementId.trim() === "")
+    ) {
+      throw new TypeError(
+        `${cellLabel}.measurementId must be a nonempty string`,
+      );
+    }
     const outcomes = [
       typeof cell.buildMs === "number",
       typeof cell.timedOutMs === "number",

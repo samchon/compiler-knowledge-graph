@@ -105,6 +105,7 @@ export function assertStrictComparisonArithmetic() {
     project,
     tool,
     host,
+    measurementId: "fixture-measurement",
     fixtureCommit: PROJECTS[project].commit,
     strict: tool === "samchon-graph",
     ...extra,
@@ -113,11 +114,15 @@ export function assertStrictComparisonArithmetic() {
   const absentProject = "flask";
   const timeoutProject = "gin";
   const staticProject = "gson";
+  const differentRunProject = "tokio";
+  const differentHostProject = "redis";
   const projects = [
     servedProject,
     absentProject,
     timeoutProject,
     staticProject,
+    differentRunProject,
+    differentHostProject,
   ];
   const fixture = {
     schemaVersion: 1,
@@ -172,6 +177,27 @@ export function assertStrictComparisonArithmetic() {
           buildMs: 3_000,
           servedBy: "static no strict provider served",
         }),
+        // Finished semantic cells from separate runs compare runners as much as
+        // providers, even when their visible machine specifications happen to
+        // match.
+        cell(differentRunProject, "samchon-graph", {
+          buildMs: 10_000,
+          servedBy: "lsp scip-fake(rust)",
+        }),
+        cell(differentRunProject, "samchon-graph-fallback", {
+          buildMs: 50_000,
+          servedBy: "lsp no strict provider served",
+          measurementId: "different-measurement",
+        }),
+        cell(differentHostProject, "samchon-graph", {
+          buildMs: 20_000,
+          servedBy: "lsp scip-fake(c)",
+        }),
+        cell(differentHostProject, "samchon-graph-fallback", {
+          buildMs: 60_000,
+          servedBy: "lsp no strict provider served",
+          host: { ...host, cpu: "another fixture" },
+        }),
       ],
     },
   };
@@ -193,6 +219,11 @@ export function assertStrictComparisonArithmetic() {
   assert.equal(ran.status, 0, ran.stderr ?? "");
   const out = ran.stdout ?? "";
 
+  assert.match(
+    out,
+    /measured across 3 measurement runs/,
+    "the summary must not attribute separately measured cells to one host",
+  );
   assert.match(
     out,
     new RegExp(`${servedProject}[^\\n]*25\\.0x`),
@@ -221,5 +252,60 @@ export function assertStrictComparisonArithmetic() {
     out,
     new RegExp(`${staticProject}[^\\n]*x$`, "m"),
     "a static strict-off cell must not be given a semantic savings ratio",
+  );
+  assert.match(
+    out,
+    new RegExp(
+      `${differentRunProject}[^\\n]*not measured together on the same host`,
+    ),
+    "separately measured cells must be reported as non-comparable",
+  );
+  assert.doesNotMatch(
+    out,
+    new RegExp(`${differentRunProject}[^\\n]*x$`, "m"),
+    "separately measured cells must not be given a provider savings ratio",
+  );
+  assert.match(
+    out,
+    new RegExp(
+      `${differentHostProject}[^\\n]*not measured together on the same host`,
+    ),
+    "cells from different hosts must be reported as non-comparable",
+  );
+  assert.doesNotMatch(
+    out,
+    new RegExp(`${differentHostProject}[^\\n]*x$`, "m"),
+    "cells from different hosts must not be given a provider savings ratio",
+  );
+
+  const jsonRan = cp.spawnSync(
+    process.execPath,
+    [
+      path.join(
+        repoRoot,
+        "tests",
+        "benchmark",
+        "graph",
+        "index-time-summary.mjs",
+      ),
+      "--json",
+    ],
+    {
+      encoding: "utf8",
+      env: { ...process.env, SAMCHON_BENCH_INDEX_JSON: file },
+      windowsHide: true,
+    },
+  );
+  assert.equal(jsonRan.status, 0, jsonRan.stderr ?? "");
+  const json = JSON.parse(jsonRan.stdout ?? "");
+  assert.equal(
+    json.host,
+    null,
+    "the JSON summary must not promote the last folded host over mixed runs",
+  );
+  assert.equal(
+    json.measurementRunCount,
+    3,
+    "the JSON summary names how many comparable measurement groups it contains",
   );
 }

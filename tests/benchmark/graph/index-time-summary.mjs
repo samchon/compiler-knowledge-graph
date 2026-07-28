@@ -73,10 +73,34 @@ const rows = Object.keys(PROJECTS).map((project) => {
 const currentCells = [...measured.values()].flatMap((perTool) => [
   ...perTool.values(),
 ]);
+const measurementKeys = currentCells.map(measurementKey);
+const allMeasurementsIdentified = measurementKeys.every(
+  (key) => key !== null,
+);
+const identifiedMeasurements = new Set(
+  measurementKeys.filter((key) => key !== null),
+);
+const uniform =
+  currentCells.length > 0 &&
+  allMeasurementsIdentified &&
+  measurementKeys.every((key) => key === measurementKeys[0])
+    ? (currentCells[0]?.host ?? index.host)
+    : null;
 
 if (process.argv.includes("--json")) {
   process.stdout.write(
-    `${JSON.stringify({ host: index.host, staleCellCount, rows }, null, 2)}\n`,
+    `${JSON.stringify(
+      {
+        host: uniform,
+        measurementRunCount: allMeasurementsIdentified
+          ? identifiedMeasurements.size
+          : null,
+        staleCellCount,
+        rows,
+      },
+      null,
+      2,
+    )}\n`,
   );
   process.exit(0);
 }
@@ -87,13 +111,6 @@ if (process.argv.includes("--json")) {
 // would be naming a CPU that twelve of the rows never touched. When the cells
 // disagree, each says what it ran on and the reader can see that two rows are
 // not one comparison.
-const hosts = new Set(
-  currentCells
-    .map((cell) => cell.host?.cpu)
-    .filter((cpu) => typeof cpu === "string"),
-);
-const uniform =
-  hosts.size === 1 ? (currentCells[0]?.host ?? index.host) : null;
 if (uniform)
   process.stdout.write(
     `host: ${uniform.cpu ?? "unknown"} — ${String(uniform.cores ?? "?")} cores, ` +
@@ -101,7 +118,9 @@ if (uniform)
   );
 else
   process.stdout.write(
-    `measured across ${String(hosts.size)} distinct hosts; each row names its own.\n\n`,
+    allMeasurementsIdentified
+      ? `measured across ${String(identifiedMeasurements.size)} measurement runs; each row names its host.\n\n`
+      : "measurement runs are not uniformly identified; each row names its host.\n\n",
   );
 
 if (index.schemaVersion !== 2 || staleCellCount > 0) {
@@ -191,11 +210,17 @@ if (paired.length > 0) {
     const fallbackSemantic =
       typeof fallback.servedBy === "string" &&
       fallback.servedBy.startsWith("lsp ");
+    const sameMeasurement =
+      typeof strict.measurementId === "string" &&
+      strict.measurementId === fallback.measurementId &&
+      sameHost(strict.host, fallback.host);
     const verdict = !served
       ? "no strict provider served, so both cells measured the same lane"
       : !fallbackSemantic
         ? "strict-off cell produced no semantic index; times are not comparable"
-        : `${(fallback.buildMs / strict.buildMs).toFixed(1)}x`;
+        : !sameMeasurement
+          ? "cells were not measured together on the same host; times are not comparable"
+          : `${(fallback.buildMs / strict.buildMs).toFixed(1)}x`;
     const strictTime = `${(strict.buildMs / 1000).toFixed(1)} s`;
     const fallbackTime = `${(fallback.buildMs / 1000).toFixed(1)} s`;
     process.stdout.write(
@@ -218,6 +243,23 @@ if (unmeasured.length > 0) {
 function pad(value, width) {
   const text = String(value);
   return text.length >= width ? text : text + " ".repeat(width - text.length);
+}
+
+function sameHost(left, right) {
+  return ["cpu", "cores", "ramGB", "os", "kernel", "node"].every(
+    (field) => left?.[field] === right?.[field],
+  );
+}
+
+function measurementKey(cell) {
+  return typeof cell.measurementId === "string"
+    ? JSON.stringify([
+        cell.measurementId,
+        ...["cpu", "cores", "ramGB", "os", "kernel", "node"].map(
+          (field) => cell.host?.[field],
+        ),
+      ])
+    : null;
 }
 
 function readJson(file) {

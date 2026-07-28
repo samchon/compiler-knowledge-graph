@@ -602,6 +602,23 @@ function testIndexPublicationRefusesMalformedJson() {
         ],
       },
     ],
+    [
+      "empty measurement identity",
+      { ...validReportDocument, measurementId: "" },
+    ],
+    [
+      "cell measurement mismatch",
+      {
+        ...validReportDocument,
+        measurementId: "incoming-measurement",
+        cells: [
+          {
+            ...validReportDocument.cells[0],
+            measurementId: "different-measurement",
+          },
+        ],
+      },
+    ],
   ]) {
     fs.writeFileSync(publication, validPublication);
     fs.writeFileSync(report, JSON.stringify(invalidScope));

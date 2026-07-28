@@ -28,6 +28,8 @@ export const test_compile_database_names_the_compiler_that_built_it =
   async () => {
     assertTheDatabaseDecidesTheToolchain();
     assertALauncherIsNotTheCompiler();
+    assertEnvExecutionContextIsCompilerContext();
+    assertMemoizedDatabaseUsesTheCurrentEnvironment();
     assertAQuotedOrEscapedDriverSurvives();
     assertADriverWithAPathIsTakenLiterally();
     assertAnUnusableDatabaseNamesNoCompiler();
@@ -83,8 +85,6 @@ function assertALauncherIsNotTheCompiler(): void {
         "-i",
         "-u",
         "CPATH",
-        "--chdir",
-        root,
         "SOURCE_DATE_EPOCH=0",
         "ccache",
         "gcc",
@@ -95,11 +95,14 @@ function assertALauncherIsNotTheCompiler(): void {
     // GNU env's split-string inserts command tokens back into its argv. The
     // option terminator also has to disappear rather than becoming a driver.
     { command: "env -S'ccache gcc' -c d.c" },
+    { command: "env -vS'ccache gcc' -c d0.c" },
     {
       arguments: ["env", "--split-string", "ccache clang", "-c", "d1.c"],
     },
     { command: "env --split-string='ccache gcc' -c d2.c" },
+    { arguments: ["env", "-S", "ccache\\_gcc", "-c", "d3.c"] },
     { arguments: ["env", "--unset=CPATH", "clang", "-c", "d3.c"] },
+    { arguments: ["env", "-a", "compiler", "1=X", "clang", "-c", "d4.c"] },
     { arguments: ["env", "--ignore-environment", "--", "clang", "-c", "e.c"] },
   ]);
   writeShims(root, ["gcc", "clang", "ccache", "env"]);
@@ -107,6 +110,222 @@ function assertALauncherIsNotTheCompiler(): void {
     "launchers, env options, and leading assignments are stepped over",
     drivers(root),
     ["clang=clang v1.0.0", "gcc=gcc v1.0.0"],
+  );
+}
+
+function assertEnvExecutionContextIsCompilerContext(): void {
+  const root = GraphPaths.createTempDirectory("graph-compdb-env-context-");
+  const changed = path.join(root, "changed");
+  const nested = path.join(changed, "nested");
+  const searched = path.join(root, "searched");
+  const missing = path.join(root, "missing");
+  const changedDriver = shim(changed, "gxx");
+  shim(nested, "nestedcc");
+  shim(searched, "cc");
+  shim(searched, "g#cc");
+  shim(searched, "ccache");
+  shim(root, "gcc");
+  writeShims(root, []);
+  fs.writeFileSync(
+    path.join(root, "compile_commands.json"),
+    JSON.stringify([
+      {
+        directory: root,
+        file: "a.c",
+        arguments: [
+          "env",
+          `-C${changed}`,
+          `.${path.sep}${path.basename(changedDriver)}`,
+          "-c",
+          "a.c",
+        ],
+      },
+      {
+        directory: root,
+        file: "b.c",
+        arguments: [
+          "env",
+          "--chdir",
+          path.relative(root, changed),
+          path.basename(changedDriver).replace(/\.(?:cmd|exe|bat)$/i, ""),
+          "-c",
+          "b.c",
+        ],
+      },
+      {
+        directory: root,
+        file: "c.c",
+        arguments: ["env", `-P${searched}`, "cc", "-c", "c.c"],
+      },
+      {
+        directory: root,
+        file: "d.c",
+        arguments: [
+          "env",
+          "-S",
+          `-P${envSplitQuoted(searched)} cc`,
+          "-c",
+          "d.c",
+        ],
+      },
+      {
+        directory: root,
+        file: "e.c",
+        arguments: ["env", "PATH=searched", "cc", "-c", "e.c"],
+      },
+      {
+        directory: root,
+        file: "f.c",
+        arguments: ["env", "-", `PATH=${searched}`, "env", "cc", "-c", "f.c"],
+      },
+      {
+        directory: root,
+        file: "g.c",
+        arguments: ["env", "--unset=PATH", changedDriver, "-c", "g.c"],
+      },
+      {
+        directory: root,
+        file: "h.c",
+        arguments: [
+          "env",
+          "-S",
+          `PATH=${envSplitQuoted(searched)} g\\#cc`,
+          "-c",
+          "h.c",
+        ],
+      },
+      {
+        directory: root,
+        file: "i.c",
+        arguments: [
+          "env",
+          "--block-signal",
+          "--default-signal=PIPE",
+          "--ignore-signal=INT",
+          "--list-signal-handling",
+          "--argv0",
+          "compiler",
+          changedDriver,
+          "-c",
+          "i.c",
+        ],
+      },
+      {
+        directory: root,
+        file: "j.c",
+        arguments: [
+          "env",
+          "-C",
+          changed,
+          "env",
+          "-C",
+          "nested",
+          "nestedcc",
+          "-c",
+          "j.c",
+        ],
+      },
+      {
+        directory: root,
+        file: "k.c",
+        arguments: [
+          "env",
+          `-P${searched}`,
+          "ccache",
+          "gcc",
+          "-c",
+          "k.c",
+        ],
+      },
+      {
+        directory: root,
+        file: "l.c",
+        arguments: [
+          "env",
+          `-P${missing}`,
+          "missing-env-driver",
+          "-c",
+          "l.c",
+        ],
+      },
+      {
+        directory: root,
+        file: "m.c",
+        arguments: ["env", "-S", "'\\q'", "-c", "m.c"],
+      },
+      {
+        directory: root,
+        file: "n.c",
+        arguments: ["env", "-S", '"ccache\\_gcc"', "-c", "n.c"],
+      },
+      {
+        directory: root,
+        file: "o.c",
+        arguments: ["env", "-S", "'$gcc'", "-c", "o.c"],
+      },
+      {
+        directory: root,
+        file: "p.c",
+        arguments: ["env", "-S", "g\\$cc", "-c", "p.c"],
+      },
+    ]),
+  );
+  TestValidator.equals(
+    "env chdir and search-path options decide the executable that is probed",
+    drivers(root).sort(),
+    [
+      "$gcc=unavailable",
+      "cc=cc v1.0.0",
+      "ccache gcc=unavailable",
+      "g#cc=g#cc v1.0.0",
+      "g$cc=unavailable",
+      "gcc=gcc v1.0.0",
+      "gxx=gxx v1.0.0",
+      "missing-env-driver=unavailable",
+      "nestedcc=nestedcc v1.0.0",
+      "q=unavailable",
+    ],
+  );
+  TestValidator.predicate(
+    "the exact env-selected drivers keep scip-clang eligible",
+    clang.resolve(root, environment(root)) !== undefined,
+  );
+}
+
+function assertMemoizedDatabaseUsesTheCurrentEnvironment(): void {
+  const root = GraphPaths.createTempDirectory("graph-compdb-env-memo-");
+  const first = path.join(root, "first");
+  const second = path.join(root, "second");
+  exactShim(first, process.platform === "win32" ? "cc.cmd" : "cc", "first");
+  exactShim(second, process.platform === "win32" ? "cc.cmd" : "cc", "second");
+  writeShims(root, []);
+  fs.writeFileSync(
+    path.join(root, "compile_commands.json"),
+    JSON.stringify([
+      { directory: root, file: "a.c", arguments: ["env", "cc", "-c", "a.c"] },
+    ]),
+  );
+  const rows = (overrides: NodeJS.ProcessEnv): string[] =>
+    [
+      ...(clang.configuration?.(root, {
+        ...environment(root),
+        ...overrides,
+      }) ?? []),
+    ].filter((row) => !row.startsWith("scip"));
+  TestValidator.equals(
+    "the first environment materializes the memoized command in its PATH",
+    rows({ PATH: first, Path: first }),
+    ["cc=first v1.0.0"],
+  );
+  TestValidator.equals(
+    "a later environment resolves the same parsed command from Path",
+    rows({ PATH: undefined, Path: second }),
+    ["cc=second v1.0.0"],
+  );
+  TestValidator.equals(
+    "an inherited environment without a search path declines a bare command",
+    rows({ PATH: undefined, Path: undefined }),
+    ["cc=unavailable"],
   );
 }
 
@@ -226,6 +445,50 @@ function assertAnUnusableDatabaseNamesNoCompiler(): void {
     [
       "entries whose env invocation names no command",
       '[{"command":"env -i -u CPATH"},{"arguments":["env","-S"]}]',
+    ],
+    [
+      "entries whose env split cannot be replayed",
+      JSON.stringify([
+        { arguments: ["env", "-S", "${HISTORICAL_PATH} gcc"] },
+        { arguments: ["env", "-S", "'' gcc"] },
+        { arguments: ["env", "-S", "'unterminated"] },
+        { arguments: ["env", "-S", "gcc\\"] },
+        { arguments: ["env", "-S", '"gcc\\c"'] },
+        { arguments: ["env", "-S", "gcc\\q"] },
+      ]),
+    ],
+    [
+      "entries whose env options alter unknowable state",
+      JSON.stringify([
+        { arguments: ["env", "-L", "root/default", "gcc"] },
+        { arguments: ["env", "-Uroot/default", "gcc"] },
+        { arguments: ["env", "--unknown", "gcc"] },
+        { arguments: ["env", "-x", "gcc"] },
+        { arguments: ["env", "-0", "gcc"] },
+        { arguments: ["env", "--null", "gcc"] },
+        { arguments: ["env", "-u", "PATH", "gcc"] },
+        { arguments: ["env", "-u", "", "gcc"] },
+        { arguments: ["env", "--unset=A=B", "gcc"] },
+        { arguments: ["env", "--unset"] },
+        { arguments: ["env", "--chdir=", "gcc"] },
+        { arguments: ["env", "--chdir"] },
+        { arguments: ["env", "--debug=yes", "gcc"] },
+        { arguments: ["env", "-P", "", "gcc"] },
+        { arguments: ["env", "=X", "gcc"] },
+        { arguments: ["env", "-", "-i", "gcc"] },
+        { arguments: ["env", "--help", "gcc"] },
+        { arguments: ["env", "--version", "gcc"] },
+        { arguments: ["env", "-C", "relative", "gcc"] },
+        { arguments: ["env", `.${path.sep}gcc`] },
+        { arguments: ["env", "PATH=relative", "gcc"] },
+      ]),
+    ],
+    [
+      "entries whose env split comments or cuts off the command",
+      JSON.stringify([
+        { arguments: ["env", "-S", "# no command"] },
+        { arguments: ["env", "-S", "ccache\\c gcc"] },
+      ]),
     ],
   ] as const) {
     // A distinct root per case. Sharing one would let the memo answer a later
@@ -379,6 +642,11 @@ function shimPath(root: string, name: string): string {
     "bin",
     process.platform === "win32" ? `${name}.cmd` : name,
   );
+}
+
+/** One literal token inside an `env -S` operand. */
+function envSplitQuoted(value: string): string {
+  return `'${value.replaceAll("\\", "\\\\").replaceAll("'", "\\'")}'`;
 }
 
 /** The file name a platform can launch, for a program of this name. */

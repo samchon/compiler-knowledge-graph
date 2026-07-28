@@ -6,6 +6,7 @@ import { dartPackageConfigInputs } from "../../indexer/dartPackageConfigInputs";
 import { languageOf } from "../../indexer/languageOf";
 import { GraphEdgeKind, GraphLanguage } from "../../typings";
 import { BoundedMap } from "../../utils/BoundedMap";
+import { isSpawnableFile } from "../../utils/isSpawnableFile";
 import { spawnableCommand } from "../../utils/spawnableCommand";
 import { IGraphProvider } from "../IGraphProvider";
 import { providerInputFiles } from "../providerInputFiles";
@@ -433,7 +434,10 @@ type IToolchain =
     }
   | {
       aliases?: never;
-      fromProject: (root: string) => readonly string[];
+      fromProject: (
+        root: string,
+        env: NodeJS.ProcessEnv,
+      ) => readonly string[];
       override?: never;
 
       /** What the rows call this toolchain when the project names none. */
@@ -775,7 +779,7 @@ function resolveToolchain(
       },
     ];
   }
-  const namedTools = toolchain.fromProject(root);
+  const namedTools = toolchain.fromProject(root, env);
   if (namedTools.length === 0) {
     return [
       {
@@ -921,7 +925,10 @@ function lastSegment(named: string): string {
  * repeated JSON parsing, which is the expensive part for a database routinely
  * tens of megabytes long.
  */
-function compilationDatabaseCompilers(root: string): string[] {
+function compilationDatabaseCompilers(
+  root: string,
+  env: NodeJS.ProcessEnv = process.env,
+): string[] {
   const database = compilationDatabase(root);
   if (database === undefined) return [];
   let contents: Buffer;
@@ -937,14 +944,27 @@ function compilationDatabaseCompilers(root: string): string[] {
   const key = `${database}${SEPARATOR}${createHash("sha256")
     .update(contents)
     .digest("hex")}`;
-  const memoized = compilationDatabases.get(key);
-  if (memoized !== undefined) return [...memoized];
-  const drivers = readCompilationDatabaseCompilers(contents);
-  compilationDatabases.set(key, drivers);
-  return [...drivers];
+  let commands = compilationDatabases.get(key);
+  if (commands === undefined) {
+    commands = readCompilationDatabaseCommands(contents);
+    compilationDatabases.set(key, commands);
+  }
+  const drivers = new Set<string>();
+  for (const command of commands) {
+    const driver = compilerToken(command.tokens, command.directory, env);
+    if (driver !== undefined) drivers.add(driver);
+  }
+  return [...drivers].sort(compareOrdinal);
 }
 
-function readCompilationDatabaseCompilers(contents: Buffer): string[] {
+interface ICompilationDatabaseCommand {
+  tokens: string[];
+  directory?: string;
+}
+
+function readCompilationDatabaseCommands(
+  contents: Buffer,
+): ICompilationDatabaseCommand[] {
   let entries: unknown;
   try {
     entries = JSON.parse(contents.toString("utf8"));
@@ -952,7 +972,7 @@ function readCompilationDatabaseCompilers(contents: Buffer): string[] {
     return [];
   }
   if (!Array.isArray(entries)) return [];
-  const drivers = new Set<string>();
+  const commands: ICompilationDatabaseCommand[] = [];
   for (const entry of entries) {
     if (typeof entry !== "object" || entry === null) continue;
     const record = entry as {
@@ -967,20 +987,14 @@ function readCompilationDatabaseCompilers(contents: Buffer): string[] {
       : typeof record.command === "string"
         ? splitCommand(record.command)
         : [];
-    const driver = compilerToken(tokens);
-    if (driver === undefined) continue;
-    // A driver written with a separator is relative to the entry's own
-    // directory, not to the project root — the database records where each
-    // translation unit was compiled precisely because they differ.
-    drivers.add(
-      path.isAbsolute(driver) ||
-        !/[\\/]/.test(driver) ||
-        typeof record.directory !== "string"
-        ? driver
-        : path.resolve(record.directory, driver),
-    );
+    commands.push({
+      tokens,
+      ...(typeof record.directory === "string"
+        ? { directory: record.directory }
+        : {}),
+    });
   }
-  return [...drivers].sort(compareOrdinal);
+  return commands;
 }
 
 /**
@@ -992,71 +1006,397 @@ function readCompilationDatabaseCompilers(contents: Buffer): string[] {
  * — runs the real compiler as its argument, and publishing ccache's version as
  * the toolchain that decided the index's semantics would name a cache.
  */
-function compilerToken(tokens: readonly string[]): string | undefined {
+function compilerToken(
+  tokens: readonly string[],
+  directory: string | undefined,
+  env: NodeJS.ProcessEnv,
+): string | undefined {
   let candidates = [...tokens];
-  for (let index = 0; index < candidates.length; index += 1) {
-    const token = candidates[index]!;
-    if (token === "") continue;
-    if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(token)) continue;
-    const program = programName(token);
-    if (program === "env") {
-      candidates = envCommandTokens(candidates.slice(index + 1));
-      index = -1;
+  let index = 0;
+  let options = true;
+  let assignments = true;
+  let envWrapped = false;
+  let cwd =
+    directory === undefined ? undefined : path.resolve(directory);
+  let envBaseCwd = cwd;
+  let environmentPath: IEnvSearchPath | null | undefined;
+  let commandPath: IEnvSearchPath | undefined;
+
+  for (;;) {
+    const token = candidates[index++];
+    if (token === undefined) return undefined;
+    if (token === "") {
+      if (envWrapped) return undefined;
       continue;
     }
-    if (COMPILER_LAUNCHERS.has(program)) continue;
-    return token;
+
+    if (envWrapped && options && token === "--") {
+      options = false;
+      continue;
+    }
+    if (envWrapped && options && token === "-") {
+      environmentPath = null;
+      options = false;
+      continue;
+    }
+    if (envWrapped && options && token.startsWith("--")) {
+      const [name, attached] = splitLongOption(token);
+      if (ENV_LONG_OPTIONS_WITHOUT_OPERAND.has(name)) {
+        if (
+          attached !== undefined &&
+          !ENV_LONG_OPTIONS_WITH_OPTIONAL_OPERAND.has(name)
+        ) {
+          return undefined;
+        }
+        if (name === "--ignore-environment") environmentPath = null;
+        if (
+          name === "--null" ||
+          name === "--help" ||
+          name === "--version"
+        ) {
+          return undefined;
+        }
+        continue;
+      }
+      if (!ENV_LONG_OPTIONS_WITH_OPERAND.has(name)) return undefined;
+      const operand = attached ?? candidates[index++];
+      if (operand === undefined) return undefined;
+      if (name === "--split-string") {
+        const split = splitEnvString(operand);
+        if (split === undefined) return undefined;
+        candidates = [...split, ...candidates.slice(index)];
+        index = 0;
+        options = true;
+        assignments = true;
+      } else if (name === "--chdir") {
+        cwd = resolveEnvCwd(envBaseCwd, operand);
+        if (cwd === undefined) return undefined;
+      } else if (name === "--unset") {
+        if (!isEnvironmentName(operand)) return undefined;
+        if (operand === "PATH") environmentPath = null;
+      }
+      continue;
+    }
+    if (envWrapped && options && token.startsWith("-")) {
+      const parsed = parseShortEnvOptions(
+        token,
+        candidates,
+        index,
+        envBaseCwd,
+        cwd,
+        environmentPath,
+      );
+      if (parsed === undefined) return undefined;
+      candidates = parsed.tokens;
+      index = parsed.index;
+      cwd = parsed.cwd;
+      environmentPath = parsed.environmentPath;
+      commandPath = parsed.commandPath ?? commandPath;
+      if (parsed.inserted) {
+        options = true;
+        assignments = true;
+      }
+      continue;
+    }
+    const assignment =
+      assignments &&
+      (envWrapped ? envAssignment(token) : shellAssignment(token));
+    if (assignment) {
+      options = false;
+      if (assignment.name === "PATH") {
+        environmentPath = {
+          value: assignment.value,
+          delimiter: path.delimiter,
+        };
+      }
+      continue;
+    }
+    if (assignments && envWrapped && token.startsWith("=")) return undefined;
+
+    const program = programName(token);
+    if (program === "env") {
+      if (!envWrapped && environmentPath === undefined) {
+        environmentPath = inheritedSearchPath(env);
+      }
+      envWrapped = true;
+      envBaseCwd = cwd;
+      candidates = candidates.slice(index);
+      index = 0;
+      options = true;
+      assignments = true;
+      commandPath = undefined;
+      continue;
+    }
+    if (COMPILER_LAUNCHERS.has(program)) {
+      options = false;
+      assignments = false;
+      commandPath = undefined;
+      continue;
+    }
+    if (envWrapped && token.startsWith("-")) return undefined;
+    return resolveEnvDriver(
+      token,
+      cwd,
+      commandPath ?? environmentPath,
+      env,
+    );
   }
-  return undefined;
+}
+
+interface IEnvSearchPath {
+  value: string;
+  delimiter: string;
+}
+
+interface IParsedShortEnvOptions {
+  tokens: string[];
+  index: number;
+  cwd: string | undefined;
+  environmentPath: IEnvSearchPath | null | undefined;
+  commandPath?: IEnvSearchPath;
+  inserted: boolean;
+}
+
+function parseShortEnvOptions(
+  token: string,
+  tokens: readonly string[],
+  index: number,
+  envBaseCwd: string | undefined,
+  initialCwd: string | undefined,
+  initialEnvironmentPath: IEnvSearchPath | null | undefined,
+): IParsedShortEnvOptions | undefined {
+  let cwd = initialCwd;
+  let environmentPath = initialEnvironmentPath;
+  let commandPath: IEnvSearchPath | undefined;
+  const cluster = token.slice(1);
+  for (let at = 0; at < cluster.length; at += 1) {
+    const option = cluster[at]!;
+    if (option === "i") {
+      environmentPath = null;
+      continue;
+    }
+    if (option === "0") return undefined;
+    if (option === "v") continue;
+    if (!ENV_SHORT_OPTIONS_WITH_OPERAND.has(option)) return undefined;
+    const attached = cluster.slice(at + 1);
+    const operand = attached === "" ? tokens[index++] : attached;
+    if (operand === undefined) return undefined;
+    if (option === "L" || option === "U") {
+      // login.conf can replace PATH, and its contents are not in the
+      // compilation database. Decline instead of probing a different program.
+      return undefined;
+    }
+    if (option === "S") {
+      const split = splitEnvString(operand);
+      if (split === undefined) return undefined;
+      return {
+        tokens: [...split, ...tokens.slice(index)],
+        index: 0,
+        cwd,
+        environmentPath,
+        inserted: true,
+      };
+    }
+    if (option === "C") {
+      cwd = resolveEnvCwd(envBaseCwd, operand);
+      if (cwd === undefined) return undefined;
+    } else if (option === "P") {
+      if (operand === "") return undefined;
+      commandPath = { value: operand, delimiter: path.delimiter };
+    } else if (option === "u") {
+      if (!isEnvironmentName(operand)) return undefined;
+      if (operand === "PATH") environmentPath = null;
+    }
+    // The rest of this token is the operand, so the option cluster ends here.
+    break;
+  }
+  return {
+    tokens: [...tokens],
+    index,
+    cwd,
+    environmentPath,
+    ...(commandPath === undefined ? {} : { commandPath }),
+    inserted: false,
+  };
+}
+
+function splitLongOption(token: string): [string, string | undefined] {
+  const equal = token.indexOf("=");
+  return equal === -1
+    ? [token, undefined]
+    : [token.slice(0, equal), token.slice(equal + 1)];
+}
+
+function resolveEnvCwd(
+  base: string | undefined,
+  directory: string,
+): string | undefined {
+  if (directory === "") return undefined;
+  if (path.isAbsolute(directory)) return path.resolve(directory);
+  return base === undefined ? undefined : path.resolve(base, directory);
+}
+
+function inheritedSearchPath(
+  env: NodeJS.ProcessEnv,
+): IEnvSearchPath | null {
+  const value = env.PATH ?? env.Path;
+  return value === undefined
+    ? null
+    : {
+        value,
+        delimiter: path.delimiter,
+      };
+}
+
+function shellAssignment(
+  token: string,
+): { name: string; value: string } | undefined {
+  const match = /^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/s.exec(token);
+  return match === null ? undefined : { name: match[1]!, value: match[2]! };
+}
+
+function envAssignment(
+  token: string,
+): { name: string; value: string } | undefined {
+  const equal = token.indexOf("=");
+  return equal <= 0
+    ? undefined
+    : { name: token.slice(0, equal), value: token.slice(equal + 1) };
+}
+
+function isEnvironmentName(name: string): boolean {
+  return name !== "" && !name.includes("=");
 }
 
 /**
- * The command argv left after a portable `env` invocation has consumed its
- * own flags and assignments.
+ * FreeBSD/GNU `env -S` splitting, except environment substitution.
  *
- * `env` is a launcher, but unlike ccache it has options before the program.
- * Merely stepping over its executable makes `-i`, `-u`, or the operand of
- * `--chdir` look like the compiler. GNU `-S` also inserts a shell-like token
- * string back into the argv, so parse that insertion through the same rules.
+ * A compilation database does not retain the environment that expanded
+ * `${NAME}` when it was produced. Such an operand is therefore inconclusive
+ * and fails closed; every literal escape and quoting rule that can be replayed
+ * from the artifact is handled exactly.
  */
-function envCommandTokens(tokens: readonly string[]): string[] {
-  for (let index = 0; index < tokens.length; index += 1) {
-    const token = tokens[index]!;
-    if (token === "" || /^[A-Za-z_][A-Za-z0-9_]*=/.test(token)) continue;
-    if (token === "--") return [...tokens.slice(index + 1)];
-    if (token === "-S" || token === "--split-string") {
-      const split = tokens[index + 1];
-      if (split === undefined) return [];
-      return envCommandTokens([
-        ...splitCommand(split),
-        ...tokens.slice(index + 2),
-      ]);
-    }
-    if (token.startsWith("--split-string=")) {
-      return envCommandTokens([
-        ...splitCommand(token.slice("--split-string=".length)),
-        ...tokens.slice(index + 1),
-      ]);
-    }
-    if (token.startsWith("-S") && token.length > 2) {
-      return envCommandTokens([
-        ...splitCommand(token.slice(2)),
-        ...tokens.slice(index + 1),
-      ]);
-    }
-    if (ENV_OPTIONS_WITH_OPERAND.has(token)) {
-      index += 1;
+function splitEnvString(input: string): string[] | undefined {
+  const tokens: string[] = [];
+  let current = "";
+  let quote: "'" | '"' | undefined;
+  let started = false;
+  const push = (): void => {
+    if (started) tokens.push(current);
+    current = "";
+    started = false;
+  };
+  for (let index = 0; index < input.length; index += 1) {
+    const character = input[index]!;
+    if (quote === undefined && (character === " " || character === "\t")) {
+      push();
       continue;
     }
     if (
-      ENV_OPTIONS_WITHOUT_OPERAND.has(token) ||
-      ENV_INLINE_OPTION.test(token)
+      quote === undefined &&
+      character === "#" &&
+      !started
     ) {
+      break;
+    }
+    if (character === "'" || character === '"') {
+      if (quote === undefined) {
+        quote = character;
+        started = true;
+        continue;
+      }
+      if (quote === character) {
+        quote = undefined;
+        continue;
+      }
+    }
+    if (character === "$" && quote !== "'") {
+      // Only ${NAME} is legal, and its historical value is unavailable.
+      return undefined;
+    }
+    if (character === "\\") {
+      const escaped = input[++index];
+      if (escaped === undefined) return undefined;
+      if (quote === "'" && escaped !== "'" && escaped !== "\\") {
+        current += `\\${escaped}`;
+        started = true;
+        continue;
+      }
+      if (escaped === "c") {
+        if (quote === '"') return undefined;
+        break;
+      }
+      if (escaped === "_") {
+        if (quote === '"') {
+          current += " ";
+          started = true;
+        } else {
+          push();
+        }
+        continue;
+      }
+      const replacement = ENV_SPLIT_ESCAPES[escaped];
+      if (replacement === undefined) return undefined;
+      current += replacement;
+      started = true;
       continue;
     }
-    return [...tokens.slice(index)];
+    current += character;
+    started = true;
   }
-  return [];
+  if (quote !== undefined) return undefined;
+  push();
+  return tokens;
+}
+
+function resolveEnvDriver(
+  driver: string,
+  cwd: string | undefined,
+  searchPath: IEnvSearchPath | null | undefined,
+  env: NodeJS.ProcessEnv,
+): string | undefined {
+  if (path.isAbsolute(driver)) return driver;
+  if (/[\\/]/.test(driver)) {
+    return cwd === undefined ? undefined : path.resolve(cwd, driver);
+  }
+  if (searchPath === null) return undefined;
+  if (searchPath === undefined) return driver;
+  const candidates: string[] = [];
+  for (const directory of searchPath.value.split(searchPath.delimiter)) {
+    const absoluteDirectory =
+      directory === ""
+        ? cwd
+        : path.isAbsolute(directory)
+          ? directory
+          : cwd === undefined
+            ? undefined
+            : path.resolve(cwd, directory);
+    if (absoluteDirectory === undefined) return undefined;
+    for (const spelling of envDriverSpellings(driver, env)) {
+      candidates.push(path.resolve(absoluteDirectory, spelling));
+    }
+  }
+  return (
+    candidates.find((candidate) => isSpawnableFile(candidate)) ??
+    candidates[0]
+  );
+}
+
+function envDriverSpellings(
+  driver: string,
+  env: NodeJS.ProcessEnv,
+): string[] {
+  /* c8 ignore start -- each CI operating system exercises its native arm. */
+  if (process.platform !== "win32") return [driver];
+  if (/\.(?:exe|cmd|bat)$/i.test(driver)) return [driver];
+  const extensions = (env.PATHEXT ?? ".EXE;.CMD;.BAT")
+    .split(";")
+    .filter((extension) => extension !== "")
+    .map((extension) =>
+      extension.startsWith(".") ? extension : `.${extension}`,
+    );
+  return extensions.map((extension) => `${driver}${extension.toLowerCase()}`);
+  /* c8 ignore stop */
 }
 
 /**
@@ -1145,22 +1485,15 @@ const COMPILER_LAUNCHERS = new Set([
   "buildcache",
 ]);
 
-const ENV_OPTIONS_WITH_OPERAND = new Set([
-  "-u",
+const ENV_LONG_OPTIONS_WITH_OPERAND = new Set([
   "--unset",
-  "-C",
   "--chdir",
-  "-P",
-  "-a",
   "--argv0",
+  "--split-string",
 ]);
-const ENV_OPTIONS_WITHOUT_OPERAND = new Set([
-  "-",
-  "-i",
+const ENV_LONG_OPTIONS_WITHOUT_OPERAND = new Set([
   "--ignore-environment",
-  "-0",
   "--null",
-  "-v",
   "--debug",
   "--block-signal",
   "--default-signal",
@@ -1169,8 +1502,32 @@ const ENV_OPTIONS_WITHOUT_OPERAND = new Set([
   "--help",
   "--version",
 ]);
-const ENV_INLINE_OPTION =
-  /^(?:-[uCPa].+|--(?:unset|chdir|argv0|block-signal|default-signal|ignore-signal)=.*)$/;
+const ENV_LONG_OPTIONS_WITH_OPTIONAL_OPERAND = new Set([
+  "--block-signal",
+  "--default-signal",
+  "--ignore-signal",
+]);
+const ENV_SHORT_OPTIONS_WITH_OPERAND = new Set([
+  "u",
+  "C",
+  "L",
+  "U",
+  "P",
+  "S",
+  "a",
+]);
+const ENV_SPLIT_ESCAPES: Readonly<Record<string, string>> = {
+  f: "\f",
+  n: "\n",
+  r: "\r",
+  t: "\t",
+  v: "\v",
+  "#": "#",
+  $: "$",
+  '"': '"',
+  "'": "'",
+  "\\": "\\",
+};
 
 /** A separator no path can contain. */
 const SEPARATOR = String.fromCharCode(0);
@@ -1179,7 +1536,8 @@ const COMPILATION_DATABASE_INPUTS: readonly string[] = [
   "build/compile_commands.json",
 ];
 
-const compilationDatabases = new BoundedMap<string[]>(64);
+const compilationDatabases =
+  new BoundedMap<ICompilationDatabaseCommand[]>(64);
 
 function compareOrdinal(left: string, right: string): number {
   /* c8 ignore next 2 -- driver names are distinct set members. */

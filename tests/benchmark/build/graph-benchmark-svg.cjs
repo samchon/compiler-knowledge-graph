@@ -558,31 +558,49 @@ function escapeXml(value) {
 
 function renderIndex(index) {
   const rows = [...new Set(index.cells.map((cell) => cell.project))]
-    .map((project) => ({
-      project,
-      label: REPO_LABELS[project] ?? project,
-      scale: index.scale?.[project] ?? { files: 0, lines: 0 },
-      values: INDEX_TOOLS.map((tool) => {
-        const cell = index.cells.find(
-          (item) => item.project === project && item.tool === tool.key,
-        );
-        const measured =
-          typeof cell?.buildMs === "number" &&
-          Number.isFinite(cell.buildMs) &&
-          cell.buildMs >= 0;
-        const timedOut =
-          !measured &&
-          typeof cell?.timedOutMs === "number" &&
-          Number.isFinite(cell.timedOutMs) &&
-          cell.timedOutMs > 0;
-        return {
-          ...tool,
-          ms: measured ? cell.buildMs : timedOut ? cell.timedOutMs : 0,
-          timedOut,
-        };
-      }),
-    }))
+    .map((project) => {
+      const cells = Object.fromEntries(
+        INDEX_TOOLS.map((tool) => [
+          tool.key,
+          index.cells.find(
+            (item) => item.project === project && item.tool === tool.key,
+          ),
+        ]),
+      );
+      if (
+        !sameIndexMeasurement(
+          cells["samchon-graph"],
+          cells["samchon-graph-fallback"],
+        )
+      ) {
+        return null;
+      }
+      return {
+        project,
+        label: REPO_LABELS[project] ?? project,
+        scale: index.scale?.[project] ?? { files: 0, lines: 0 },
+        values: INDEX_TOOLS.map((tool) => {
+          const cell = cells[tool.key];
+          const measured =
+            typeof cell?.buildMs === "number" &&
+            Number.isFinite(cell.buildMs) &&
+            cell.buildMs >= 0;
+          const timedOut =
+            !measured &&
+            typeof cell?.timedOutMs === "number" &&
+            Number.isFinite(cell.timedOutMs) &&
+            cell.timedOutMs > 0;
+          return {
+            ...tool,
+            ms: measured ? cell.buildMs : timedOut ? cell.timedOutMs : 0,
+            timedOut,
+          };
+        }),
+      };
+    })
+    .filter((row) => row !== null)
     .sort((a, b) => a.scale.lines - b.scale.lines);
+  if (rows.length === 0) return null;
 
   const width = 1040;
   const height = 760;
@@ -656,6 +674,24 @@ function renderIndex(index) {
     bars,
     `</svg>`,
   ].join("\n");
+}
+
+function sameIndexMeasurement(left, right) {
+  return (
+    typeof left?.measurementId === "string" &&
+    left.measurementId.trim() !== "" &&
+    left.measurementId === right?.measurementId &&
+    typeof left.host === "object" &&
+    left.host !== null &&
+    typeof right?.host === "object" &&
+    right.host !== null &&
+    ["cpu", "cores", "ramGB", "os", "kernel", "node"].every(
+      (field) =>
+        Object.hasOwn(left.host, field) &&
+        Object.hasOwn(right.host, field) &&
+        left.host[field] === right.host[field],
+    )
+  );
 }
 
 // The wall clock a first answer costs from a cold checkout: build the tool's

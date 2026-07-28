@@ -1013,6 +1013,45 @@ function testIndexCellIsolationContract() {
         ),
     "a complete matrix must discard stale index cells before folding current reports",
   );
+  const collect = workflow.indexOf("\n  collect:");
+  const collectSetup = workflow.indexOf("- name: Setup Node", collect);
+  const installRenderer = workflow.indexOf(
+    "- name: Install renderer dependencies",
+    collect,
+  );
+  const foldPublication = workflow.indexOf(
+    "- name: Fold reports into the publication",
+    collect,
+  );
+  const showPublication = workflow.indexOf(
+    "- name: Show what was measured",
+    collect,
+  );
+  const renderPublication = workflow.indexOf(
+    "- name: Render publication charts",
+    collect,
+  );
+  const uploadPublication = workflow.indexOf(
+    "- name: Upload publication",
+    collect,
+  );
+  assert.ok(
+    collect >= 0 &&
+      collectSetup > collect &&
+      installRenderer > collectSetup &&
+      foldPublication > installRenderer &&
+      showPublication > foldPublication &&
+      renderPublication > showPublication &&
+      uploadPublication > renderPublication &&
+      workflow.includes("run: pnpm install --frozen-lockfile") &&
+      workflow.includes(
+        "run: pnpm --filter @samchon/graph-benchmark render:png",
+      ) &&
+      workflow.includes("tests/benchmark/results/graph.json") &&
+      workflow.includes("tests/benchmark/results/svg") &&
+      workflow.includes("tests/benchmark/results/png"),
+    "the collect job must install the pinned renderer, render both chart formats, and publish JSON, SVG, and PNG together",
+  );
   assert.ok(
     workflow.includes(
       '--toolchain-manifest="$GITHUB_WORKSPACE/tests/experiment/.work/tools/manifest-${{ matrix.language }}.json"',
@@ -1689,6 +1728,51 @@ function testReferenceRenderer() {
   assert.doesNotMatch(staleTime, /Excalidraw|20,000 lines/);
   assert.match(staleTime, /Gin|12,000 lines/);
 
+  const unmatchedIndexReport = sampleReport();
+  unmatchedIndexReport.index.cells.find(
+    (cell) =>
+      cell.project === "excalidraw" &&
+      cell.tool === "samchon-graph-fallback",
+  ).measurementId = "different-excalidraw-measurement";
+  unmatchedIndexReport.index.cells.find(
+    (cell) =>
+      cell.project === "gin" && cell.tool === "samchon-graph-fallback",
+  ).host.cpu = "different test cpu";
+  const unmatchedIndexOut = path.join(root, "unmatched-index-out");
+  fs.mkdirSync(path.join(unmatchedIndexOut, "svg"), { recursive: true });
+  fs.mkdirSync(path.join(unmatchedIndexOut, "png"), { recursive: true });
+  fs.writeFileSync(
+    path.join(unmatchedIndexOut, "svg", "graph-index-time.svg"),
+    "stale",
+  );
+  fs.writeFileSync(
+    path.join(unmatchedIndexOut, "png", "graph-index-time.png"),
+    "stale",
+  );
+  fs.writeFileSync(input, JSON.stringify(unmatchedIndexReport));
+  run(
+    process.execPath,
+    [path.join(benchmarkDir, "build", "graph-benchmark-svg.cjs")],
+    {
+      ...env,
+      SAMCHON_GRAPH_BENCH_RENDER_OUT: unmatchedIndexOut,
+    },
+  );
+  assert.equal(
+    fs.existsSync(
+      path.join(unmatchedIndexOut, "svg", "graph-index-time.svg"),
+    ),
+    false,
+    "cells from different measurements or hosts cannot leave a comparison SVG",
+  );
+  assert.equal(
+    fs.existsSync(
+      path.join(unmatchedIndexOut, "png", "graph-index-time.png"),
+    ),
+    false,
+    "cells from different measurements or hosts cannot leave a comparison PNG",
+  );
+
   const legacyReport = sampleReport();
   delete legacyReport.index.schemaVersion;
   delete legacyReport.index.fixtures;
@@ -1978,6 +2062,15 @@ function sampleReport() {
           project,
           tool,
           fixtureCommit: PROJECTS[project].commit,
+          measurementId: `${project}-measurement`,
+          host: {
+            os: "test",
+            kernel: "test",
+            cpu: "test",
+            cores: 8,
+            ramGB: 32,
+            node: "v22.0.0",
+          },
           ...(project === "gin" &&
           tool === "samchon-graph-fallback"
             ? { buildMs: null, timedOutMs: 3_600_000 }

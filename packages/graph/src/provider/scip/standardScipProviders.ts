@@ -92,6 +92,7 @@ const jvmScipProvider = createScipProvider({
     ".mvn/extensions.xml",
     ".mvn/jvm.config",
     ".mvn/maven.config",
+    ".mvn/wrapper/MavenWrapperDownloader.java",
     ".mvn/wrapper/maven-wrapper.jar",
     ".mvn/wrapper/maven-wrapper.properties",
     "pom.xml",
@@ -108,7 +109,7 @@ const jvmScipProvider = createScipProvider({
     "gradlew",
     "libs.versions.toml",
   ],
-  buildExtensions: [".gradle", ".kts"],
+  buildExtensions: [".gradle", ".gradle.kts"],
   // scip-java's injected Gradle tasks are not compatible with a project's
   // configuration cache in the released producer. The build command after
   // `--` replaces its defaults, so retain those exact tasks while disabling

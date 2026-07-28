@@ -263,12 +263,18 @@ export const test_standard_providers_execute_their_exact_contracts =
           for (const [file, contents] of [
             ["pom.xml", "<project />\n"],
             [".mvn/maven.config", "-Pfixture\n"],
+            [
+              ".mvn/wrapper/MavenWrapperDownloader.java",
+              "final class MavenWrapperDownloader {}\n",
+            ],
             [".mvn/wrapper/maven-wrapper.properties", "distributionUrl=x\n"],
             ["mvnw", "#!/bin/sh\n"],
             ["gradle.lockfile", "empty=1\n"],
             ["gradle/libs.versions.toml", "[versions]\n"],
             ["gradle/conventions/java.gradle", "allprojects {}\n"],
             ["gradle/conventions/kotlin.gradle.kts", "allprojects {}\n"],
+            [".mvn/unrelated.gradle.kts", "allprojects {}\n"],
+            ["unrelated.kts", "println(\"not a Gradle script\")\n"],
           ] as const) {
             const absolute = path.join(jvmInputRoot, file);
             fs.mkdirSync(path.dirname(absolute), { recursive: true });
@@ -288,6 +294,7 @@ export const test_standard_providers_execute_their_exact_contracts =
             [
               "pom.xml",
               ".mvn/maven.config",
+              ".mvn/wrapper/MavenWrapperDownloader.java",
               ".mvn/wrapper/maven-wrapper.properties",
               "mvnw",
               "gradle.lockfile",
@@ -295,6 +302,8 @@ export const test_standard_providers_execute_their_exact_contracts =
               "gradle/conventions/java.gradle",
               "gradle/conventions/kotlin.gradle.kts",
             ].every((input) => jvmInputs.includes(input)) &&
+              jvmInputs.includes(".mvn/unrelated.gradle.kts") === false &&
+              jvmInputs.includes("unrelated.kts") === false &&
               jvmInputs.includes("build.sbt") === false &&
               jvmInputs.includes("build.sc") === false,
           );

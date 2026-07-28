@@ -81,27 +81,46 @@ export const test_provider_commands_and_inputs_respect_project_boundaries =
       });
       for (const [file, contents] of [
         [".mvn/maven.config", "-Pfixture\n"],
+        [
+          ".mvn/wrapper/MavenWrapperDownloader.java",
+          "final class MavenWrapperDownloader {}\n",
+        ],
         ["mvnw", "#!/bin/sh\n"],
         ["gradle.lockfile", "empty=1\n"],
         ["gradle/libs.versions.toml", "[versions]\n"],
         ["gradle/conventions/java.gradle", "allprojects {}\n"],
         ["gradle/conventions/kotlin.gradle.kts", "allprojects {}\n"],
+        [".mvn/unrelated.gradle.kts", "allprojects {}\n"],
+        ["unrelated.kts", "println(\"not a Gradle script\")\n"],
       ] as const) {
         const absolute = path.join(root, file);
         fs.mkdirSync(path.dirname(absolute), { recursive: true });
         fs.writeFileSync(absolute, contents);
       }
       const javaBuildInputs = languageBuildInputs(root, ["java"]);
+      fs.mkdirSync(path.join(root, ".git"), { recursive: true });
+      fs.writeFileSync(path.join(root, ".git", "declared.txt"), "private\n");
+      TestValidator.equals(
+        "exact build paths cross ignored directories but never Git metadata",
+        providerInputFiles(root, [], [
+          ".mvn/maven.config",
+          ".git/declared.txt",
+        ]),
+        [".mvn/maven.config"],
+      );
       TestValidator.predicate(
         "generic JVM lanes watch Maven and Gradle build-universe inputs",
         [
           ".mvn/maven.config",
+          ".mvn/wrapper/MavenWrapperDownloader.java",
           "mvnw",
           "gradle.lockfile",
           "gradle/libs.versions.toml",
           "gradle/conventions/java.gradle",
           "gradle/conventions/kotlin.gradle.kts",
-        ].every((input) => javaBuildInputs.includes(input)),
+        ].every((input) => javaBuildInputs.includes(input)) &&
+          javaBuildInputs.includes(".mvn/unrelated.gradle.kts") === false &&
+          javaBuildInputs.includes("unrelated.kts") === false,
       );
       fs.mkdirSync(path.join(root, "vendor"), { recursive: true });
       fs.mkdirSync(path.join(root, "vendor", "example.com", "dep"), {

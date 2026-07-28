@@ -8,8 +8,8 @@ import { resolveProviderCommand } from "./resolveProviderCommand";
 /**
  * Observe one toolchain as a single configuration row.
  *
- * A toolchain observation has four outcomes. Resolution ran and found nothing
- * (`unavailable`), the command ran and printed no usable version
+ * A toolchain observation has four outcomes. Resolution completed and found
+ * nothing (`unavailable`), the command completed without a usable version
  * (`unreported`), the command answered with a version, or the lookup/probe
  * observation did not complete conclusively (`unasked`). The first three are
  * conclusive configuration facts. The fourth says nothing about the tool and

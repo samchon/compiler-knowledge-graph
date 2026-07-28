@@ -46,6 +46,7 @@ export function walkSourceFiles(root: string, options: IWalkOptions): string[] {
       }
       /* c8 ignore next */
       if (!entry.isFile()) continue;
+      if (entry.name === ".git") continue;
       const extension = path.extname(entry.name);
       // GCC and Clang assign uppercase `.C` and `.H` to C++, while lowercase
       // `.c` and `.h` are C identities. All other registered suffixes remain

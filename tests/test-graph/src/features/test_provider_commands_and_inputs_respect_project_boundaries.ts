@@ -113,6 +113,13 @@ export const test_provider_commands_and_inputs_respect_project_boundaries =
         ]),
         [".mvn/maven.config"],
       );
+      fs.rmSync(path.join(root, ".git"), { recursive: true });
+      fs.writeFileSync(path.join(root, ".git"), "gitdir: elsewhere\n");
+      TestValidator.predicate(
+        "a Git worktree marker is neither a named nor extensionless input",
+        providerInputFiles(root, [], [".git"], [""]).includes(".git") ===
+          false,
+      );
       TestValidator.predicate(
         "generic JVM lanes watch Maven and Gradle build-universe inputs",
         [

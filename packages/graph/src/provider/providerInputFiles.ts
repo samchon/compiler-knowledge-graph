@@ -88,6 +88,7 @@ function visitBuildInputs(
         inputs,
       );
     } else if (entry.isFile()) {
+      if (entry.name === ".git") continue;
       const lower = entry.name.toLowerCase();
       if (
         paths.has(relative) ||

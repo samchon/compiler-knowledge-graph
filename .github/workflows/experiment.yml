@@ -18,9 +18,10 @@ on:
       - "pnpm-lock.yaml"
       - "pnpm-workspace.yaml"
 
-# Cancellation belongs to the real-language jobs below, after latest_update has
-# classified this push. A result-only synchronize must not cancel valid evidence
-# and then skip its own replacement matrix.
+# Deliberately no concurrency cancellation. Classification jobs and language
+# jobs can be admitted out of push order, so an older run must never be able to
+# cancel current-head evidence. A publication-only synchronize and every manual
+# dispatch likewise leave all requested work intact.
 
 jobs:
   latest_update:
@@ -53,12 +54,6 @@ jobs:
     needs: latest_update
     if: ${{ needs.latest_update.outputs.run == 'true' }}
     name: ${{ matrix.language }} LSP
-    # Sixteen jobs per run can hold most available runners in superseded work.
-    # Only current-head evidence is usable, so each relevant PR push replaces
-    # the older job for the same language. Manual dispatches remain uncancelled.
-    concurrency:
-      group: experiment-${{ github.event.pull_request.number || github.ref }}-${{ matrix.language }}
-      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     strategy:

@@ -88,8 +88,13 @@ export const test_provider_commands_and_inputs_respect_project_boundaries =
         ["mvnw", "#!/bin/sh\n"],
         ["gradle.lockfile", "empty=1\n"],
         ["gradle/libs.versions.toml", "[versions]\n"],
+        [
+          "gradle/wrapper/gradle-wrapper.properties",
+          "distributionUrl=x\n",
+        ],
         ["gradle/conventions/java.gradle", "allprojects {}\n"],
         ["gradle/conventions/kotlin.gradle.kts", "allprojects {}\n"],
+        ["gradle-wrapper.properties", "unrelated=1\n"],
         [".mvn/unrelated.gradle.kts", "allprojects {}\n"],
         ["unrelated.kts", "println(\"not a Gradle script\")\n"],
       ] as const) {
@@ -116,9 +121,11 @@ export const test_provider_commands_and_inputs_respect_project_boundaries =
           "mvnw",
           "gradle.lockfile",
           "gradle/libs.versions.toml",
+          "gradle/wrapper/gradle-wrapper.properties",
           "gradle/conventions/java.gradle",
           "gradle/conventions/kotlin.gradle.kts",
         ].every((input) => javaBuildInputs.includes(input)) &&
+          javaBuildInputs.includes("gradle-wrapper.properties") === false &&
           javaBuildInputs.includes(".mvn/unrelated.gradle.kts") === false &&
           javaBuildInputs.includes("unrelated.kts") === false,
       );

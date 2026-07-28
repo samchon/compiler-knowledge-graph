@@ -271,8 +271,13 @@ export const test_standard_providers_execute_their_exact_contracts =
             ["mvnw", "#!/bin/sh\n"],
             ["gradle.lockfile", "empty=1\n"],
             ["gradle/libs.versions.toml", "[versions]\n"],
+            [
+              "gradle/wrapper/gradle-wrapper.properties",
+              "distributionUrl=x\n",
+            ],
             ["gradle/conventions/java.gradle", "allprojects {}\n"],
             ["gradle/conventions/kotlin.gradle.kts", "allprojects {}\n"],
+            ["gradle-wrapper.properties", "unrelated=1\n"],
             [".mvn/unrelated.gradle.kts", "allprojects {}\n"],
             ["unrelated.kts", "println(\"not a Gradle script\")\n"],
           ] as const) {
@@ -299,9 +304,11 @@ export const test_standard_providers_execute_their_exact_contracts =
               "mvnw",
               "gradle.lockfile",
               "gradle/libs.versions.toml",
+              "gradle/wrapper/gradle-wrapper.properties",
               "gradle/conventions/java.gradle",
               "gradle/conventions/kotlin.gradle.kts",
             ].every((input) => jvmInputs.includes(input)) &&
+              jvmInputs.includes("gradle-wrapper.properties") === false &&
               jvmInputs.includes(".mvn/unrelated.gradle.kts") === false &&
               jvmInputs.includes("unrelated.kts") === false &&
               jvmInputs.includes("build.sbt") === false &&

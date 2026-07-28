@@ -83,7 +83,7 @@ const JVM_BUILD_INPUTS = [
   "settings.gradle.kts",
   "gradle.properties",
   "gradle.lockfile",
-  "gradle-wrapper.properties",
+  "gradle/wrapper/gradle-wrapper.properties",
   "gradle/verification-metadata.xml",
   "gradle/wrapper/gradle-wrapper.jar",
   "gradlew",

@@ -229,48 +229,58 @@ export const test_semantic_identity_edge_cases_stay_covered = async () => {
     ],
   );
 
-  const floodedAmbiguous: ISamchonGraphNode[] = [
-    gnode({
-      id: "src/flood.go#foo:function",
-      name: "foo",
-      qualifiedName: "foo",
-      evidence: { file: "src/flood.go", startLine: 1 },
-    }),
-    gnode({
-      id: "src/flood.go#foo:function",
-      name: "foo",
-      qualifiedName: "foo",
-      evidence: { file: "src/flood.go", startLine: 5 },
-    }),
+  const floodAmbiguousWarnings = (
+    targets: readonly string[],
+  ): { edges: ISamchonGraphEdge[]; warnings: string[] } => {
+    const nodes: ISamchonGraphNode[] = [
+      gnode({
+        id: "src/flood.go#foo:function",
+        name: "foo",
+        qualifiedName: "foo",
+        file: "src/flood.go",
+        evidence: { file: "src/flood.go", startLine: 1 },
+      }),
+      gnode({
+        id: "src/flood.go#foo:function",
+        name: "foo",
+        qualifiedName: "foo",
+        file: "src/flood.go",
+        evidence: { file: "src/flood.go", startLine: 5 },
+      }),
+    ];
+    const edges = targets.map(
+      (target): ISamchonGraphEdge => ({
+        kind: "calls",
+        from: "src/flood.go#foo:function",
+        to: target,
+      }),
+    );
+    const warnings: string[] = [];
+    assignSemanticIdentities(nodes, edges, warnings);
+    return { edges, warnings };
+  };
+  const floodTargets = [
+    ...Array.from(
+      { length: 11 },
+      (_, at) => `target-${String(at).padStart(2, "0")}`,
+    ),
+    "target-10",
   ];
-  const floodedAmbiguousEdges: ISamchonGraphEdge[] = Array.from(
-    { length: 12 },
-    (_, at): ISamchonGraphEdge => ({
-      kind: "calls",
-      from: "src/flood.go#foo:function",
-      to: `target-${String(at).padStart(2, "0")}`,
-    }),
-  );
-  const floodedAmbiguousWarnings: string[] = [];
-  assignSemanticIdentities(
-    floodedAmbiguous,
-    floodedAmbiguousEdges,
-    floodedAmbiguousWarnings,
-  );
+  const flooded = floodAmbiguousWarnings(floodTargets);
+  const reversedFlood = floodAmbiguousWarnings([...floodTargets].reverse());
   TestValidator.equals(
     "amplified ambiguous generic-edge warnings are capped and deterministic",
     [
-      floodedAmbiguousEdges.length,
-      floodedAmbiguousWarnings.length,
-      floodedAmbiguousWarnings[0],
-      floodedAmbiguousWarnings[1],
-      floodedAmbiguousWarnings[10],
-      floodedAmbiguousWarnings.some(
-        (warning) =>
-          warning.includes("target-10") || warning.includes("target-11"),
-      ),
+      flooded.edges.length,
+      reversedFlood.edges.length,
+      flooded.warnings.length,
+      flooded.warnings[0],
+      flooded.warnings[1],
+      flooded.warnings[10],
+      flooded.warnings.some((warning) => warning.includes("target-10")),
     ],
     [
+      0,
       0,
       11,
       "@samchon/graph: omitted 12 ambiguous generic edges without provider endpoint proof; up to 10 distinct examples follow",
@@ -278,6 +288,11 @@ export const test_semantic_identity_edge_cases_stay_covered = async () => {
       "@samchon/graph: omitted an ambiguous generic edge without provider endpoint proof: calls src/flood.go#foo:function -> target-09",
       false,
     ],
+  );
+  TestValidator.equals(
+    "the capped examples do not depend on reverse-splice input order",
+    reversedFlood.warnings,
+    flooded.warnings,
   );
 
   const duplicateLocations: ISamchonGraphNode[] = [

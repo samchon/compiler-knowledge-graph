@@ -1,4 +1,5 @@
 import { TestValidator } from "@nestia/e2e";
+import { LANGUAGE_SPECS } from "@samchon/graph";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -242,32 +243,42 @@ export const test_experiment_corpora_are_commit_pinned = () => {
   // cannot be counted as part of the last row, and a comment written above
   // `language:` — which this catalog already does — stays with the row it
   // explains instead of being attributed to the row before it.
-  const catalogRows = region(
+  const catalogArray = region(
     catalog,
     "export const LANGUAGE_EXPERIMENTS = [",
     "\n];",
-  )
-    .split(/^ {2}\{$/m)
-    .slice(1);
+  );
+  const catalogRows = catalogArray.split(/^ {2}\{$/m).slice(1);
   const named = (row: string): string =>
     /language: "([^"]+)"/.exec(row)?.[1] ?? "unnamed";
-  // Both shapes, because each refuses what the other cannot see.
+  // Three shapes, because each refuses what the others cannot see.
   //
-  // The totals are derived without the row boundary at all, so they catch a
-  // split that stopped matching. That failure is the dangerous one: an empty
-  // row list compared against an empty expectation is an assertion that passes
-  // by checking nothing, which is exactly the trap `region` is documented
-  // against and which reindenting the array would spring.
+  // The first answers to the product rather than to this file. An empty row
+  // list compared against an empty expectation is an assertion that passes by
+  // checking nothing — the trap `region` is documented against, which
+  // reindenting the array would spring — and a right-hand side derived from the
+  // same source cannot notice it. Every advertised language owes an experiment
+  // row, so the language registry is the outside authority that can.
   TestValidator.equals(
-    "the row split still finds every catalog row",
+    "the catalog covers every advertised language",
     catalogRows.length,
-    [...catalog.matchAll(/strictProvider:\s*"[^"]+"/g)].length +
-      [...catalog.matchAll(/feasibilityBlocked:\s*"[^"]/g)].length,
+    LANGUAGE_SPECS.length,
   );
-  // The per-row map then refuses a row declaring both or neither, which equal
-  // totals would let cancel out, and names the language so a failure points at
-  // the row rather than at an index. `declares` rather than presence, so an
-  // empty declaration cannot satisfy either half.
+  // The second is independent of the row split without leaving the array. The
+  // whole file would also count a declaration quoted in a comment above it or a
+  // helper below it, and report that as a row-split failure it is not.
+  TestValidator.equals(
+    "the row split still finds every declaring row",
+    catalogRows.length,
+    [...catalogArray.matchAll(/strictProvider:\s*"[^"]+"/g)].length +
+      [...catalogArray.matchAll(/feasibilityBlocked:\s*"[^"]+"/g)].length,
+  );
+  // The third refuses a row declaring both or neither, which the counts above
+  // let cancel out — moving one declaration from a blocked row onto a strict
+  // row leaves every total unchanged and only this map objects. It names the
+  // language so a failure points at the row rather than at an index, and uses
+  // `declares` rather than presence so an empty declaration cannot satisfy
+  // either half.
   TestValidator.equals(
     "every catalog row declares exactly one of a provider and a blocker",
     catalogRows.map(

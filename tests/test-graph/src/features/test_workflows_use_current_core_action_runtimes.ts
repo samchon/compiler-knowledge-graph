@@ -142,11 +142,25 @@ export const test_workflows_use_current_core_action_runtimes = () => {
     path.join(directory, "index-time.yml"),
     "utf8",
   );
-  TestValidator.predicate(
-    "a result-only index update runs when its predecessor has no verdict",
-    indexTime.includes("--carry-forward-workflow=index-time.yml") &&
-      indexTime.includes("GITHUB_TOKEN: ${{ github.token }}"),
-  );
+  // Every workflow that classifies its own synchronize boundary owes this.
+  // Skipping is honest only when the head being skipped for already has
+  // evidence: a relevant push followed, while it is still running, by an
+  // irrelevant one publishes a green check on the second head having executed
+  // nothing, and a reader merges on that green while the run that covered the
+  // change is still open or already red. The experiment lane classified without
+  // carrying forward and produced exactly that: a success on a head where the
+  // matrix was skipped.
+  for (const [name, source] of [
+    ["experiment.yml", experiment],
+    ["index-time.yml", indexTime],
+  ] as const) {
+    TestValidator.predicate(
+      `a skipped ${name} update still requires its predecessor's verdict`,
+      source.includes(`--carry-forward-workflow=${name}`) &&
+        source.includes("GITHUB_TOKEN: ${{ github.token }}") &&
+        source.includes("actions: read"),
+    );
+  }
 
   const releasePack = fs.readFileSync(
     path.join(GraphPaths.repositoryRoot, "build", "release-pack.mjs"),

@@ -124,6 +124,7 @@ const jvmScipProvider = createScipProvider({
     ".mvn/wrapper/maven-wrapper.properties",
     "pom.xml",
     "mvnw",
+    "mvnw.cmd",
     "build.gradle",
     "build.gradle.kts",
     "settings.gradle",
@@ -134,6 +135,7 @@ const jvmScipProvider = createScipProvider({
     "gradle/verification-metadata.xml",
     "gradle/wrapper/gradle-wrapper.jar",
     "gradlew",
+    "gradlew.bat",
     "libs.versions.toml",
   ],
   buildExtensions: [".gradle", ".gradle.kts"],
@@ -160,6 +162,7 @@ function jvmScipIndexArgs(artifact: string, root: string): string[] {
     "settings.gradle",
     "settings.gradle.kts",
     "gradlew",
+    "gradlew.bat",
     "build.gradle",
     "build.gradle.kts",
   ].some((file) =>

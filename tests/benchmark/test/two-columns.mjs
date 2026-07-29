@@ -139,6 +139,7 @@ export function assertStrictComparisonArithmetic() {
   const absentStaticProject = "lualine";
   const differentRunProject = "tokio";
   const differentHostProject = "redis";
+  const unknownProvenanceProject = "serilog";
   const projects = [
     servedProject,
     absentProject,
@@ -147,6 +148,7 @@ export function assertStrictComparisonArithmetic() {
     absentStaticProject,
     differentRunProject,
     differentHostProject,
+    unknownProvenanceProject,
   ];
   const fixture = {
     schemaVersion: 1,
@@ -231,6 +233,18 @@ export function assertStrictComparisonArithmetic() {
           buildMs: 60_000,
           servedBy: "lsp no strict provider served",
           host: { ...host, cpu: "another fixture" },
+        }),
+        // A completed process without the provenance line proves neither that a
+        // strict provider served nor that its output is semantic. Missing
+        // evidence must not become a savings claim merely because both clocks
+        // stopped.
+        cell(unknownProvenanceProject, "samchon-graph", {
+          buildMs: 15_000,
+          servedBy: "unknown",
+        }),
+        cell(unknownProvenanceProject, "samchon-graph-fallback", {
+          buildMs: 45_000,
+          servedBy: "lsp no strict provider served",
         }),
       ],
     },
@@ -322,6 +336,18 @@ export function assertStrictComparisonArithmetic() {
     out,
     new RegExp(`${differentHostProject}[^\\n]*x$`, "m"),
     "cells from different hosts must not be given a provider savings ratio",
+  );
+  assert.match(
+    out,
+    new RegExp(
+      `${unknownProvenanceProject}[^\\n]*at least one cell produced no semantic index`,
+    ),
+    "a completed cell without strict-provider provenance must be non-comparable",
+  );
+  assert.doesNotMatch(
+    out,
+    new RegExp(`${unknownProvenanceProject}[^\\n]*x$`, "m"),
+    "a completed cell without strict-provider provenance must not report a ratio",
   );
 
   const jsonRan = cp.spawnSync(

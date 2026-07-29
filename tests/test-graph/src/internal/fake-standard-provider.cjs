@@ -96,6 +96,7 @@ const contracts = {
       "settings.gradle",
       "settings.gradle.kts",
       "gradlew",
+      "gradlew.bat",
       "build.gradle",
       "build.gradle.kts",
     ].some((file) => fs.statSync(path.join(process.cwd(), file), {

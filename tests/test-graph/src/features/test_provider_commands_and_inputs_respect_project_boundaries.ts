@@ -86,6 +86,7 @@ export const test_provider_commands_and_inputs_respect_project_boundaries =
           "final class MavenWrapperDownloader {}\n",
         ],
         ["mvnw", "#!/bin/sh\n"],
+        ["mvnw.cmd", "@echo off\r\n"],
         ["gradle.lockfile", "empty=1\n"],
         ["gradle/libs.versions.toml", "[versions]\n"],
         [
@@ -94,6 +95,7 @@ export const test_provider_commands_and_inputs_respect_project_boundaries =
         ],
         ["gradle/conventions/java.gradle", "allprojects {}\n"],
         ["gradle/conventions/kotlin.gradle.kts", "allprojects {}\n"],
+        ["gradlew.bat", "@echo off\r\n"],
         ["gradle-wrapper.properties", "unrelated=1\n"],
         [".mvn/unrelated.gradle.kts", "allprojects {}\n"],
         ["unrelated.kts", "println(\"not a Gradle script\")\n"],
@@ -150,11 +152,13 @@ export const test_provider_commands_and_inputs_respect_project_boundaries =
           ".mvn/maven.config",
           ".mvn/wrapper/MavenWrapperDownloader.java",
           "mvnw",
+          "mvnw.cmd",
           "gradle.lockfile",
           "gradle/libs.versions.toml",
           "gradle/wrapper/gradle-wrapper.properties",
           "gradle/conventions/java.gradle",
           "gradle/conventions/kotlin.gradle.kts",
+          "gradlew.bat",
         ].every((input) => javaBuildInputs.includes(input)) &&
           javaBuildInputs.includes("gradle-wrapper.properties") === false &&
           javaBuildInputs.includes(".mvn/unrelated.gradle.kts") === false &&

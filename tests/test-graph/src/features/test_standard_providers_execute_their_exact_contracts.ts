@@ -269,6 +269,7 @@ export const test_standard_providers_execute_their_exact_contracts =
             ],
             [".mvn/wrapper/maven-wrapper.properties", "distributionUrl=x\n"],
             ["mvnw", "#!/bin/sh\n"],
+            ["mvnw.cmd", "@echo off\r\n"],
             ["gradle.lockfile", "empty=1\n"],
             ["gradle/libs.versions.toml", "[versions]\n"],
             [
@@ -277,6 +278,7 @@ export const test_standard_providers_execute_their_exact_contracts =
             ],
             ["gradle/conventions/java.gradle", "allprojects {}\n"],
             ["gradle/conventions/kotlin.gradle.kts", "allprojects {}\n"],
+            ["gradlew.bat", "@echo off\r\n"],
             ["gradle-wrapper.properties", "unrelated=1\n"],
             [".mvn/unrelated.gradle.kts", "allprojects {}\n"],
             ["unrelated.kts", "println(\"not a Gradle script\")\n"],
@@ -302,11 +304,13 @@ export const test_standard_providers_execute_their_exact_contracts =
               ".mvn/wrapper/MavenWrapperDownloader.java",
               ".mvn/wrapper/maven-wrapper.properties",
               "mvnw",
+              "mvnw.cmd",
               "gradle.lockfile",
               "gradle/libs.versions.toml",
               "gradle/wrapper/gradle-wrapper.properties",
               "gradle/conventions/java.gradle",
               "gradle/conventions/kotlin.gradle.kts",
+              "gradlew.bat",
             ].every((input) => jvmInputs.includes(input)) &&
               jvmInputs.includes("gradle-wrapper.properties") === false &&
               jvmInputs.includes(".mvn/unrelated.gradle.kts") === false &&
@@ -406,6 +410,47 @@ export const test_standard_providers_execute_their_exact_contracts =
             );
           } finally {
             await settingsSession.close();
+          }
+          const windowsWrapperRoot = path.join(
+            root,
+            "gradle-windows-wrapper-jvm",
+          );
+          writeProject(windowsWrapperRoot);
+          fs.rmSync(path.join(windowsWrapperRoot, "pom.xml"));
+          fs.writeFileSync(
+            path.join(windowsWrapperRoot, "gradlew.bat"),
+            "@echo off\r\n",
+          );
+          const windowsWrapperCommand = provider.resolve(
+            windowsWrapperRoot,
+            process.env,
+          );
+          TestValidator.predicate(
+            "scip-java resolves a Windows-wrapper-only Gradle workspace",
+            windowsWrapperCommand !== undefined,
+          );
+          if (windowsWrapperCommand === undefined) {
+            throw new Error(
+              "scip-java: Windows-wrapper Gradle fixture command did not resolve",
+            );
+          }
+          const windowsWrapperSession = provider.open({
+            root: windowsWrapperRoot,
+            command: windowsWrapperCommand,
+            languages: provider.languages,
+            options: { cwd: windowsWrapperRoot },
+          });
+          try {
+            const windowsWrapperSnapshot =
+              await windowsWrapperSession.refresh();
+            TestValidator.predicate(
+              "a gradlew.bat-only workspace selects the guarded Gradle command",
+              windowsWrapperSnapshot.mode === "initial" &&
+                windowsWrapperSnapshot.snapshot.provenance.provider ===
+                  "scip-java",
+            );
+          } finally {
+            await windowsWrapperSession.close();
           }
         }
         await assertHeuristicTwinFails(provider, command, root);

@@ -206,6 +206,7 @@ if (paired.length > 0) {
   for (const { row, strict, fallback } of paired) {
     const served =
       typeof strict.servedBy === "string" &&
+      strict.servedBy.startsWith("lsp ") &&
       !/no strict provider/.test(strict.servedBy);
     const strictFallbackSemantic =
       !served &&

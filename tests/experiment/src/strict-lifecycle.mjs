@@ -483,35 +483,42 @@ export const runStrictLifecycle = async (experiment, pinnedRoot) => {
     }
     const coldProvenance = strictProvenance(cold, experiment);
     const retryProvenance = strictProvenance(retried, experiment);
-    // The restored tree is the tree the cold generation indexed, so the source
-    // manifest has to come back byte for byte. Nothing about a producer's
-    // scheduling can move it: it is a digest of the files, not of the facts.
-    if (coldProvenance.manifest !== retryProvenance.manifest) {
-      throw new Error(
-        `${experiment.language}: restoring the original sources did not restore the source manifest ` +
-          `(cold ${coldProvenance.manifest}, retry ${retryProvenance.manifest})`,
-      );
-    }
-    const reproduced = coldProvenance.content === retryProvenance.content;
+    // Restoring the sources restores the generation, or the row says why not.
+    //
+    // This was written as two claims, on the theory that a source manifest is a
+    // digest of files and so nothing about a producer's scheduling could move
+    // it. The C++ lane disproved that on its first complete run: the manifest
+    // moved too. It had to. scip-clang's own statistics flag warns that
+    // "non-determinism may affect the number of files skipped by individual
+    // indexing jobs", and a manifest lists the files the producer reported — so
+    // a schedule that skips a different set publishes a different manifest.
+    //
+    // One claim, then, and the same exemption covers both halves. Most
+    // producers reproduce their own generation and a silent difference in
+    // either half is a defect; a row that names its limitation may differ, and
+    // what actually moved is published either way rather than merely permitted.
+    const reproducedManifest =
+      coldProvenance.manifest === retryProvenance.manifest;
+    const reproducedContent =
+      coldProvenance.content === retryProvenance.content;
+    const reproduced = reproducedManifest && reproducedContent;
     const limitation = experiment.regenerationLimitation;
-    // The facts are a separate claim, and only the producer can make it. Most
-    // of them do, so equality is the default and a silent difference is a
-    // defect. One does not: scip-clang's own help says it "does not support
-    // deterministic work scheduling yet", which changes how many files each
-    // indexing job skips. A row may therefore accept a differing regeneration
-    // only by naming that limitation, and it is published either way so a
-    // reader sees what actually happened rather than what was permitted.
     if (!reproduced && limitation === undefined) {
       throw new Error(
-        `${experiment.language}: restoring the original source manifest reproduced different graph facts ` +
-          `(cold ${String(cold.nodes.length)} nodes/${String(cold.edges.length)} edges, ` +
+        `${experiment.language}: restoring the original sources did not reproduce the generation ` +
+          `(manifest ${reproducedManifest ? "unchanged" : "moved"}, ` +
+          `facts ${reproducedContent ? "unchanged" : "moved"}; ` +
+          `cold ${String(cold.nodes.length)} nodes/${String(cold.edges.length)} edges, ` +
           `retry ${String(retried.nodes.length)} nodes/${String(retried.edges.length)} edges)`,
       );
     }
     rows.push({
       name: "regeneration",
       status: reproduced ? "reproduced" : "limited",
-      manifest: coldProvenance.manifest,
+      reproducedManifest,
+      reproducedContent,
+      coldManifest: coldProvenance.manifest,
+      retryManifest: retryProvenance.manifest,
       coldContent: coldProvenance.content,
       retryContent: retryProvenance.content,
       coldNodes: cold.nodes.length,

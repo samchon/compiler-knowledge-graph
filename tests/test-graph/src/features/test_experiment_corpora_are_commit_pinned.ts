@@ -203,9 +203,10 @@ export const test_experiment_corpora_are_commit_pinned = () => {
   // the lifecycle's strongest. Exactly one registered producer cannot meet it:
   // scip-clang 0.4.0 documents `--deterministic` as not scheduling work
   // deterministically, and warns separately that non-determinism changes how
-  // many files each indexing job skips. The exemption is therefore a declared,
-  // explained property of those two rows rather than a relaxed default, and the
-  // manifest half of the assertion stays unconditional for everyone.
+  // many files each indexing job skips — which moves the source manifest as
+  // well as the facts, because the manifest lists the files it reported. The
+  // exemption is therefore a declared, explained property of those two rows
+  // rather than a relaxed default, and it covers one claim rather than two.
   TestValidator.predicate(
     "an unreproducible producer is declared rather than serialized",
     [cpp, c].every((row) => declares(row, "regenerationLimitation")) &&
@@ -220,9 +221,7 @@ export const test_experiment_corpora_are_commit_pinned = () => {
       runner.includes(
         "regenerationLimitation: experiment.regenerationLimitation",
       ) &&
-      lifecycle.includes(
-        "coldProvenance.manifest !== retryProvenance.manifest",
-      ) &&
+      lifecycle.includes("const reproduced = reproducedManifest &&") &&
       lifecycle.includes("!reproduced && limitation === undefined") &&
       lifecycle.includes('name: "regeneration"'),
   );

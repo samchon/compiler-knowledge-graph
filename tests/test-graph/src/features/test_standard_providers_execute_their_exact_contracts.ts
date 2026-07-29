@@ -1099,7 +1099,6 @@ function assertTheFixtureRejectsAWrongInvocation(): void {
       "scip-clang",
       [
         "--compdb-path=compile_commands.json",
-        "--deterministic",
         "--temporary-output-dir=tmp",
         "--index-output-path",
         "index.scip",
@@ -1110,30 +1109,29 @@ function assertTheFixtureRejectsAWrongInvocation(): void {
     [
       "scip-clang",
       [
-        "--deterministic",
         "--index-output-path=index.scip",
         "--temporary-output-dir=tmp",
       ],
     ],
-    // Dropping the sort leaves shard merge order and per-translation-unit hash
-    // map order open, which is the part of reproducibility upstream does own.
-    [
-      "scip-clang",
-      [
-        "--compdb-path=compile_commands.json",
-        "--index-output-path=index.scip",
-        "--temporary-output-dir=tmp",
-      ],
-    ],
-    // Constraining the worker pool is equally wrong, in the other direction:
-    // it buys reproducibility the producer never promised by making the strict
-    // lane slower than the fallback it replaces. Both spellings of the option
-    // are refused, because `-j1` reaches the same setting as `--jobs=1`.
+    // Neither reproducibility flag may come back. Both were tried, neither
+    // delivered what the producer says it cannot give, and each cost a lane:
+    // serializing the workers put the strict column behind the fallback it
+    // replaces, and sorting output this package sorts again on arrival held
+    // the C++ conformance lane four times over its budget. Every spelling is
+    // refused, because blocking one form lets another walk it back in.
     [
       "scip-clang",
       [
         "--compdb-path=compile_commands.json",
         "--deterministic",
+        "--index-output-path=index.scip",
+        "--temporary-output-dir=tmp",
+      ],
+    ],
+    [
+      "scip-clang",
+      [
+        "--compdb-path=compile_commands.json",
         "--jobs=1",
         "--index-output-path=index.scip",
         "--temporary-output-dir=tmp",
@@ -1143,7 +1141,6 @@ function assertTheFixtureRejectsAWrongInvocation(): void {
       "scip-clang",
       [
         "--compdb-path=compile_commands.json",
-        "--deterministic",
         "-j1",
         "--index-output-path=index.scip",
         "--temporary-output-dir=tmp",

@@ -74,20 +74,17 @@ const descriptions = {
  * changes its arguments fails here as well as in its real lane.
  */
 const contracts = {
-  // `scip-clang --compdb-path=… --deterministic --index-output-path=…
-  // --temporary-output-dir=…`. No `--jobs`: the producer's own default is
-  // NCPUs and overriding it buys reproducibility at a cost that removes the
-  // reason to run a strict provider at all.
+  // `scip-clang --compdb-path=… --index-output-path=… --temporary-output-dir=…`
+  //
+  // Neither reproducibility flag survives. `--jobs` overrides an NCPUs default
+  // and buys determinism by serializing the compiler; `--deterministic` sorts
+  // what this package sorts again on arrival and held a conformance lane four
+  // times over its budget. Both are refused in every spelling, because
+  // forbidding one form would let `-j1` or a later re-addition walk back in.
   "scip-clang": (args) => ({
     leading: [],
-    requires: [
-      "--compdb-path=",
-      "--deterministic",
-      "--temporary-output-dir=",
-    ],
-    valueless: ["--deterministic"],
-    // Every spelling cxxopts accepts for the same option, because forbidding
-    // only `--jobs=1` would let `-j1` reintroduce the serialized run.
+    requires: ["--compdb-path=", "--temporary-output-dir="],
+    forbids: ["--deterministic"],
     forbidsPrefix: ["--jobs", "-j"],
     output: valueOf(args, "--index-output-path="),
   }),

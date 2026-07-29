@@ -124,11 +124,17 @@ export const LANGUAGE_EXPERIMENTS = [
     // and `--print-statistics-path` warns that "non-determinism may affect the
     // number of files skipped by individual indexing jobs". The driver gives
     // each well-behaved header to one translation unit, and which one wins
-    // depends on the schedule. Running one worker removes the variance and
-    // costs 39x on the redis corpus, which is not a trade a strict provider
-    // can make: the point of the lane is to be faster than the fallback.
+    // depends on the schedule — so the file set moves, and the manifest with it.
+    //
+    // Two ways of buying it back were tried and withdrawn. `--jobs=1` removed
+    // the variance by serializing the compiler and cost 39x on the redis
+    // corpus, which is not a trade a strict provider can make: the point of the
+    // lane is to be faster than the fallback. `--deterministic` alone then held
+    // this lane above forty-three minutes where it had run in under eleven, and
+    // its generations still did not reproduce. The limitation is declared
+    // instead.
     regenerationLimitation:
-      "scip-clang 0.4.0 does not schedule its indexing jobs deterministically, so regenerating an unchanged project can skip a different set of headers and publish a slightly different fact set; the source manifest is unaffected",
+      "scip-clang 0.4.0 does not schedule its indexing jobs deterministically, so regenerating an unchanged project can skip a different set of headers; both the source manifest and the fact set can therefore move, because the manifest lists the files the producer reported",
     lifecycle: {
       sourceFile: "src/format.cc",
       editSuffix: "\n// samchon-graph lifecycle edit\n",
@@ -176,7 +182,7 @@ export const LANGUAGE_EXPERIMENTS = [
     // The C and C++ slices share one producer, so they share its scheduling
     // boundary as well; see the C++ row for the upstream wording.
     regenerationLimitation:
-      "scip-clang 0.4.0 does not schedule its indexing jobs deterministically, so regenerating an unchanged project can skip a different set of headers and publish a slightly different fact set; the source manifest is unaffected",
+      "scip-clang 0.4.0 does not schedule its indexing jobs deterministically, so regenerating an unchanged project can skip a different set of headers; both the source manifest and the fact set can therefore move, because the manifest lists the files the producer reported",
     lifecycle: {
       sourceFile: "src/uv-common.c",
       editSuffix: "\n// samchon-graph lifecycle edit\n",

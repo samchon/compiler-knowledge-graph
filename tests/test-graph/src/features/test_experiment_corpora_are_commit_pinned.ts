@@ -237,21 +237,47 @@ export const test_experiment_corpora_are_commit_pinned = () => {
       runner.includes('typeof experiment.feasibilityBlocked !== "string"') &&
       runner.includes("feasibilityBlocked: experiment.feasibilityBlocked"),
   );
-  // Per row rather than as a total. Comparing two sums lets a row declaring
-  // both cancel out a row declaring neither, and the runner would not catch
-  // that pair either: it takes the strict branch on `strictProvider` alone and
-  // never looks at the blocker beside it.
-  const catalogRows = catalog
-    .split(/^ {4}language: "[^"]+",$/gm)
+  // Bounded to the array, then split on the row objects themselves rather than
+  // on a field inside one. Two things follow: a helper added below the array
+  // cannot be counted as part of the last row, and a comment written above
+  // `language:` — which this catalog already does — stays with the row it
+  // explains instead of being attributed to the row before it.
+  const catalogRows = region(
+    catalog,
+    "export const LANGUAGE_EXPERIMENTS = [",
+    "\n];",
+  )
+    .split(/^ {2}\{$/m)
     .slice(1);
+  const named = (row: string): string =>
+    /language: "([^"]+)"/.exec(row)?.[1] ?? "unnamed";
+  // Both shapes, because each refuses what the other cannot see.
+  //
+  // The totals are derived without the row boundary at all, so they catch a
+  // split that stopped matching. That failure is the dangerous one: an empty
+  // row list compared against an empty expectation is an assertion that passes
+  // by checking nothing, which is exactly the trap `region` is documented
+  // against and which reindenting the array would spring.
+  TestValidator.equals(
+    "the row split still finds every catalog row",
+    catalogRows.length,
+    [...catalog.matchAll(/strictProvider:\s*"[^"]+"/g)].length +
+      [...catalog.matchAll(/feasibilityBlocked:\s*"[^"]/g)].length,
+  );
+  // The per-row map then refuses a row declaring both or neither, which equal
+  // totals would let cancel out, and names the language so a failure points at
+  // the row rather than at an index. `declares` rather than presence, so an
+  // empty declaration cannot satisfy either half.
   TestValidator.equals(
     "every catalog row declares exactly one of a provider and a blocker",
     catalogRows.map(
       (row) =>
-        Number(/\bstrictProvider:/.test(row)) +
-        Number(/\bfeasibilityBlocked:/.test(row)),
+        `${named(row)}: ${String(
+          Number(declares(row, "strictProvider")) +
+            Number(declares(row, "feasibilityBlocked")),
+        )}`,
     ),
-    catalogRows.map(() => 1),
+    catalogRows.map((row) => `${named(row)}: 1`),
   );
 
   TestValidator.predicate(

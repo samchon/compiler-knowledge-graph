@@ -233,10 +233,12 @@ jobs:
           # have stopped it being checked.
           SAMCHON_BENCH_REQUIRE_QUIET: "1"
           # Thirty minutes is more than twice the slowest completed cell in the
-          # pinned corpus. Ruby and Dart have each reached a one-hour cap in both
-          # columns, and the post-measurement trace identifies stalled
-          # textDocument/references requests. Repeating that hour yields no new
-          # evidence: crossing this cap is the measured failure result.
+          # settled publication. A later same-toolchain cold sweep also showed
+          # why this is a verdict rather than an adaptive ceiling: host variance
+          # can push a formerly completed cell past it. Ruby and Dart have each
+          # reached a one-hour cap in both columns, and the post-measurement trace
+          # identifies stalled textDocument/references requests. Crossing this
+          # cap is the measured failure result, not a reason to extend it again.
           SAMCHON_GRAPH_BENCH_TIMEOUT_MS: "1800000"
 
       # Request tracing is deliberately outside the stopwatch above. Generic

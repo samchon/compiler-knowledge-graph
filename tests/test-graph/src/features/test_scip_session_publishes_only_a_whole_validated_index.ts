@@ -717,15 +717,17 @@ async function assertCloseOwnsItsChildren(): Promise<void> {
       speakingError = error as Error;
       return undefined;
     });
-  // Waited for, never timed. A wall-clock abort races the child's start-up, and
-  // loses on a loaded Windows runner where the job object kills without the
-  // grace period POSIX gives — a red suite on a correct build.
+  // Waited on the producer's own sentinel rather than on a clock. Aborting
+  // after a fixed delay races the child's start-up and loses on a loaded
+  // Windows runner, where the job object kills with none of the grace POSIX
+  // gives — a red suite on a correct build.
   //
-  // Bounded all the same. A fixture that stops writing the sentinel would
-  // otherwise hang here until the job's own limit killed the whole suite, and a
-  // suite that dies at its outer boundary says far less than one assertion that
-  // failed: aborting anyway leaves the assertion below to report exactly what
-  // was missing.
+  // The bound is not a second clock to race. It exists so a fixture that stops
+  // writing the sentinel at all fails as one assertion instead of hanging until
+  // the job's own limit kills the whole suite, which says far less. Its budget
+  // is an order of magnitude above what the gated spawn actually costs, so the
+  // sentinel decides when this proceeds and the bound only decides how a broken
+  // fixture is reported.
   for (
     let waited = 0;
     waited < 3_000 && !fs.existsSync(announced);

@@ -83,9 +83,15 @@ if (mode === "hang") {
   // where the job object kills without the grace period POSIX gives.
   const announce = options.get("announce");
   if (announce !== undefined) {
-    process.stderr.write(`${announce}\n`);
     const sentinel = options.get("announce-sentinel");
-    if (sentinel !== undefined) fs.writeFileSync(sentinel, announce);
+    // The sentinel says the announcement has left, not that it was queued.
+    // A write to a pipe is not synchronous on every platform, and a caller
+    // that aborts the moment it sees the file would otherwise race the flush
+    // it is waiting for — worst for the long announcement, which is the one
+    // that exists to fill a buffer.
+    process.stderr.write(`${announce}\n`, () => {
+      if (sentinel !== undefined) fs.writeFileSync(sentinel, announce);
+    });
   }
   // Ignores the first termination signal, so close() has to escalate.
   process.on("SIGTERM", () => {});

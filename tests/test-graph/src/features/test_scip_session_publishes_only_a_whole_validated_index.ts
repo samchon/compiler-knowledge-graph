@@ -703,18 +703,27 @@ async function assertCloseOwnsItsChildren(): Promise<void> {
   // benchmark lanes reached an hour cap four complete runs running and left the
   // provider's name and nothing else. Whatever the producer had already said
   // has to survive the abort that killed it.
+  const announced = path.join(root, "announced.txt");
   const speaking = sessionOf(root, {
     mode: "hang",
     announce: "scip-fake: resolving 412 of 1204 translation units",
+    announceSentinel: announced,
   });
   const speakingController = new AbortController();
-  setTimeout(() => speakingController.abort(), 250);
   let speakingError: Error | undefined;
-  try {
-    await speaking.refresh({ signal: speakingController.signal });
-  } catch (error) {
-    speakingError = error as Error;
-  }
+  const speakingRefresh = speaking
+    .refresh({ signal: speakingController.signal })
+    .catch((error: unknown) => {
+      speakingError = error as Error;
+      return undefined;
+    });
+  // Waited for, never timed. A wall-clock abort races the child's start-up, and
+  // loses on a loaded Windows runner where the job object kills without the
+  // grace period POSIX gives — a red suite on a correct build.
+  while (!fs.existsSync(announced))
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  speakingController.abort();
+  await speakingRefresh;
   TestValidator.equals(
     "an aborted producer keeps the diagnosis it had already written",
     [
@@ -834,6 +843,7 @@ interface IFixtureOptions {
   maxArtifactBytes?: number;
   onIndexArgs?: () => void;
   announce?: string;
+  announceSentinel?: string;
 }
 
 function sessionOf(root: string, options: IFixtureOptions = {}): ScipSession {
@@ -882,7 +892,12 @@ function sessionOf(root: string, options: IFixtureOptions = {}): ScipSession {
           : [`--mutate=${options.mutateInput}`]),
         ...(options.announce === undefined
           ? []
-          : [`--announce=${options.announce}`]),
+          : [
+              `--announce=${options.announce}`,
+              ...(options.announceSentinel === undefined
+                ? []
+                : [`--announce-sentinel=${options.announceSentinel}`]),
+            ]),
       ];
     },
     inputs: () =>

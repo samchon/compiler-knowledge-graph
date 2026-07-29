@@ -77,8 +77,16 @@ if (mode === "hang") {
   // Says something first when asked to. A real indexer that never finishes has
   // usually been reporting progress the whole time, and an abort that discards
   // it leaves the one case that most needs a diagnosis with none.
+  //
+  // The sentinel is how the caller knows it has. Aborting on a timer would race
+  // this write against process start-up, and lose on a loaded Windows runner
+  // where the job object kills without the grace period POSIX gives.
   const announce = options.get("announce");
-  if (announce !== undefined) process.stderr.write(`${announce}\n`);
+  if (announce !== undefined) {
+    process.stderr.write(`${announce}\n`);
+    const sentinel = options.get("announce-sentinel");
+    if (sentinel !== undefined) fs.writeFileSync(sentinel, announce);
+  }
   // Ignores the first termination signal, so close() has to escalate.
   process.on("SIGTERM", () => {});
   setInterval(() => {}, 1_000);

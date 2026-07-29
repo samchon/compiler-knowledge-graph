@@ -150,15 +150,23 @@ export const test_workflows_use_current_core_action_runtimes = () => {
   // change is still open or already red. The experiment lane classified without
   // carrying forward and produced exactly that: a success on a head where the
   // matrix was skipped.
+  //
+  // Scoped to the classifying job, not to the file. The token and the read
+  // permission belong to the step that queries the previous run; move either
+  // one to a different job and the classifier throws, the outer catch turns
+  // that into a warning, and it fails open to running the whole matrix on
+  // every push — the failure nobody watches, because it is only ever reached
+  // on the pushes that were supposed to be skipped.
   for (const [name, source] of [
     ["experiment.yml", experiment],
     ["index-time.yml", indexTime],
   ] as const) {
+    const classify = classifyingJob(source, name);
     TestValidator.predicate(
       `a skipped ${name} update still requires its predecessor's verdict`,
-      source.includes(`--carry-forward-workflow=${name}`) &&
-        source.includes("GITHUB_TOKEN: ${{ github.token }}") &&
-        source.includes("actions: read"),
+      classify.includes(`--carry-forward-workflow=${name}`) &&
+        classify.includes("GITHUB_TOKEN: ${{ github.token }}") &&
+        classify.includes("actions: read"),
     );
   }
 
@@ -197,4 +205,30 @@ export const test_workflows_use_current_core_action_runtimes = () => {
 
 function occurrences(text: string, needle: string): number {
   return text.split(needle).length - 1;
+}
+
+/**
+ * The `latest_update` job alone, so an assertion about it cannot be satisfied
+ * by the same text sitting in a different job.
+ *
+ * Bounded at the next top-level job key rather than at a named one, because the
+ * job that follows it differs between these two workflows and naming it would
+ * make the helper wrong for one of them the moment either is renamed.
+ *
+ * Both line endings, and not as a courtesy. A Windows checkout hands these
+ * files back with CRLF while the repository stores LF, so a literal newline
+ * match here would pass on the runner and fail on the author's machine — a
+ * scoping helper that silently stops scoping on one of the two platforms it is
+ * read on.
+ */
+function classifyingJob(source: string, workflow: string): string {
+  const start = /\r?\n {2}latest_update:\r?\n/.exec(source);
+  if (start === null) {
+    throw new Error(
+      `@samchon/graph-test: ${workflow} has no latest_update job to scope to`,
+    );
+  }
+  const rest = source.slice(start.index + start[0].indexOf("l"));
+  const next = /\r?\n {2}[a-z_]+:\r?\n/.exec(rest);
+  return next === null ? rest : rest.slice(0, next.index);
 }

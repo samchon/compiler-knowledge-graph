@@ -925,6 +925,20 @@ function runChecked(
 ) {
   process.stdout.write(`[index-time] ${label}\n`);
   const devNull = discardStdout ? fs.openSync(os.devNull, "w") : null;
+  // Straight to the log file, not through a pipe.
+  //
+  // `spawnSync` closes its stdio pipes at the instant it kills a timed-out
+  // child, before that child can run a signal handler. Everything a killed run
+  // says while it retires — which is where a strict producer's own account of
+  // what it was doing travels — was therefore written into a pipe whose reader
+  // was already gone, and the log kept only what happened to arrive before the
+  // kill. That is why two lanes reached the cap four complete runs running and
+  // left one line between them.
+  //
+  // An inherited file descriptor has no reader to lose. What was written before
+  // the kill is already on disk, and what the child writes on its way out lands
+  // beside it.
+  const errorLog = fs.openSync(`${logBase}.err.log`, "w");
   let result;
   try {
     result = cp.spawnSync(command, args, {
@@ -937,13 +951,17 @@ function runChecked(
       windowsHide: true,
       maxBuffer: 512 * 1024 * 1024,
       timeout: benchTimeoutMs(),
-      ...(devNull !== null ? { stdio: ["ignore", devNull, "pipe"] } : {}),
+      stdio: [
+        input === undefined ? "ignore" : "pipe",
+        devNull ?? "pipe",
+        errorLog,
+      ],
     });
   } finally {
     if (devNull !== null) fs.closeSync(devNull);
+    fs.closeSync(errorLog);
   }
   fs.writeFileSync(`${logBase}.out.log`, result.stdout ?? "");
-  fs.writeFileSync(`${logBase}.err.log`, result.stderr ?? "");
   if (result.error) {
     // A timeout is a measurement, not a crash. "ruby's language-server lane does
     // not finish inside an hour" is one of the more useful things this benchmark

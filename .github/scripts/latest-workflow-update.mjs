@@ -36,13 +36,21 @@ export function latestWorkflowUpdateDecision({
 }
 
 /**
- * An irrelevant update may inherit a completed predecessor's evidence.
+ * An irrelevant update may inherit a completed predecessor's evidence, and only
+ * a completed one.
  *
- * GitHub concurrency preserves the running measurement but keeps only one
- * pending run. If a relevant pending head is replaced by a later result-only
- * push, that later run must measure unless the predecessor already completed
- * successfully; otherwise the classifier would skip the replacement and lose
- * the only run that covered the relevant change.
+ * Two callers need this for two reasons, and the rule is the same either way:
+ * a skip is a claim about the head being skipped for, so it is honest only when
+ * that head already has a verdict to stand on.
+ *
+ * The measurement's reason is concurrency. It preserves the running run but
+ * keeps only one pending member, so a relevant pending head replaced by a later
+ * result-only push would lose the only run that covered the relevant change.
+ *
+ * The experiment lane has no concurrency group at all, and its reason is the
+ * merge gate. Its check reports success on the skipped head while the run that
+ * covered the change is still open — or has already failed — so a reader looking
+ * at the head sees green for work nothing verified.
  */
 export function carryForwardWorkflowDecision(
   decision,

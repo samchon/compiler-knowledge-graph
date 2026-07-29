@@ -427,7 +427,13 @@ export class BatchGraphSession implements IBulkGraphSession {
             abortedProcessError(
               this.options.provider,
               command.command,
-              failureDetail(stderr, stdout),
+              // The tail, bounded. A producer killed after an hour is the one
+              // most likely to have filled the whole 64 KiB stderr buffer with
+              // progress, and the last of that is the part that says where it
+              // had got to. The exit-code path keeps its full text: a producer
+              // that chose to stop usually said why in one message, and this
+              // one did not choose to stop at all.
+              boundedDetail(failureDetail(stderr, stdout)),
             ),
           );
           return;
@@ -722,3 +728,9 @@ function failureDetail(stderr: string, stdout: string): string {
 
 /** Enough for a build tool's failure summary, short of an artifact. */
 const FAILURE_DETAIL_LIMIT = 2000;
+
+/** The end of a detail, which is where a killed producer's progress is. */
+function boundedDetail(detail: string): string {
+  if (detail.length <= FAILURE_DETAIL_LIMIT) return detail;
+  return `: …${detail.slice(-FAILURE_DETAIL_LIMIT)}`;
+}

@@ -259,10 +259,17 @@ export const test_experiment_corpora_are_commit_pinned = () => {
   // reindenting the array would spring — and a right-hand side derived from the
   // same source cannot notice it. Every advertised language owes an experiment
   // row, so the language registry is the outside authority that can.
+  //
+  // Which languages, not how many. A count alone lets one row be renamed to
+  // duplicate another: the registry still advertises the language that
+  // disappeared, and nothing objects until its real-server lane spends its
+  // budget looking up an experiment that is no longer there. Sorted, because
+  // the order these are written in is presentation and pinning it would fail a
+  // harmless reorder.
   TestValidator.equals(
     "the catalog covers every advertised language",
-    catalogRows.length,
-    LANGUAGE_SPECS.length,
+    [...catalogRows.map(named)].sort(),
+    [...LANGUAGE_SPECS.map((spec) => spec.language)].sort(),
   );
   // The second is independent of the row split without leaving the array. The
   // whole file would also count a declaration quoted in a comment above it or a

@@ -697,6 +697,34 @@ async function assertCloseOwnsItsChildren(): Promise<void> {
   );
   await listenerRace.close();
 
+  // An aborted producer is the one failure that never explains itself
+  // otherwise. Its snapshot is never published, so its warnings are never
+  // printed, and the buffered output dies with the process holding it — two
+  // benchmark lanes reached an hour cap four complete runs running and left the
+  // provider's name and nothing else. Whatever the producer had already said
+  // has to survive the abort that killed it.
+  const speaking = sessionOf(root, {
+    mode: "hang",
+    announce: "scip-fake: resolving 412 of 1204 translation units",
+  });
+  const speakingController = new AbortController();
+  setTimeout(() => speakingController.abort(), 250);
+  let speakingError: Error | undefined;
+  try {
+    await speaking.refresh({ signal: speakingController.signal });
+  } catch (error) {
+    speakingError = error as Error;
+  }
+  TestValidator.equals(
+    "an aborted producer keeps the diagnosis it had already written",
+    [
+      speakingError?.name,
+      speakingError?.message.includes("resolving 412 of 1204") === true,
+    ],
+    ["AbortError", true],
+  );
+  await speaking.close();
+
   const unchangedAborted = sessionOf(root);
   await unchangedAborted.refresh();
   const unchangedController = new AbortController();
@@ -805,6 +833,7 @@ interface IFixtureOptions {
   maxStdoutBytes?: number;
   maxArtifactBytes?: number;
   onIndexArgs?: () => void;
+  announce?: string;
 }
 
 function sessionOf(root: string, options: IFixtureOptions = {}): ScipSession {
@@ -851,6 +880,9 @@ function sessionOf(root: string, options: IFixtureOptions = {}): ScipSession {
         ...(options.mutateInput === undefined
           ? []
           : [`--mutate=${options.mutateInput}`]),
+        ...(options.announce === undefined
+          ? []
+          : [`--announce=${options.announce}`]),
       ];
     },
     inputs: () =>

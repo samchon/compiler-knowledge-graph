@@ -74,6 +74,11 @@ if (mode === "silent") {
 }
 
 if (mode === "hang") {
+  // Says something first when asked to. A real indexer that never finishes has
+  // usually been reporting progress the whole time, and an abort that discards
+  // it leaves the one case that most needs a diagnosis with none.
+  const announce = options.get("announce");
+  if (announce !== undefined) process.stderr.write(`${announce}\n`);
   // Ignores the first termination signal, so close() has to escalate.
   process.on("SIGTERM", () => {});
   setInterval(() => {}, 1_000);

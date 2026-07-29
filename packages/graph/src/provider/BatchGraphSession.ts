@@ -416,8 +416,19 @@ export class BatchGraphSession implements IBulkGraphSession {
         }
         /* c8 ignore stop */
         if (signal?.aborted === true) {
+          // With whatever the producer had already said. An aborted run is the
+          // one case where nothing else will ever explain itself: the snapshot
+          // is never published, so its warnings are never printed, and the
+          // buffered output dies with the process that held it. Two benchmark
+          // lanes reached their hour cap four complete runs running and left
+          // one line between them — the provider's name — because this branch
+          // threw away the stderr sitting in scope.
           reject(
-            abortedProcessError(this.options.provider, command.command),
+            abortedProcessError(
+              this.options.provider,
+              command.command,
+              failureDetail(stderr, stdout),
+            ),
           );
           return;
         }
@@ -614,8 +625,12 @@ interface ISpawned {
 const DEFAULT_MAX_PROCESS_STDOUT_BYTES = 256 * 1024 * 1024;
 const MAX_PROCESS_STDERR_CHARS = 64 * 1024;
 
-function abortedProcessError(provider: string, command: string): Error {
-  const error = new Error(`${provider}: ${command} was aborted`);
+function abortedProcessError(
+  provider: string,
+  command: string,
+  detail = "",
+): Error {
+  const error = new Error(`${provider}: ${command} was aborted${detail}`);
   error.name = "AbortError";
   return error;
 }

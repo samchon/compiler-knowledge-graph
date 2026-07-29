@@ -204,12 +204,14 @@ const paired = rows
 if (paired.length > 0) {
   process.stdout.write("\nstrict provider vs the same project with none:\n\n");
   for (const { row, strict, fallback } of paired) {
-    const served =
+    const strictProviderServed =
       typeof strict.servedBy === "string" &&
-      strict.servedBy.startsWith("lsp ") &&
+      /^(?:lsp|hybrid) /.test(strict.servedBy) &&
       !/no strict provider/.test(strict.servedBy);
+    const strictSemantic =
+      strictProviderServed && strict.servedBy.startsWith("lsp ");
     const strictFallbackSemantic =
-      !served &&
+      !strictProviderServed &&
       typeof strict.servedBy === "string" &&
       strict.servedBy.startsWith("lsp ");
     const fallbackSemantic =
@@ -219,17 +221,21 @@ if (paired.length > 0) {
       typeof strict.measurementId === "string" &&
       strict.measurementId === fallback.measurementId &&
       sameHost(strict.host, fallback.host);
-    const verdict = !served && (!strictFallbackSemantic || !fallbackSemantic)
-      ? "strict provider did not serve and at least one cell produced no semantic index; times are not comparable"
-      : !served && !sameMeasurement
-        ? "strict provider did not serve and cells were not measured together on the same host; times are not comparable"
-        : !served
-          ? "no strict provider served, so both cells measured the same lane (LSP)"
-          : !fallbackSemantic
-            ? "strict-off cell produced no semantic index; times are not comparable"
-            : !sameMeasurement
-              ? "cells were not measured together on the same host; times are not comparable"
-              : `${(fallback.buildMs / strict.buildMs).toFixed(1)}x`;
+    const verdict =
+      !strictProviderServed &&
+      (!strictFallbackSemantic || !fallbackSemantic)
+        ? "strict provider did not serve and at least one cell produced no semantic index; times are not comparable"
+        : !strictProviderServed && !sameMeasurement
+          ? "strict provider did not serve and cells were not measured together on the same host; times are not comparable"
+          : !strictProviderServed
+            ? "no strict provider served, so both cells measured the same lane (LSP)"
+            : !strictSemantic
+              ? "strict provider served a hybrid index; times are not comparable"
+              : !fallbackSemantic
+                ? "strict-off cell produced no semantic index; times are not comparable"
+                : !sameMeasurement
+                  ? "cells were not measured together on the same host; times are not comparable"
+                  : `${(fallback.buildMs / strict.buildMs).toFixed(1)}x`;
     const strictTime = `${(strict.buildMs / 1000).toFixed(1)} s`;
     const fallbackTime = `${(fallback.buildMs / 1000).toFixed(1)} s`;
     process.stdout.write(

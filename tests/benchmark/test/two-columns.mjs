@@ -140,6 +140,7 @@ export function assertStrictComparisonArithmetic() {
   const differentRunProject = "tokio";
   const differentHostProject = "redis";
   const unknownProvenanceProject = "serilog";
+  const hybridProject = "slim";
   const projects = [
     servedProject,
     absentProject,
@@ -149,6 +150,7 @@ export function assertStrictComparisonArithmetic() {
     differentRunProject,
     differentHostProject,
     unknownProvenanceProject,
+    hybridProject,
   ];
   const fixture = {
     schemaVersion: 1,
@@ -244,6 +246,17 @@ export function assertStrictComparisonArithmetic() {
         }),
         cell(unknownProvenanceProject, "samchon-graph-fallback", {
           buildMs: 45_000,
+          servedBy: "lsp no strict provider served",
+        }),
+        // A strict provider served part of the graph, but a hybrid result also
+        // contains static fallback facts. It is useful raw evidence and not a
+        // wholly semantic index whose duration can headline a speedup.
+        cell(hybridProject, "samchon-graph", {
+          buildMs: 12_000,
+          servedBy: "hybrid scip-fake(php)",
+        }),
+        cell(hybridProject, "samchon-graph-fallback", {
+          buildMs: 48_000,
           servedBy: "lsp no strict provider served",
         }),
       ],
@@ -348,6 +361,16 @@ export function assertStrictComparisonArithmetic() {
     out,
     new RegExp(`${unknownProvenanceProject}[^\\n]*x$`, "m"),
     "a completed cell without strict-provider provenance must not report a ratio",
+  );
+  assert.match(
+    out,
+    new RegExp(`${hybridProject}[^\\n]*hybrid index; times are not comparable`),
+    "a hybrid strict cell must remain visible without becoming a semantic speedup",
+  );
+  assert.doesNotMatch(
+    out,
+    new RegExp(`${hybridProject}[^\\n]*x$`, "m"),
+    "a hybrid strict cell must not report a semantic savings ratio",
   );
 
   const jsonRan = cp.spawnSync(

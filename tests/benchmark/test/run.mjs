@@ -1277,9 +1277,13 @@ function testIndexCellIsolationContract() {
       workflow.indexOf("Measure cold index build") <
       workflow.indexOf("Diagnose slow LSP requests outside the measurement") &&
       workflow.includes("--project=${{ matrix.project }}") &&
+      workflow.includes('SAMCHON_GRAPH_BENCH_TIMEOUT_MS: "1800000"') &&
+      !workflow.includes('SAMCHON_GRAPH_BENCH_TIMEOUT_MS: "3600000"') &&
+      workflow.includes("timeout-minutes: 120") &&
+      !workflow.includes("timeout-minutes: 150") &&
       workflow.includes("--timeout-ms=300000") &&
       workflow.includes("timeout-minutes: 10"),
-    "slow-lane request diagnosis must run after the authoritative measurement with its own bounded budget",
+    "measurement and slow-lane diagnosis must each run inside their evidence-backed bounded budgets",
   );
   assert.ok(
     source.includes("copyPreparedFixtureCompanion(spec, source, target)") &&

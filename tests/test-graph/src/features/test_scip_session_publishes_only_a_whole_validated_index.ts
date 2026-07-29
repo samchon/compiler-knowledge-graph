@@ -720,8 +720,19 @@ async function assertCloseOwnsItsChildren(): Promise<void> {
   // Waited for, never timed. A wall-clock abort races the child's start-up, and
   // loses on a loaded Windows runner where the job object kills without the
   // grace period POSIX gives — a red suite on a correct build.
-  while (!fs.existsSync(announced))
+  //
+  // Bounded all the same. A fixture that stops writing the sentinel would
+  // otherwise hang here until the job's own limit killed the whole suite, and a
+  // suite that dies at its outer boundary says far less than one assertion that
+  // failed: aborting anyway leaves the assertion below to report exactly what
+  // was missing.
+  for (
+    let waited = 0;
+    waited < 3_000 && !fs.existsSync(announced);
+    waited += 10
+  ) {
     await new Promise((resolve) => setTimeout(resolve, 10));
+  }
   speakingController.abort();
   await speakingRefresh;
   TestValidator.equals(
@@ -733,6 +744,46 @@ async function assertCloseOwnsItsChildren(): Promise<void> {
     ["AbortError", true],
   );
   await speaking.close();
+
+  // The same producer after an hour of it. A run that reaches a cap has usually
+  // filled the whole stderr buffer, and the end of that is the part that says
+  // where it had got to — so the message keeps the tail, drops the head, and
+  // stays a size a log can hold.
+  const flooded = path.join(root, "flooded.txt");
+  const floodedSession = sessionOf(root, {
+    mode: "hang",
+    announce: `${"unit ".repeat(600)}LAST UNIT`,
+    announceSentinel: flooded,
+  });
+  const floodedController = new AbortController();
+  let floodedError: Error | undefined;
+  const floodedRefresh = floodedSession
+    .refresh({ signal: floodedController.signal })
+    .catch((error: unknown) => {
+      floodedError = error as Error;
+      return undefined;
+    });
+  for (
+    let waited = 0;
+    waited < 3_000 && !fs.existsSync(flooded);
+    waited += 10
+  ) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  floodedController.abort();
+  await floodedRefresh;
+  const floodedMessage = floodedError?.message ?? "";
+  TestValidator.equals(
+    "a flooded producer keeps its last words and not its first",
+    [
+      floodedError?.name,
+      floodedMessage.includes("LAST UNIT"),
+      floodedMessage.includes("…"),
+      floodedMessage.length < 2_200,
+    ],
+    ["AbortError", true, true, true],
+  );
+  await floodedSession.close();
 
   const unchangedAborted = sessionOf(root);
   await unchangedAborted.refresh();

@@ -427,13 +427,16 @@ export class BatchGraphSession implements IBulkGraphSession {
             abortedProcessError(
               this.options.provider,
               command.command,
-              // The tail, bounded. A producer killed after an hour is the one
-              // most likely to have filled the whole 64 KiB stderr buffer with
-              // progress, and the last of that is the part that says where it
-              // had got to. The exit-code path keeps its full text: a producer
-              // that chose to stop usually said why in one message, and this
-              // one did not choose to stop at all.
-              boundedDetail(failureDetail(stderr, stdout)),
+              // Bounded before it is labelled, not after. A producer killed
+              // after an hour is the one most likely to have filled the whole
+              // 64 KiB stderr buffer with progress, and the last of that says
+              // where it had got to — but slicing the finished sentence would
+              // cut off the `(no stderr; last of stdout)` attribution whenever
+              // the fallback text is long, leaving a reader unable to tell a
+              // diagnosis from a scraped stdout tail. The exit-code path keeps
+              // its full text: a producer that chose to stop usually said why
+              // once, and this one did not choose to stop at all.
+              failureDetail(boundedTail(stderr), stdout),
             ),
           );
           return;
@@ -729,8 +732,9 @@ function failureDetail(stderr: string, stdout: string): string {
 /** Enough for a build tool's failure summary, short of an artifact. */
 const FAILURE_DETAIL_LIMIT = 2000;
 
-/** The end of a detail, which is where a killed producer's progress is. */
-function boundedDetail(detail: string): string {
-  if (detail.length <= FAILURE_DETAIL_LIMIT) return detail;
-  return `: …${detail.slice(-FAILURE_DETAIL_LIMIT)}`;
+/** The end of a producer's output, which is where its last progress is. */
+function boundedTail(text: string): string {
+  const trimmed = text.trim();
+  if (trimmed.length <= FAILURE_DETAIL_LIMIT) return trimmed;
+  return `…${trimmed.slice(-FAILURE_DETAIL_LIMIT)}`;
 }

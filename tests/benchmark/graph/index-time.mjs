@@ -924,7 +924,6 @@ function runChecked(
   { label, logBase, cwd = repoRoot, env = {}, discardStdout = false, input },
 ) {
   process.stdout.write(`[index-time] ${label}\n`);
-  const devNull = discardStdout ? fs.openSync(os.devNull, "w") : null;
   // Straight to the log file, not through a pipe.
   //
   // `spawnSync` closes its stdio pipes at the instant it kills a timed-out
@@ -939,8 +938,12 @@ function runChecked(
   // the kill is already on disk, and what the child writes on its way out lands
   // beside it.
   const errorLog = fs.openSync(`${logBase}.err.log`, "w");
+  // Opened inside the guard that closes it. Both descriptors used to be taken
+  // before the `try`, so a failure between them left the first one open.
+  let devNull = null;
   let result;
   try {
+    if (discardStdout) devNull = fs.openSync(os.devNull, "w");
     result = cp.spawnSync(command, args, {
       cwd,
       encoding: "utf8",
@@ -951,8 +954,12 @@ function runChecked(
       windowsHide: true,
       maxBuffer: 512 * 1024 * 1024,
       timeout: benchTimeoutMs(),
+      // Only the error stream moves. The other two keep exactly the shapes this
+      // helper gave them before — a null sink or a pipe for output, and stdin
+      // ignored for a discarding call and piped otherwise — so nothing about a
+      // measured invocation changes except where its diagnosis lands.
       stdio: [
-        input === undefined ? "ignore" : "pipe",
+        input !== undefined || !discardStdout ? "pipe" : "ignore",
         devNull ?? "pipe",
         errorLog,
       ],

@@ -81,13 +81,12 @@ const clangScipProvider = createScipProvider({
     // each well-behaved header to one translation unit, and which one wins is a
     // property of the schedule.
     //
-    // No `--jobs`. Pinning it to one worker does close that gap, and the
-    // measured cost on the largest C project in the indexing-time lane was 39x
-    // — from about sixteen seconds to about eleven minutes on the same pinned
-    // revision and host class, which put the strict lane behind the generic
-    // fallback it exists to beat. The honest arrangement is the producer's own
-    // default parallelism plus a declared regeneration limitation, not a
-    // serialized compiler.
+    // No `--jobs`. Pinning it to one worker does close that gap, and on a large
+    // real C project the measured cost was 39x — about sixteen seconds to about
+    // eleven minutes on one pinned revision and host class, which put the
+    // strict lane behind the generic fallback it exists to beat. The honest
+    // arrangement is the producer's own default parallelism plus a declared
+    // regeneration limitation, not a serialized compiler.
     "--deterministic",
     `--index-output-path=${artifact}`,
     `--temporary-output-dir=${path.join(path.dirname(artifact), "clang")}`,

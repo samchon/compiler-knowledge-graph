@@ -237,14 +237,21 @@ export const test_experiment_corpora_are_commit_pinned = () => {
       runner.includes('typeof experiment.feasibilityBlocked !== "string"') &&
       runner.includes("feasibilityBlocked: experiment.feasibilityBlocked"),
   );
-  // Counted rather than enumerated, so a seventeenth language cannot join by
-  // omission: every row declares exactly one of the two, and the two counts
-  // have to add up to the number of rows.
+  // Per row rather than as a total. Comparing two sums lets a row declaring
+  // both cancel out a row declaring neither, and the runner would not catch
+  // that pair either: it takes the strict branch on `strictProvider` alone and
+  // never looks at the blocker beside it.
+  const catalogRows = catalog
+    .split(/^ {4}language: "[^"]+",$/gm)
+    .slice(1);
   TestValidator.equals(
-    "every catalog row is either strict or explicitly blocked",
-    [...catalog.matchAll(/strictProvider:\s*"[^"]+"/g)].length +
-      [...catalog.matchAll(/feasibilityBlocked:/g)].length,
-    [...catalog.matchAll(/^ {4}language: "[^"]+",$/gm)].length,
+    "every catalog row declares exactly one of a provider and a blocker",
+    catalogRows.map(
+      (row) =>
+        Number(/\bstrictProvider:/.test(row)) +
+        Number(/\bfeasibilityBlocked:/.test(row)),
+    ),
+    catalogRows.map(() => 1),
   );
 
   TestValidator.predicate(
@@ -337,13 +344,6 @@ function experimentSource(file: string): string {
 }
 
 /**
- * A slice that fails loudly instead of silently widening.
- *
- * `String.slice` treats a missing marker's `-1` as an offset from the end, so a
- * renamed function would leave every assertion below reading the whole file and
- * still passing — the scoping the caller asked for, gone with no failure.
- */
-/**
  * Whether a catalog row states a field as a quoted, non-blank explanation.
  *
  * Each of these fields buys an exemption from an assertion, so the check has to
@@ -359,6 +359,13 @@ function declares(row: string, field: string): boolean {
   return match !== null && match[1]!.trim() !== "";
 }
 
+/**
+ * A slice that fails loudly instead of silently widening.
+ *
+ * `String.slice` treats a missing marker's `-1` as an offset from the end, so a
+ * renamed function would leave every assertion below reading the whole file and
+ * still passing — the scoping the caller asked for, gone with no failure.
+ */
 function region(source: string, from: string, to: string): string {
   const start = source.indexOf(from);
   const end = source.indexOf(to);

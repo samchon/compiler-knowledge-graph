@@ -122,7 +122,14 @@ export const test_workflows_use_current_core_action_runtimes = () => {
   // budget stops being a boundary: the one lane that needed 90 minutes needed
   // it because the provider had been serialized, so raising the budget was
   // preserving the cause rather than bounding it.
-  const experimentTimeouts = experiment
+  //
+  // Scoped to the matrix job, not to the file. Counting `timeout-minutes:`
+  // lines across the whole workflow passes just as well when the only one has
+  // been moved up into the classification job — leaving all sixteen real-tool
+  // lanes on GitHub's six-hour default, which is the unbounded state this
+  // assertion exists to prevent.
+  const experimentJob = experiment.slice(experiment.indexOf("\n  experiment:"));
+  const experimentTimeouts = experimentJob
     .split("\n")
     .filter((line) => line.trim().startsWith("timeout-minutes:"))
     .map((line) => line.trim());

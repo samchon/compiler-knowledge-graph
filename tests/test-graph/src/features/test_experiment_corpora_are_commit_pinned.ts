@@ -143,7 +143,7 @@ export const test_experiment_corpora_are_commit_pinned = () => {
   // `contains` is the first for scip-python, so the row has to say so.
   TestValidator.predicate(
     "a family the pinned producer cannot emit is published as a limitation",
-    /semanticLimitation:\s*"?[^",]/.test(python) &&
+    declares(python, "semanticLimitation") &&
       python.includes("enclosing_symbol") &&
       runner.includes("semanticLimitation: experiment.semanticLimitation"),
   );
@@ -153,7 +153,7 @@ export const test_experiment_corpora_are_commit_pinned = () => {
       (row) =>
         row.includes("semanticEdges: []") &&
         !row.includes("crossFileEdge:") &&
-        /semanticLimitation:\s*"?[^",]/.test(row),
+        declares(row, "semanticLimitation"),
     ) &&
       runner.includes("experiment.semanticEdges.length === 0") &&
       runner.includes("crossFileEdge !== undefined") &&
@@ -168,7 +168,7 @@ export const test_experiment_corpora_are_commit_pinned = () => {
   TestValidator.predicate(
     "a failure boundary the producer does not have is published as a limitation",
     python.includes('failurePolicy: "tolerated"') &&
-      /failureLimitation:\s*"?[^",]/.test(python) &&
+      declares(python, "failureLimitation") &&
       lifecycle.includes('fixture.failurePolicy === "tolerated"') &&
       lifecycle.includes('fixture.failureLimitation === ""') &&
       lifecycle.includes("provenance.universe === prior.universe") &&
@@ -178,7 +178,7 @@ export const test_experiment_corpora_are_commit_pinned = () => {
   TestValidator.predicate(
     "a degraded publication is distinct from an input the producer ignored",
     lua.includes('failurePolicy: "published"') &&
-      /failureLimitation:\s*"?[^",]/.test(lua) &&
+      declares(lua, "failureLimitation") &&
       lifecycle.includes('fixture.failurePolicy === "published"') &&
       lifecycle.includes('status: "published-with-limitation"') &&
       lifecycle.includes("publicationChanges("),
@@ -188,7 +188,7 @@ export const test_experiment_corpora_are_commit_pinned = () => {
     [cpp, c].every(
       (row) =>
         row.includes('failurePolicy: "fallback"') &&
-        /failureLimitation:\s*"?[^",]/.test(row),
+        declares(row, "failureLimitation"),
     ) &&
       lifecycle.includes('fixture.failurePolicy === "fallback"') &&
       lifecycle.includes('status: "fallback-with-limitation"') &&
@@ -207,12 +207,13 @@ export const test_experiment_corpora_are_commit_pinned = () => {
   // manifest half of the assertion stays unconditional for everyone.
   TestValidator.predicate(
     "an unreproducible producer is declared rather than serialized",
-    [cpp, c].every((row) =>
-      /regenerationLimitation:\s*"?[^",]/.test(row),
-    ) &&
-      [python, lua, csharp].every(
-        (row) => !row.includes("regenerationLimitation"),
-      ) &&
+    [cpp, c].every((row) => declares(row, "regenerationLimitation")) &&
+      // Counted over the whole catalog, not checked against a list of the rows
+      // that happen not to declare it. The exemption drops the lifecycle's
+      // strongest assertion for whichever row carries it, so a third one
+      // appearing has to be a reviewed edit here rather than eight words in a
+      // catalog nobody re-reads.
+      [...catalog.matchAll(/regenerationLimitation:/g)].length === 2 &&
       runner.includes("experiment.regenerationLimitation !== undefined") &&
       runner.includes("regenerationLimitation.trim() === \"\"") &&
       runner.includes(
@@ -231,10 +232,19 @@ export const test_experiment_corpora_are_commit_pinned = () => {
   TestValidator.predicate(
     "every language without a strict provider states what blocks one",
     [swift, scala, zig].every((row) =>
-      /feasibilityBlocked:\s*"?[^",]/.test(row),
+      declares(row, "feasibilityBlocked"),
     ) &&
       runner.includes('typeof experiment.feasibilityBlocked !== "string"') &&
       runner.includes("feasibilityBlocked: experiment.feasibilityBlocked"),
+  );
+  // Counted rather than enumerated, so a seventeenth language cannot join by
+  // omission: every row declares exactly one of the two, and the two counts
+  // have to add up to the number of rows.
+  TestValidator.equals(
+    "every catalog row is either strict or explicitly blocked",
+    [...catalog.matchAll(/strictProvider:\s*"[^"]+"/g)].length +
+      [...catalog.matchAll(/feasibilityBlocked:/g)].length,
+    [...catalog.matchAll(/^ {4}language: "[^"]+",$/gm)].length,
   );
 
   TestValidator.predicate(
@@ -333,6 +343,22 @@ function experimentSource(file: string): string {
  * renamed function would leave every assertion below reading the whole file and
  * still passing — the scoping the caller asked for, gone with no failure.
  */
+/**
+ * Whether a catalog row states a field as a quoted, non-blank explanation.
+ *
+ * Each of these fields buys an exemption from an assertion, so the check has to
+ * be that something was actually said. A pattern permitting an optional quote
+ * before one non-comma character accepts `field: ""` — the space after the
+ * colon satisfies it — which certifies exactly the declaration it exists to
+ * refuse.
+ */
+function declares(row: string, field: string): boolean {
+  const match = new RegExp(`${field}:\\s*"((?:[^"\\\\]|\\\\.)*)"`, "u").exec(
+    row,
+  );
+  return match !== null && match[1]!.trim() !== "";
+}
+
 function region(source: string, from: string, to: string): string {
   const start = source.indexOf(from);
   const end = source.indexOf(to);

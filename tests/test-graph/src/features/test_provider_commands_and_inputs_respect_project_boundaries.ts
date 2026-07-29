@@ -120,6 +120,30 @@ export const test_provider_commands_and_inputs_respect_project_boundaries =
         providerInputFiles(root, [], [".git"], [""]).includes(".git") ===
           false,
       );
+      // Only scip-clang asks for the empty extension, and it asks because a C++
+      // include universe really does contain files with no suffix. `extname`
+      // reports no extension for a leading-dot name too, so every configuration
+      // file in the project answered the same request and entered the strict
+      // provider's input manifest — after which editing `.gitignore` rebuilt an
+      // index that never read it. The worktree marker above was one witness of
+      // that class; these are the rest of it.
+      fs.mkdirSync(path.join(root, "include"), { recursive: true });
+      for (const [file, contents] of [
+        [".gitignore", "build/\n"],
+        [".clang-format", "BasedOnStyle: LLVM\n"],
+        ["include/api", "#pragma once\n"],
+        ["LICENSE", "MIT\n"],
+      ] as const) {
+        fs.writeFileSync(path.join(root, file), contents);
+      }
+      const extensionless = providerInputFiles(root, [], [], [""]);
+      TestValidator.predicate(
+        "an extensionless include is watched and a dotfile is not",
+        extensionless.includes("include/api") &&
+          extensionless.includes("LICENSE") &&
+          extensionless.includes(".gitignore") === false &&
+          extensionless.includes(".clang-format") === false,
+      );
       TestValidator.predicate(
         "generic JVM lanes watch Maven and Gradle build-universe inputs",
         [

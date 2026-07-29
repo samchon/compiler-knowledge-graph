@@ -74,17 +74,21 @@ const descriptions = {
  * changes its arguments fails here as well as in its real lane.
  */
 const contracts = {
-  // `scip-clang --compdb-path=… --deterministic --jobs=1
-  // --index-output-path=… --temporary-output-dir=…`
+  // `scip-clang --compdb-path=… --deterministic --index-output-path=…
+  // --temporary-output-dir=…`. No `--jobs`: the producer's own default is
+  // NCPUs and overriding it buys reproducibility at a cost that removes the
+  // reason to run a strict provider at all.
   "scip-clang": (args) => ({
     leading: [],
     requires: [
       "--compdb-path=",
       "--deterministic",
-      "--jobs=1",
       "--temporary-output-dir=",
     ],
-    valueless: ["--deterministic", "--jobs=1"],
+    valueless: ["--deterministic"],
+    // Every spelling cxxopts accepts for the same option, because forbidding
+    // only `--jobs=1` would let `-j1` reintroduce the serialized run.
+    forbidsPrefix: ["--jobs", "-j"],
     output: valueOf(args, "--index-output-path="),
   }),
   // `scip-java index --output <path> [-- <build command>]`. The released
@@ -224,6 +228,16 @@ if (scip !== undefined) {
   }
   for (const forbidden of contract.forbids ?? []) {
     if (forwarded.includes(forbidden)) {
+      throw new Error(
+        `fake standard provider: ${producer} was invoked with forbidden ${forbidden}`,
+      );
+    }
+  }
+  // A forbidden option family, not one spelling of it. `--jobs=1`, `--jobs 1`,
+  // `-j1` and `-j 1` all reach the same upstream setting, so an exact-string
+  // refusal would pass for three of the four.
+  for (const forbidden of contract.forbidsPrefix ?? []) {
+    if (forwarded.some((argument) => argument.startsWith(forbidden))) {
       throw new Error(
         `fake standard provider: ${producer} was invoked with forbidden ${forbidden}`,
       );

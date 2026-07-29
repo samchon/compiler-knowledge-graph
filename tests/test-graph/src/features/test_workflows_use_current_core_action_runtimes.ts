@@ -118,11 +118,18 @@ export const test_workflows_use_current_core_action_runtimes = () => {
     path.join(directory, "experiment.yml"),
     "utf8",
   );
-  TestValidator.predicate(
-    "the serialized C++ lifecycle has its own bounded real-tool budget",
-    experiment.includes(
-      "timeout-minutes: ${{ matrix.language == 'cpp' && 90 || 45 }}",
-    ),
+  // One hang boundary for every language. A per-language exception is how a
+  // budget stops being a boundary: the one lane that needed 90 minutes needed
+  // it because the provider had been serialized, so raising the budget was
+  // preserving the cause rather than bounding it.
+  const experimentTimeouts = experiment
+    .split("\n")
+    .filter((line) => line.trim().startsWith("timeout-minutes:"))
+    .map((line) => line.trim());
+  TestValidator.equals(
+    "every real-tool language lane shares one hang boundary",
+    experimentTimeouts,
+    ["timeout-minutes: 45"],
   );
   const indexTime = fs.readFileSync(
     path.join(directory, "index-time.yml"),

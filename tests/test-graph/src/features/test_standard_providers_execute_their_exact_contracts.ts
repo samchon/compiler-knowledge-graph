@@ -1100,7 +1100,6 @@ function assertTheFixtureRejectsAWrongInvocation(): void {
       [
         "--compdb-path=compile_commands.json",
         "--deterministic",
-        "--jobs=1",
         "--temporary-output-dir=tmp",
         "--index-output-path",
         "index.scip",
@@ -1112,39 +1111,40 @@ function assertTheFixtureRejectsAWrongInvocation(): void {
       "scip-clang",
       [
         "--deterministic",
-        "--jobs=1",
         "--index-output-path=index.scip",
         "--temporary-output-dir=tmp",
       ],
     ],
-    // Deterministic data structure emission alone does not fix parallel header
-    // ownership, and serial scheduling without it leaves hash-map order open.
+    // Dropping the sort leaves shard merge order and per-translation-unit hash
+    // map order open, which is the part of reproducibility upstream does own.
     [
       "scip-clang",
       [
         "--compdb-path=compile_commands.json",
-        "--jobs=1",
         "--index-output-path=index.scip",
         "--temporary-output-dir=tmp",
       ],
     ],
-    // Omitting the worker limit restores the schedule-dependent default.
-    [
-      "scip-clang",
-      [
-        "--compdb-path=compile_commands.json",
-        "--deterministic",
-        "--index-output-path=index.scip",
-        "--temporary-output-dir=tmp",
-      ],
-    ],
-    // A larger worker pool would reopen the same scheduling boundary.
+    // Constraining the worker pool is equally wrong, in the other direction:
+    // it buys reproducibility the producer never promised by making the strict
+    // lane slower than the fallback it replaces. Both spellings of the option
+    // are refused, because `-j1` reaches the same setting as `--jobs=1`.
     [
       "scip-clang",
       [
         "--compdb-path=compile_commands.json",
         "--deterministic",
-        "--jobs=2",
+        "--jobs=1",
+        "--index-output-path=index.scip",
+        "--temporary-output-dir=tmp",
+      ],
+    ],
+    [
+      "scip-clang",
+      [
+        "--compdb-path=compile_commands.json",
+        "--deterministic",
+        "-j1",
         "--index-output-path=index.scip",
         "--temporary-output-dir=tmp",
       ],

@@ -119,6 +119,16 @@ export const LANGUAGE_EXPERIMENTS = [
     semanticEdges: [],
     semanticLimitation:
       "scip-clang 0.4.0 emits no occurrence enclosing_range, SymbolInformation.enclosing_symbol, or type-definition relationship, so its semantic declarations carry no provable graph edge family",
+    // scip-clang 0.4.0's own CLI states both halves of this: `--deterministic`
+    // is documented as "Does not support deterministic work scheduling yet",
+    // and `--print-statistics-path` warns that "non-determinism may affect the
+    // number of files skipped by individual indexing jobs". The driver gives
+    // each well-behaved header to one translation unit, and which one wins
+    // depends on the schedule. Running one worker removes the variance and
+    // costs 39x on the redis corpus, which is not a trade a strict provider
+    // can make: the point of the lane is to be faster than the fallback.
+    regenerationLimitation:
+      "scip-clang 0.4.0 does not schedule its indexing jobs deterministically, so regenerating an unchanged project can skip a different set of headers and publish a slightly different fact set; the source manifest is unaffected",
     lifecycle: {
       sourceFile: "src/format.cc",
       editSuffix: "\n// samchon-graph lifecycle edit\n",
@@ -163,6 +173,10 @@ export const LANGUAGE_EXPERIMENTS = [
     semanticEdges: [],
     semanticLimitation:
       "scip-clang 0.4.0 emits no occurrence enclosing_range, SymbolInformation.enclosing_symbol, or type-definition relationship, so its semantic declarations carry no provable graph edge family",
+    // The C and C++ slices share one producer, so they share its scheduling
+    // boundary as well; see the C++ row for the upstream wording.
+    regenerationLimitation:
+      "scip-clang 0.4.0 does not schedule its indexing jobs deterministically, so regenerating an unchanged project can skip a different set of headers and publish a slightly different fact set; the source manifest is unaffected",
     lifecycle: {
       sourceFile: "src/uv-common.c",
       editSuffix: "\n// samchon-graph lifecycle edit\n",

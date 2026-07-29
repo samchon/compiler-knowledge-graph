@@ -71,6 +71,19 @@ if (strict) {
       `${experiment.language}: an edge-free strict row must publish its semantic limitation`,
     );
   }
+  // Declaring that a producer may not reproduce its own facts is an exemption
+  // from the lifecycle's strongest assertion, so the declaration itself has to
+  // say something. An empty or blank string would turn the exemption into a
+  // way of not asserting anything at all.
+  if (
+    experiment.regenerationLimitation !== undefined &&
+    (typeof experiment.regenerationLimitation !== "string" ||
+      experiment.regenerationLimitation.trim() === "")
+  ) {
+    throw new Error(
+      `${experiment.language}: a strict row that accepts an unreproducible regeneration must state why`,
+    );
+  }
 }
 let dump;
 let elapsedMs;
@@ -273,6 +286,7 @@ const result = {
   edgeKindCounts,
   semanticLimitation: experiment.semanticLimitation,
   compilerLimitation: experiment.compilerLimitation,
+  regenerationLimitation: experiment.regenerationLimitation,
   lifecycleCreatedEdge,
   crossFileCalls,
   crossFileRelationships,

@@ -67,12 +67,24 @@ const clangScipProvider = createScipProvider({
     return compdb === undefined ? undefined : [`--compdb-path=${compdb}`];
   },
   indexArgs: (artifact) => [
-    // scip-clang otherwise merges worker shards and emits each TU's hash maps
-    // in schedule-dependent order. Its deterministic mode sorts those facts,
-    // but upstream explicitly leaves work scheduling nondeterministic; one
-    // worker closes that remaining header-ownership boundary.
+    // Sorts what the producer can sort: worker shards are ordered before they
+    // merge and each translation unit's hash maps are emitted in a fixed order,
+    // so the artifact does not depend on which worker finished first. Upstream
+    // pairs this flag with a fixed temporary directory, which the next argument
+    // supplies.
+    //
+    // It does not make the run reproducible, and the remaining gap is not ours
+    // to close. `--deterministic` sits in scip-clang 0.4.0's "Debugging" group
+    // saying "Does not support deterministic work scheduling yet", and
+    // `--print-statistics-path` warns that "non-determinism may affect the
+    // number of files skipped by individual indexing jobs" — the driver assigns
+    // each well-behaved header to one translation unit, and which one wins is a
+    // property of the schedule. Forcing `--jobs=1` did fix it and cost 39x on
+    // redis (16.4 s to 645.8 s on the same pinned revision and host class),
+    // which put the strict lane behind the generic fallback it exists to beat.
+    // The honest arrangement is the producer's own default parallelism plus a
+    // declared regeneration limitation, not a serialized compiler.
     "--deterministic",
-    "--jobs=1",
     `--index-output-path=${artifact}`,
     `--temporary-output-dir=${path.join(path.dirname(artifact), "clang")}`,
   ],

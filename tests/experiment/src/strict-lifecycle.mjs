@@ -483,16 +483,43 @@ export const runStrictLifecycle = async (experiment, pinnedRoot) => {
     }
     const coldProvenance = strictProvenance(cold, experiment);
     const retryProvenance = strictProvenance(retried, experiment);
-    if (
-      coldProvenance.manifest !== retryProvenance.manifest ||
-      coldProvenance.content !== retryProvenance.content
-    ) {
+    // The restored tree is the tree the cold generation indexed, so the source
+    // manifest has to come back byte for byte. Nothing about a producer's
+    // scheduling can move it: it is a digest of the files, not of the facts.
+    if (coldProvenance.manifest !== retryProvenance.manifest) {
+      throw new Error(
+        `${experiment.language}: restoring the original sources did not restore the source manifest ` +
+          `(cold ${coldProvenance.manifest}, retry ${retryProvenance.manifest})`,
+      );
+    }
+    const reproduced = coldProvenance.content === retryProvenance.content;
+    const limitation = experiment.regenerationLimitation;
+    // The facts are a separate claim, and only the producer can make it. Most
+    // of them do, so equality is the default and a silent difference is a
+    // defect. One does not: scip-clang's own help says it "does not support
+    // deterministic work scheduling yet", which changes how many files each
+    // indexing job skips. A row may therefore accept a differing regeneration
+    // only by naming that limitation, and it is published either way so a
+    // reader sees what actually happened rather than what was permitted.
+    if (!reproduced && limitation === undefined) {
       throw new Error(
         `${experiment.language}: restoring the original source manifest reproduced different graph facts ` +
           `(cold ${String(cold.nodes.length)} nodes/${String(cold.edges.length)} edges, ` +
           `retry ${String(retried.nodes.length)} nodes/${String(retried.edges.length)} edges)`,
       );
     }
+    rows.push({
+      name: "regeneration",
+      status: reproduced ? "reproduced" : "limited",
+      manifest: coldProvenance.manifest,
+      coldContent: coldProvenance.content,
+      retryContent: retryProvenance.content,
+      coldNodes: cold.nodes.length,
+      retryNodes: retried.nodes.length,
+      coldEdges: cold.edges.length,
+      retryEdges: retried.edges.length,
+      ...(limitation === undefined ? {} : { limitation }),
+    });
     return { dump: cold, rows, project: lifecycleRoot };
   } finally {
     await resident.close();

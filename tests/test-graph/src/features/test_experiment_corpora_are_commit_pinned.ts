@@ -195,6 +195,33 @@ export const test_experiment_corpora_are_commit_pinned = () => {
       lifecycle.includes('? ["initial", ...CHANGED_MODES]'),
   );
 
+  // Regenerating an unchanged project must reproduce it, and that assertion is
+  // the lifecycle's strongest. Exactly one registered producer cannot meet it:
+  // scip-clang 0.4.0 documents `--deterministic` as not scheduling work
+  // deterministically, and warns separately that non-determinism changes how
+  // many files each indexing job skips. The exemption is therefore a declared,
+  // explained property of those two rows rather than a relaxed default, and the
+  // manifest half of the assertion stays unconditional for everyone.
+  TestValidator.predicate(
+    "an unreproducible producer is declared rather than serialized",
+    [cpp, c].every((row) =>
+      /regenerationLimitation:\s*"?[^",]/.test(row),
+    ) &&
+      [python, lua, csharp].every(
+        (row) => !row.includes("regenerationLimitation"),
+      ) &&
+      runner.includes("experiment.regenerationLimitation !== undefined") &&
+      runner.includes("regenerationLimitation.trim() === \"\"") &&
+      runner.includes(
+        "regenerationLimitation: experiment.regenerationLimitation",
+      ) &&
+      lifecycle.includes(
+        "coldProvenance.manifest !== retryProvenance.manifest",
+      ) &&
+      lifecycle.includes("!reproduced && limitation === undefined") &&
+      lifecycle.includes('name: "regeneration"'),
+  );
+
   TestValidator.predicate(
     "the clone helper fetches and detaches the pinned revision",
     helpers.includes('["fetch", "--depth=1", "origin", experiment.commit]') &&

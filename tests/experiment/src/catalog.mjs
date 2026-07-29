@@ -337,6 +337,8 @@ export const LANGUAGE_EXPERIMENTS = [
     maxFiles: 120,
     minNodes: 1,
     minEdges: 1,
+    feasibilityBlocked:
+      "swift build emits an index store during an ordinary debug build and its records carry RelChild, but the on-disk format is toolchain-internal, versioned v5, with no third-party stability claim and no binary specification; reading it requires a compiled Swift program linking IndexStoreDB, which does not exist yet",
   },
   {
     language: "scala",
@@ -345,6 +347,8 @@ export const LANGUAGE_EXPERIMENTS = [
     maxFiles: 120,
     minNodes: 1,
     minEdges: 1,
+    feasibilityBlocked:
+      "scip-java is a Java and Kotlin indexer by its own README, supported-language table, and source tree, so registering it for Scala made an installed scip-java displace the real Scala language server with a producer that cannot index the language; a SemanticDB or TASTy channel through BSP is unwritten work",
   },
   {
     language: "zig",
@@ -353,6 +357,8 @@ export const LANGUAGE_EXPERIMENTS = [
     maxFiles: 120,
     minNodes: 1,
     minEdges: 0,
+    feasibilityBlocked:
+      "zig build-obj -femit-docs emits a main.wasm analyzer whose namespace walk reaches every declaration but exposes no reference or callee, because the analysis runs over pre-semantic ZIR; a provider built on it could claim containment while displacing the ZLS lane that does answer references, so registering it would trade coverage for strictness",
   },
   {
     language: "python",

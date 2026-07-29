@@ -84,6 +84,18 @@ if (strict) {
       `${experiment.language}: a strict row that accepts an unreproducible regeneration must state why`,
     );
   }
+} else if (
+  // A language without a strict row has to say why it has none. Otherwise the
+  // catalog cannot distinguish a producer that was investigated and found
+  // unusable from one nobody has reached yet, and both read as a bounded
+  // generic lane that passes on counts. The three that remain are decisions,
+  // and each carries the evidence that settled it.
+  typeof experiment.feasibilityBlocked !== "string" ||
+  experiment.feasibilityBlocked.trim() === ""
+) {
+  throw new Error(
+    `${experiment.language}: a language with no strict provider must state what blocks one`,
+  );
 }
 let dump;
 let elapsedMs;
@@ -287,6 +299,7 @@ const result = {
   semanticLimitation: experiment.semanticLimitation,
   compilerLimitation: experiment.compilerLimitation,
   regenerationLimitation: experiment.regenerationLimitation,
+  feasibilityBlocked: experiment.feasibilityBlocked,
   lifecycleCreatedEdge,
   crossFileCalls,
   crossFileRelationships,

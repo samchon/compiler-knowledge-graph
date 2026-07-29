@@ -28,6 +28,9 @@ export const test_experiment_corpora_are_commit_pinned = () => {
   const java = region(catalog, 'language: "java"', 'language: "csharp"');
   const csharp = region(catalog, 'language: "csharp"', 'language: "kotlin"');
   const kotlin = region(catalog, 'language: "kotlin"', 'language: "swift"');
+  const swift = region(catalog, 'language: "swift"', 'language: "scala"');
+  const scala = region(catalog, 'language: "scala"', 'language: "zig"');
+  const zig = region(catalog, 'language: "zig"', 'language: "python"');
   const cpp = region(catalog, 'language: "cpp"', 'language: "c"');
   const c = region(catalog, 'language: "c"', 'language: "java"');
   const ruby = region(catalog, 'language: "ruby"', 'language: "php"');
@@ -220,6 +223,18 @@ export const test_experiment_corpora_are_commit_pinned = () => {
       ) &&
       lifecycle.includes("!reproduced && limitation === undefined") &&
       lifecycle.includes('name: "regeneration"'),
+  );
+  // Sixteen product languages, thirteen strict rows. The other three are
+  // decisions with evidence behind them, not lanes nobody reached, and a
+  // bounded generic row that passes on node counts cannot tell a reader which
+  // it is. So the absence of a strict provider is itself a declaration.
+  TestValidator.predicate(
+    "every language without a strict provider states what blocks one",
+    [swift, scala, zig].every((row) =>
+      /feasibilityBlocked:\s*"?[^",]/.test(row),
+    ) &&
+      runner.includes('typeof experiment.feasibilityBlocked !== "string"') &&
+      runner.includes("feasibilityBlocked: experiment.feasibilityBlocked"),
   );
 
   TestValidator.predicate(

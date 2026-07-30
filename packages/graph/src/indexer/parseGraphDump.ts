@@ -26,6 +26,18 @@ export function parseGraphDump(input: unknown): ISamchonGraphDump {
   const files = new Set<string>();
   const dumpLanguages = new Set(dump.languages);
   for (const node of dump.nodes) {
+    if (
+      node.id === "" ||
+      node.id.includes("\0") ||
+      node.name === "" ||
+      node.name.includes("\0") ||
+      node.qualifiedName === "" ||
+      node.qualifiedName?.includes("\0") === true
+    ) {
+      throw new Error(
+        "@samchon/graph: node identity and display names must be non-empty and NUL-free",
+      );
+    }
     if (node.file === "") {
       if (!node.external || node.kind !== "external_symbol") {
         throw new Error(
@@ -105,9 +117,13 @@ export function parseGraphDump(input: unknown): ISamchonGraphDump {
 
   const providers = new Set<string>();
   for (const row of dump.provenance ?? []) {
-    if (row.provider === "" || providers.has(row.provider)) {
+    if (
+      row.provider === "" ||
+      row.provider.includes("\0") ||
+      providers.has(row.provider)
+    ) {
       throw new Error(
-        `@samchon/graph: duplicate or empty provenance provider: ${row.provider}`,
+        `@samchon/graph: duplicate, empty, or NUL-delimited provenance provider: ${row.provider}`,
       );
     }
     providers.add(row.provider);
@@ -312,6 +328,7 @@ function validateGraphPath(file: string, label: string): void {
     const relative = file.slice("bundled:///".length);
     if (
       relative === "" ||
+      relative.includes("\0") ||
       relative.includes("\\") ||
       path.posix.normalize(relative) !== relative ||
       relative.split("/").some((part) => part === "" || part === "." || part === "..")
@@ -323,6 +340,7 @@ function validateGraphPath(file: string, label: string): void {
   const parts = file.split("/");
   if (
     file === "" ||
+    file.includes("\0") ||
     file.includes("\\") ||
     /^[A-Za-z]:\//.test(file) ||
     path.posix.isAbsolute(file) ||

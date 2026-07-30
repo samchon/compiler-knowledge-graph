@@ -1,8 +1,7 @@
 import path from "node:path";
 
-import { parseGraphDump } from "../indexer/parseGraphDump";
 import { GraphLanguage } from "../typings";
-import { dumpProvenanceOf } from "./dumpProvenanceOf";
+import { assertGraphSnapshotPayload } from "./assertGraphSnapshotPayload";
 import { GraphSnapshotProtocol } from "./GraphSnapshotProtocol";
 import { IBulkGraphSession } from "./IBulkGraphSession";
 import { IGraphProvider } from "./IGraphProvider";
@@ -31,23 +30,7 @@ export function assertGraphSnapshotContract(
 ): void {
   const label = `@samchon/graph: provider "${provider.name}"`;
   const project = path.resolve(root);
-  assertProvenance(snapshot, label);
-  parseGraphDump({
-    project,
-    languages: snapshot.languages,
-    indexer: "lsp",
-    nodes: snapshot.nodes,
-    edges: snapshot.edges,
-    diagnostics: snapshot.diagnostics,
-    warnings: snapshot.warnings,
-    provenance: [dumpProvenanceOf(snapshot)],
-    ...(snapshot.coverage !== undefined
-      ? { coverage: snapshot.coverage }
-      : {}),
-    ...(snapshot.unresolved !== undefined
-      ? { unresolved: snapshot.unresolved }
-      : {}),
-  });
+  assertGraphSnapshotPayload(snapshot, project, label);
   const claimed = new Set(languages);
   for (const language of snapshot.languages) {
     if (!claimed.has(language)) {
@@ -101,7 +84,6 @@ export function assertGraphSnapshotContract(
     );
   }
 
-  assertSourceManifest(snapshot, project, label, files);
   assertProtocol(snapshot, label);
 }
 
@@ -136,115 +118,6 @@ function assertProtocol(
   }
   if (GraphSnapshotProtocol.factDigest(snapshot) !== protocol.factDigest) {
     throw new Error(`${label} published a mismatched protocol fact digest`);
-  }
-}
-
-function assertSourceManifest(
-  snapshot: IBulkGraphSession.ISnapshot,
-  root: string,
-  label: string,
-  nodeFiles: ReadonlySet<string>,
-): void {
-  for (const file of snapshot.sources.keys()) {
-    if (file.startsWith("bundled:///")) {
-      const relative = file.slice("bundled:///".length);
-      if (
-        relative === "" ||
-        relative.includes("\\") ||
-        path.posix.normalize(relative) !== relative ||
-        relative
-          .split("/")
-          .some((part) => part === "" || part === "." || part === "..")
-      ) {
-        throw new Error(
-          `${label} published a non-canonical bundled source identity: ${file}`,
-        );
-      }
-    } else if (!path.isAbsolute(file) || path.normalize(file) !== file) {
-      throw new Error(
-        `${label} published a source identity that is not normalized and absolute: ${file}`,
-      );
-    }
-  }
-
-  const required = new Set<string>();
-  for (const file of nodeFiles) requireHostSource(required, file);
-  for (const node of snapshot.nodes) {
-    if (node.evidence?.file !== undefined) {
-      requireHostSource(required, node.evidence.file);
-    }
-    if (node.implementation?.file !== undefined) {
-      requireHostSource(required, node.implementation.file);
-    }
-  }
-  for (const edge of snapshot.edges) {
-    if (edge.evidence?.file !== undefined) {
-      requireHostSource(required, edge.evidence.file);
-    }
-  }
-  for (const diagnostic of snapshot.diagnostics) {
-    if (diagnostic.file !== "") requireHostSource(required, diagnostic.file);
-  }
-  for (const unresolved of snapshot.unresolved ?? []) {
-    requireHostSource(required, unresolved.evidence.file);
-  }
-
-  for (const file of required) {
-    const source = path.resolve(root, file);
-    if (!snapshot.sources.has(source)) {
-      throw new Error(
-        `${label} published facts for ${file} without binding that file to its source manifest`,
-      );
-    }
-  }
-}
-
-function requireHostSource(required: Set<string>, file: string): void {
-  // A bundled identity is versioned with its provider/toolchain and has no
-  // coordinator-readable host file. Requiring it in the host source manifest
-  // rejects valid compiler builtins (Go universe nodes, TypeScript lib files)
-  // without adding a byte fence the coordinator could reproduce.
-  if (!file.startsWith("bundled:///")) required.add(file);
-}
-
-function assertProvenance(
-  snapshot: IBulkGraphSession.ISnapshot,
-  label: string,
-): void {
-  const provenance = snapshot.provenance;
-  if (
-    !Number.isSafeInteger(provenance.schemaVersion) ||
-    provenance.schemaVersion < 1 ||
-    !Number.isSafeInteger(provenance.protocolVersion) ||
-    provenance.protocolVersion < 0 ||
-    provenance.tool === "" ||
-    !SHA256.test(provenance.universe)
-  ) {
-    throw new Error(`${label} published an invalid provenance envelope`);
-  }
-  const capabilities = new Set(provenance.capabilities);
-  if (
-    capabilities.size !== provenance.capabilities.length ||
-    provenance.capabilities.some((capability) => capability === "") ||
-    !capabilities.has("universe")
-  ) {
-    throw new Error(
-      `${label} published duplicate, empty, or unproven provenance capabilities`,
-    );
-  }
-  const sourceDigests = capabilities.has("sourceDigests");
-  const diskDigests = capabilities.has("diskDigests");
-  for (const [file, digest] of snapshot.sources) {
-    if (
-      (sourceDigests && !SHA256.test(digest.checkerDigest)) ||
-      (!sourceDigests && digest.checkerDigest !== "") ||
-      (digest.diskDigest !== "" &&
-        (!diskDigests || !SHA256.test(digest.diskDigest)))
-    ) {
-      throw new Error(
-        `${label} published a source digest that contradicts its capabilities: ${file}`,
-      );
-    }
   }
 }
 

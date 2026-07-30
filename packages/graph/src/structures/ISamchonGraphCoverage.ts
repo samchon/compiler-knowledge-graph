@@ -29,7 +29,8 @@ export interface ISamchonGraphCoverage {
 
   /**
    * `complete` makes absence meaningful in the named universe; `partial`
-   * publishes proven facts while unresolved/excluded sites remain;
+   * publishes proven facts while unresolved/excluded sites remain, whether or
+   * not a legacy or fallback producer can enumerate their exact locations;
    * `unsupported` says the producer cannot prove the family.
    */
   state: "complete" | "partial" | "unsupported";

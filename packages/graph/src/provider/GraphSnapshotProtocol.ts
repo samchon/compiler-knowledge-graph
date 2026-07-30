@@ -16,6 +16,7 @@ import {
 } from "../typings";
 import { freezeDeep } from "../utils/freezeDeep";
 import { sealedMap } from "../utils/sealedMap";
+import { assertGraphSnapshotPayload } from "./assertGraphSnapshotPayload";
 import { IBulkGraphSession } from "./IBulkGraphSession";
 
 /**
@@ -230,7 +231,14 @@ export namespace GraphSnapshotProtocol {
   export class Store {
     private committed = new Map<string, ICommittedShard>();
     private identity: IHello | undefined;
+    private readonly generations = new Set<string>();
+    private readonly root: string;
     private snapshot: IBulkGraphSession.ISnapshot | undefined;
+
+    /** Project root used to bind relative fact evidence to source digests. */
+    public constructor(root: string) {
+      this.root = path.resolve(root);
+    }
 
     public get current(): IBulkGraphSession.ISnapshot | undefined {
       return this.snapshot;
@@ -260,6 +268,9 @@ export namespace GraphSnapshotProtocol {
       assertBegin(begin);
       if (commit.generation !== begin.generation) {
         throw new Error("graph snapshot protocol: commit generation does not match begin");
+      }
+      if (this.generations.has(begin.generation)) {
+        throw new Error("graph snapshot protocol: generation token was reused");
       }
       const priorGeneration = this.snapshot?.protocol?.generation;
       if (
@@ -325,6 +336,16 @@ export namespace GraphSnapshotProtocol {
       if (
         begin.baseGeneration !== undefined &&
         this.snapshot !== undefined &&
+        begin.manifest !== this.snapshot.protocol!.manifest &&
+        changed.size === 0
+      ) {
+        throw new Error(
+          "graph snapshot protocol: manifest movement reported no shard delta",
+        );
+      }
+      if (
+        begin.baseGeneration !== undefined &&
+        this.snapshot !== undefined &&
         (begin.universe !== this.snapshot.provenance.universe ||
           !sameList(begin.targets, this.snapshot.protocol!.targets))
       ) {
@@ -345,15 +366,21 @@ export namespace GraphSnapshotProtocol {
         throw new Error("graph snapshot protocol: commit shard manifest mismatch");
       }
       const assembled = assemble(hello, begin, commit, expectedManifest, next);
-      assertAssembledFacts(assembled);
+      assertAssembledFacts(assembled, hello);
       if (factDigest(assembled) !== commit.factDigest) {
         throw new Error("graph snapshot protocol: commit fact digest mismatch");
       }
       assertCompleteCoverage(assembled, hello, begin);
+      assertGraphSnapshotPayload(
+        assembled,
+        this.root,
+        `graph snapshot protocol: provider "${hello.provider}"`,
+      );
       throwIfAborted(options.signal);
       freezeDeep(assembled, "the graph snapshot protocol generation");
       this.committed = next;
       this.identity = clone(hello);
+      this.generations.add(begin.generation);
       this.snapshot = assembled;
       return assembled;
     }
@@ -641,6 +668,7 @@ export namespace GraphSnapshotProtocol {
 
   function assertAssembledFacts(
     snapshot: IBulkGraphSession.ISnapshot,
+    hello: IHello,
   ): void {
     const nodeIds = new Set<string>();
     const files = new Set(snapshot.sources.keys());
@@ -655,6 +683,11 @@ export namespace GraphSnapshotProtocol {
     }
     const edgeKeys = new Set<string>();
     for (const edge of snapshot.edges) {
+      if (!hello.supportedFacts.includes(edge.kind)) {
+        throw new Error(
+          `graph snapshot protocol: assembled edge uses unadvertised family ${String(edge.kind)}`,
+        );
+      }
       const key = `${edge.kind}\0${edge.from}\0${edge.to}`;
       if (edgeKeys.has(key)) {
         throw new Error(

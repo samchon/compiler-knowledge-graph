@@ -5,6 +5,11 @@ import {
   ISamchonGraphUnresolvedSummary,
 } from "../structures";
 import { GRAPH_EDGE_KINDS, GraphEdgeKind } from "../typings";
+import { isStructural } from "./isStructural";
+
+const LOOKUP_FAMILIES = GRAPH_EDGE_KINDS.filter(
+  (family) => family === "exports" || !isStructural(family),
+);
 
 /** Structured trust envelope for one non-escape operation. */
 export function graphTrust(
@@ -62,11 +67,9 @@ function familiesOf(
 ): GraphEdgeKind[] {
   switch (type) {
     case "entrypoints":
-      return ["contains", "exports", "calls", "tests"];
     case "lookup":
-      return ["contains", "exports", "references"];
+      return [...LOOKUP_FAMILIES];
     case "overview":
-      return ["contains", "exports", "imports"];
     case "trace":
     case "details":
     case "tour":

@@ -20,7 +20,7 @@ const digest = (letter: string): string => letter.repeat(64);
  */
 export const test_graph_snapshot_protocol_commits_atomic_shard_generations =
   async () => {
-    const store = new GraphSnapshotProtocol.Store();
+    const store = new GraphSnapshotProtocol.Store(process.cwd());
     const initialFrames = transaction("generation-1");
     const ndjson = initialFrames.map(JSON.stringify).join("\n");
     const parsed = GraphSnapshotProtocol.parse(ndjson);
@@ -133,6 +133,7 @@ export const test_graph_snapshot_protocol_commits_atomic_shard_generations =
       mutate(
         transaction("changed-identity", {
           baseGeneration: "generation-3",
+          coverageState: "complete",
         }),
         (frames) => {
           (frames[0] as GraphSnapshotProtocol.IHello).producer = "other";
@@ -148,11 +149,35 @@ export const test_graph_snapshot_protocol_commits_atomic_shard_generations =
       }),
       "deleting an absent shard",
     );
+    const manifestWithoutDelta = mutate(
+      transaction("manifest-without-delta", {
+        baseGeneration: "generation-3",
+        deleteSource: true,
+      }),
+      (frames) => {
+        (frames[1] as GraphSnapshotProtocol.IBegin).manifest = digest("d");
+        frames.splice(2, 2);
+      },
+    );
+    await rejectedWithoutMovement(
+      store,
+      manifestWithoutDelta,
+      "manifest movement without a shard delta",
+    );
+    await rejectedWithoutMovement(
+      store,
+      transaction("generation-3", {
+        baseGeneration: "generation-3",
+        coverageState: "complete",
+      }),
+      "a reused generation token",
+    );
     await rejectedWithoutMovement(
       store,
       mutate(
         transaction("moved-universe", {
           baseGeneration: "generation-3",
+          coverageState: "complete",
         }),
         (frames) => {
           (frames[1] as GraphSnapshotProtocol.IBegin).universe = digest("d");
@@ -165,6 +190,7 @@ export const test_graph_snapshot_protocol_commits_atomic_shard_generations =
       mutate(
         transaction("moved-target", {
           baseGeneration: "generation-3",
+          coverageState: "complete",
         }),
         (frames) => {
           (frames[1] as GraphSnapshotProtocol.IBegin).targets.push("other");
@@ -174,23 +200,41 @@ export const test_graph_snapshot_protocol_commits_atomic_shard_generations =
     );
     await rejectedWithoutMovement(
       store,
-      mutate(transaction("bad-shard", { baseGeneration: "generation-3" }), (frames) => {
-        upsert(frames, "source").digest = digest("f");
-      }),
+      mutate(
+        transaction("bad-shard", {
+          baseGeneration: "generation-3",
+          coverageState: "complete",
+        }),
+        (frames) => {
+          upsert(frames, "source").digest = digest("f");
+        },
+      ),
       "a shard digest mismatch",
     );
     await rejectedWithoutMovement(
       store,
-      mutate(transaction("bad-facts", { baseGeneration: "generation-3" }), (frames) => {
-        commit(frames).factDigest = digest("f");
-      }),
+      mutate(
+        transaction("bad-facts", {
+          baseGeneration: "generation-3",
+          coverageState: "complete",
+        }),
+        (frames) => {
+          commit(frames).factDigest = digest("f");
+        },
+      ),
       "a fact digest mismatch",
     );
     await rejectedWithoutMovement(
       store,
-      mutate(transaction("bad-manifest", { baseGeneration: "generation-3" }), (frames) => {
-        commit(frames).shards.reverse();
-      }),
+      mutate(
+        transaction("bad-manifest", {
+          baseGeneration: "generation-3",
+          coverageState: "complete",
+        }),
+        (frames) => {
+          commit(frames).shards.reverse();
+        },
+      ),
       "a non-canonical manifest",
     );
     await rejectedWithoutMovement(
@@ -258,16 +302,37 @@ export const test_graph_snapshot_protocol_commits_atomic_shard_generations =
       await rejectedWithoutMovement(store, frames, label);
     }
 
-    const deleteStore = new GraphSnapshotProtocol.Store();
+    const manifestStore = new GraphSnapshotProtocol.Store(process.cwd());
+    manifestStore.apply(transaction("manifest-generation-1"));
+    const manifestEdit = mutate(
+      transaction("manifest-generation-2", {
+        baseGeneration: "manifest-generation-1",
+        nodeName: "manifest-edited",
+      }),
+      (frames) => {
+        (frames[1] as GraphSnapshotProtocol.IBegin).manifest = digest("d");
+      },
+    );
+    TestValidator.equals(
+      "manifest movement commits when a shard delta carries the affected facts",
+      manifestStore.apply(manifestEdit).nodes.map((node) => node.name),
+      ["manifest-edited"],
+    );
+
+    const deleteStore = new GraphSnapshotProtocol.Store(process.cwd());
     deleteStore.apply(transaction("delete-generation-1"));
     const duplicateDelete = transaction("delete-generation-2", {
       baseGeneration: "delete-generation-1",
       deleteSource: true,
     });
+    const deleteFrame = duplicateDelete.find(
+      (frame): frame is GraphSnapshotProtocol.IDeleteShard =>
+        frame.type === "deleteShard",
+    )!;
     duplicateDelete.splice(
-      duplicateDelete.length - 1,
+      -1,
       0,
-      structuredClone(duplicateDelete[2]!),
+      structuredClone(deleteFrame),
     );
     await rejectedWithoutMovement(
       deleteStore,
@@ -275,7 +340,7 @@ export const test_graph_snapshot_protocol_commits_atomic_shard_generations =
       "a duplicate delete delta",
     );
 
-    const bundledStore = new GraphSnapshotProtocol.Store();
+    const bundledStore = new GraphSnapshotProtocol.Store(process.cwd());
     const bundledFrames = mutate(
       transaction("bundled-generation"),
       (frames) => {
@@ -289,6 +354,10 @@ export const test_graph_snapshot_protocol_commits_atomic_shard_generations =
           external: true,
         });
         shard.sources[0]!.file = file;
+        for (const site of coverageShard(frames).shard.unresolved) {
+          site.evidence.file = file;
+          if (site.candidates !== undefined) site.candidates = [file];
+        }
         refreshDigests(frames);
       },
     );
@@ -301,6 +370,7 @@ export const test_graph_snapshot_protocol_commits_atomic_shard_generations =
 
 interface ITransactionOptions {
   baseGeneration?: string;
+  coverageState?: "complete" | "partial";
   nodeName?: string;
   deleteSource?: boolean;
 }
@@ -332,29 +402,38 @@ function transaction(
       language: "typescript",
       target: "app",
       family,
-      state: family === "calls" ? "partial" : "unsupported",
+      state:
+        family === "calls"
+          ? options.coverageState ??
+            (options.deleteSource === true ? "complete" : "partial")
+          : "unsupported",
     })),
-    unresolved: [
-      {
-        provider: hello.provider,
-        language: "typescript",
-        target: "app",
-        universe: begin.universe,
-        family: "calls",
-        evidence: { file: "src/main.ts", startLine: 1, startCol: 1 },
-        reason: "dynamic",
-        candidates: ["src/main.ts#target:function"],
-      },
-      {
-        provider: hello.provider,
-        language: "typescript",
-        target: "app",
-        universe: begin.universe,
-        family: "calls",
-        evidence: { file: "src/main.ts", startLine: 2, startCol: 1 },
-        reason: "reflection",
-      },
-    ],
+    unresolved:
+      (options.coverageState ??
+        (options.deleteSource === true ? "complete" : "partial")) ===
+      "complete"
+        ? []
+        : [
+            {
+              provider: hello.provider,
+              language: "typescript",
+              target: "app",
+              universe: begin.universe,
+              family: "calls",
+              evidence: { file: "src/main.ts", startLine: 1, startCol: 1 },
+              reason: "dynamic",
+              candidates: ["src/main.ts#target:function"],
+            },
+            {
+              provider: hello.provider,
+              language: "typescript",
+              target: "app",
+              universe: begin.universe,
+              family: "calls",
+              evidence: { file: "src/main.ts", startLine: 2, startCol: 1 },
+              reason: "reflection",
+            },
+          ],
     sources: [],
   };
   const source: GraphSnapshotProtocol.IShard = {
@@ -387,7 +466,7 @@ function transaction(
     options.baseGeneration === undefined
       ? [upsertOf(coverage), ...(options.deleteSource === true ? [] : [upsertOf(source)])]
       : options.deleteSource === true
-        ? []
+        ? [upsertOf(coverage)]
         : [upsertOf(source)];
   const middle: GraphSnapshotProtocol.Frame[] = [
     ...upserts,
@@ -710,6 +789,57 @@ function malformedTransactions(): Array<
       }),
     ],
     [
+      "an empty node display name",
+      mutate(valid, (frames) => {
+        upsert(frames, "source").shard.nodes[0]!.name = "";
+        refreshDigests(frames);
+      }),
+    ],
+    [
+      "an invalid node evidence span",
+      mutate(valid, (frames) => {
+        upsert(frames, "source").shard.nodes[0]!.evidence = {
+          startLine: 0,
+        };
+        refreshDigests(frames);
+      }),
+    ],
+    [
+      "node evidence absent from the source manifest",
+      mutate(valid, (frames) => {
+        upsert(frames, "source").shard.nodes[0]!.evidence = {
+          file: "src/missing.ts",
+          startLine: 1,
+        };
+        refreshDigests(frames);
+      }),
+    ],
+    [
+      "an edge from an unadvertised family",
+      mutate(valid, (frames) => {
+        const shard = upsert(frames, "source").shard;
+        shard.edges.push({
+          kind: "type_ref",
+          from: shard.nodes[0]!.id,
+          to: shard.nodes[0]!.id,
+        });
+        refreshDigests(frames);
+      }),
+    ],
+    [
+      "an unknown edge family",
+      mutate(valid, (frames) => {
+        const shard = upsert(frames, "source").shard;
+        shard.edges.push({
+          kind: "calls",
+          from: shard.nodes[0]!.id,
+          to: shard.nodes[0]!.id,
+        });
+        record(shard.edges[0]!).kind = "future-fact";
+        refreshDigests(frames);
+      }),
+    ],
+    [
       "a duplicated edge inside one shard",
       mutate(valid, (frames) => {
         const shard = upsert(frames, "source").shard;
@@ -974,6 +1104,18 @@ function invalidProtocolSnapshots(): Array<
       "without binding that file to its source manifest",
       (snapshot) => {
         snapshot.unresolved![0]!.evidence.file = "src/missing.ts";
+      },
+    ],
+    [
+      "a NUL-delimited committed source identity",
+      "source identity that is not normalized and absolute",
+      (snapshot) => {
+        snapshot.sources = new Map(
+          [...snapshot.sources].map(([file, value]) => [
+            `${file}\0other`,
+            value,
+          ]),
+        );
       },
     ],
     [

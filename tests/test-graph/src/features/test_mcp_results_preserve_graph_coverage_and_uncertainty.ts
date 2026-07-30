@@ -30,7 +30,7 @@ export const test_mcp_results_preserve_graph_coverage_and_uncertainty =
       request: { type: "lookup", query: "run" },
     });
     TestValidator.equals(
-      "lookup returns only its relevant coverage families",
+      "lookup reports every family that can affect ranking",
       [
         lookup.provenance?.[0]?.provider,
         lookup.coverage?.schemaVersion,
@@ -41,10 +41,51 @@ export const test_mcp_results_preserve_graph_coverage_and_uncertainty =
       [
         "fixture-compiler",
         1,
-        ["contains", "exports", "references"],
-        3,
-        { count: 0, reasons: [], examples: [] },
+        GRAPH_EDGE_KINDS.filter(
+          (family) =>
+            family === "exports" ||
+            !["contains", "exports", "imports"].includes(family),
+        ),
+        GRAPH_EDGE_KINDS.length - 2,
+        {
+          count: 2,
+          reasons: [
+            { reason: "dynamic", count: 1 },
+            { reason: "reflection", count: 1 },
+          ],
+          examples: dump.unresolved,
+        },
       ],
+    );
+
+    const entrypoints = await application.inspect_code_graph({
+      question: "where does run begin",
+      draft: { reason: "first handles", type: "entrypoints" },
+      review: "entrypoints is exact",
+      request: { type: "entrypoints", query: "run" },
+    });
+    TestValidator.equals(
+      "entrypoints includes the lookup and neighborhood trust families",
+      [
+        entrypoints.coverage?.families,
+        entrypoints.unresolved?.count,
+      ],
+      [lookup.coverage?.families, 2],
+    );
+
+    const overview = await application.inspect_code_graph({
+      question: "what are the architectural hotspots",
+      draft: { reason: "dependency ranking", type: "overview" },
+      review: "overview is exact",
+      request: { type: "overview", aspect: "hotspots" },
+    });
+    TestValidator.equals(
+      "overview reports every family counted or used for ranking",
+      [
+        overview.coverage?.families,
+        overview.unresolved?.count,
+      ],
+      [GRAPH_EDGE_KINDS, 2],
     );
 
     const trace = await application.inspect_code_graph({

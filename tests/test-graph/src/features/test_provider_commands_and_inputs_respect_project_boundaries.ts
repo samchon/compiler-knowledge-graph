@@ -355,7 +355,6 @@ export const test_provider_commands_and_inputs_respect_project_boundaries =
           path.resolve(root),
         ]),
       );
-      fs.rmSync(sourceGo, { force: true });
 
       const bundledManifest = path.join(bundledSource, "go.mod");
       const hiddenManifest = `${bundledManifest}.test-hidden`;
@@ -363,12 +362,16 @@ export const test_provider_commands_and_inputs_respect_project_boundaries =
       try {
         TestValidator.equals(
           "a malformed package without its Go source sidecar declines cleanly",
-          goGraphProvider.resolve(root, emptyPath),
+          goGraphProvider.resolve(root, {
+            ...emptyPath,
+            SAMCHON_GRAPH_GO_TOOLCHAIN: sourceGo,
+          }),
           undefined,
         );
       } finally {
         fs.renameSync(hiddenManifest, bundledManifest);
       }
+      fs.rmSync(sourceGo, { force: true });
       TestValidator.equals(
         "the packaged Go source sidecar declines without a Go toolchain",
         goGraphProvider.resolve(root, emptyPath),

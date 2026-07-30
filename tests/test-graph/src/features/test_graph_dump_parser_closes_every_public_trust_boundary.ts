@@ -110,6 +110,24 @@ export const test_graph_dump_parser_closes_every_public_trust_boundary =
     await rejected("duplicate node identities", (candidate) => {
       candidate.nodes.push({ ...candidate.nodes[1]! });
     });
+    await rejected("empty node identities", (candidate) => {
+      candidate.nodes[1]!.id = "";
+    });
+    await rejected("NUL-delimited node identities", (candidate) => {
+      candidate.nodes[1]!.id = "src/other.go\0#Other:function";
+    });
+    await rejected("empty node display names", (candidate) => {
+      candidate.nodes[1]!.name = "";
+    });
+    await rejected("NUL-delimited node display names", (candidate) => {
+      candidate.nodes[1]!.name = "Other\0Name";
+    });
+    await rejected("empty qualified names", (candidate) => {
+      candidate.nodes[0]!.qualifiedName = "";
+    });
+    await rejected("NUL-delimited qualified names", (candidate) => {
+      candidate.nodes[0]!.qualifiedName = "example\0Run";
+    });
     await rejected("relative project roots", (candidate) => {
       candidate.project = "fixture";
     });
@@ -134,6 +152,10 @@ export const test_graph_dump_parser_closes_every_public_trust_boundary =
     await rejected("raw absolute graph paths", (candidate) => {
       record(candidate.nodes[1]!).file = "C:/machine/other.go";
     });
+    await rejected("NUL-delimited graph paths", (candidate) => {
+      candidate.nodes[1]!.id = "src/other\0name.go#Other:function";
+      candidate.nodes[1]!.file = "src/other\0name.go";
+    });
     await rejected("terminal parent graph paths", (candidate) => {
       record(candidate.nodes[1]!).file = "../..";
     });
@@ -142,6 +164,13 @@ export const test_graph_dump_parser_closes_every_public_trust_boundary =
     });
     await rejected("backslashed bundled graph paths", (candidate) => {
       record(candidate.nodes[1]!).file = "bundled:///go\\..\\escape";
+    });
+    await rejected("NUL-delimited bundled graph paths", (candidate) => {
+      candidate.nodes[1]!.id = "bundled:///go/\0builtin";
+      candidate.nodes[1]!.kind = "file";
+      candidate.nodes[1]!.name = "builtin";
+      candidate.nodes[1]!.file = "bundled:///go/\0builtin";
+      candidate.nodes[1]!.external = true;
     });
     await rejected("invalid source ranges", (candidate) => {
       candidate.nodes[0]!.evidence!.endLine = 0;
@@ -243,6 +272,11 @@ export const test_graph_dump_parser_closes_every_public_trust_boundary =
     });
     await rejected("empty provenance provider names", (candidate) => {
       candidate.provenance = [{ ...validProvenance(), provider: "" }];
+    });
+    await rejected("NUL-delimited provenance provider names", (candidate) => {
+      candidate.provenance = [
+        { ...validProvenance(), provider: "scip\0go" },
+      ];
     });
     await rejected("invalid provenance producer revisions", (candidate) => {
       candidate.provenance = [

@@ -673,7 +673,10 @@ func (indexer fixtureScipIndexer) Version(context.Context) (string, error) {
 	return "scip-go v0.2.7", nil
 }
 
-func (fixtureScipIndexer) Index(_ context.Context, moduleRoot string) (scipArtifact, error) {
+func (indexer fixtureScipIndexer) Index(
+	_ context.Context,
+	moduleRoot string,
+) (scipArtifact, error) {
 	var documents []string
 	definitions := map[string]int{}
 	err := filepath.WalkDir(moduleRoot, func(file string, entry os.DirEntry, walkErr error) error {

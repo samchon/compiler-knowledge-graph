@@ -13,5 +13,9 @@ export const test_cli_help_prints_usage = () => {
     "CLI help prints usage",
     result.stdout.includes("Usage:") && result.stdout.includes("samchon-graph dump"),
   );
+  TestValidator.predicate(
+    "CLI help names the strict-provider comparison switch",
+    result.stdout.includes("--no-strict"),
+  );
   TestValidator.equals("CLI help has no stderr", result.stderr, "");
 };

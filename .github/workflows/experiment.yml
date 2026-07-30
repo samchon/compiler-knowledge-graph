@@ -11,25 +11,67 @@ on:
     branches: [master]
     paths:
       - ".github/workflows/experiment.yml"
+      - ".github/scripts/latest-workflow-update.mjs"
+      - "config/**"
+      - "package.json"
       - "packages/graph/**"
+      - "packages/graph-sitter/**"
       - "sidecars/**"
       - "tests/experiment/**"
       - "pnpm-lock.yaml"
       - "pnpm-workspace.yaml"
 
-# Sixteen jobs per run, so a branch under active review can hold most of the
-# available runners in superseded work. Only the current head's real-server
-# result is usable — the earlier ones describe code that has already been
-# replaced — and keeping them alive delays the one verdict that can gate a
-# merge.
-#
-# A manual dispatch is left alone: somebody asked for that specific run.
-concurrency:
-  group: experiment-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+# Deliberately no concurrency cancellation. Classification jobs and language
+# jobs can be admitted out of push order, so an older run must never be able to
+# cancel current-head evidence. A publication-only synchronize and every manual
+# dispatch likewise leave all requested work intact.
 
 jobs:
+  latest_update:
+    name: latest update
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      run: ${{ steps.classify.outputs.run }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      # Pull-request path filters see the whole base-to-topic diff. The event's
+      # before/after pair identifies whether this particular push changed the
+      # real-language experiment surface.
+      #
+      # Carrying forward, because skipping is only honest when the head being
+      # skipped for has evidence. A push that touches the experiment surface,
+      # followed while it is still running by one that does not, would otherwise
+      # publish a green experiment check on the second head having executed
+      # nothing — and if the first run then failed, the head a reader merges on
+      # would be green while the only run that covered the change was red.
+      - name: Classify the exact pushed update
+        id: classify
+        run: |
+          node .github/scripts/latest-workflow-update.mjs \
+            --carry-forward-workflow=experiment.yml \
+            --include=.github/workflows/experiment.yml \
+            --include=.github/scripts/latest-workflow-update.mjs \
+            --include=config/** \
+            --include=package.json \
+            --include=packages/graph/** \
+            --include=packages/graph-sitter/** \
+            --include=sidecars/** \
+            --include=tests/experiment/** \
+            --include=pnpm-lock.yaml \
+            --include=pnpm-workspace.yaml
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+
   experiment:
+    needs: latest_update
+    if: ${{ needs.latest_update.outputs.run == 'true' }}
     name: ${{ matrix.language }} LSP
     runs-on: ubuntu-latest
     timeout-minutes: 45

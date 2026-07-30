@@ -26,7 +26,32 @@ export const test_ttscgraph_provider_rejects_malformed_serve_responses =
 
     // A non-JSON serve line is a framing fault the client parses itself, so it
     // is surfaced as an error rather than resolving a request.
-    await assertRejected(root, "--nonjson", "a non-JSON serve line");
+    // The line itself has to travel with the error. "invalid NDJSON" is true of
+    // every possible cause, and what a producer printed onto its protocol stream
+    // — a stack trace, a deprecation notice, a shell error — is the diagnosis.
+    const shortLine = await assertRejected(
+      root,
+      "--nonjson",
+      "a non-JSON serve line",
+    );
+    TestValidator.predicate(
+      "a short stray line is reported whole",
+      shortLine.includes("this is not a ttscgraph frame") &&
+        !shortLine.includes("…"),
+    );
+    // Bounded, because this stream is also the artifact channel and a partial
+    // snapshot is not something to put in an error message.
+    const longLine = await assertRejected(
+      root,
+      "--nonjson-long",
+      "an oversized non-JSON serve line",
+    );
+    TestValidator.predicate(
+      "an oversized stray line is cut and marked",
+      longLine.includes("NOT-A-FRAME") &&
+        longLine.includes("…") &&
+        longLine.length < 1000,
+    );
     await assertRejected(
       root,
       ["--nonjson", "--late-after-nonjson"],
@@ -49,7 +74,8 @@ async function assertRejected(
   root: string,
   serveFlag: string | readonly string[],
   label: string,
-): Promise<void> {
+): Promise<string> {
+  let message = "";
   const client = new TtscGraphClient({
     root,
     command: process.execPath,
@@ -66,6 +92,7 @@ async function assertRejected(
       error = caught;
     }
     TestValidator.predicate(`${label} fails the refresh`, error instanceof Error);
+    message = error instanceof Error ? error.message : String(error);
     TestValidator.predicate(
       `${label} publishes no snapshot`,
       client.current === undefined && client.generation === 0,
@@ -73,4 +100,5 @@ async function assertRejected(
   } finally {
     await client.close();
   }
+  return message;
 }

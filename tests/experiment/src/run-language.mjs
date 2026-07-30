@@ -5,6 +5,7 @@ import { buildGraphDump } from "@samchon/graph";
 
 import { findExperiment } from "./catalog.mjs";
 import {
+  activateProvisionedTools,
   assertPinnedCorpus,
   cloneRepository,
   ensureDir,
@@ -16,6 +17,7 @@ import {
 } from "./process.mjs";
 import { runStrictLifecycle } from "./strict-lifecycle.mjs";
 
+activateProvisionedTools();
 const args = parseArgs(process.argv.slice(2));
 const experiment = findExperiment(args.language);
 const pinned = cloneRepository(experiment, { refresh: args.refresh === "true" });
@@ -37,7 +39,6 @@ if (strict) {
     "strictTool",
     "requiredCapabilities",
     "semanticEdges",
-    "crossFileEdge",
   ]) {
     if (experiment[field] === undefined) {
       throw new Error(
@@ -45,6 +46,56 @@ if (strict) {
       );
     }
   }
+  if (
+    experiment.semanticEdges.length > 0 &&
+    experiment.crossFileEdge === undefined
+  ) {
+    throw new Error(
+      `${experiment.language}: a strict row with semantic edges must state its expected crossFileEdge`,
+    );
+  }
+  if (
+    experiment.semanticEdges.length === 0 &&
+    experiment.crossFileEdge !== undefined
+  ) {
+    throw new Error(
+      `${experiment.language}: an edge-free strict row cannot expect a cross-file edge`,
+    );
+  }
+  if (
+    experiment.semanticEdges.length === 0 &&
+    (typeof experiment.semanticLimitation !== "string" ||
+      experiment.semanticLimitation.trim() === "")
+  ) {
+    throw new Error(
+      `${experiment.language}: an edge-free strict row must publish its semantic limitation`,
+    );
+  }
+  // Declaring that a producer may not reproduce its own facts is an exemption
+  // from the lifecycle's strongest assertion, so the declaration itself has to
+  // say something. An empty or blank string would turn the exemption into a
+  // way of not asserting anything at all.
+  if (
+    experiment.regenerationLimitation !== undefined &&
+    (typeof experiment.regenerationLimitation !== "string" ||
+      experiment.regenerationLimitation.trim() === "")
+  ) {
+    throw new Error(
+      `${experiment.language}: a strict row that accepts an unreproducible regeneration must state why`,
+    );
+  }
+} else if (
+  // A language without a strict row has to say why it has none. Otherwise the
+  // catalog cannot distinguish a producer that was investigated and found
+  // unusable from one nobody has reached yet, and both read as a bounded
+  // generic lane that passes on counts. The three that remain are decisions,
+  // and each carries the evidence that settled it.
+  typeof experiment.feasibilityBlocked !== "string" ||
+  experiment.feasibilityBlocked.trim() === ""
+) {
+  throw new Error(
+    `${experiment.language}: a language with no strict provider must state what blocks one`,
+  );
 }
 let dump;
 let elapsedMs;
@@ -103,14 +154,16 @@ if (
   (provenance.authority !== experiment.strictAuthority ||
     provenance.producer.tool !== experiment.strictTool ||
     provenance.producer.version === "" ||
-    provenance.producer.compiler === "" ||
     // A tool that did not answer answers the shape of the question and not the
     // question, and a row that accepted it would go green on a provenance
-    // saying nothing about which runtime resolved its facts. Both spellings,
+    // saying nothing about which runtime resolved its facts. All three states,
     // because a provider that declines when its toolchain is absent can still
     // publish a toolchain that resolved and then said nothing — and a check for
-    // only the first is a check that can no longer fail.
-    /=(?:unavailable|unreported)(?:;|$)/.test(provenance.producer.compiler) ||
+    // only the first is a check that can no longer fail. `unasked` is the
+    // transient fourth state: it establishes even less than either one.
+    /=(?:unavailable|unreported|unasked)(?:;|$)/.test(
+      provenance.producer.compiler,
+    ) ||
     experiment.requiredCapabilities.some(
       (capability) => !provenance.capabilities.includes(capability),
     ))
@@ -118,6 +171,25 @@ if (
   throw new Error(
     `${experiment.language}: strict provenance is incomplete: ${JSON.stringify(provenance)}`,
   );
+}
+if (provenance !== undefined) {
+  const compilerLimitation =
+    typeof experiment.compilerLimitation === "string"
+      ? experiment.compilerLimitation.trim()
+      : "";
+  const compiler =
+    typeof provenance.producer.compiler === "string"
+      ? provenance.producer.compiler.trim()
+      : "";
+  if (
+    typeof provenance.producer.compiler !== "string" ||
+    (compiler === "" && compilerLimitation === "") ||
+    (compiler !== "" && compilerLimitation !== "")
+  ) {
+    throw new Error(
+      `${experiment.language}: strict compiler provenance and its limitation disagree: ${JSON.stringify(provenance)}`,
+    );
+  }
 }
 const edgeKindCounts = Object.fromEntries(
   [...new Set(dump.edges.map((edge) => edge.kind))]
@@ -127,10 +199,18 @@ const edgeKindCounts = Object.fromEntries(
       dump.edges.filter((edge) => edge.kind === kind).length,
     ]),
 );
+// A small pinned build fixture can truthfully exercise a relationship only in
+// the isolated create/rename transition. `runStrictLifecycle` has already
+// required this exact edge in both generations; count that evidence instead of
+// pre-editing the pinned baseline merely to make the final cold dump contain it.
+const lifecycleCreatedEdge = experiment.lifecycle?.createdEdge;
 for (const kind of experiment.semanticEdges ?? []) {
-  if ((edgeKindCounts[kind] ?? 0) === 0) {
+  if (
+    (edgeKindCounts[kind] ?? 0) === 0 &&
+    lifecycleCreatedEdge?.kind !== kind
+  ) {
     throw new Error(
-      `${experiment.language}: strict corpus produced no ${kind} semantic edge; observed ${JSON.stringify(edgeKindCounts)}`,
+      `${experiment.language}: strict corpus or lifecycle produced no ${kind} semantic edge; observed ${JSON.stringify(edgeKindCounts)}`,
     );
   }
 }
@@ -149,7 +229,7 @@ if (provenance !== undefined) {
   }
 }
 const nodeFiles = new Map(dump.nodes.map((node) => [node.id, node.file]));
-const crossFileEdge = experiment.crossFileEdge ?? "calls";
+const crossFileEdge = experiment.crossFileEdge;
 const crossFileCalls = dump.edges.filter(
   (edge) =>
     edge.kind === "calls" &&
@@ -157,22 +237,33 @@ const crossFileCalls = dump.edges.filter(
     nodeFiles.get(edge.to) !== undefined &&
     nodeFiles.get(edge.from) !== nodeFiles.get(edge.to),
 ).length;
-const crossFileRelationships = dump.edges.filter(
+const coldCrossFileRelationships = dump.edges.filter(
   (edge) =>
+    crossFileEdge !== undefined &&
     edge.kind === crossFileEdge &&
     nodeFiles.get(edge.from) !== undefined &&
     nodeFiles.get(edge.to) !== undefined &&
     nodeFiles.get(edge.from) !== nodeFiles.get(edge.to),
 ).length;
+const crossFileRelationships =
+  coldCrossFileRelationships +
+  (lifecycleCreatedEdge?.crossFile === true &&
+  lifecycleCreatedEdge.kind === crossFileEdge
+    ? 1
+    : 0);
 // Naming a family the provider is not registered to prove would make this row
 // unsatisfiable for a correct provider, which is the failure that produced the
 // `calls` default it replaces.
-if (provenance !== undefined && !provenance.facts.includes(crossFileEdge)) {
+if (
+  provenance !== undefined &&
+  crossFileEdge !== undefined &&
+  !provenance.facts.includes(crossFileEdge)
+) {
   throw new Error(
     `${experiment.language}: the row expects cross-file ${crossFileEdge} relationships although ${provenance.provider} is registered to prove only ${provenance.facts.join(", ")}`,
   );
 }
-if (strict && crossFileRelationships === 0) {
+if (strict && crossFileEdge !== undefined && crossFileRelationships === 0) {
   throw new Error(
     `${experiment.language}: strict corpus produced no cross-file ${crossFileEdge} relationship`,
   );
@@ -206,6 +297,10 @@ const result = {
   provenance,
   edgeKindCounts,
   semanticLimitation: experiment.semanticLimitation,
+  compilerLimitation: experiment.compilerLimitation,
+  regenerationLimitation: experiment.regenerationLimitation,
+  feasibilityBlocked: experiment.feasibilityBlocked,
+  lifecycleCreatedEdge,
   crossFileCalls,
   crossFileRelationships,
   lifecycle: lifecycle?.rows,

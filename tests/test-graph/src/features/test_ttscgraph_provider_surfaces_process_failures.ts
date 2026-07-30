@@ -16,6 +16,19 @@ import { GraphPaths } from "../internal/GraphPaths";
 export const test_ttscgraph_provider_surfaces_process_failures = async () => {
   const root = GraphPaths.createTempDirectory("samchon-graph-ttscgraph-fail-");
 
+  TestValidator.equals(
+    "silent native exits distinguish signals, codes, and a still-running child",
+    [
+      TtscGraphClient.exitSuffix({
+        signalCode: "SIGKILL",
+        exitCode: null,
+      }),
+      TtscGraphClient.exitSuffix({ signalCode: null, exitCode: 7 }),
+      TtscGraphClient.exitSuffix({ signalCode: null, exitCode: null }),
+    ],
+    [" (killed by SIGKILL)", " (child exited 7)", ""],
+  );
+
   // A command that cannot be spawned rejects the refresh instead of hanging or
   // returning an empty snapshot, and publishes no generation.
   const unspawnable = new TtscGraphClient({
@@ -39,7 +52,11 @@ export const test_ttscgraph_provider_surfaces_process_failures = async () => {
     command: process.execPath,
     args: [GraphPaths.fakeTtscGraphServer, "--stderr-exit"],
   });
-  await delay(200);
+  // No sleep before refreshing, deliberately. This used to wait 200 ms so the
+  // child was already gone and its stderr already drained — which meant the
+  // race was stepped around rather than closed. The client now waits for the
+  // streams to finish before it reports, so the diagnostics arrive whether or
+  // not the caller happened to pause first.
   let crash: unknown;
   try {
     await dying.refresh();
@@ -68,7 +85,26 @@ export const test_ttscgraph_provider_surfaces_process_failures = async () => {
     command: process.execPath,
     args: [GraphPaths.fakeTtscGraphServer, "--exit-silently"],
   });
-  await rejects(silent.refresh(), "a silently exiting process rejects the refresh");
+  // A child that says nothing still says how it left, and that is the whole
+  // diagnosis available for one. The flagship benchmark lane came back with
+  // `write EPIPE` and nothing else and fell to the static reader; an exit code
+  // separates a program that chose to stop from one the kernel killed, which a
+  // broken pipe alone never distinguishes.
+  let quiet: unknown;
+  try {
+    await silent.refresh();
+  } catch (error) {
+    quiet = error;
+  }
+  TestValidator.predicate(
+    "a silently exiting process rejects the refresh",
+    quiet instanceof Error,
+  );
+  TestValidator.predicate(
+    "and how it left is named even when it said nothing",
+    quiet instanceof Error &&
+      /exited \(1\)|child exited 1|killed by/.test(quiet.message),
+  );
   await rejects(
     silent.refresh(),
     "a refresh after a silent exit reports the process is not running",

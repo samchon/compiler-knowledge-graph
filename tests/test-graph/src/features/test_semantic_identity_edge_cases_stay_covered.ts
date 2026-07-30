@@ -221,7 +221,79 @@ export const test_semantic_identity_edge_cases_stay_covered = async () => {
     ambiguousEdges,
     [],
   );
-  TestValidator.equals("the omitted endpoint is reported", ambiguousWarnings.length, 1);
+  TestValidator.equals(
+    "the omitted endpoint is reported precisely below the warning cap",
+    ambiguousWarnings,
+    [
+      "@samchon/graph: omitted an ambiguous generic edge without provider endpoint proof: calls src/a.go#foo:function -> src/a.go#bare:function",
+    ],
+  );
+
+  const floodAmbiguousWarnings = (
+    targets: readonly string[],
+  ): { edges: ISamchonGraphEdge[]; warnings: string[] } => {
+    const nodes: ISamchonGraphNode[] = [
+      gnode({
+        id: "src/flood.go#foo:function",
+        name: "foo",
+        qualifiedName: "foo",
+        file: "src/flood.go",
+        evidence: { file: "src/flood.go", startLine: 1 },
+      }),
+      gnode({
+        id: "src/flood.go#foo:function",
+        name: "foo",
+        qualifiedName: "foo",
+        file: "src/flood.go",
+        evidence: { file: "src/flood.go", startLine: 5 },
+      }),
+    ];
+    const edges = targets.map(
+      (target): ISamchonGraphEdge => ({
+        kind: "calls",
+        from: "src/flood.go#foo:function",
+        to: target,
+      }),
+    );
+    const warnings: string[] = [];
+    assignSemanticIdentities(nodes, edges, warnings);
+    return { edges, warnings };
+  };
+  const floodTargets = [
+    ...Array.from(
+      { length: 11 },
+      (_, at) => `target-${String(at).padStart(2, "0")}`,
+    ),
+    "target-00",
+  ];
+  const flooded = floodAmbiguousWarnings(floodTargets);
+  const reversedFlood = floodAmbiguousWarnings([...floodTargets].reverse());
+  TestValidator.equals(
+    "amplified ambiguous generic-edge warnings are capped and deterministic",
+    [
+      flooded.edges.length,
+      reversedFlood.edges.length,
+      flooded.warnings.length,
+      flooded.warnings[0],
+      flooded.warnings[1],
+      flooded.warnings[10],
+      flooded.warnings.some((warning) => warning.includes("target-10")),
+    ],
+    [
+      0,
+      0,
+      11,
+      "@samchon/graph: omitted 12 ambiguous generic edges without provider endpoint proof; up to 10 distinct examples follow",
+      "@samchon/graph: omitted an ambiguous generic edge without provider endpoint proof: calls src/flood.go#foo:function -> target-00",
+      "@samchon/graph: omitted an ambiguous generic edge without provider endpoint proof: calls src/flood.go#foo:function -> target-09",
+      false,
+    ],
+  );
+  TestValidator.equals(
+    "the capped examples do not depend on reverse-splice input order",
+    reversedFlood.warnings,
+    flooded.warnings,
+  );
 
   const duplicateLocations: ISamchonGraphNode[] = [
     gnode({

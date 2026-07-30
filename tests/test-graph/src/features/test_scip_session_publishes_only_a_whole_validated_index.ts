@@ -197,9 +197,50 @@ async function assertGenerations(): Promise<void> {
       initial.snapshot.provenance.toolVersion,
       initial.snapshot.provenance.provider,
       initial.snapshot.provenance.authority,
+      initial.snapshot.provenance.protocolVersion,
     ],
-    ["fake-scip", "1.2.3", "scip-fake", "semantic-index"],
+    ["fake-scip", "1.2.3", "scip-fake", "semantic-index", 0],
   );
+  const futureProtocol = sessionOf(root, { protocolVersion: 1 });
+  const future = await futureProtocol.refresh();
+  TestValidator.equals(
+    "the producer's unknown numeric protocol reaches public provenance",
+    future.snapshot.provenance.protocolVersion,
+    1,
+  );
+  await futureProtocol.close();
+  const namedRoot = GraphPaths.createTempDirectory(
+    "samchon-graph-scip-protocol-",
+  );
+  fs.writeFileSync(path.join(namedRoot, "main.go"), "package main\n");
+  for (const rejectedVersion of [
+    "FutureProtocolVersion",
+    "9007199254740992",
+    "1",
+  ]) {
+    const named = sessionOf(namedRoot, {
+      state: path.join(namedRoot, `${rejectedVersion}.txt`),
+      protocolVersionName: "UnspecifiedProtocolVersion",
+      nextProtocolVersionName: rejectedVersion,
+    });
+    const known = await named.refresh();
+    TestValidator.equals(
+      "a known named protocol reaches public provenance",
+      known.snapshot.provenance.protocolVersion,
+      0,
+    );
+    fs.appendFileSync(path.join(namedRoot, "main.go"), "// changed\n");
+    await rejects(
+      named.refresh(),
+      `an unrepresentable protocol is rejected: ${rejectedVersion}`,
+    );
+    TestValidator.equals(
+      "a rejected protocol leaves the whole prior generation published",
+      [named.generation, named.current === known.snapshot],
+      [1, true],
+    );
+    await named.close();
+  }
   // The index carries no document text, so there is no honest checker digest
   // to give: hashing the disk here and calling it one would let a reader
   // "prove" byte-identity against text the facts were never computed from.
@@ -404,6 +445,44 @@ async function assertFailuresRetainTheGeneration(): Promise<void> {
   } catch (error) {
     silentFailureMessage = (error as Error).message;
   }
+  // A tool that failed and said so on stdout. The java lane came back as
+  // `scip-java: … exited with code 1` and nothing else, because scip-java runs
+  // the project's Gradle build and Gradle reports on stdout — so the entire
+  // explanation was captured and then dropped for arriving on the wrong stream.
+  const loudFailure = sessionOf(root, { mode: "stdout-fail" });
+  let loudFailureMessage = "";
+  try {
+    await loudFailure.refresh();
+  } catch (error) {
+    loudFailureMessage = (error as Error).message;
+  }
+  TestValidator.predicate(
+    "a failure explained only on stdout still reaches the message",
+    loudFailureMessage.includes("FAILURE: compilation failed") &&
+      loudFailureMessage.includes("no stderr"),
+  );
+  // Bounded, and bounded from the end: a build prints its failure last, and
+  // stdout is the artifact channel for some providers.
+  TestValidator.predicate(
+    "and is truncated to its tail rather than pasted whole",
+    !loudFailureMessage.includes("OPENING LINE") &&
+      loudFailureMessage.includes("…"),
+  );
+  // The ordinary shape: one line, nothing to cut. An ellipsis here would claim
+  // the tool said more than it did, which is the same kind of untruth as
+  // dropping what it said.
+  const shortFailure = sessionOf(root, { mode: "short-stdout-fail" });
+  let shortFailureMessage = "";
+  try {
+    await shortFailure.refresh();
+  } catch (error) {
+    shortFailureMessage = (error as Error).message;
+  }
+  TestValidator.predicate(
+    "a short stdout failure is carried whole and unmarked",
+    shortFailureMessage.endsWith("cannot open project") &&
+      !shortFailureMessage.includes("…"),
+  );
   TestValidator.predicate(
     "a silent non-zero exit has no invented stderr suffix",
     silentFailureMessage.endsWith("exited with code 3"),
@@ -618,6 +697,96 @@ async function assertCloseOwnsItsChildren(): Promise<void> {
   );
   await listenerRace.close();
 
+  // An aborted producer is the one failure that never explains itself
+  // otherwise. Its snapshot is never published, so its warnings are never
+  // printed, and the buffered output dies with the process holding it — two
+  // benchmark lanes reached an hour cap four complete runs running and left the
+  // provider's name and nothing else. Whatever the producer had already said
+  // has to survive the abort that killed it.
+  const announced = path.join(root, "announced.txt");
+  const speaking = sessionOf(root, {
+    mode: "hang",
+    announce: "scip-fake: resolving 412 of 1204 translation units",
+    announceSentinel: announced,
+  });
+  const speakingController = new AbortController();
+  let speakingError: Error | undefined;
+  const speakingRefresh = speaking
+    .refresh({ signal: speakingController.signal })
+    .catch((error: unknown) => {
+      speakingError = error as Error;
+      return undefined;
+    });
+  // Waited on the producer's own sentinel rather than on a clock. Aborting
+  // after a fixed delay races the child's start-up and loses on a loaded
+  // Windows runner, where the job object kills with none of the grace POSIX
+  // gives — a red suite on a correct build.
+  //
+  // The bound is not a second clock to race. It exists so a fixture that stops
+  // writing the sentinel at all fails as one assertion instead of hanging until
+  // the job's own limit kills the whole suite, which says far less. Its budget
+  // is an order of magnitude above what the gated spawn actually costs, so the
+  // sentinel decides when this proceeds and the bound only decides how a broken
+  // fixture is reported.
+  for (
+    let waited = 0;
+    waited < 3_000 && !fs.existsSync(announced);
+    waited += 10
+  ) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  speakingController.abort();
+  await speakingRefresh;
+  TestValidator.equals(
+    "an aborted producer keeps the diagnosis it had already written",
+    [
+      speakingError?.name,
+      speakingError?.message.includes("resolving 412 of 1204") === true,
+    ],
+    ["AbortError", true],
+  );
+  await speaking.close();
+
+  // The same producer after an hour of it. A run that reaches a cap has usually
+  // filled the whole stderr buffer, and the end of that is the part that says
+  // where it had got to — so the message keeps the tail, drops the head, and
+  // stays a size a log can hold.
+  const flooded = path.join(root, "flooded.txt");
+  const floodedSession = sessionOf(root, {
+    mode: "hang",
+    announce: `${"unit ".repeat(600)}LAST UNIT`,
+    announceSentinel: flooded,
+  });
+  const floodedController = new AbortController();
+  let floodedError: Error | undefined;
+  const floodedRefresh = floodedSession
+    .refresh({ signal: floodedController.signal })
+    .catch((error: unknown) => {
+      floodedError = error as Error;
+      return undefined;
+    });
+  for (
+    let waited = 0;
+    waited < 3_000 && !fs.existsSync(flooded);
+    waited += 10
+  ) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  floodedController.abort();
+  await floodedRefresh;
+  const floodedMessage = floodedError?.message ?? "";
+  TestValidator.equals(
+    "a flooded producer keeps its last words and not its first",
+    [
+      floodedError?.name,
+      floodedMessage.includes("LAST UNIT"),
+      floodedMessage.includes("…"),
+      floodedMessage.length < 2_200,
+    ],
+    ["AbortError", true, true, true],
+  );
+  await floodedSession.close();
+
   const unchangedAborted = sessionOf(root);
   await unchangedAborted.refresh();
   const unchangedController = new AbortController();
@@ -719,10 +888,15 @@ interface IFixtureOptions {
   languages?: ("go" | "rust")[];
   mutateInput?: string;
   goJson?: boolean;
+  protocolVersion?: number;
+  protocolVersionName?: string;
+  nextProtocolVersionName?: string;
   projectRootFromInvocation?: boolean;
   maxStdoutBytes?: number;
   maxArtifactBytes?: number;
   onIndexArgs?: () => void;
+  announce?: string;
+  announceSentinel?: string;
 }
 
 function sessionOf(root: string, options: IFixtureOptions = {}): ScipSession {
@@ -756,10 +930,27 @@ function sessionOf(root: string, options: IFixtureOptions = {}): ScipSession {
         ...(options.bare === true ? ["--no-tool-info"] : []),
         ...(options.plainRoot === true ? ["--plain-root"] : []),
         ...(options.goJson === true ? ["--go-json"] : []),
+        ...(options.protocolVersion === undefined
+          ? []
+          : [`--protocol-version=${options.protocolVersion}`]),
+        ...(options.protocolVersionName === undefined
+          ? []
+          : [`--protocol-version-name=${options.protocolVersionName}`]),
+        ...(options.nextProtocolVersionName === undefined
+          ? []
+          : [`--next-protocol-version-name=${options.nextProtocolVersionName}`]),
         ...(options.state === undefined ? [] : [`--state=${options.state}`]),
         ...(options.mutateInput === undefined
           ? []
           : [`--mutate=${options.mutateInput}`]),
+        ...(options.announce === undefined
+          ? []
+          : [
+              `--announce=${options.announce}`,
+              ...(options.announceSentinel === undefined
+                ? []
+                : [`--announce-sentinel=${options.announceSentinel}`]),
+            ]),
       ];
     },
     inputs: () =>

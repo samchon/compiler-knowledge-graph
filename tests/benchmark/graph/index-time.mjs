@@ -10,6 +10,10 @@
  * - `samchon-graph`: `samchon-graph dump --cwd <fixture> --language <language>`
  *   — the MCP launcher builds the same LSP graph at startup, so the agent's
  *   first question waits on it. The dump is stateless, so every run is cold.
+ * - `samchon-graph-fallback`: the same command with `--no-strict`, so the
+ *   project is indexed by the generic language-server lane alone. Two cells
+ *   from one run on one host is the only way to state what a strict provider
+ *   is worth; comparing separate runs compares machines as much as providers.
  * - `codegraph`: `codegraph init <fixture>` after removing `.codegraph/`.
  * - `codebase-memory`: `codebase-memory-mcp cli index_repository` into an
  *   isolated `CBM_CACHE_DIR` after removing `.codebase-memory/`.
@@ -27,41 +31,95 @@
  * this runner must not disturb.
  */
 import cp from "node:child_process";
+import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { PROJECTS, projectDir, resolveWorkDir } from "./corpus.mjs";
+import currentIndex from "./current-index.cjs";
 import {
   assertPinnedCheckout,
   assertPreparedFixture,
+  ensureLocalIgnored,
   graphLauncher,
   prepareFixture,
+  preparedFixtureCompanion,
   serverArgsForPreparedFixture,
 } from "./language.mjs";
+import {
+  assertIndexReport,
+  assertWebsitePublication,
+} from "./publication-document.mjs";
+import {
+  ALL_TOOLS,
+  TOOL_CODEBASE_MEMORY,
+  TOOL_CODEGRAPH,
+  TOOL_SAMCHON,
+  TOOL_SAMCHON_FALLBACK,
+  TOOL_SERENA,
+  strictIntentOfTool,
+  timedOutIndexCell,
+} from "./index-time-cell.mjs";
+import { javaSystemProperty } from "./java-tool-options.mjs";
+import { removeTree } from "./remove-tree.mjs";
 
+const { selectCurrentIndex } = currentIndex;
+const SELECTED_FIXTURES = Object.fromEntries(
+  Object.entries(PROJECTS).map(([project, spec]) => [project, spec.commit]),
+);
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, "../../..");
 const workDir = resolveWorkDir(repoRoot);
-const websiteJson = path.join(
-  repoRoot,
-  "tests",
-  "benchmark",
-  "results",
-  "graph.json",
-);
+const websiteJson =
+  process.env.SAMCHON_BENCH_INDEX_JSON ??
+  path.join(repoRoot, "tests", "benchmark", "results", "graph.json");
 
-const TOOL_SAMCHON = "samchon-graph";
-const TOOL_CODEGRAPH = "codegraph";
-const TOOL_CODEBASE_MEMORY = "codebase-memory";
-const TOOL_SERENA = "serena";
-const ALL_TOOLS = [
-  TOOL_SAMCHON,
-  TOOL_CODEGRAPH,
-  TOOL_CODEBASE_MEMORY,
-  TOOL_SERENA,
-];
+// Above every top-level statement that can reach it, deliberately. The project
+// loop below calls `measureScale`, which reads this table, and a `const`
+// declared after that loop is still in its temporal dead zone when the loop
+// runs. That is exactly how this file died on its first execution — it had been
+// complete and unrun for as long as it had existed, so the order had never been
+// tested by anything except reading it. `tests/benchmark/test/run.mjs` now
+// checks the ordering so the next one is caught before a runner is.
+const SOURCE_EXTENSIONS = {
+  typescript: [".ts", ".tsx", ".mts", ".cts"],
+  go: [".go"],
+  python: [".py"],
+  rust: [".rs"],
+  java: [".java"],
+  c: [".c", ".h"],
+  cpp: [
+    ".cc",
+    ".cpp",
+    ".cxx",
+    ".c++",
+    ".C",
+    ".h",
+    ".hh",
+    ".hpp",
+    ".hxx",
+    ".h++",
+    ".H",
+    ".ipp",
+    ".tpp",
+    ".tcc",
+    ".inl",
+  ],
+  ruby: [".rb"],
+  php: [".php"],
+  csharp: [".cs"],
+  kotlin: [".kt", ".kts"],
+  lua: [".lua"],
+  dart: [".dart"],
+};
+
+// The same tool on the same project with every strict provider stood down.
+// What a strict provider is worth cannot be read off one number: redis went
+// from 263 s to 15.6 s when scip-clang finally served, and that was only
+// visible by comparing two runs days apart on different machines. Two cells in
+// one run, one host, one clock is the comparison the table was missing.
 
 // `serena project create` interviews the operator about every language it
 // detects, one prompt each, and VS Code detects twenty-two of them. Decline them
@@ -70,12 +128,15 @@ const ALL_TOOLS = [
 const SERENA_DECLINE_ALL = "n\n".repeat(80);
 
 const parsed = parseArgs(process.argv.slice(2));
+const toolchainManifest = parsed.values["toolchain-manifest"];
+assertToolchainManifestOption(process.argv.slice(2));
 const selected = selectProjects(parsed);
 const tools = selectTools(parsed.values.tools ?? parsed.values.tool ?? "all");
 const outDir = path.resolve(
   parsed.values.out ?? path.join(workDir, "graph-index", timestamp()),
 );
 const reportPath = path.join(outDir, "report.json");
+const awaitQuietSeconds = Number(parsed.values["await-quiet"] ?? 0);
 
 if (parsed.flags.has("--list")) {
   for (const project of Object.keys(PROJECTS)) {
@@ -84,6 +145,12 @@ if (parsed.flags.has("--list")) {
       `${project}: ${projectDir(workDir, spec)} (${spec.language} @ ${spec.commit.slice(0, 12)})\n`,
     );
   }
+  process.exit(0);
+}
+
+if (parsed.flags.has("--reset-index-only")) {
+  resetWebsiteIndex();
+  process.stdout.write("Index-time publication reset for a complete matrix.\n");
   process.exit(0);
 }
 
@@ -105,29 +172,6 @@ if (selected.length === 0) {
   throw new Error("index-time benchmark requires --project <name> or --all");
 }
 
-// Quiet-host gate, mirrored from performance.mjs: a cold build is one sample
-// with no median to hide behind, so a noisy host corrupts the cell outright.
-// Warns by default, aborts under SAMCHON_BENCH_REQUIRE_QUIET=1 (set it for every
-// publication run), and is silenced by SAMCHON_BENCH_SKIP_LOAD_CHECK=1. Note
-// os.loadavg() reports zeros on Windows, so the gate only bites on POSIX
-// hosts; on Windows quietness stays the operator's responsibility.
-if (process.env.SAMCHON_BENCH_SKIP_LOAD_CHECK !== "1") {
-  const cpuCount = Math.max(os.cpus().length, 1);
-  const load1 = os.loadavg()[0];
-  const ratio = load1 / cpuCount;
-  if (ratio > 0.5) {
-    const msg =
-      `host load is high (1-min loadavg ${load1.toFixed(2)} on ` +
-      `${cpuCount} CPUs, ratio ${ratio.toFixed(2)}); a one-shot cold build ` +
-      `may drift far from a quiet baseline. ` +
-      `Set SAMCHON_BENCH_SKIP_LOAD_CHECK=1 to ignore.`;
-    if (process.env.SAMCHON_BENCH_REQUIRE_QUIET === "1") {
-      throw new Error(`index-time: ${msg}`);
-    }
-    process.stderr.write(`[index-time] warning: ${msg}\n`);
-  }
-}
-
 fs.mkdirSync(outDir, { recursive: true });
 
 if (!parsed.flags.has("--no-setup")) {
@@ -140,15 +184,25 @@ if (!parsed.flags.has("--no-setup")) {
 }
 
 const report = {
+  schemaVersion: 2,
   date: new Date().toISOString(),
+  measurementId: randomUUID(),
   outDir,
   tools,
   projects: selected,
+  fixtures: Object.fromEntries(
+    selected.map((project) => [project, PROJECTS[project].commit]),
+  ),
   host: hostSpec(),
+  toolchain: loadToolchainEvidence(toolchainManifest),
   scale: {},
   cells: [],
 };
 
+// Complete the declared scope before the first expensive cell starts. The
+// report owns `projects × tools`, including authoritative absence after a
+// later failure, so every scoped project's scale must already be present when
+// the first successful cell is published.
 for (const project of selected) {
   const spec = PROJECTS[project];
   const repoDir = projectDir(workDir, spec);
@@ -157,18 +211,103 @@ for (const project of selected) {
   // Project scale, so a build time can be read against the work it had to do:
   // forty seconds on VS Code and one second on a small backend are the same
   // tool, not two. Tracked TypeScript/TSX sources (git ls-files) naturally
-  // exclude node_modules, build output, and anything else the fixture
-  // ignores; `.d.ts` is excluded because it is shipped output, not source.
-  report.scale[project] = measureScale(project, spec, repoDir);
-  writeJson(reportPath, report);
+  // exclude node_modules, build output, and anything else the fixture ignores;
+  // `.d.ts` is excluded because it is shipped output, not source.
+  report.scale[project] = measureScale(
+    project,
+    spec,
+    indexDir(spec, repoDir),
+  );
+}
+// Refuse malformed provisioning evidence before the first stopwatch starts.
+// A one-shot cell without the exact tools that produced it cannot be repaired
+// afterwards, and spending the measurement before discovering that would turn
+// an avoidable harness error into another hour-long missing result.
+assertIndexReport(report, "new index-time result");
+writeJson(reportPath, report);
 
+for (const project of selected) {
+  const spec = PROJECTS[project];
+  const repoDir = projectDir(workDir, spec);
   for (const tool of tools) {
-    const cell = runIndexCell({ project, spec, repoDir, tool });
-    assertPinnedCheckout(spec, repoDir);
-    report.cells.push(cell);
-    writeJson(reportPath, report);
-    printCellSummary(project, cell);
-    publishWebsiteIndex(report);
+    let cellRepoDir;
+    let cellCache;
+    await runWithCleanup(
+      async () => {
+        cellRepoDir = prepareCellFixture(project, spec, repoDir, tool);
+        cellCache = prepareCellCache(project, spec, tool);
+        // Preparation can clone dependencies, generate a compilation database,
+        // or run a full build. The quiet observation belongs here, immediately
+        // before the timer, rather than before the work that heats the host.
+        const quietWait = await quietHostForCell(project, tool);
+        let cell;
+        try {
+          cell = runIndexCell({
+            project,
+            spec,
+            repoDir: cellRepoDir,
+            tool,
+            env: cellCache.env,
+          });
+        } catch (error) {
+          // Only a timeout becomes a cell. Anything else is still a broken run
+          // and has to stop the lane, or a genuine defect would publish as a
+          // number.
+          if (typeof error?.timedOutMs !== "number") throw error;
+          cell = timedOutIndexCell({
+            project,
+            tool,
+            timedOutMs: error.timedOutMs,
+            // The process was killed before it could write its provenance line,
+            // so this cannot say what produced the graph — there is none. It can
+            // say what was being attempted, because that is announced before
+            // the first candidate runs, and "timed out running scip-ruby" is a
+            // finding where "timed out" alone is a mystery.
+            servedBy: servedBy(error.logStem ?? ""),
+          });
+        }
+        assertPinnedCheckout(spec, cellRepoDir);
+        // The machine and its quietness travel with the cell, not with the
+        // publication. One host panel is only truthful when one sweep measured
+        // everything, and `index-time.yml` deliberately gives each language its
+        // own runner — thirteen VMs with thirteen CPU models, because two lanes
+        // sharing a machine would corrupt each other's wall clock. Folding those
+        // under a single panel would attribute twelve cells to a machine they
+        // never ran on, and the workflow's own header says cells from different
+        // hosts are not one comparison. A cold build is one sample; what it ran
+        // on is part of it.
+        report.cells.push({
+          ...cell,
+          measurementId: report.measurementId,
+          fixtureCommit: spec.commit,
+          measuredAt: new Date().toISOString(),
+          cacheIsolation: cellCache.kind,
+          host: report.host,
+          toolchain: report.toolchain,
+          quietWait,
+        });
+        writeJson(reportPath, report);
+        printCellSummary(project, cell);
+        publishWebsiteIndex(report);
+      },
+      [
+        {
+          label: `remove isolated fixture ${project}/${tool}`,
+          run: () => {
+            if (cellRepoDir !== undefined) {
+              cleanupCellFixture(cellRepoDir);
+            }
+          },
+        },
+        {
+          label: `remove isolated cache ${project}/${tool}`,
+          run: () => {
+            if (cellCache !== undefined) cleanupCellCache(cellCache.root);
+          },
+        },
+      ],
+      `benchmark cell ${project}/${tool}`,
+    );
   }
 }
 
@@ -182,7 +321,7 @@ if (!parsed.flags.has("--no-website")) {
   );
 }
 
-function runIndexCell({ project, spec, repoDir, tool }) {
+function runIndexCell({ project, spec, repoDir, tool, env }) {
   if (tool === TOOL_SERENA) {
     // serena does ship a build step -- `serena project index`, which its own
     // docs recommend for larger projects -- and the harness had never run it.
@@ -197,16 +336,18 @@ function runIndexCell({ project, spec, repoDir, tool }) {
     ensureLocalIgnored(repoDir, ".serena/");
     cleanupInsideFixture(repoDir, ".serena");
     try {
-      runChecked(...serenaCommand(["project", "create", repoDir]), {
+      runChecked(...serenaCommand(["project", "create", indexDir(spec, repoDir)]), {
         label: `serena project create ${project}`,
         logBase: path.join(outDir, `serena-create-${project}`),
         cwd: repoDir,
+        env,
         input: SERENA_DECLINE_ALL,
       });
       const ms = timeChecked(...serenaCommand(["project", "index"]), {
         label: `serena project index ${project}`,
         logBase: path.join(outDir, `serena-index-${project}`),
         cwd: repoDir,
+        env,
         input: SERENA_DECLINE_ALL,
       });
       return { project, tool, buildMs: ms };
@@ -214,41 +355,80 @@ function runIndexCell({ project, spec, repoDir, tool }) {
       cleanupInsideFixture(repoDir, ".serena");
     }
   }
-  if (tool === TOOL_SAMCHON) {
-    const logStem = path.join(outDir, `samchon-graph-index-${project}`);
+  if (tool === TOOL_SAMCHON || tool === TOOL_SAMCHON_FALLBACK) {
+    const strict = tool === TOOL_SAMCHON;
+    const logStem = path.join(
+      outDir,
+      strict
+        ? `samchon-graph-index-${project}`
+        : `samchon-graph-fallback-index-${project}`,
+    );
     const ms = timeChecked(
       process.execPath,
       [
         graphLauncher,
         "dump",
         "--cwd",
-        repoDir,
+        indexDir(spec, repoDir),
         "--language",
         spec.language,
         "--mode",
         "lsp",
+        // Stood down rather than tripped. Capping files or naming a server
+        // also disables a strict provider, but by making it refuse — which
+        // measures the refusal, not the lane underneath it.
+        ...(strict ? [] : ["--no-strict"]),
         ...serverArgsForPreparedFixture(spec, repoDir).flatMap((arg) => [
           "--server-arg",
           arg,
         ]),
       ],
       {
-        label: `samchon-graph dump ${project}`,
+        label: `${tool} dump ${project}`,
         logBase: logStem,
+        // Per-request tracing is intentionally absent here. Its formatting and
+        // stderr writes scale with generic-LSP requests while bulk strict
+        // providers bypass that path, so enabling it inside this clock would
+        // asymmetrically inflate the fallback column. Slow-lane diagnosis runs
+        // afterwards through lsp-request-diagnosis.mjs.
+        env: {
+          ...env,
+          // A caller may have enabled diagnosis in its shell. The publication
+          // contract owns this process and forces that opt-in back off.
+          SAMCHON_GRAPH_LSP_REQUEST_TRACE: "0",
+        },
         // The dump JSON reaches hundreds of MB on vscode; the payload is the
         // wire benchmark's concern, not this one's, so stdout is discarded.
         discardStdout: true,
       },
     );
-    return { project, tool, buildMs: ms };
+    // Which path produced the number. A cell used to carry a duration and
+    // nothing else, so a published time could not say whether a strict provider
+    // built it or the generic language-server lane did — and those differ by
+    // orders of magnitude. The dump writes one provenance line to stderr, which
+    // is captured even while stdout goes to /dev/null, so reading it back costs
+    // nothing and happens after the clock has stopped.
+    // `strict` alongside `servedBy`, because those two say different things
+    // that read identically. A fallback cell reports "no strict provider
+    // served" — and so does a strict cell whose provider failed. One was asked
+    // for and the other is a defect, and a table that cannot tell them apart
+    // reports every fallback measurement as a broken provider.
+    return {
+      project,
+      tool,
+      buildMs: ms,
+      strict,
+      servedBy: servedBy(logStem),
+    };
   }
   if (tool === TOOL_CODEGRAPH) {
     ensureLocalIgnored(repoDir, ".codegraph/");
     cleanupInsideFixture(repoDir, ".codegraph");
     try {
-      const ms = timeChecked(...codegraphCommand(["init", repoDir]), {
+      const ms = timeChecked(...codegraphCommand(["init", indexDir(spec, repoDir)]), {
         label: `codegraph init ${project}`,
         logBase: path.join(outDir, `codegraph-index-${project}`),
+        env,
       });
       return { project, tool, buildMs: ms };
     } finally {
@@ -263,7 +443,7 @@ function runIndexCell({ project, spec, repoDir, tool }) {
       "codebase-memory-cache",
       filenamePart(project),
     );
-    fs.rmSync(cacheDir, { recursive: true, force: true });
+    removeTree(cacheDir);
     fs.mkdirSync(cacheDir, { recursive: true });
     try {
       const ms = timeChecked(
@@ -271,7 +451,7 @@ function runIndexCell({ project, spec, repoDir, tool }) {
           "cli",
           "index_repository",
           JSON.stringify({
-            repo_path: repoDir,
+            repo_path: indexDir(spec, repoDir),
             // codebase-memory-mcp index mode: full (default) | moderate |
             // fast. `fast` is the only mode that can index large repos
             // (vscode) on a 64 GB host without the full mode's blowup.
@@ -284,6 +464,7 @@ function runIndexCell({ project, spec, repoDir, tool }) {
           label: `codebase-memory index ${project}`,
           logBase: path.join(outDir, `codebase-memory-index-${project}`),
           env: {
+            ...env,
             CBM_CACHE_DIR: cacheDir,
             CBM_LOG_LEVEL: process.env.CBM_LOG_LEVEL ?? "warn",
           },
@@ -299,10 +480,27 @@ function runIndexCell({ project, spec, repoDir, tool }) {
       };
     } finally {
       cleanupInsideFixture(repoDir, ".codebase-memory");
-      fs.rmSync(cacheDir, { recursive: true, force: true });
+      removeTree(cacheDir);
     }
   }
   throw new Error(`unknown tool ${tool}`);
+}
+
+/**
+ * The directory a tool should be pointed at, which is not always the checkout.
+ *
+ * A repository can keep its build somewhere other than its own root — koin puts
+ * every module under projects/ — and an indexer run at the checkout root finds
+ * no build file and declines. The clone is still the git root, so the pinned
+ * tree, the local ignores and the cleanup all stay there; only the question
+ * "what am I indexing" moves.
+ *
+ * Every tool gets the same answer, or the comparison stops being one.
+ */
+function indexDir(spec, repoDir) {
+  return spec.indexRoot === undefined
+    ? repoDir
+    : path.join(repoDir, spec.indexRoot);
 }
 
 function measureScale(project, spec, repoDir) {
@@ -321,7 +519,7 @@ function measureScale(project, spec, repoDir) {
   const files = (listed.stdout ?? "")
     .split("\0")
     .filter(Boolean)
-    .filter((file) => extensions.some((ext) => file.toLowerCase().endsWith(ext)))
+    .filter((file) => matchesSourceExtension(file, extensions))
     .filter((file) => !/\.d\.(ts|mts|cts)$/.test(file));
   let lines = 0;
   for (const file of files) {
@@ -335,21 +533,88 @@ function measureScale(project, spec, repoDir) {
   return { files: files.length, lines };
 }
 
-const SOURCE_EXTENSIONS = {
-  typescript: [".ts", ".tsx", ".mts", ".cts"],
-  go: [".go"],
-  python: [".py"],
-  rust: [".rs"],
-  java: [".java"],
-  c: [".c", ".h"],
-  cpp: [".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx"],
-  ruby: [".rb"],
-  php: [".php"],
-  csharp: [".cs"],
-  kotlin: [".kt", ".kts"],
-  lua: [".lua"],
-  dart: [".dart"],
-};
+function matchesSourceExtension(file, extensions) {
+  const exact = path.extname(file);
+  if (exact === ".C" || exact === ".H") {
+    return extensions.includes(exact);
+  }
+  const folded = file.toLowerCase();
+  return extensions.some((extension) => folded.endsWith(extension));
+}
+
+/**
+ * Settle and gate the host after this cell's setup, immediately before timing.
+ *
+ * A cold build is one sample with no median to hide behind. Warn by default,
+ * abort under SAMCHON_BENCH_REQUIRE_QUIET=1, and only skip the gate when the
+ * operator explicitly sets SAMCHON_BENCH_SKIP_LOAD_CHECK=1. Windows reports
+ * zero load averages, so its quietness remains the operator's responsibility.
+ */
+async function quietHostForCell(project, tool) {
+  const limit =
+    Number.isFinite(awaitQuietSeconds) && awaitQuietSeconds > 0
+      ? awaitQuietSeconds
+      : 0;
+  const observation = await awaitQuietHost(limit);
+  process.stdout.write(
+    `[index-time] ${project}/${tool} host ratio ` +
+      `${observation.ratio.toFixed(2)} after ` +
+      `${String(observation.waitedSeconds)}s quiet wait\n`,
+  );
+  if (
+    process.env.SAMCHON_BENCH_SKIP_LOAD_CHECK !== "1" &&
+    observation.ratio > 0.5
+  ) {
+    const load1 = observation.ratio * observation.cores;
+    const msg =
+      `host load is high (1-min loadavg ${load1.toFixed(2)} on ` +
+      `${observation.cores} CPUs, ratio ${observation.ratio.toFixed(2)}); ` +
+      `a one-shot cold build may drift far from a quiet baseline. ` +
+      `Set SAMCHON_BENCH_SKIP_LOAD_CHECK=1 to ignore.`;
+    if (process.env.SAMCHON_BENCH_REQUIRE_QUIET === "1") {
+      throw new Error(`index-time: ${msg}`);
+    }
+    process.stderr.write(`[index-time] warning: ${msg}\n`);
+  }
+  return observation;
+}
+
+/**
+ * Wait until the one-minute load average falls under the gate's own threshold.
+ *
+ * The same ratio the gate uses, deliberately: two thresholds would drift, and
+ * the point is to make the gate's claim true rather than to sneak past it. A
+ * checkout, a dependency install, and a language-server download leave a load
+ * average that has nothing to do with the measurement and everything to do with
+ * a cold build's wall clock.
+ *
+ * Returns how long it waited and what the ratio finally was, so the report can
+ * say the host was allowed to settle instead of leaving a reader to assume it.
+ * A host that never settles falls through to the gate and is refused, which is
+ * the honest end for a machine that cannot take this measurement.
+ *
+ * `os.loadavg()` reports zeros on Windows, where this returns immediately and
+ * quietness stays the operator's responsibility — exactly as the gate does.
+ */
+async function awaitQuietHost(limitSeconds) {
+  const cpuCount = Math.max(os.cpus().length, 1);
+  const started = process.hrtime.bigint();
+  const elapsed = () => Number(process.hrtime.bigint() - started) / 1e9;
+  let ratio = os.loadavg()[0] / cpuCount;
+  while (ratio > 0.5 && elapsed() < limitSeconds) {
+    process.stdout.write(
+      `[index-time] waiting for a quiet host: ratio ${ratio.toFixed(2)}\n`,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 5000));
+    ratio = os.loadavg()[0] / cpuCount;
+  }
+  return {
+    waitedSeconds: Math.round(elapsed()),
+    limitSeconds,
+    ratio,
+    cores: cpuCount,
+  };
+}
 
 // The same host block shape performance.json publishes — a wall-clock number
 // without the machine it ran on is not a measurement.
@@ -376,33 +641,266 @@ function hostSpec() {
 
 function publishWebsiteIndex(currentReport) {
   if (parsed.flags.has("--no-website")) return;
+  assertIndexReport(currentReport, "incoming index-time result");
+  assertIncomingReportScope(currentReport);
   const prior = fs.existsSync(websiteJson) ? loadJson(websiteJson) : null;
+  if (prior !== null) {
+    assertWebsitePublication(prior);
+  }
   const keepPrior = !parsed.flags.has("--reset-index");
   const priorIndex = keepPrior ? (prior?.index ?? null) : null;
-  const scale = { ...(priorIndex?.scale ?? {}), ...currentReport.scale };
-  const cells = [...(priorIndex?.cells ?? [])];
+  // A schema-1 cell has no fixture revision and a schema-2 cell can name a
+  // revision that the current corpus no longer selects. Neither may survive a
+  // preserving fold or another public consumer.
+  const { index: currentPriorIndex } = selectCurrentIndex(
+    priorIndex,
+    SELECTED_FIXTURES,
+  );
+  const priorScale = currentPriorIndex.scale;
+  const priorFixtures = currentPriorIndex.fixtures;
+  const scale = { ...priorScale, ...currentReport.scale };
+  const fixtures = { ...priorFixtures, ...currentReport.fixtures };
+  const projects = new Set(currentReport.projects);
+  const tools = new Set(currentReport.tools);
+  const cells = currentPriorIndex.cells.filter(
+    (cell) =>
+      (!projects.has(cell.project) || !tools.has(cell.tool)),
+  );
   for (const cell of currentReport.cells) {
-    const at = cells.findIndex(
-      (old) => old.project === cell.project && old.tool === cell.tool,
-    );
-    if (at >= 0) cells[at] = cell;
-    else cells.push(cell);
+    cells.push(cell);
   }
   const out = {
     schemaVersion: prior?.schemaVersion ?? 1,
     generatedAt: new Date().toISOString(),
     structural: prior?.structural ?? null,
     agent: prior?.agent ?? { cells: [] },
-    // One host panel per publication, like performance.json: merged cells are
-    // only comparable when a full sweep re-measures them on one machine, so
-    // the panel always names the machine of the latest write.
-    index: { host: currentReport.host, scale, cells },
+    // The panel still names the machine of the latest write, as
+    // performance.json does — but it is no longer the only record of one, and
+    // it is no longer what a reader should trust. Each cell now carries the
+    // host it was measured on, because this benchmark's cells are produced by
+    // thirteen separate runners on purpose and a single panel would speak for
+    // twelve machines it never saw. Read the cell; the panel is a summary of
+    // whichever fold happened to land last.
+    index: {
+      schemaVersion: 2,
+      host: currentReport.host,
+      fixtures,
+      scale,
+      cells,
+    },
   };
   fs.mkdirSync(path.dirname(websiteJson), { recursive: true });
   fs.writeFileSync(websiteJson, `${JSON.stringify(out)}\n`);
 }
 
+/**
+ * A measured report owns the whole project/tool rectangle it declares.
+ *
+ * The file is written before the first tool and after every successful tool.
+ * If a later tool crashes, its final uploaded report is intentionally
+ * incomplete. Folding only the cells that happened to finish would retain the
+ * failed tool's old value and manufacture a strict/fallback pair from separate
+ * runs. The scope metadata makes absence authoritative instead.
+ */
+function assertIncomingReportScope(incoming) {
+  if (incoming.toolchain === undefined) {
+    throw new TypeError(
+      "incoming index-time result.toolchain is required",
+    );
+  }
+  if (
+    typeof incoming.measurementId !== "string" ||
+    incoming.measurementId.trim() === ""
+  ) {
+    throw new TypeError(
+      "incoming index-time result.measurementId must be a nonempty string",
+    );
+  }
+  for (const field of ["projects", "tools"]) {
+    const values = incoming[field];
+    if (
+      !Array.isArray(values) ||
+      values.length === 0 ||
+      values.some((value) => typeof value !== "string" || value.trim() === "")
+    ) {
+      throw new TypeError(
+        `incoming index-time result.${field} must be a nonempty string array`,
+      );
+    }
+    if (new Set(values).size !== values.length) {
+      throw new TypeError(
+        `incoming index-time result.${field} must not contain duplicates`,
+      );
+    }
+  }
+  const projects = new Set(incoming.projects);
+  const tools = new Set(incoming.tools);
+  for (const tool of tools) {
+    if (!ALL_TOOLS.includes(tool)) {
+      throw new TypeError(
+        `incoming index-time result.tools names unknown tool ${tool}`,
+      );
+    }
+  }
+  if (
+    incoming.schemaVersion !== 2 ||
+    typeof incoming.fixtures !== "object" ||
+    incoming.fixtures === null ||
+    Array.isArray(incoming.fixtures)
+  ) {
+    throw new TypeError(
+      "incoming index-time result must use revision-bound schemaVersion 2",
+    );
+  }
+  for (const project of projects) {
+    const selectedCommit = PROJECTS[project]?.commit;
+    if (incoming.fixtures[project] !== selectedCommit) {
+      throw new TypeError(
+        `incoming index-time result.fixtures must bind ${project} to the selected corpus revision`,
+      );
+    }
+    if (!Object.hasOwn(incoming.scale, project)) {
+      throw new TypeError(
+        `incoming index-time result.scale must describe scoped project ${project}`,
+      );
+    }
+  }
+  for (const project of Object.keys(incoming.scale)) {
+    if (!projects.has(project)) {
+      throw new TypeError(
+        `incoming index-time result.scale describes out-of-scope project ${project}`,
+      );
+    }
+  }
+  for (const project of Object.keys(incoming.fixtures)) {
+    if (!projects.has(project)) {
+      throw new TypeError(
+        `incoming index-time result.fixtures describes out-of-scope project ${project}`,
+      );
+    }
+  }
+  for (const cell of incoming.cells) {
+    if (!projects.has(cell.project) || !tools.has(cell.tool)) {
+      throw new TypeError(
+        `incoming index-time result cell ${cell.project}/${cell.tool} is outside its declared scope`,
+      );
+    }
+    if (cell.fixtureCommit !== incoming.fixtures[cell.project]) {
+      throw new TypeError(
+        `incoming index-time result cell ${cell.project}/${cell.tool} does not match its scoped fixture revision`,
+      );
+    }
+    if (cell.measurementId !== incoming.measurementId) {
+      throw new TypeError(
+        `incoming index-time result cell ${cell.project}/${cell.tool} does not match its measurement`,
+      );
+    }
+    if (!sameHostEvidence(cell.host, incoming.host)) {
+      throw new TypeError(
+        `incoming index-time result cell ${cell.project}/${cell.tool} does not match its host evidence`,
+      );
+    }
+    if (
+      JSON.stringify(cell.toolchain) !==
+      JSON.stringify(incoming.toolchain)
+    ) {
+      throw new TypeError(
+        `incoming index-time result cell ${cell.project}/${cell.tool} does not match its toolchain evidence`,
+      );
+    }
+    const expectedStrict = strictIntentOfTool(cell.tool);
+    if (cell.strict !== expectedStrict) {
+      throw new TypeError(
+        `incoming index-time result cell ${cell.project}/${cell.tool} does not match its strict-provider intent`,
+      );
+    }
+  }
+}
+
+function sameHostEvidence(left, right) {
+  return ["cpu", "cores", "ramGB", "os", "kernel", "node"].every(
+    (field) => left[field] === right[field],
+  );
+}
+
+/**
+ * Preserve the setup manifest in every cell that its tools produced.
+ *
+ * CI supplies this file from the real-language provisioner. A manual run may
+ * use a machine-owned toolchain instead; that is represented explicitly as
+ * unreported rather than by an empty array a reader could mistake for a proof
+ * that no external tools participated.
+ */
+function loadToolchainEvidence(manifest) {
+  if (manifest === undefined) {
+    return {
+      status: "unreported",
+      tools: [],
+    };
+  }
+  const tools = loadJson(path.resolve(manifest));
+  return {
+    status: "recorded",
+    tools,
+  };
+}
+
+/**
+ * Keep the ordinary parser authoritative while rejecting ambiguous evidence.
+ *
+ * Generic valued options retain their last spelling. A toolchain manifest is
+ * provenance for a one-shot measurement, so two spellings cannot silently let
+ * the latter replace the former, and an empty path cannot mean unreported.
+ */
+function assertToolchainManifestOption(argv) {
+  const prefix = "--toolchain-manifest=";
+  const values = argv
+    .filter((argument) => argument.startsWith(prefix))
+    .map((argument) => argument.slice(prefix.length));
+  if (values.length > 1) {
+    throw new Error("index-time accepts one --toolchain-manifest");
+  }
+  if (values[0] === "") {
+    throw new Error("--toolchain-manifest must name a file");
+  }
+}
+
+/**
+ * Begin a complete matrix without inheriting cells this run did not produce.
+ *
+ * Partial manual dispatches replace their declared project/tool rectangle and
+ * preserve every unrelated cell. A full workflow run is different: if one
+ * lane fails before writing any report, no scoped fold can remove its old
+ * cells. Preserve the unrelated benchmark axes and remove the whole index axis
+ * before the first full-matrix report is folded.
+ */
+function resetWebsiteIndex() {
+  const prior = fs.existsSync(websiteJson) ? loadJson(websiteJson) : null;
+  if (prior !== null) assertWebsitePublication(prior);
+  const out = {
+    schemaVersion: prior?.schemaVersion ?? 1,
+    generatedAt: new Date().toISOString(),
+    structural: prior?.structural ?? null,
+    agent: prior?.agent ?? { cells: [] },
+  };
+  fs.mkdirSync(path.dirname(websiteJson), { recursive: true });
+  fs.writeFileSync(websiteJson, `${JSON.stringify(out)}\n`);
+}
+
+/** One place, so the limit reported always matches the limit enforced. */
+function benchTimeoutMs() {
+  return Number(process.env.SAMCHON_GRAPH_BENCH_TIMEOUT_MS ?? 1_800_000);
+}
+
 function printCellSummary(project, cell) {
+  if (typeof cell.timedOutMs === "number") {
+    process.stdout.write(
+      `[index-time] ${project} ${cell.tool}: timed out after ${(
+        cell.timedOutMs / 1000
+      ).toFixed(0)} s\n`,
+    );
+    return;
+  }
   if (cell.hasBuildStep === false) {
     process.stdout.write(
       `[index-time] ${project} ${cell.tool}: no build step\n`,
@@ -426,9 +924,26 @@ function runChecked(
   { label, logBase, cwd = repoRoot, env = {}, discardStdout = false, input },
 ) {
   process.stdout.write(`[index-time] ${label}\n`);
-  const devNull = discardStdout ? fs.openSync(os.devNull, "w") : null;
+  // Straight to the log file, not through a pipe.
+  //
+  // `spawnSync` closes its stdio pipes at the instant it kills a timed-out
+  // child, before that child can run a signal handler. Everything a killed run
+  // says while it retires — which is where a strict producer's own account of
+  // what it was doing travels — was therefore written into a pipe whose reader
+  // was already gone, and the log kept only what happened to arrive before the
+  // kill. That is why two lanes reached the cap four complete runs running and
+  // left one line between them.
+  //
+  // An inherited file descriptor has no reader to lose. What was written before
+  // the kill is already on disk, and what the child writes on its way out lands
+  // beside it.
+  const errorLog = fs.openSync(`${logBase}.err.log`, "w");
+  // Opened inside the guard that closes it. Both descriptors used to be taken
+  // before the `try`, so a failure between them left the first one open.
+  let devNull = null;
   let result;
   try {
+    if (discardStdout) devNull = fs.openSync(os.devNull, "w");
     result = cp.spawnSync(command, args, {
       cwd,
       encoding: "utf8",
@@ -438,19 +953,86 @@ function runChecked(
       env: { ...process.env, ...env },
       windowsHide: true,
       maxBuffer: 512 * 1024 * 1024,
-      timeout: Number(process.env.SAMCHON_GRAPH_BENCH_TIMEOUT_MS ?? 1_800_000),
-      ...(devNull !== null ? { stdio: ["ignore", devNull, "pipe"] } : {}),
+      timeout: benchTimeoutMs(),
+      // Only the error stream moves. The other two keep exactly the shapes this
+      // helper gave them before — a null sink or a pipe for output, and stdin
+      // ignored for a discarding call and piped otherwise — so nothing about a
+      // measured invocation changes except where its diagnosis lands.
+      stdio: [
+        input !== undefined || !discardStdout ? "pipe" : "ignore",
+        devNull ?? "pipe",
+        errorLog,
+      ],
     });
   } finally {
     if (devNull !== null) fs.closeSync(devNull);
+    fs.closeSync(errorLog);
   }
   fs.writeFileSync(`${logBase}.out.log`, result.stdout ?? "");
-  fs.writeFileSync(`${logBase}.err.log`, result.stderr ?? "");
-  if (result.error) throw result.error;
+  if (result.error) {
+    // A timeout is a measurement, not a crash. "ruby's language-server lane does
+    // not finish inside an hour" is one of the more useful things this benchmark
+    // can say, and spawnSync reports it as an ETIMEDOUT that took the whole lane
+    // down instead — losing the columns that had already been measured and
+    // publishing nothing at all for that language.
+    //
+    // Marked rather than swallowed: the caller decides, because the same helper
+    // fetches git objects and creates serena projects, and a timeout there is an
+    // error like any other.
+    if (result.error.code === "ETIMEDOUT") {
+      const limitMs = benchTimeoutMs();
+      const timedOut = new Error(
+        `${label} did not finish within ${String(Math.round(limitMs / 1000))}s; ` +
+          `see ${path.relative(repoRoot, `${logBase}.err.log`)}`,
+      );
+      timedOut.timedOutMs = limitMs;
+      // Where the killed run's own account of itself is. The caller turns this
+      // into a cell and would otherwise have no way back to the log it just
+      // wrote, so a timed-out cell could only ever say "unknown".
+      timedOut.logStem = logBase;
+      throw timedOut;
+    }
+    throw result.error;
+  }
   if (result.status !== 0) {
     throw new Error(
       `${label} failed (${result.status}); see ${path.relative(repoRoot, `${logBase}.err.log`)}`,
     );
+  }
+}
+
+/**
+ * The provenance line the dump wrote beside its payload, or an honest absence.
+ *
+ * Read from the captured stderr rather than parsed out of the graph itself: the
+ * payload is discarded on purpose, and re-running the build to learn what built
+ * it would cost as much as the measurement. A line that is not there is
+ * reported as unknown rather than guessed at, because "no strict provider
+ * served" and "this dump predates the line" are different facts.
+ */
+function servedBy(logStem) {
+  const served = "@samchon/graph: indexer=";
+  // What it set out to run, written before the first candidate starts. A build
+  // that finishes says what produced it; a build that is killed says nothing at
+  // all, and the killed ones are the expensive ones. Reading the intent turns a
+  // timed-out cell from "unknown" into "was running scip-ruby when the hour
+  // ran out", which is the difference between a mystery and a finding.
+  const attempting = "@samchon/graph: indexing with ";
+  try {
+    const lines = fs
+      .readFileSync(`${logStem}.err.log`, "utf8")
+      .split(/\r?\n/);
+    const outcome = lines.find((line) => line.startsWith(served));
+    if (outcome !== undefined) return outcome.slice(served.length).trim();
+    const intent = lines.find((line) => line.startsWith(attempting));
+    // Marked as an attempt rather than presented as a result: it says what was
+    // selected, not what published, and those differ exactly when a provider
+    // was chosen and then failed.
+    return intent === undefined
+      ? "unknown"
+      : `attempted ${intent.slice(attempting.length).trim()}`;
+  } catch {
+    return "unknown";
   }
 }
 
@@ -490,17 +1072,6 @@ function codebaseMemoryCommand(args) {
   return ["cmd.exe", ["/d", "/s", "/c", resolved, ...args]];
 }
 
-function ensureLocalIgnored(repoDir, entry) {
-  const exclude = path.join(repoDir, ".git", "info", "exclude");
-  if (!fs.existsSync(exclude)) return;
-  const text = fs.readFileSync(exclude, "utf8");
-  if (new RegExp(`^${entry.replace(/[.\\/]/g, "\\$&")}$`, "m").test(text))
-    return;
-  fs.appendFileSync(
-    exclude,
-    `${text.endsWith("\n") ? "" : "\n"}# generated by graph benchmark\n${entry}\n`,
-  );
-}
 
 function cleanupInsideFixture(repoDir, name) {
   const root = path.resolve(repoDir);
@@ -513,7 +1084,232 @@ function cleanupInsideFixture(repoDir, name) {
   ) {
     throw new Error(`refusing to remove path outside fixture: ${target}`);
   }
-  fs.rmSync(target, { recursive: true, force: true });
+  removeTree(target);
+}
+
+/**
+ * Give one measured tool one project state.
+ *
+ * Strict producers run real builds. Reusing their checkout for the fallback
+ * column lets the second cell inherit `target/`, `build/`, `bin/`, or `obj/`
+ * from the first and turns a provider comparison into a cache-order
+ * comparison. A local clone preserves the exact source commit and host while
+ * keeping those project outputs private to one timer.
+ */
+function prepareCellFixture(project, spec, source, tool) {
+  const root = path.join(outDir, "fixtures");
+  const cellRoot = path.join(
+    root,
+    `${filenamePart(project)}-${filenamePart(tool)}`,
+  );
+  // Preserve the checkout basename inside a per-cell container. External
+  // prepared companions use relative project paths, so copying the same
+  // basename and directory geometry keeps those paths valid without rerunning
+  // setup under --no-setup.
+  const target = path.join(cellRoot, path.basename(source));
+  fs.mkdirSync(root, { recursive: true });
+  cleanupCellFixture(target);
+  fs.mkdirSync(cellRoot, { recursive: true });
+  try {
+    if (parsed.flags.has("--no-setup")) {
+      fs.cpSync(source, target, {
+        recursive: true,
+        verbatimSymlinks: true,
+      });
+      copyPreparedFixtureCompanion(spec, source, target);
+      assertPreparedFixture(spec, target);
+      return target;
+    }
+    runChecked(
+      "git",
+      ["clone", "--quiet", "--local", "--no-hardlinks", source, target],
+      {
+        label: `clone isolated fixture ${project}/${tool}`,
+        logBase: path.join(
+          outDir,
+          `setup-${filenamePart(project)}-${filenamePart(tool)}-clone`,
+        ),
+      },
+    );
+    prepareFixture(spec, target, {
+      noInstall: parsed.flags.has("--no-install"),
+    });
+    return target;
+  } catch (error) {
+    // The caller only receives a path after preparation succeeds. Own partial
+    // copies here so a failed clone or dependency setup cannot strand a full
+    // fixture outside the caller's finally block.
+    rethrowWithCleanup(
+      error,
+      [
+        {
+          label: `remove partial fixture ${project}/${tool}`,
+          run: () => cleanupCellFixture(target),
+        },
+      ],
+      `prepare isolated fixture ${project}/${tool}`,
+    );
+  }
+}
+
+function cleanupCellFixture(target) {
+  const root = path.resolve(outDir, "fixtures");
+  const cellRoot = path.dirname(path.resolve(target));
+  const relative = path.relative(root, cellRoot);
+  if (
+    relative === "" ||
+    relative.startsWith("..") ||
+    path.isAbsolute(relative)
+  ) {
+    throw new Error(
+      `refusing to remove cell fixture outside output: ${cellRoot}`,
+    );
+  }
+  removeTree(cellRoot);
+}
+
+function copyPreparedFixtureCompanion(spec, source, target) {
+  const from = preparedFixtureCompanion(spec, source);
+  const to = preparedFixtureCompanion(spec, target);
+  if (from === undefined || to === undefined) return;
+  if (!fs.existsSync(from)) {
+    throw new Error(`${spec.name} is missing prepared companion ${from}`);
+  }
+  fs.mkdirSync(path.dirname(to), { recursive: true });
+  fs.cpSync(from, to, { recursive: true, verbatimSymlinks: true });
+}
+
+/**
+ * Isolate ecosystem caches whose build tools otherwise make the second column
+ * warm merely because it ran second.
+ *
+ * Only caches used by a corpus language are redirected. In particular Dart's
+ * installed `scip_dart` executable lives in the provisioned pub cache, so
+ * moving `PUB_CACHE` would remove the tool being measured rather than isolate
+ * its project dependencies.
+ */
+function prepareCellCache(project, spec, tool) {
+  const root = path.join(
+    outDir,
+    "cell-caches",
+    filenamePart(project),
+    filenamePart(tool),
+  );
+  cleanupCellCache(root);
+  try {
+    fs.mkdirSync(root, { recursive: true });
+    const env = {};
+    if (spec.language === "java" || spec.language === "kotlin") {
+      env.GRADLE_USER_HOME = path.join(root, "gradle");
+      const localRepository = path.join(root, "maven").replaceAll("\\", "/");
+      env.JAVA_TOOL_OPTIONS = [
+        process.env.JAVA_TOOL_OPTIONS,
+        javaSystemProperty("maven.repo.local", localRepository),
+      ]
+        .filter(Boolean)
+        .join(" ");
+    } else if (spec.language === "csharp") {
+      env.NUGET_PACKAGES = path.join(root, "nuget");
+      env.NUGET_HTTP_CACHE_PATH = path.join(root, "nuget-http");
+      env.NUGET_SCRATCH = path.join(root, "nuget-scratch");
+      env.NUGET_PLUGINS_CACHE_PATH = path.join(root, "nuget-plugins");
+      env.DOTNET_CLI_HOME = path.join(root, "dotnet-home");
+    } else if (spec.language === "go") {
+      env.GOCACHE = path.join(root, "go-build");
+      env.GOMODCACHE = path.join(root, "go-mod");
+    } else if (spec.language === "rust") {
+      env.CARGO_HOME = path.join(root, "cargo");
+    }
+    return {
+      root,
+      env,
+      kind:
+        Object.keys(env).length === 0 ? "project" : "project-and-ecosystem",
+    };
+  } catch (error) {
+    rethrowWithCleanup(
+      error,
+      [
+        {
+          label: `remove partial cache ${project}/${tool}`,
+          run: () => cleanupCellCache(root),
+        },
+      ],
+      `prepare isolated cache ${project}/${tool}`,
+    );
+  }
+}
+
+function cleanupCellCache(target) {
+  const root = path.resolve(outDir, "cell-caches");
+  const resolved = path.resolve(target);
+  const relative = path.relative(root, resolved);
+  if (
+    relative === "" ||
+    relative.startsWith("..") ||
+    path.isAbsolute(relative)
+  ) {
+    throw new Error(`refusing to remove cell cache outside output: ${target}`);
+  }
+  removeTree(resolved);
+}
+
+/**
+ * Run one operation and every cleanup without letting a later cleanup erase an
+ * earlier failure.
+ */
+async function runWithCleanup(operation, cleanups, label) {
+  let failed = false;
+  let failure;
+  let result;
+  try {
+    result = await operation();
+  } catch (error) {
+    failed = true;
+    failure = error;
+  }
+  const cleanup = cleanupFailures(cleanups);
+  if (cleanup.length > 0) {
+    throw new AggregateError(
+      [...(failed ? [failure] : []), ...cleanup],
+      failed
+        ? `${label} failed, and its cleanup also failed`
+        : `${label} cleanup failed`,
+    );
+  }
+  if (failed) throw failure;
+  return result;
+}
+
+/** Rethrow one known failure after attempting all of its cleanup. */
+function rethrowWithCleanup(failure, cleanups, label) {
+  const cleanup = cleanupFailures(cleanups);
+  if (cleanup.length > 0) {
+    throw new AggregateError(
+      [failure, ...cleanup],
+      `${label} failed, and its cleanup also failed`,
+    );
+  }
+  throw failure;
+}
+
+function cleanupFailures(cleanups) {
+  const failures = [];
+  for (const cleanup of cleanups) {
+    try {
+      cleanup.run();
+    } catch (error) {
+      failures.push(
+        new Error(
+          `${cleanup.label}: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+          { cause: error },
+        ),
+      );
+    }
+  }
+  return failures;
 }
 
 function ensureFixtures(projects) {
@@ -537,9 +1333,6 @@ function ensureFixtures(projects) {
       assertPinnedCheckout(spec, repoDir);
       process.stdout.write(`[index-time] reusing fixture ${project}\n`);
     }
-    prepareFixture(spec, repoDir, {
-      noInstall: parsed.flags.has("--no-install"),
-    });
   }
 }
 
@@ -553,12 +1346,12 @@ function selectTools(value) {
   const allowed = new Set(ALL_TOOLS);
   if (expanded.length === 0)
     throw new Error(
-      "--tools must contain samchon-graph, codegraph, codebase-memory, serena, or all",
+      `--tools must name one of ${ALL_TOOLS.join(", ")} or all`,
     );
   for (const name of expanded) {
     if (!allowed.has(name))
       throw new Error(
-        "--tools must contain samchon-graph, codegraph, codebase-memory, serena, or all",
+        `--tools must name one of ${ALL_TOOLS.join(", ")} or all`,
       );
   }
   return [...new Set(expanded)];
@@ -616,11 +1409,7 @@ function filenamePart(value) {
 }
 
 function loadJson(file) {
-  try {
-    return JSON.parse(fs.readFileSync(file, "utf8"));
-  } catch {
-    return null;
-  }
+  return JSON.parse(fs.readFileSync(file, "utf8"));
 }
 
 function timestamp() {

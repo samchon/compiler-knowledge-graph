@@ -1,0 +1,190 @@
+name: lua-probe
+
+# A research instrument, not a gate. Dispatch only.
+#
+# Lua is one of three languages with no upstream SCIP indexer, and the channel
+# it does have is unusual enough to be worth proving before anything is built on
+# it: lua-language-server takes a `--doc` export and lets a build script replace
+# the exporter, handing that script the `vm` analysis engine. If `vm.getRefs`
+# resolves across files from a global's recorded sets, Lua gets a semantic bulk
+# export for the price of one Lua file. If it does not, the provider has to be
+# designed differently, and that is much cheaper to learn here than halfway
+# through writing it.
+#
+# `Lua.docScriptPath` is concatenated onto the indexed root as a string, so a
+# path built from the root's own relative distance escapes the project instead
+# of being written into it. Nothing lands in the tree being analysed.
+on:
+  workflow_dispatch:
+  # `workflow_dispatch` alone cannot be fired until the file reaches the default
+  # branch, and this exists precisely to answer a question before anything is
+  # merged. A `push` trigger evaluates its paths against that push's own
+  # changes — unlike `pull_request`, which matches the whole branch diff — so it
+  # runs when the probe itself changes and stays quiet otherwise.
+  push:
+    paths:
+      - ".github/workflows/lua-probe.yml"
+      - "sidecars/lua/**"
+
+concurrency:
+  group: lua-probe-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  probe:
+    name: probe the LuaLS doc export
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Enable pnpm
+        run: corepack enable
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22.x
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Install lua-language-server
+        run: pnpm --filter @samchon/graph-experiment run setup -- --language lua
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # A small project of our own rather than a corpus fixture: the questions
+      # are about the engine's API, and two files that reference each other
+      # answer them as well as a real repository would while keeping the report
+      # readable.
+      - name: Write a two-file Lua project
+        run: |
+          mkdir -p lua-probe-project lua-probe-out
+          cat > lua-probe-project/util.lua <<'LUA'
+          local M = {}
+          function M.greet(name)
+            return 'hello ' .. name
+          end
+          return M
+          LUA
+          cat > lua-probe-project/main.lua <<'LUA'
+          local util = require 'util'
+          local blend = function(left, right) return left .. right end
+          function caller() callee() end
+          function callee() return blend(util.greet('world'), '!') end
+          LUA
+
+      # Exercise the checked-in exporter rather than a TypeScript translation
+      # of its path rule. LuaLS deliberately filters workspace-library files
+      # from this doc-mode URI enumeration, so a small injected engine is the
+      # source-level seam that can present the exact POSIX sibling URI.
+      - name: Verify the actual exporter rejects POSIX backslash siblings
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes lua5.4
+          lua5.4 \
+            sidecars/lua/test-export-path-boundary.lua \
+            sidecars/lua/export.lua
+
+      # docScriptPath is resolved as `<root> .. sub_path`, so the leading `/`
+      # plus `..` segments walks back out of the project to the checked-in
+      # probe. Written this way it needs no copy into the analysed tree.
+      - name: Point the doc export at the probe
+        run: |
+          root="$GITHUB_WORKSPACE/lua-probe-project"
+          rel=$(realpath --relative-to="$root" "$GITHUB_WORKSPACE/sidecars/lua/probe.lua")
+          node - "$rel" <<'NODE'
+          const fs = require("node:fs");
+          fs.writeFileSync(
+            "lua-probe-config.json",
+            `${JSON.stringify({
+              "Lua.docScriptPath": `/${process.argv[2]}`,
+            }, null, 2)}\n`,
+          );
+          NODE
+          echo "resolved docScriptPath: /$rel"
+          cat lua-probe-config.json
+
+      - name: Run the doc export through the probe
+        run: |
+          lua-language-server \
+            --doc="$GITHUB_WORKSPACE/lua-probe-project" \
+            --doc_out_path="$GITHUB_WORKSPACE/lua-probe-out" \
+            --configpath="$GITHUB_WORKSPACE/lua-probe-config.json"
+
+      # The exporter itself, on the same project, through the same seam. The
+      # probe answered what the engine exposes; this answers whether the thing
+      # built on those answers actually produces a graph.
+      - name: Run the real exporter
+        run: |
+          root="$GITHUB_WORKSPACE/lua-probe-project"
+          rel=$(realpath --relative-to="$root" "$GITHUB_WORKSPACE/sidecars/lua/export.lua")
+          node - "$rel" <<'NODE'
+          const fs = require("node:fs");
+          fs.writeFileSync(
+            "lua-export-config.json",
+            `${JSON.stringify({
+              "Lua.docScriptPath": `/${process.argv[2]}`,
+            }, null, 2)}\n`,
+          );
+          NODE
+          lua-language-server \
+            --doc="$root" \
+            --doc_out_path="$GITHUB_WORKSPACE/lua-probe-out" \
+            --configpath="$GITHUB_WORKSPACE/lua-export-config.json"
+
+      - name: Validate function-valued local ranges
+        run: |
+          node <<'NODE'
+          const fs = require("node:fs");
+          const report = JSON.parse(
+            fs.readFileSync("lua-probe-out/samchon-graph-lua.json", "utf8"),
+          );
+          const blend = report.nodes.find((node) => node.name === "blend");
+          if (
+            blend === undefined ||
+            blend.body?.file !== blend.location?.file ||
+            blend.body.startLine > blend.location.startLine ||
+            (blend.body.startLine === blend.location.startLine &&
+              blend.body.startColumn > blend.location.startColumn) ||
+            blend.body.endLine < blend.location.endLine ||
+            (blend.body.endLine === blend.location.endLine &&
+              blend.body.endColumn < blend.location.endColumn)
+          ) {
+            throw new Error(
+              "the real Lua exporter did not publish a blend body containing its declaration",
+            );
+          }
+          NODE
+
+      - name: Show the exported graph
+        if: ${{ always() }}
+        run: |
+          if [ -f lua-probe-out/samchon-graph-lua.json ]; then
+            cat lua-probe-out/samchon-graph-lua.json
+          else
+            echo "::warning::the exporter wrote no graph"
+          fi
+
+      # Printed as well as uploaded: the whole point is to read it.
+      - name: Show what the engine exposed
+        if: ${{ always() }}
+        run: |
+          ls -la lua-probe-out || true
+          if [ -f lua-probe-out/samchon-graph-lua-probe.json ]; then
+            cat lua-probe-out/samchon-graph-lua-probe.json
+          else
+            echo "::warning::the probe wrote no report"
+          fi
+
+      - name: Upload the probe output
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: lua-probe
+          path: lua-probe-out
+          if-no-files-found: ignore

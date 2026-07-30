@@ -1,5 +1,13 @@
 import { IScipIndex } from "./IScipIndex";
 
+const MAX_INVALID_ENCLOSING_RANGE_WARNING_EXAMPLES = 10;
+const MAX_TRANSLATION_UNIT_WARNING_EXAMPLES = 10;
+
+interface IPathWarning {
+  relativePath: string;
+  message: string;
+}
+
 /**
  * Validate one decoded SCIP index before any of it is believed.
  *
@@ -8,17 +16,21 @@ import { IScipIndex } from "./IScipIndex";
  * index is the failure mode worth avoiding: the missing facts are silent, so a
  * consumer cannot distinguish "this symbol has no references" from "the record
  * carrying them was malformed and dropped", and the audit riding on the result
- * asserts the first. The one producer-compatibility exception is an enclosing
- * range on a non-definition occurrence: graph never consumes that field, and
- * stock rust-analyzer writes the referenced definition's body there. Such a
- * range is validated structurally and then omitted when it cannot enclose the
- * occurrence; definition scopes remain strict.
+ * asserts the first. The one producer-compatibility exception is an optional
+ * enclosing range. Stock rust-analyzer has written the referenced definition's
+ * body on a reference, and scip-java has written a definition scope that misses
+ * its own name. Such a range is validated structurally and then omitted with a
+ * warning when it cannot enclose the occurrence. The occurrence itself remains
+ * valid, while the adapter gets no scope from which it could invent containment.
  */
-export function parseScipIndex(value: unknown, label = "scip"): IScipIndex {
+export function parseScipIndex(
+  value: unknown,
+  label = "scip",
+  warnings: string[] = [],
+): IScipIndex {
   const index = objectOf(value, label);
   const metadata = objectOf(index.metadata, `${label}.metadata`);
   const documents = arrayOf(index.documents, `${label}.documents`);
-  const seen = new Set<string>();
   const toolInfo = fieldOf(
     metadata,
     "toolInfo",
@@ -43,13 +55,45 @@ export function parseScipIndex(value: unknown, label = "scip"): IScipIndex {
     "external_symbols",
     label,
   );
+  const parsedExternalSymbols =
+    externalSymbols === undefined
+      ? undefined
+      : arrayOf(
+          externalSymbols,
+          `${label}.externalSymbols`,
+        ).map((symbol, at) =>
+          symbolInformationOf(symbol, `${label}.externalSymbols[${at}]`),
+        );
+  const rangeWarnings: IPathWarning[] = [];
+  const parsedDocuments = documents.map((document, index) =>
+    documentOf(document, `${label}.documents[${index}]`, rangeWarnings),
+  );
+  const foldedDocuments = foldDocumentsByPath(parsedDocuments, warnings);
+  const uniqueRangeWarningMessages = [
+    ...new Set(rangeWarnings.map((warning) => warning.message)),
+  ].sort(compareText);
+  if (
+    uniqueRangeWarningMessages.length <=
+    MAX_INVALID_ENCLOSING_RANGE_WARNING_EXAMPLES
+  ) {
+    warnings.push(...uniqueRangeWarningMessages);
+  } else {
+    const affectedFileCount = new Set(
+      rangeWarnings.map((warning) => warning.relativePath),
+    ).size;
+    warnings.push(
+      `scip: ${String(rangeWarnings.length)} occurrences carry enclosing ranges that do not enclose them; optional scopes were omitted; affected files: ${String(affectedFileCount)}; first ${String(MAX_INVALID_ENCLOSING_RANGE_WARNING_EXAMPLES)} examples follow`,
+      ...uniqueRangeWarningMessages.slice(
+        0,
+        MAX_INVALID_ENCLOSING_RANGE_WARNING_EXAMPLES,
+      ),
+    );
+  }
   return {
     metadata: {
-      ...optionalEnumName(
+      ...optionalProtocolVersion(
         metadata.version,
         `${label}.metadata.version`,
-        "version",
-        PROTOCOL_VERSIONS,
       ),
       ...(toolInfo === undefined
         ? {}
@@ -65,33 +109,26 @@ export function parseScipIndex(value: unknown, label = "scip"): IScipIndex {
         TEXT_ENCODINGS,
       ),
     },
-    documents: documents.map((document, index) => {
-      const parsed = documentOf(document, `${label}.documents[${index}]`);
-      // One document per path. Two records for one file cannot both be the
-      // complete occurrence list for it, and merging them would double every
-      // reference they share while hiding which of the two the reader got.
-      if (seen.has(parsed.relativePath)) {
-        throw new Error(
-          `scip: two documents describe ${parsed.relativePath}, so neither is its complete occurrence list`,
-        );
-      }
-      seen.add(parsed.relativePath);
-      return parsed;
-    }),
-    ...(externalSymbols === undefined
+    documents: foldedDocuments,
+    ...(parsedExternalSymbols === undefined
       ? {}
       : {
-          externalSymbols: arrayOf(
-            externalSymbols,
-            `${label}.externalSymbols`,
-          ).map((symbol, at) =>
-            symbolInformationOf(symbol, `${label}.externalSymbols[${at}]`),
+          // The protocol calls this a repeated field and does not promise
+          // uniqueness. Normalize it before the adapter's symbol map can make
+          // producer order choose the last duplicate.
+          externalSymbols: mergeSymbols(
+            "the external symbol table",
+            parsedExternalSymbols,
           ),
         }),
   };
 }
 
-function documentOf(value: unknown, label: string): IScipIndex.IDocument {
+function documentOf(
+  value: unknown,
+  label: string,
+  warnings: IPathWarning[],
+): IScipIndex.IDocument {
   const document = objectOf(value, label);
   const rawPath = stringOf(
     fieldOf(document, "relativePath", "relative_path", label),
@@ -139,7 +176,12 @@ function documentOf(value: unknown, label: string): IScipIndex.IDocument {
             document.occurrences,
             `${label}.occurrences`,
           ).map((occurrence, at) =>
-            occurrenceOf(occurrence, `${label}.occurrences[${at}]`),
+            occurrenceOf(
+              occurrence,
+              `${label}.occurrences[${at}]`,
+              relativePath,
+              warnings,
+            ),
           ),
         }),
     ...(document.symbols === undefined
@@ -174,7 +216,12 @@ function documentOf(value: unknown, label: string): IScipIndex.IDocument {
   };
 }
 
-function occurrenceOf(value: unknown, label: string): IScipIndex.IOccurrence {
+function occurrenceOf(
+  value: unknown,
+  label: string,
+  relativePath: string,
+  warnings: IPathWarning[],
+): IScipIndex.IOccurrence {
   const occurrence = objectOf(value, label);
   const range = occurrenceRangeOf(occurrence, label, false)!;
   const enclosingRange = occurrenceRangeOf(occurrence, label, true);
@@ -194,17 +241,26 @@ function occurrenceOf(value: unknown, label: string): IScipIndex.IOccurrence {
     symbolRoles === undefined
       ? undefined
       : roleMaskOf(symbolRoles, `${label}.symbolRoles`);
+  const parsedSymbol = optionalString(
+    occurrence.symbol,
+    `${label}.symbol`,
+    "symbol",
+  );
   const invalidEnclosingRange =
     enclosingRange !== undefined && !rangeContains(enclosingRange, range);
-  if (
-    invalidEnclosingRange &&
-    ((parsedSymbolRoles ?? 0) & IScipIndex.SymbolRole.Definition) !== 0
-  ) {
-    throw new Error(`scip: ${label}.enclosingRange does not enclose its range`);
+  if (invalidEnclosingRange) {
+    warnings.push({
+      relativePath,
+      message: `scip: ${relativePath} occurrence ${
+        parsedSymbol.symbol === undefined
+          ? "without a symbol"
+          : JSON.stringify(parsedSymbol.symbol)
+      } at ${JSON.stringify(range)} carries an enclosing range that does not enclose it; the optional scope was omitted`,
+    });
   }
   return {
     range,
-    ...optionalString(occurrence.symbol, `${label}.symbol`, "symbol"),
+    ...parsedSymbol,
     ...(parsedSymbolRoles === undefined
       ? {}
       : { symbolRoles: parsedSymbolRoles }),
@@ -325,11 +381,19 @@ function occurrenceRangeOf(
 
 function singleLineRangeOf(value: unknown, label: string): number[] {
   const range = objectOf(value, label);
+  // Both protobuf JSON and the decoder's Go `encoding/json` output omit
+  // zero-valued proto3 scalars. Absence is therefore the encoded value zero,
+  // not a missing coordinate.
   return rangeOf(
     [
-      range.line,
-      fieldOf(range, "startCharacter", "start_character", label),
-      fieldOf(range, "endCharacter", "end_character", label),
+      proto3ScalarFieldOf(range, "line", "line", label),
+      proto3ScalarFieldOf(
+        range,
+        "startCharacter",
+        "start_character",
+        label,
+      ),
+      proto3ScalarFieldOf(range, "endCharacter", "end_character", label),
     ],
     label,
   );
@@ -339,10 +403,15 @@ function multiLineRangeOf(value: unknown, label: string): number[] {
   const range = objectOf(value, label);
   return rangeOf(
     [
-      fieldOf(range, "startLine", "start_line", label),
-      fieldOf(range, "startCharacter", "start_character", label),
-      fieldOf(range, "endLine", "end_line", label),
-      fieldOf(range, "endCharacter", "end_character", label),
+      proto3ScalarFieldOf(range, "startLine", "start_line", label),
+      proto3ScalarFieldOf(
+        range,
+        "startCharacter",
+        "start_character",
+        label,
+      ),
+      proto3ScalarFieldOf(range, "endLine", "end_line", label),
+      proto3ScalarFieldOf(range, "endCharacter", "end_character", label),
     ],
     label,
   );
@@ -607,18 +676,64 @@ function optionalEnumName<K extends string>(
   return { [key]: enumNameOf(value, label, names) } as Record<K, string>;
 }
 
+/**
+ * Preserve a protocol version that this decoder does not know yet.
+ *
+ * Protobuf keeps unknown enum numbers for forward compatibility. Most SCIP
+ * enums affect graph meaning and therefore remain closed below, but protocol
+ * version is metadata that graph does not interpret. Refusing a non-negative
+ * int32 here would reject an otherwise usable index merely because its
+ * producer is ahead of the decoder (and scip-php 0.1.0 already writes `1`
+ * despite bundling a schema that only names `0`). Negative values cannot be
+ * represented by graph's public protocol provenance contract. ProtoJSON enum
+ * strings remain enum identifiers: accepting a decimal string here would lose
+ * whether the producer wrote a name or a number before provenance sees it.
+ */
+function optionalProtocolVersion(
+  value: unknown,
+  label: string,
+): Partial<Record<"version", string>> {
+  if (value === undefined) return {};
+  if (typeof value === "string") {
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(value)) {
+      throw new Error(
+        `scip: ${label} must be a protobuf enum name or non-negative int32 number`,
+      );
+    }
+    return { version: value };
+  }
+  if (
+    typeof value !== "number" ||
+    !Number.isInteger(value) ||
+    value < 0 ||
+    value > 0x7fffffff
+  ) {
+    throw new Error(
+      `scip: ${label} must be a protobuf enum name or non-negative int32 number`,
+    );
+  }
+  return { version: PROTOCOL_VERSIONS[value] ?? String(value) };
+}
+
 function enumNameOf(
   value: unknown,
   label: string,
   names: Readonly<Record<number, string>>,
 ): string {
-  if (typeof value === "string") return value;
+  if (typeof value === "string") {
+    if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(value)) return value;
+    throw new Error(
+      `scip: ${label} must be a protobuf enum name or known number`,
+    );
+  }
   if (
     typeof value !== "number" ||
     !Number.isSafeInteger(value) ||
     names[value] === undefined
   ) {
-    throw new Error(`scip: ${label} must be a known enum name or number`);
+    throw new Error(
+      `scip: ${label} must be a protobuf enum name or known number`,
+    );
   }
   return names[value];
 }
@@ -642,6 +757,17 @@ function fieldOf(
     );
   }
   return camelValue !== undefined ? camelValue : snakeValue;
+}
+
+/** Apply proto3's scalar default only when JSON omitted the field. */
+function proto3ScalarFieldOf(
+  object: Record<string, unknown>,
+  camel: string,
+  snake: string,
+  label: string,
+): unknown {
+  const value = fieldOf(object, camel, snake, label);
+  return value === undefined ? 0 : value;
 }
 
 function nonEmptyString(value: unknown, label: string): string {
@@ -830,3 +956,493 @@ const SYMBOL_KINDS: Readonly<Record<number, string>> = {
   85: "Mixin",
   86: "Concept",
 };
+
+/**
+ * One document per path, folding the several a multi-TU language emits.
+ *
+ * The SCIP schema calls `relative_path` a "Unique path to the text document",
+ * and for a language whose file belongs to exactly one compilation that holds.
+ * C and C++ are not such languages: a source compiled into several translation
+ * units is indexed once per unit, and scip-clang emits a document for each.
+ * A vendored helper compiled into two binaries is the ordinary case. Neither
+ * the schema nor scip-clang says how a consumer should read that, so this
+ * decides.
+ *
+ * Refusing was the previous answer, on the ground that two records cannot both
+ * be one file's complete occurrence list and that merging would double every
+ * shared reference. The second half is what exact deduplication answers: two
+ * translation units reporting the same symbol at the same range with the same
+ * roles have stated one fact twice, not two facts. The union of what they say
+ * is the file's occurrence list; the alternative was that no C project with a
+ * shared source could be indexed at all, which is nearly all of them.
+ *
+ * Where they genuinely disagree — one range, two different symbols, which
+ * conditional compilation can produce — the union keeps both and says so.
+ * Publishing both is truthful, since the file really does mean two things in
+ * two units, but a reader must not discover that by accident.
+ */
+function foldDocumentsByPath(
+  documents: readonly IScipIndex.IDocument[],
+  warnings: string[],
+): IScipIndex.IDocument[] {
+  const byPath = new Map<string, IScipIndex.IDocument[]>();
+  const foldWarnings: IPathWarning[] = [];
+  const ambiguityWarnings: IPathWarning[] = [];
+  for (const document of documents) {
+    const units = byPath.get(document.relativePath) ?? [];
+    units.push(document);
+    byPath.set(document.relativePath, units);
+  }
+  const merged = [...byPath].map(([relativePath, units]) => {
+    const document =
+      units.length === 1 ? units[0]! : mergeDocuments(units);
+    if (units.length === 1) return document;
+    foldWarnings.push({
+      relativePath,
+      message: `scip: ${relativePath} was indexed as ${String(units.length)} translation units; their occurrences are folded into one document`,
+    });
+    ambiguityWarnings.push(...translationUnitAmbiguityWarnings(document));
+    return document;
+  });
+  pushBoundedPathWarnings(
+    warnings,
+    foldWarnings,
+    (count) =>
+      `scip: ${String(count)} files were indexed as multiple translation units; their occurrences were folded into one document per file; first ${String(MAX_TRANSLATION_UNIT_WARNING_EXAMPLES)} examples follow`,
+  );
+  pushBoundedPathWarnings(
+    warnings,
+    ambiguityWarnings,
+    (count, affectedFiles) =>
+      `scip: ${String(count)} ranges or symbol readings disagreed across translation units; every reading is published; affected files: ${String(affectedFiles)}; first ${String(MAX_TRANSLATION_UNIT_WARNING_EXAMPLES)} examples follow`,
+  );
+  // Sorted, because an indexer's document order is its own business and at
+  // least one producer's varies between runs of an unchanged project.
+  // rust-analyzer walks crates in parallel, and two indexes of one source have
+  // published different normalized snapshot bytes purely from the order they
+  // came back in — a difference the graph then reported as the project having
+  // moved. Ordering here makes every downstream digest a function of the facts
+  // rather than of the schedule that produced them.
+  return merged.sort((left, right) =>
+    left.relativePath < right.relativePath
+      ? -1
+      : left.relativePath > right.relativePath
+        ? 1
+        /* c8 ignore next -- `byPath` has one value per unique path. */
+        : 0,
+  );
+}
+
+function mergeDocuments(
+  documents: readonly IScipIndex.IDocument[],
+): IScipIndex.IDocument {
+  const first = documents[0]!;
+  // Text is per-file, not per-unit: two units compile the same bytes. A
+  // disagreement means they did not, which is a moved source rather than a
+  // merge to attempt.
+  let text: string | undefined;
+  let language: string | undefined;
+  let positionEncoding: string | undefined;
+  for (const document of documents) {
+    if (
+      text !== undefined &&
+      document.text !== undefined &&
+      text !== document.text
+    ) {
+      throw new Error(
+        `scip: two translation units disagree about the text of ${first.relativePath}`,
+      );
+    }
+    text ??= document.text;
+    language = compatibleDocumentScalar(
+      first.relativePath,
+      "language",
+      language,
+      document.language,
+    );
+    positionEncoding = compatibleDocumentScalar(
+      first.relativePath,
+      "position encoding",
+      positionEncoding,
+      document.positionEncoding,
+    );
+  }
+  const occurrences = mergeOccurrences(
+    ...documents.map((document) => document.occurrences ?? []),
+  );
+  const symbols = mergeSymbols(
+    first.relativePath,
+    ...documents.map((document) => document.symbols ?? []),
+  );
+  const diagnostics = mergeExact(
+    ...documents.map((document) => document.diagnostics ?? []),
+  );
+  return {
+    ...(language === undefined ? {} : { language }),
+    relativePath: first.relativePath,
+    ...(documents.every((document) => document.occurrences === undefined)
+      ? {}
+      : { occurrences }),
+    ...(documents.every((document) => document.symbols === undefined)
+      ? {}
+      : { symbols }),
+    ...(text === undefined ? {} : { text }),
+    ...(positionEncoding === undefined ? {} : { positionEncoding }),
+    // Preserve presence as well as contents. An omitted repeated field and an
+    // explicitly empty one encode the same proto value, but retaining the wire
+    // distinction here costs nothing and prevents the fold from erasing data.
+    ...(documents.every((document) => document.diagnostics === undefined)
+      ? {}
+      : { diagnostics }),
+  };
+}
+
+/**
+ * Merge occurrence facts without treating their coordinates as their meaning.
+ *
+ * The old fold keyed only by range and symbol. A token that is a definition in
+ * one conditional compilation and a reference in another therefore lost one
+ * reading, as did a scope or diagnostic carried by only one unit. Exact
+ * semantic twins fold; different roles, syntax, or scopes survive. Diagnostics
+ * are unioned on an otherwise identical occurrence so the common graph fact is
+ * not doubled merely because one unit attached another finding.
+ */
+function mergeOccurrences(
+  ...groups: readonly (readonly IScipIndex.IOccurrence[])[]
+): IScipIndex.IOccurrence[] {
+  const byCore = new Map<string, IScipIndex.IOccurrence[]>();
+  for (const group of groups) {
+    for (const occurrence of group) {
+      const core = occurrenceCoreKey(occurrence);
+      const readings = byCore.get(core) ?? [];
+      readings.push(occurrence);
+      byCore.set(core, readings);
+    }
+  }
+  return [...byCore.values()].map((readings) => {
+    const existing = readings[0]!;
+    const symbolRoles = readings.find(
+      (occurrence) => occurrence.symbolRoles !== undefined,
+    )?.symbolRoles;
+    const diagnostics = mergeExact(
+      ...readings.map((occurrence) => occurrence.diagnostics ?? []),
+    );
+    return {
+      range: existing.range,
+      ...(existing.symbol === undefined ? {} : { symbol: existing.symbol }),
+      ...(symbolRoles === undefined ? {} : { symbolRoles }),
+      ...(existing.syntaxKind === undefined
+        ? {}
+        : { syntaxKind: existing.syntaxKind }),
+      ...(existing.enclosingRange === undefined
+        ? {}
+        : { enclosingRange: existing.enclosingRange }),
+      ...(readings.every((occurrence) => occurrence.diagnostics === undefined)
+        ? {}
+        : { diagnostics }),
+    };
+  }).sort(compareOccurrence);
+}
+
+/**
+ * Name translation-unit ambiguity from the completed union, not from an
+ * intermediate pairwise fold. Three or more units can arrive in any order;
+ * deriving these warnings once makes their text a function of the final facts
+ * rather than of which partial union happened first.
+ */
+function translationUnitAmbiguityWarnings(
+  document: IScipIndex.IDocument,
+): IPathWarning[] {
+  const warnings: IPathWarning[] = [];
+  const claims = new Map<
+    string,
+    { range: string; symbol: string; cores: Set<string> }
+  >();
+  const symbolsByRange = new Map<string, Set<string>>();
+  for (const occurrence of document.occurrences ?? []) {
+    const range = rangeKey(occurrence.range);
+    const symbol = occurrence.symbol ?? "";
+    const core = occurrenceCoreKey(occurrence);
+    const claimKey = JSON.stringify([range, symbol]);
+    const claim = claims.get(claimKey) ?? {
+      range,
+      symbol,
+      cores: new Set<string>(),
+    };
+    claim.cores.add(core);
+    claims.set(claimKey, claim);
+    const rangeSymbols = symbolsByRange.get(range) ?? new Set<string>();
+    rangeSymbols.add(symbol);
+    symbolsByRange.set(range, rangeSymbols);
+  }
+  for (const symbols of symbolsByRange.values()) {
+    if (symbols.size <= 1) continue;
+    warnings.push({
+      relativePath: document.relativePath,
+      message: `scip: ${document.relativePath} resolves one range to ${[...symbols]
+        .sort(compareText)
+        .map((symbol) => JSON.stringify(symbol))
+        .join(", ")} across translation units; every reading is published`,
+    });
+  }
+  for (const claim of claims.values()) {
+    if (claim.cores.size <= 1) continue;
+    warnings.push({
+      relativePath: document.relativePath,
+      message: `scip: ${document.relativePath} reports ${JSON.stringify(claim.symbol)} at range ${claim.range} with different roles, syntax, or scopes across translation units; every reading is published`,
+    });
+  }
+  return warnings.sort((left, right) =>
+    compareText(left.message, right.message),
+  );
+}
+
+function pushBoundedPathWarnings(
+  warnings: string[],
+  examples: readonly IPathWarning[],
+  summary: (count: number, affectedFiles: number) => string,
+): void {
+  // Warnings ride every public dump. Keep the complete folded facts above, but
+  // do not make one warning string per ambiguous range in a large C build.
+  const unique = [
+    ...new Map(
+      examples.map((example) => [example.message, example] as const),
+    ).values(),
+  ].sort((left, right) => compareText(left.message, right.message));
+  if (unique.length <= MAX_TRANSLATION_UNIT_WARNING_EXAMPLES) {
+    warnings.push(...unique.map((example) => example.message));
+    return;
+  }
+  warnings.push(
+    summary(
+      unique.length,
+      new Set(unique.map((example) => example.relativePath)).size,
+    ),
+    ...unique
+      .slice(0, MAX_TRANSLATION_UNIT_WARNING_EXAMPLES)
+      .map((example) => example.message),
+  );
+}
+
+function occurrenceCoreKey(occurrence: IScipIndex.IOccurrence): string {
+  return JSON.stringify([
+    occurrence.range,
+    occurrence.symbol ?? null,
+    occurrence.symbolRoles ?? 0,
+    occurrence.syntaxKind ?? null,
+    occurrence.enclosingRange ?? null,
+  ]);
+}
+
+/**
+ * Merge one symbol's additive evidence while refusing irreconcilable scalars.
+ *
+ * Relationships are a fact union. Documentation contributes producer-local
+ * order constraints to one Markdown sequence, while a display name, kind, or
+ * enclosing symbol has one public slot. The documentation constraints merge
+ * deterministically unless they form a cycle; scalar disagreements and cyclic
+ * orders are refused rather than silently dropping or reordering evidence.
+ */
+function mergeSymbols(
+  file: string,
+  ...groups: readonly (readonly IScipIndex.ISymbolInformation[])[]
+): IScipIndex.ISymbolInformation[] {
+  const bySymbol = new Map<string, IScipIndex.ISymbolInformation[]>();
+  for (const group of groups) {
+    for (const symbol of group) {
+      const records = bySymbol.get(symbol.symbol) ?? [];
+      records.push(symbol);
+      bySymbol.set(symbol.symbol, records);
+    }
+  }
+  return [...bySymbol.values()].map((records) => {
+    const first = records[0]!;
+    let displayName: string | undefined;
+    let kind: string | undefined;
+    let enclosingSymbol: string | undefined;
+    for (const record of records) {
+      displayName = compatibleSymbolScalar(
+        file,
+        first.symbol,
+        "displayName",
+        displayName,
+        record.displayName,
+      );
+      kind = compatibleSymbolScalar(
+        file,
+        first.symbol,
+        "kind",
+        kind,
+        record.kind,
+      );
+      enclosingSymbol = compatibleSymbolScalar(
+        file,
+        first.symbol,
+        "enclosingSymbol",
+        enclosingSymbol,
+        record.enclosingSymbol,
+      );
+    }
+    const documentation = compatibleSymbolDocumentation(
+      file,
+      first.symbol,
+      records.map((record) => record.documentation),
+    );
+    const relationships = mergeExact(
+      ...records.map((record) => record.relationships ?? []),
+    );
+    return {
+      symbol: first.symbol,
+      ...(displayName === undefined ? {} : { displayName }),
+      ...(kind === undefined ? {} : { kind }),
+      ...(documentation === undefined ? {} : { documentation }),
+      ...(records.every((record) => record.relationships === undefined)
+        ? {}
+        : { relationships }),
+      ...(enclosingSymbol === undefined ? {} : { enclosingSymbol }),
+    };
+  }).sort((leftSymbol, rightSymbol) =>
+    compareText(leftSymbol.symbol, rightSymbol.symbol),
+  );
+}
+
+function compatibleSymbolDocumentation(
+  file: string,
+  symbol: string,
+  sequences: readonly (readonly string[] | undefined)[],
+): string[] | undefined {
+  if (sequences.every((sequence) => sequence === undefined)) return undefined;
+
+  interface IToken {
+    key: string;
+    line: string;
+    sortKey: string;
+  }
+  const nodes = new Map<string, IToken>();
+  const outgoing = new Map<string, Set<string>>();
+  const incoming = new Map<string, number>();
+  for (const sequence of sequences) {
+    if (sequence === undefined) continue;
+    const ordinals = new Map<string, number>();
+    let previous: string | undefined;
+    for (const line of sequence) {
+      const ordinal = ordinals.get(line) ?? 0;
+      ordinals.set(line, ordinal + 1);
+      const key = JSON.stringify([line, ordinal]);
+      if (!nodes.has(key)) {
+        nodes.set(key, {
+          key,
+          line,
+          sortKey: JSON.stringify([
+            line,
+            String(ordinal).padStart(16, "0"),
+          ]),
+        });
+        outgoing.set(key, new Set());
+        incoming.set(key, 0);
+      }
+      if (previous !== undefined) {
+        const targets = outgoing.get(previous)!;
+        if (!targets.has(key)) {
+          targets.add(key);
+          incoming.set(key, incoming.get(key)! + 1);
+        }
+      }
+      previous = key;
+    }
+  }
+
+  const compareToken = (left: IToken, right: IToken): number =>
+    compareText(left.sortKey, right.sortKey);
+  const available = [...nodes.values()]
+    .filter((token) => incoming.get(token.key) === 0)
+    .sort(compareToken);
+  const documentation: string[] = [];
+  while (available.length !== 0) {
+    const token = available.shift()!;
+    documentation.push(token.line);
+    for (const target of [...outgoing.get(token.key)!].sort((left, right) =>
+      compareToken(nodes.get(left)!, nodes.get(right)!),
+    )) {
+      const remaining = incoming.get(target)! - 1;
+      incoming.set(target, remaining);
+      if (remaining === 0) {
+        available.push(nodes.get(target)!);
+        available.sort(compareToken);
+      }
+    }
+  }
+  if (documentation.length !== nodes.size) {
+    throw new Error(
+      `scip: translation units disagree about documentation order for ${JSON.stringify(symbol)} in ${file}`,
+    );
+  }
+  return documentation;
+}
+
+function compatibleDocumentScalar(
+  file: string,
+  field: string,
+  left: string | undefined,
+  right: string | undefined,
+): string | undefined {
+  if (left !== undefined && right !== undefined && left !== right) {
+    throw new Error(
+      `scip: two translation units disagree about the ${field} of ${file}`,
+    );
+  }
+  return left ?? right;
+}
+
+function compatibleSymbolScalar(
+  file: string,
+  symbol: string,
+  field: "displayName" | "kind" | "enclosingSymbol",
+  left: string | undefined,
+  right: string | undefined,
+): string | undefined {
+  if (left !== undefined && right !== undefined && left !== right) {
+    throw new Error(
+      `scip: two translation units disagree about ${field} for ${symbol} in ${file}`,
+    );
+  }
+  return left ?? right;
+}
+
+/** Exact, stable union for already-validated records. */
+function mergeExact<T>(...groups: readonly (readonly T[])[]): T[] {
+  const merged = new Map<string, T>();
+  for (const group of groups) {
+    for (const value of group) {
+      const key = JSON.stringify(value);
+      if (!merged.has(key)) merged.set(key, value);
+    }
+  }
+  return [...merged].sort(([leftKey], [rightKey]) =>
+    compareText(leftKey, rightKey),
+  ).map(([, value]) => value);
+}
+
+/** A range's exact identity, without normalization. */
+function rangeKey(range: readonly number[]): string {
+  return range.join(",");
+}
+
+function compareOccurrence(
+  left: IScipIndex.IOccurrence,
+  right: IScipIndex.IOccurrence,
+): number {
+  const length = Math.min(left.range.length, right.range.length);
+  for (let index = 0; index < length; index++) {
+    const difference = left.range[index]! - right.range[index]!;
+    if (difference !== 0) return difference;
+  }
+  if (left.range.length !== right.range.length)
+    return left.range.length - right.range.length;
+  return compareText(occurrenceCoreKey(left), occurrenceCoreKey(right));
+}
+
+function compareText(left: string, right: string): number {
+  /* c8 ignore next 2 -- callers compare distinct set or map identities. */
+  return left < right ? -1 : left > right ? 1 : 0;
+}

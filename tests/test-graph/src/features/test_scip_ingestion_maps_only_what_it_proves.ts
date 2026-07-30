@@ -1,6 +1,7 @@
 import { TestValidator } from "@nestia/e2e";
 import {
   adaptScipIndex,
+  languageOf,
   parseScipIndex,
   scipSymbol,
 } from "@samchon/graph";
@@ -20,7 +21,18 @@ import {
 export const test_scip_ingestion_maps_only_what_it_proves = async () => {
   assertSymbolParsing();
   assertIndexValidation();
+  assertExternalSymbolsAreCanonical();
+  assertDocumentOrderIsDecidedHere();
+  assertTranslationUnitsFoldIntoOneDocument();
+  assertSparseTranslationUnitsPreserveOptionalEvidence();
+  assertDisagreeingUnitsAreNamed();
+  assertTranslationUnitFactsAreNotConflated();
+  assertTranslationUnitWarningsAreOrderIndependent();
+  assertTranslationUnitDocumentationIsPartiallyOrdered();
+  assertIrreconcilableTranslationUnitFactsAreRefused();
+  assertDisagreeingTextIsRefused();
   assertMapping();
+  assertAnUnreliableProducerLanguageCanYieldToTheFile();
   assertForwardDefinitionOrdering();
 };
 
@@ -230,7 +242,6 @@ function assertIndexValidation(): void {
             TypedEnclosingRange: {
               MultiLineEnclosingRange: {
                 start_line: 3,
-                start_character: 0,
                 end_line: 5,
                 end_character: 1,
               },
@@ -311,6 +322,57 @@ function assertIndexValidation(): void {
       },
     ],
   );
+  TestValidator.equals(
+    "an unknown numeric protocol version is retained without weakening semantic enums",
+    [
+      parseScipIndex({
+        metadata: { projectRoot: "file:///r", version: 1 },
+        documents: [],
+      }).metadata.version,
+      parseScipIndex({
+        metadata: {
+          projectRoot: "file:///r",
+          version: "FutureProtocolVersion",
+        },
+        documents: [],
+      }).metadata.version,
+    ],
+    ["1", "FutureProtocolVersion"],
+  );
+  const futureSemanticNames = parseScipIndex({
+    metadata: { projectRoot: "file:///r" },
+    documents: [
+      {
+        relativePath: "future.go",
+        symbols: [
+          {
+            symbol: "scip-go gomod example v1 `main`/Future#",
+            kind: "FutureSymbolKind",
+          },
+        ],
+        occurrences: [
+          {
+            range: [0, 0, 1],
+            symbol: "scip-go gomod example v1 `main`/Future#",
+            syntaxKind: "FutureSyntaxKind",
+            diagnostics: [
+              { message: "future", severity: "FutureSeverity" },
+            ],
+          },
+        ],
+      },
+    ],
+  });
+  TestValidator.equals(
+    "future semantic enum names remain available to conservative adapters",
+    [
+      futureSemanticNames.documents[0]?.symbols?.[0]?.kind,
+      futureSemanticNames.documents[0]?.occurrences?.[0]?.syntaxKind,
+      futureSemanticNames.documents[0]?.occurrences?.[0]?.diagnostics?.[0]
+        ?.severity,
+    ],
+    ["FutureSymbolKind", "FutureSyntaxKind", "FutureSeverity"],
+  );
 
   // Every rejection below is a shape that, if accepted, would attribute facts
   // to source that never produced them.
@@ -355,6 +417,48 @@ function assertIndexValidation(): void {
         ],
       },
     ],
+    [
+      "a fractional protocol version",
+      {
+        metadata: { projectRoot: "file:///r", version: 1.5 },
+        documents: [],
+      },
+    ],
+    [
+      "a numeric-looking protocol enum string",
+      {
+        metadata: { projectRoot: "file:///r", version: "1" },
+        documents: [],
+      },
+    ],
+    [
+      "a protocol version outside int32",
+      {
+        metadata: { projectRoot: "file:///r", version: 0x80000000 },
+        documents: [],
+      },
+    ],
+    [
+      "a negative protocol version",
+      {
+        metadata: { projectRoot: "file:///r", version: -1 },
+        documents: [],
+      },
+    ],
+    [
+      "a negative protocol version outside int32",
+      {
+        metadata: { projectRoot: "file:///r", version: -0x80000001 },
+        documents: [],
+      },
+    ],
+    [
+      "a nonnumeric protocol version",
+      {
+        metadata: { projectRoot: "file:///r", version: false },
+        documents: [],
+      },
+    ],
     ["a non-string occurrence symbol", withOccurrence({ range: [0, 0, 1], symbol: 1 })],
     ["an occurrence without any range", withOccurrence({ symbol: "s" })],
     ["a two-element range", withOccurrence({ range: [0, 1], symbol: "s" })],
@@ -392,10 +496,21 @@ function assertIndexValidation(): void {
       }),
     ],
     [
-      "a typed range with a missing coordinate",
+      "a typed range with a nonnumeric coordinate",
       withOccurrence({
         symbol: "s",
-        singleLineRange: { line: 0, startCharacter: 0 },
+        singleLineRange: { line: 0, startCharacter: 0, endCharacter: "1" },
+      }),
+    ],
+    [
+      "a typed range with an explicitly null coordinate",
+      withOccurrence({
+        symbol: "s",
+        singleLineRange: {
+          line: 0,
+          startCharacter: 0,
+          endCharacter: null,
+        },
       }),
     ],
     [
@@ -467,6 +582,14 @@ function assertIndexValidation(): void {
     [
       "an unknown numeric symbol kind",
       withSymbol({ symbol: "s", kind: 83 }),
+    ],
+    [
+      "a numeric-looking named syntax kind",
+      withOccurrence({
+        range: [0, 0, 1],
+        symbol: "s",
+        syntaxKind: "16",
+      }),
     ],
     [
       "non-array external symbols",
@@ -641,6 +764,41 @@ function assertIndexValidation(): void {
       [4, 0, 10],
     ],
   );
+  TestValidator.equals(
+    "omitted protobuf scalar coordinates retain their zero defaults",
+    [
+      parseScipIndex(
+        withOccurrence({
+          symbol: "s",
+          singleLineRange: { endCharacter: 1 },
+        }),
+      ).documents[0]!.occurrences![0]!.range,
+      parseScipIndex(
+        withOccurrence({
+          symbol: "s",
+          multiLineRange: { endCharacter: 1 },
+        }),
+      ).documents[0]!.occurrences![0]!.range,
+      parseScipIndex(
+        withOccurrence({
+          symbol: "s",
+          singleLineRange: {},
+        }),
+      ).documents[0]!.occurrences![0]!.range,
+      parseScipIndex(
+        withOccurrence({
+          symbol: "s",
+          multiLineRange: {},
+        }),
+      ).documents[0]!.occurrences![0]!.range,
+    ],
+    [
+      [0, 0, 1],
+      [0, 0, 0, 1],
+      [0, 0, 0],
+      [0, 0, 0, 0],
+    ],
+  );
   const typedMultiLine = parseScipIndex(
     withOccurrence({
       range: [2, 3, 4, 5],
@@ -681,17 +839,114 @@ function assertIndexValidation(): void {
     [rustAnalyzerReference.range, rustAnalyzerReference.enclosingRange],
     [[8, 4, 10], undefined],
   );
-  TestValidator.error(
-    "a definition whose enclosing range does not enclose it is refused",
-    () =>
-      parseScipIndex(
-        withOccurrence({
-          range: [8, 4, 10],
-          symbol: "s",
-          symbolRoles: 1,
-          enclosingRange: [1, 0, 5, 1],
-        }),
+  const definitionWarnings: string[] = [];
+  const malformedDefinition = parseScipIndex(
+    withOccurrence({
+      range: [8, 4, 10],
+      symbol: "s",
+      symbolRoles: 1,
+      enclosingRange: [1, 0, 5, 1],
+    }),
+    "scip-java",
+    definitionWarnings,
+  ).documents[0]!.occurrences![0]!;
+  TestValidator.equals(
+    "a malformed optional definition scope cannot poison the semantic occurrence",
+    [
+      malformedDefinition.symbol,
+      malformedDefinition.symbolRoles,
+      malformedDefinition.enclosingRange,
+    ],
+    ["s", 1, undefined],
+  );
+  TestValidator.equals(
+    "omitting a malformed optional definition scope is explicit",
+    definitionWarnings,
+    [
+      'scip: a.go occurrence "s" at [8,4,10] carries an enclosing range that does not enclose it; the optional scope was omitted',
+    ],
+  );
+  const symbolLessWarnings: string[] = [];
+  const malformedSymbolLess = parseScipIndex(
+    withOccurrence({
+      range: [8, 4, 10],
+      enclosingRange: [1, 0, 5, 1],
+    }),
+    "scip-java",
+    symbolLessWarnings,
+  ).documents[0]!.occurrences![0]!;
+  TestValidator.equals(
+    "a malformed symbol-less optional scope preserves its occurrence",
+    [malformedSymbolLess.range, malformedSymbolLess.enclosingRange],
+    [[8, 4, 10], undefined],
+  );
+  TestValidator.equals(
+    "a malformed symbol-less optional scope is named without inventing an identity",
+    symbolLessWarnings,
+    [
+      "scip: a.go occurrence without a symbol at [8,4,10] carries an enclosing range that does not enclose it; the optional scope was omitted",
+    ],
+  );
+  const amplifiedWarnings: string[] = [];
+  const repeatedMalformedScope = {
+    range: [0, 10, 11],
+    enclosingRange: [0, 0, 5],
+    symbol: "repeated",
+  };
+  const amplified = parseScipIndex(
+    {
+      metadata: { projectRoot: "file:///r" },
+      documents: [
+        {
+          relativePath: "flood.go",
+          occurrences: Array.from({ length: 12 }, (_, at) => 11 - at).map(
+            (line) => ({
+              range: [line, 10, 11],
+              enclosingRange: [line, 0, 5],
+              symbol: `s${String(line).padStart(2, "0")}`,
+            }),
+          ),
+        },
+        {
+          relativePath: "second.go",
+          occurrences: [repeatedMalformedScope, repeatedMalformedScope],
+        },
+      ],
+    },
+    "scip",
+    amplifiedWarnings,
+  );
+  const amplifiedOccurrences = amplified.documents.flatMap(
+    (document) => document.occurrences ?? [],
+  );
+  TestValidator.equals(
+    "every occurrence survives an amplified malformed optional-scope report",
+    [
+      amplifiedOccurrences.length,
+      amplifiedOccurrences.every(
+        (occurrence) => occurrence.enclosingRange === undefined,
       ),
+    ],
+    [14, true],
+  );
+  TestValidator.equals(
+    "amplified malformed optional-scope warnings are capped and deterministic",
+    [
+      amplifiedWarnings.length,
+      amplifiedWarnings[0],
+      amplifiedWarnings[1],
+      amplifiedWarnings[10],
+      amplifiedWarnings.some(
+        (warning) => warning.includes('"s10"') || warning.includes('"s11"'),
+      ),
+    ],
+    [
+      11,
+      "scip: 14 occurrences carry enclosing ranges that do not enclose them; optional scopes were omitted; affected files: 2; first 10 examples follow",
+      'scip: flood.go occurrence "s00" at [0,10,11] carries an enclosing range that does not enclose it; the optional scope was omitted',
+      'scip: flood.go occurrence "s09" at [9,10,11] carries an enclosing range that does not enclose it; the optional scope was omitted',
+      false,
+    ],
   );
   // Optional records the graph does not read are still validated, because a
   // malformed one is evidence the index was not produced the way it claims.
@@ -1074,6 +1329,172 @@ function assertLongLineScopeSelection(): void {
           edge.from === id("outer") &&
           edge.to === id("target"),
       ),
+  );
+}
+
+/**
+ * The protocol does not promise that `external_symbols` is unique or ordered.
+ *
+ * The adapter indexes it by symbol, so leaving duplicates in producer order
+ * made its last record silently win. External evidence follows the same merge
+ * contract as document symbols before that map can discard anything.
+ */
+function assertExternalSymbolsAreCanonical(): void {
+  const externalSymbols = [
+    {
+      symbol: "z",
+      display_name: "external",
+      documentation: ["Summary", "Left detail"],
+      relationships: [{ symbol: "left", is_reference: true }],
+    },
+    { symbol: "a" },
+    {
+      symbol: "z",
+      kind: "Function",
+      documentation: ["Summary", "Right detail"],
+      relationships: [{ symbol: "right", is_reference: true }],
+    },
+  ];
+  const parse = (symbols: readonly Record<string, unknown>[]) =>
+    parseScipIndex({
+      metadata: { projectRoot: "file:///r" },
+      documents: [],
+      external_symbols: symbols,
+    }).externalSymbols;
+  const canonical = parse(externalSymbols);
+  TestValidator.equals(
+    "duplicate external symbol evidence is merged and sorted",
+    canonical,
+    [
+      { symbol: "a" },
+      {
+        symbol: "z",
+        displayName: "external",
+        kind: "Function",
+        documentation: ["Summary", "Left detail", "Right detail"],
+        relationships: [
+          { symbol: "left", isReference: true },
+          { symbol: "right", isReference: true },
+        ],
+      },
+    ],
+  );
+  TestValidator.equals(
+    "external symbol producer order cannot change normalized evidence",
+    parse([...externalSymbols].reverse()),
+    canonical,
+  );
+
+  let conflict = "";
+  try {
+    parse([
+      { symbol: "s", display_name: "left" },
+      { symbol: "s", display_name: "right" },
+    ]);
+  } catch (error) {
+    conflict = error instanceof Error ? error.message : String(error);
+  }
+  TestValidator.predicate(
+    "conflicting external symbol identity is refused instead of selecting the last record",
+    conflict.includes("displayName") &&
+      conflict.includes("the external symbol table"),
+  );
+}
+
+function assertAnUnreliableProducerLanguageCanYieldToTheFile(): void {
+  const symbol = "scip-clang . example . `api`/run().";
+  const adapt = (
+    relativePath: string,
+    languages: readonly ("c" | "cpp")[],
+    statedLanguage: string | undefined,
+  ) =>
+    adaptScipIndex({
+      index: parseScipIndex({
+        metadata: { projectRoot: "file:///r" },
+        documents: [
+          {
+            // scip-clang 0.4.0 writes this value for every C and C++ document.
+            ...(statedLanguage === undefined
+              ? {}
+              : { language: statedLanguage }),
+            relativePath,
+            symbols: [{ symbol, displayName: "run", kind: "Function" }],
+            occurrences: [
+              { range: [0, 0, 3], symbol, symbolRoles: 0x1 },
+            ],
+          },
+        ],
+      }),
+      root: "/r",
+      provider: "scip-clang",
+      languages,
+      languageOf,
+      preferFileLanguage: true,
+    });
+
+  const source = adapt("src/main.c", ["c"], "C++");
+  TestValidator.equals(
+    "a hard-coded C++ document remains an owned C source",
+    [source.nodes[0]?.language, source.warnings],
+    ["c", []],
+  );
+  TestValidator.equals(
+    "an ambiguous header follows the only C dialect the session owns",
+    adapt("include/api.h", ["c"], "C++").nodes[0]?.language,
+    "c",
+  );
+  TestValidator.equals(
+    "the same ambiguous header follows a C++-only session",
+    adapt("include/api.h", ["cpp"], "C++").nodes[0]?.language,
+    "cpp",
+  );
+  const exactCppHeaderInC = adapt("include/api.H", ["c"], "C++");
+  TestValidator.predicate(
+    "an exact C++ header cannot enter a C-only snapshot",
+    exactCppHeaderInC.nodes.length === 0 &&
+      exactCppHeaderInC.warnings.some((warning) =>
+        warning.includes("whose cpp facts this provider does not own"),
+      ),
+  );
+  TestValidator.equals(
+    "an exact C++ header remains in a C++-only snapshot",
+    adapt("include/api.H", ["cpp"], "C++").nodes[0]?.language,
+    "cpp",
+  );
+  TestValidator.equals(
+    "a .inc include follows the only dialect the session owns",
+    adapt("include/generated.inc", ["c"], "C++").nodes[0]?.language,
+    "c",
+  );
+  TestValidator.equals(
+    "an extensionless include follows the only dialect the session owns",
+    adapt("include/generated", ["c"], "C++").nodes[0]?.language,
+    "c",
+  );
+  for (const extension of [".ipp", ".tpp", ".tcc", ".inl"]) {
+    TestValidator.equals(
+      `a ${extension} implementation header remains in the C++ universe`,
+      adapt(`include/api${extension}`, ["cpp"], "C++").nodes[0]?.language,
+      "cpp",
+    );
+  }
+  const foreign = adapt("src/kernel.cu", ["c"], "C++");
+  TestValidator.predicate(
+    "an unrelated unknown extension cannot borrow C ownership",
+    foreign.nodes.length === 0 &&
+      foreign.warnings.some((warning) =>
+        warning.includes("whose unknown facts this provider does not own"),
+      ),
+  );
+  TestValidator.equals(
+    "an ambiguous header retains the producer language when both dialects are owned",
+    adapt("include/api.h", ["c", "cpp"], "C++").nodes[0]?.language,
+    "cpp",
+  );
+  TestValidator.equals(
+    "an ambiguous header falls back to the file when the producer omits a language",
+    adapt("include/api.h", ["c", "cpp"], undefined).nodes[0]?.language,
+    "c",
   );
 }
 
@@ -1564,6 +1985,96 @@ function assertRelationshipsAndExternals(): void {
     "…and says which definition it kept",
     duplicated.warnings.some((warning) => warning.includes("keeping the first")),
   );
+
+  const repeatedFiles = Array.from(
+    { length: 12 },
+    (_, at) => `duplicate-${String(at).padStart(2, "0")}.go`,
+  );
+  const repeatedDefinitions = (files: string[]) => {
+    const result = adaptScipIndex({
+      index: parseScipIndex({
+        metadata: { projectRoot: "file:///r" },
+        documents: files.map((relativePath) => ({
+          relativePath,
+          symbols: [{ symbol: iface, displayName: "Reader", kind: "Interface" }],
+        })),
+      }),
+      root: "/r",
+      provider: "scip-go",
+      languages: ["go"],
+      languageOf: () => "go",
+    });
+    return { nodes: result.nodes, warnings: result.warnings };
+  };
+  const exactDuplicateLimit = repeatedDefinitions(repeatedFiles.slice(0, 11));
+  TestValidator.predicate(
+    "ten duplicate definitions need no summary",
+    exactDuplicateLimit.warnings.length === 10 &&
+      exactDuplicateLimit.warnings.every((warning) =>
+        warning.includes("is defined in both"),
+      ),
+  );
+  const sortedDuplicateWarnings = adaptScipIndex({
+    index: parseScipIndex({
+      metadata: { projectRoot: "file:///r" },
+      documents: [
+        {
+          relativePath: "order-00.go",
+          symbols: [
+            { symbol: iface, displayName: "Reader", kind: "Interface" },
+          ],
+        },
+        {
+          relativePath: "order-01.go",
+          symbols: [
+            { symbol: iface, displayName: "Reader", kind: "Interface" },
+          ],
+        },
+        {
+          relativePath: "order-02.go",
+          symbols: [{ symbol: impl, displayName: "File", kind: "Struct" }],
+        },
+        {
+          relativePath: "order-03.go",
+          symbols: [{ symbol: impl, displayName: "File", kind: "Struct" }],
+        },
+      ],
+    }),
+    root: "/r",
+    provider: "scip-go",
+    languages: ["go"],
+    languageOf: () => "go",
+  }).warnings;
+  TestValidator.predicate(
+    "duplicate warnings are sorted independently of producer traversal",
+    sortedDuplicateWarnings.length === 2 &&
+      sortedDuplicateWarnings[0]?.includes("/File#") === true &&
+      sortedDuplicateWarnings[1]?.includes("/Reader#") === true,
+  );
+  const boundedDuplicates = repeatedDefinitions(repeatedFiles);
+  TestValidator.equals(
+    "amplified duplicate definitions keep their complete canonical result",
+    repeatedDefinitions([...repeatedFiles].reverse()),
+    boundedDuplicates,
+  );
+  TestValidator.equals(
+    "…and still keep exactly one declaration",
+    boundedDuplicates.nodes.length,
+    1,
+  );
+  TestValidator.predicate(
+    "…while their warnings are summarized with ten deterministic examples",
+    boundedDuplicates.warnings.length === 11 &&
+      boundedDuplicates.warnings[0]?.includes(
+        "11 symbol definition(s) were repeated",
+      ) === true &&
+      boundedDuplicates.warnings.filter((warning) =>
+        warning.includes("is defined in both"),
+      ).length === 10 &&
+      boundedDuplicates.warnings.every(
+        (warning) => !warning.includes("duplicate-11.go"),
+      ),
+  );
 }
 
 function rawIndex(
@@ -1621,4 +2132,898 @@ function withOccurrence(occurrence: Record<string, unknown>): unknown {
 
 function withSymbol(symbol: Record<string, unknown>): unknown {
   return withDocument({ relativePath: "a.go", symbols: [symbol] });
+}
+
+/**
+ * A source compiled twice is one document, and the folding is said out loud.
+ *
+ * SCIP calls `relative_path` unique, and for one-compilation-per-file languages
+ * it is. C is not one: scip-clang indexes per translation unit, and redis
+ * brought the whole build down on `deps/xxhash/xxhash.c` appearing twice.
+ *
+ * Refusing was defensible — two records cannot both be a complete occurrence
+ * list — but it meant no C project sharing a source could ever be indexed. What
+ * makes folding safe is that two units reporting the same symbol at the same
+ * range stated one fact twice, so exact deduplication answers the doubling
+ * objection directly.
+ */
+function assertTranslationUnitsFoldIntoOneDocument(): void {
+  const warnings: string[] = [];
+  const index = parseScipIndex(
+    {
+      metadata: { projectRoot: "file:///r" },
+      documents: [
+        {
+          relative_path: "xxhash.c",
+          occurrences: [
+            { range: [1, 0, 4], symbol: "shared" },
+            { range: [2, 0, 4], symbol: "only-first" },
+          ],
+          symbols: [{ symbol: "shared" }],
+        },
+        {
+          relative_path: "xxhash.c",
+          occurrences: [
+            { range: [1, 0, 4], symbol: "shared" },
+            { range: [3, 0, 4], symbol: "only-second" },
+          ],
+          symbols: [{ symbol: "second-only-symbol" }],
+        },
+      ],
+    },
+    "scip-clang",
+    warnings,
+  );
+
+  TestValidator.equals(
+    "two translation units become one document",
+    index.documents.map((document) => document.relativePath),
+    ["xxhash.c"],
+  );
+  // The shared occurrence appears once: it is one fact stated twice, not two.
+  TestValidator.equals(
+    "their occurrences are unioned without doubling what they share",
+    (index.documents[0]?.occurrences ?? []).map(
+      (occurrence) => occurrence.symbol,
+    ),
+    ["shared", "only-first", "only-second"],
+  );
+  TestValidator.equals(
+    "and their symbol tables merge by symbol",
+    (index.documents[0]?.symbols ?? []).map((entry) => entry.symbol),
+    ["second-only-symbol", "shared"],
+  );
+  TestValidator.predicate(
+    "the fold is reported rather than performed silently",
+    warnings.some(
+      (warning) =>
+        warning.includes("xxhash.c") && warning.includes("2 translation units"),
+    ),
+  );
+}
+
+/**
+ * Optional SCIP fields remain optional while translation units are merged.
+ *
+ * A producer may omit a symbol on an occurrence, omit whole occurrence and
+ * symbol lists, or report source text from only one unit. Those are wire-level
+ * distinctions, so the fold must neither invent empty records nor discard the
+ * one unit that carried evidence.
+ */
+function assertSparseTranslationUnitsPreserveOptionalEvidence(): void {
+  const index = parseScipIndex({
+    metadata: { projectRoot: "file:///r" },
+    documents: [
+      {
+        relative_path: "sparse.c",
+        occurrences: [{ range: [1, 0, 1] }],
+        symbols: [{ symbol: "shared" }],
+      },
+      {
+        relative_path: "sparse.c",
+        text: "x\n",
+        occurrences: [
+          { range: [1, 0, 1] },
+          { range: [2, 0, 1] },
+        ],
+        symbols: [{ symbol: "shared" }, { symbol: "right-only" }],
+      },
+      { relative_path: "sparse.c" },
+      { relative_path: "sparse.c", text: "x\n" },
+      { relative_path: "empty.c" },
+      { relative_path: "empty.c" },
+    ],
+  });
+  const sparse = index.documents.find(
+    (document) => document.relativePath === "sparse.c",
+  );
+  const empty = index.documents.find(
+    (document) => document.relativePath === "empty.c",
+  );
+  TestValidator.equals(
+    "one unit's text and sparse records survive the fold without duplication",
+    {
+      text: sparse?.text,
+      occurrences: sparse?.occurrences?.map((entry) => entry.symbol),
+      symbols: sparse?.symbols?.map((entry) => entry.symbol),
+    },
+    {
+      text: "x\n",
+      occurrences: [undefined, undefined],
+      symbols: ["right-only", "shared"],
+    },
+  );
+  TestValidator.equals(
+    "two absent record lists remain absent",
+    [empty?.occurrences, empty?.symbols],
+    [undefined, undefined],
+  );
+}
+
+/**
+ * When two units disagree about one range, both survive and the reader is told.
+ *
+ * Conditional compilation makes this real rather than impossible. Publishing
+ * both is truthful — the file does mean two things in two units — but nobody
+ * should have to discover that by comparing counts.
+ */
+function assertDisagreeingUnitsAreNamed(): void {
+  const warnings: string[] = [];
+  const index = parseScipIndex(
+    {
+      metadata: { projectRoot: "file:///r" },
+      documents: [
+        {
+          relative_path: "cfg.c",
+          occurrences: [{ range: [1, 0, 4], symbol: "posix-impl" }],
+        },
+        {
+          relative_path: "cfg.c",
+          occurrences: [{ range: [1, 0, 4], symbol: "win32-impl" }],
+        },
+      ],
+    },
+    "scip-clang",
+    warnings,
+  );
+
+  TestValidator.equals(
+    "a range resolved two ways keeps both readings",
+    (index.documents[0]?.occurrences ?? []).map(
+      (occurrence) => occurrence.symbol,
+    ),
+    ["posix-impl", "win32-impl"],
+  );
+  TestValidator.predicate(
+    "and the disagreement is named, not folded away",
+    warnings.some(
+      (warning) =>
+        warning.includes("posix-impl") && warning.includes("win32-impl"),
+    ),
+  );
+}
+
+/**
+ * A shared coordinate is not a complete occurrence or document identity.
+ *
+ * Conditional compilation can change a token's role or scope while leaving its
+ * spelling and coordinates untouched. Each unit can also contribute its own
+ * diagnostics and relationships. Folding those records by range and symbol
+ * alone silently erased valid facts from every unit after the first.
+ */
+function assertTranslationUnitFactsAreNotConflated(): void {
+  const warnings: string[] = [];
+  const documents = [
+    {
+      relative_path: "conditional.c",
+      language: "C",
+      position_encoding: "UTF16CodeUnitOffsetFromLineStart",
+      diagnostics: [{ message: "left-document" }],
+      occurrences: [
+        {
+          range: [1, 0, 4],
+          symbol: "shared",
+          symbol_roles: 1,
+          diagnostics: [{ message: "shared-finding" }],
+        },
+        {
+          range: [2, 0, 4],
+          symbol: "same-core",
+          syntax_kind: 6,
+          enclosing_range: [2, 0, 2, 4],
+          diagnostics: [{ message: "left-occurrence" }],
+        },
+        {
+          range: [4, 0, 4],
+          symbol: "right-diagnostic-only",
+        },
+        {
+          range: [5, 0, 5],
+          symbol: "short-range",
+        },
+        {
+          range: [5, 0, 5, 6],
+          symbol: "long-range",
+        },
+        { range: [3, 0, 4], symbol: "default-role" },
+      ],
+      symbols: [
+        {
+          symbol: "shared",
+          display_name: "shared",
+          kind: "Function",
+          documentation: ["Summary first", "Details second"],
+          relationships: [
+            { symbol: "left-target", is_type_definition: true },
+          ],
+        },
+        {
+          symbol: "z-left-documentation",
+          documentation: ["left-only"],
+        },
+        {
+          symbol: "z-right-relationship",
+        },
+        { symbol: "z-right-documentation" },
+      ],
+    },
+    {
+      relative_path: "conditional.c",
+      language: "C",
+      position_encoding: "UTF16CodeUnitOffsetFromLineStart",
+      diagnostics: [
+        { message: "left-document" },
+        { message: "right-document" },
+      ],
+      occurrences: [
+        {
+          range: [1, 0, 4],
+          symbol: "shared",
+          symbol_roles: 0,
+          enclosing_range: [0, 0, 3, 0],
+        },
+        {
+          range: [2, 0, 4],
+          symbol: "same-core",
+          syntax_kind: 6,
+          enclosing_range: [2, 0, 2, 4],
+          diagnostics: [
+            { message: "left-occurrence" },
+            { message: "right-occurrence" },
+          ],
+        },
+        {
+          range: [4, 0, 4],
+          symbol: "right-diagnostic-only",
+          diagnostics: [{ message: "right-only-occurrence" }],
+        },
+        {
+          range: [3, 0, 4],
+          symbol: "default-role",
+          symbol_roles: 0,
+        },
+      ],
+      symbols: [
+        {
+          symbol: "shared",
+          kind: "Function",
+          documentation: ["Summary first", "Details second"],
+          enclosing_symbol: "owner",
+          relationships: [
+            { symbol: "right-target", is_type_definition: true },
+          ],
+        },
+        { symbol: "z-left-documentation" },
+        {
+          symbol: "z-right-documentation",
+          documentation: ["right-only"],
+        },
+        {
+          symbol: "z-right-relationship",
+          relationships: [
+            { symbol: "right-only-target", is_type_definition: true },
+          ],
+        },
+      ],
+    },
+  ];
+  const index = parseScipIndex(
+    {
+      metadata: { projectRoot: "file:///r" },
+      documents,
+    },
+    "scip-clang",
+    warnings,
+  );
+  const document = index.documents[0]!;
+  TestValidator.equals(
+    "same coordinates with different semantic fields remain distinct",
+    document.occurrences?.map((occurrence) => ({
+      symbol: occurrence.symbol,
+      roles: occurrence.symbolRoles,
+      syntax: occurrence.syntaxKind,
+      enclosing: occurrence.enclosingRange,
+      diagnostics: occurrence.diagnostics?.map(
+        (diagnostic) => diagnostic.message,
+      ),
+    })),
+    [
+      {
+        symbol: "shared",
+        roles: 0,
+        syntax: undefined,
+        enclosing: [0, 0, 3, 0],
+        diagnostics: undefined,
+      },
+      {
+        symbol: "shared",
+        roles: 1,
+        syntax: undefined,
+        enclosing: undefined,
+        diagnostics: ["shared-finding"],
+      },
+      {
+        symbol: "same-core",
+        roles: undefined,
+        syntax: "Identifier",
+        enclosing: [2, 0, 2, 4],
+        diagnostics: ["left-occurrence", "right-occurrence"],
+      },
+      {
+        symbol: "default-role",
+        roles: 0,
+        syntax: undefined,
+        enclosing: undefined,
+        diagnostics: undefined,
+      },
+      {
+        symbol: "right-diagnostic-only",
+        roles: undefined,
+        syntax: undefined,
+        enclosing: undefined,
+        diagnostics: ["right-only-occurrence"],
+      },
+      {
+        symbol: "short-range",
+        roles: undefined,
+        syntax: undefined,
+        enclosing: undefined,
+        diagnostics: undefined,
+      },
+      {
+        symbol: "long-range",
+        roles: undefined,
+        syntax: undefined,
+        enclosing: undefined,
+        diagnostics: undefined,
+      },
+    ],
+  );
+  TestValidator.equals(
+    "document diagnostics and symbol relationships are exact unions",
+    {
+      diagnostics: document.diagnostics?.map(
+        (diagnostic) => diagnostic.message,
+      ),
+      relationships: document.symbols?.[0]?.relationships?.map(
+        (relationship) => relationship.symbol,
+      ),
+      symbol: {
+        displayName: document.symbols?.[0]?.displayName,
+        kind: document.symbols?.[0]?.kind,
+        documentation: document.symbols?.[0]?.documentation,
+        enclosingSymbol: document.symbols?.[0]?.enclosingSymbol,
+      },
+      oneSidedDocumentation: document.symbols?.slice(1).map((symbol) => ({
+        symbol: symbol.symbol,
+        documentation: symbol.documentation,
+      })),
+      oneSidedRelationship: document.symbols
+        ?.find((symbol) => symbol.symbol === "z-right-relationship")
+        ?.relationships?.map((relationship) => relationship.symbol),
+    },
+    {
+      diagnostics: ["left-document", "right-document"],
+      relationships: ["left-target", "right-target"],
+      symbol: {
+        displayName: "shared",
+        kind: "Function",
+        documentation: ["Summary first", "Details second"],
+        enclosingSymbol: "owner",
+      },
+      oneSidedDocumentation: [
+        {
+          symbol: "z-left-documentation",
+          documentation: ["left-only"],
+        },
+        {
+          symbol: "z-right-documentation",
+          documentation: ["right-only"],
+        },
+        {
+          symbol: "z-right-relationship",
+          documentation: undefined,
+        },
+      ],
+      oneSidedRelationship: ["right-only-target"],
+    },
+  );
+  const reverseWarnings: string[] = [];
+  const reversed = parseScipIndex(
+    {
+      metadata: { projectRoot: "file:///r" },
+      documents: [...documents].reverse(),
+    },
+    "scip-clang",
+    reverseWarnings,
+  );
+  TestValidator.equals(
+    "translation-unit scheduling cannot change the normalized document",
+    [reversed.documents, reverseWarnings],
+    [index.documents, warnings],
+  );
+  TestValidator.predicate(
+    "role ambiguity is reported",
+    warnings.some(
+      (warning) =>
+        warning.includes("different roles") &&
+        warning.includes("shared"),
+    ),
+  );
+}
+
+/**
+ * Documentation contributes ordering constraints rather than one opaque scalar.
+ *
+ * Translation units can report subsets of one symbol's Markdown, and
+ * scip-clang does so in the benchmark corpus. Every producer-local order must
+ * survive, unrelated lines need one canonical tie-break, and a later unit must
+ * not inherit an artificial order chosen while folding two earlier units.
+ */
+function assertTranslationUnitDocumentationIsPartiallyOrdered(): void {
+  const documents: Record<string, unknown>[] = [
+    {
+      relative_path: "documentation.c",
+      symbols: [
+        { symbol: "empty", documentation: [] },
+        {
+          symbol: "diamond",
+          documentation: ["Start", "Left branch", "Tail"],
+        },
+        {
+          symbol: "ordered",
+          documentation: ["Summary", "Shared", "Left detail"],
+        },
+        { symbol: "later-order", documentation: ["Alpha"] },
+      ],
+    },
+    {
+      relative_path: "documentation.c",
+      symbols: [
+        {
+          symbol: "diamond",
+          documentation: ["Start", "Right branch", "Tail"],
+        },
+        {
+          symbol: "ordered",
+          documentation: ["Summary", "Shared", "Right detail"],
+        },
+        { symbol: "later-order", documentation: ["Beta"] },
+      ],
+    },
+    {
+      relative_path: "documentation.c",
+      symbols: [
+        {
+          symbol: "ordered",
+          documentation: [
+            "Right detail",
+            "Repeated",
+            "Repeated",
+            "Tail",
+          ],
+        },
+        {
+          symbol: "later-order",
+          documentation: ["Beta", "Alpha"],
+        },
+      ],
+    },
+  ];
+  const permutations = [
+    [0, 1, 2],
+    [0, 2, 1],
+    [1, 0, 2],
+    [1, 2, 0],
+    [2, 0, 1],
+    [2, 1, 0],
+  ];
+  const results = permutations.map((order) => {
+    const index = parseScipIndex({
+      metadata: { projectRoot: "file:///r" },
+      documents: order.map((at) => documents[at]!),
+    });
+    return index.documents[0]?.symbols?.map((symbol) => ({
+      symbol: symbol.symbol,
+      documentation: symbol.documentation,
+    }));
+  });
+  for (let index = 1; index < results.length; ++index) {
+    TestValidator.equals(
+      `documentation constraint permutation ${String(index)} is canonical`,
+      results[index],
+      results[0],
+    );
+  }
+  TestValidator.equals(
+    "documentation preserves source orders and canonically orders unrelated lines",
+    results[0],
+    [
+      {
+        symbol: "diamond",
+        documentation: ["Start", "Left branch", "Right branch", "Tail"],
+      },
+      {
+        symbol: "empty",
+        documentation: [],
+      },
+      {
+        symbol: "later-order",
+        documentation: ["Beta", "Alpha"],
+      },
+      {
+        symbol: "ordered",
+        documentation: [
+          "Summary",
+          "Shared",
+          "Left detail",
+          "Right detail",
+          "Repeated",
+          "Repeated",
+          "Tail",
+        ],
+      },
+    ],
+  );
+}
+
+/**
+ * Ambiguity belongs to the completed translation-unit union.
+ *
+ * Pairwise warning accumulation made a three-unit index remember which two
+ * units happened to merge first: the final facts matched, but a warning for
+ * that intermediate subset survived. Every permutation must instead publish
+ * the same complete warning set.
+ */
+function assertTranslationUnitWarningsAreOrderIndependent(): void {
+  const documents: Record<string, unknown>[] = [
+    {
+      relative_path: "three-units.c",
+      occurrences: [
+        {
+          range: [1, 0, 4],
+          symbol: "shared",
+          symbol_roles: 1,
+        },
+      ],
+    },
+    {
+      relative_path: "three-units.c",
+      occurrences: [
+        {
+          range: [1, 0, 4],
+          symbol: "shared",
+          symbol_roles: 0,
+          enclosing_range: [0, 0, 2, 0],
+        },
+      ],
+    },
+    {
+      relative_path: "three-units.c",
+      occurrences: [
+        {
+          range: [1, 0, 4],
+          symbol: "alternative",
+        },
+      ],
+    },
+  ];
+  const permutations = [
+    [0, 1, 2],
+    [0, 2, 1],
+    [1, 0, 2],
+    [1, 2, 0],
+    [2, 0, 1],
+    [2, 1, 0],
+  ];
+  const normalized = permutations.map((order) => {
+    const warnings: string[] = [];
+    const index = parseScipIndex(
+      {
+        metadata: { projectRoot: "file:///r" },
+        documents: order.map((at) => documents[at]!),
+      },
+      "scip-clang",
+      warnings,
+    );
+    return { documents: index.documents, warnings };
+  });
+  for (let i = 1; i < normalized.length; ++i)
+    TestValidator.equals(
+      `translation-unit permutation ${String(i)} has canonical facts and warnings`,
+      normalized[i],
+      normalized[0],
+    );
+  TestValidator.predicate(
+    "the complete three-unit ambiguity is reported exactly once",
+    normalized[0]!.warnings.filter((warning) =>
+      warning.includes('"alternative", "shared"'),
+    ).length === 1,
+  );
+
+  const amplified = Array.from({ length: 12 }, (_, at) => {
+    const relativePath = `bounded-${String(at).padStart(2, "0")}.c`;
+    return [
+      {
+        relativePath,
+        occurrences: [{ range: [0, 0, 1], symbol: `left-${String(at)}` }],
+      },
+      {
+        relativePath,
+        occurrences: [{ range: [0, 0, 1], symbol: `right-${String(at)}` }],
+      },
+    ];
+  }).flat();
+  const fold = (input: Record<string, unknown>[]) => {
+    const warnings: string[] = [];
+    const index = parseScipIndex(
+      {
+        metadata: { projectRoot: "file:///r" },
+        documents: input,
+      },
+      "scip-clang",
+      warnings,
+    );
+    return { documents: index.documents, warnings };
+  };
+  const foldedFiles = (count: number): Record<string, unknown>[] =>
+    Array.from({ length: count }, (_, at) => {
+      const relativePath = `fold-${String(at).padStart(2, "0")}.c`;
+      return [{ relativePath }, { relativePath }];
+    }).flat();
+  const exactFoldLimit = fold(foldedFiles(10));
+  TestValidator.predicate(
+    "ten translation-unit folds need no summary",
+    exactFoldLimit.warnings.length === 10 &&
+      exactFoldLimit.warnings.every((warning) =>
+        warning.includes("was indexed as 2 translation units"),
+      ),
+  );
+  const firstFoldOverLimit = fold(foldedFiles(11));
+  TestValidator.predicate(
+    "the eleventh translation-unit fold adds one summary and keeps ten examples",
+    firstFoldOverLimit.warnings.length === 11 &&
+      firstFoldOverLimit.warnings[0]?.includes(
+        "11 files were indexed as multiple translation units",
+      ) === true &&
+      firstFoldOverLimit.warnings.slice(1).every((warning) =>
+        warning.includes("was indexed as 2 translation units"),
+      ),
+  );
+  const ambiguousFiles = (counts: readonly number[]) =>
+    counts.flatMap((count, fileAt) => {
+      const relativePath = `ambiguity-${String(fileAt)}.c`;
+      const occurrences = (side: "left" | "right") =>
+        Array.from({ length: count }, (_, line) => ({
+          range: [line, 0, 1],
+          symbol: `${side}-${String(line)}`,
+        }));
+      return [
+        { relativePath, occurrences: occurrences("left") },
+        { relativePath, occurrences: occurrences("right") },
+      ];
+    });
+  const exactAmbiguityLimit = fold(ambiguousFiles([10]));
+  TestValidator.predicate(
+    "ten translation-unit ambiguities need no summary",
+    exactAmbiguityLimit.warnings.filter((warning) =>
+      warning.includes("resolves one range"),
+    ).length === 10 &&
+      exactAmbiguityLimit.warnings.every(
+        (warning) =>
+          !warning.includes(
+            "ranges or symbol readings disagreed across translation units",
+          ),
+      ),
+  );
+  const firstAmbiguityOverLimit = fold(ambiguousFiles([10, 1]));
+  TestValidator.predicate(
+    "the eleventh ambiguity summarizes ten examples and distinct affected files",
+    firstAmbiguityOverLimit.warnings.some((warning) =>
+      warning.includes(
+        "11 ranges or symbol readings disagreed across translation units; every reading is published; affected files: 2;",
+      ),
+    ) &&
+      firstAmbiguityOverLimit.warnings.filter((warning) =>
+        warning.includes("resolves one range"),
+      ).length === 10,
+  );
+  const bounded = fold(amplified);
+  TestValidator.equals(
+    "amplified translation-unit input has canonical facts and warnings",
+    fold([...amplified].reverse()),
+    bounded,
+  );
+  TestValidator.predicate(
+    "…and warning bounds never discard an occurrence",
+    bounded.documents.length === 12 &&
+      bounded.documents.reduce(
+        (count, document) => count + (document.occurrences?.length ?? 0),
+        0,
+      ) === 24,
+  );
+  TestValidator.predicate(
+    "…while each warning class carries one summary and ten examples",
+    bounded.warnings.length === 22 &&
+      bounded.warnings.some((warning) =>
+        warning.includes("12 files were indexed as multiple translation units"),
+      ) &&
+      bounded.warnings.some((warning) =>
+        warning.includes(
+          "12 ranges or symbol readings disagreed across translation units",
+        ),
+      ) &&
+      bounded.warnings.filter((warning) =>
+        warning.includes("was indexed as 2 translation units"),
+      ).length === 10 &&
+      bounded.warnings.filter((warning) =>
+        warning.includes("resolves one range"),
+      ).length === 10 &&
+      bounded.warnings.every(
+        (warning) =>
+          !warning.includes("bounded-10.c") &&
+          !warning.includes("bounded-11.c"),
+      ),
+  );
+}
+
+/**
+ * Some duplicate-document fields have one public slot and no truthful union.
+ *
+ * Text, coordinate encoding, document language, contradictory documentation
+ * order, and one symbol's scalar identity cannot be selected by
+ * translation-unit schedule. A disagreement rejects the index instead of
+ * publishing an arbitrary first reading.
+ */
+function assertIrreconcilableTranslationUnitFactsAreRefused(): void {
+  const cases: Array<[string, Record<string, unknown>, Record<string, unknown>]> =
+    [
+      [
+        "language",
+        { language: "C" },
+        { language: "CPP" },
+      ],
+      [
+        "position encoding",
+        { position_encoding: "UTF8CodeUnitOffsetFromLineStart" },
+        { position_encoding: "UTF16CodeUnitOffsetFromLineStart" },
+      ],
+      [
+        "displayName",
+        { symbols: [{ symbol: "s", display_name: "left" }] },
+        { symbols: [{ symbol: "s", display_name: "right" }] },
+      ],
+      [
+        "kind",
+        { symbols: [{ symbol: "s", kind: "Class" }] },
+        { symbols: [{ symbol: "s", kind: "Function" }] },
+      ],
+      [
+        "enclosingSymbol",
+        { symbols: [{ symbol: "s", enclosing_symbol: "left" }] },
+        { symbols: [{ symbol: "s", enclosing_symbol: "right" }] },
+      ],
+      [
+        "documentation",
+        {
+          symbols: [
+            {
+              symbol: "s",
+              documentation: ["Summary first", "Details second"],
+            },
+          ],
+        },
+        {
+          symbols: [
+            {
+              symbol: "s",
+              documentation: ["Details second", "Summary first"],
+            },
+          ],
+        },
+      ],
+    ];
+  for (const [field, left, right] of cases) {
+    let message = "";
+    try {
+      parseScipIndex({
+        metadata: { projectRoot: "file:///r" },
+        documents: [
+          { relative_path: "ambiguous.c", ...left },
+          { relative_path: "ambiguous.c", ...right },
+        ],
+      });
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+    TestValidator.predicate(
+      `translation units that disagree about ${field} are refused`,
+      message.includes(field) && message.includes("ambiguous.c"),
+    );
+  }
+}
+
+/**
+ * Two units that disagree about the bytes are not a merge to attempt.
+ *
+ * Text is per-file: two compilations of one source read the same bytes. A
+ * difference means they did not, which is a moved generation and exactly what
+ * the digest machinery exists to catch.
+ */
+function assertDisagreeingTextIsRefused(): void {
+  let message = "";
+  try {
+    parseScipIndex({
+      metadata: { projectRoot: "file:///r" },
+      documents: [
+        { relative_path: "moved.c", text: "before" },
+        { relative_path: "moved.c", text: "after" },
+      ],
+    });
+  } catch (error) {
+    message = error instanceof Error ? error.message : String(error);
+  }
+  TestValidator.predicate(
+    "a text disagreement across units is refused",
+    message.includes("disagree about the text of moved.c"),
+  );
+}
+
+/**
+ * Document order is the producer's business, so the parse decides it.
+ *
+ * rust-analyzer walks crates in parallel and its document order varies between
+ * runs of an unchanged project. Two indexes of one source then normalized to
+ * different bytes, which the graph reported as the project having moved —
+ * intermittently, and on every platform at once, which is the shape of a
+ * schedule rather than a change.
+ */
+function assertDocumentOrderIsDecidedHere(): void {
+  const index = parseScipIndex({
+    metadata: { projectRoot: "file:///r" },
+    documents: [
+      { relative_path: "z.rs" },
+      { relative_path: "a.rs" },
+      { relative_path: "m.rs" },
+    ],
+  });
+  TestValidator.equals(
+    "documents are ordered by path, not by arrival",
+    index.documents.map((document) => document.relativePath),
+    ["a.rs", "m.rs", "z.rs"],
+  );
+
+  const reversed = parseScipIndex({
+    metadata: { projectRoot: "file:///r" },
+    documents: [
+      { relative_path: "m.rs" },
+      { relative_path: "z.rs" },
+      { relative_path: "a.rs" },
+    ],
+  });
+  TestValidator.equals(
+    "so two arrival orders of one project parse identically",
+    JSON.stringify(reversed.documents),
+    JSON.stringify(index.documents),
+  );
 }

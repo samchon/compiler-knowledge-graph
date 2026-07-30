@@ -14,7 +14,18 @@ const producer = producerArgument.slice("--producer=".length);
 const forwarded = args.filter((arg) => arg !== producerArgument);
 const heuristic = process.env.SAMCHON_GRAPH_FIXTURE_MODE === "heuristic";
 
-if (forwarded.includes("--version")) {
+// scip-php deliberately has no version flag. Its real entry point ignores that
+// unknown option and continues into indexing, so preserving the convenient
+// fake-version shortcut for this producer would make the configuration test
+// incapable of detecting the destructive probe it exists to forbid.
+if (producer !== "scip-php" && forwarded.includes("--version")) {
+  process.stdout.write(`${producer} v1.0.0\n`);
+  process.exit(0);
+}
+if (
+  (producer === "rustc" && forwarded.includes("-vV")) ||
+  (producer === "cargo" && forwarded.includes("-V"))
+) {
   process.stdout.write(`${producer} v1.0.0\n`);
   process.exit(0);
 }
@@ -30,17 +41,21 @@ if (producer === "scip") {
 
 const descriptions = {
   "scip-clang": [
-    { language: "C", file: "src/main.c" },
+    // Upstream v0.4.0 hard-codes CPP on every document. The product must recover
+    // the C slice from the file rather than teaching this oracle a nicer value.
+    { language: "C++", file: "src/main.c" },
     { language: "C++", file: "src/main.cpp" },
   ],
   "scip-java": [
     { language: "Java", file: "src/Main.java" },
     { language: "Kotlin", file: "src/Main.kt" },
-    { language: "Scala", file: "src/Main.scala" },
   ],
   "scip-dotnet": [{ language: "C#", file: "src/Main.cs" }],
   "scip-python": [{ language: "Python", file: "src/main.py" }],
   "scip-ruby": [{ language: "Ruby", file: "src/main.rb" }],
+  "scip-php": [{ language: "PHP", file: "src/main.php" }],
+  // Keyed by the binary, not the provider: dart's indexer ships as `scip_dart`.
+  scip_dart: [{ language: "Dart", file: "src/main.dart" }],
   "rust-analyzer": [{ language: "Rust", file: "src/lib.rs" }],
 };
 /**
@@ -60,17 +75,48 @@ const descriptions = {
  */
 const contracts = {
   // `scip-clang --compdb-path=… --index-output-path=… --temporary-output-dir=…`
+  //
+  // Neither reproducibility flag survives. `--jobs` overrides an NCPUs default
+  // and buys determinism by serializing the compiler; `--deterministic` sorts
+  // what this package sorts again on arrival and held a conformance lane four
+  // times over its budget. Both are refused in every spelling, because
+  // forbidding one form would let `-j1` or a later re-addition walk back in.
   "scip-clang": (args) => ({
     leading: [],
     requires: ["--compdb-path=", "--temporary-output-dir="],
+    forbids: ["--deterministic"],
+    forbidsPrefix: ["--jobs", "-j"],
     output: valueOf(args, "--index-output-path="),
   }),
-  // `scip-java index --output <path>`
-  "scip-java": (args) => ({
-    leading: ["index"],
-    requires: [],
-    output: valueAfter(args, "--output"),
-  }),
+  // `scip-java index --output <path> [-- <build command>]`. The released
+  // producer's injected tasks cannot be configuration-cached, while Maven
+  // needs to retain its own default command instead of receiving Gradle tasks.
+  "scip-java": (args) => {
+    const gradle = [
+      "settings.gradle",
+      "settings.gradle.kts",
+      "gradlew",
+      "gradlew.bat",
+      "build.gradle",
+      "build.gradle.kts",
+    ].some((file) => fs.statSync(path.join(process.cwd(), file), {
+      throwIfNoEntry: false,
+    })?.isFile());
+    const gradleCommand = [
+      "--",
+      "--no-configuration-cache",
+      "clean",
+      "scipPrintDependencies",
+      "scipCompileAll",
+    ];
+    return {
+      leading: ["index"],
+      requires: gradle ? gradleCommand : [],
+      valueless: gradleCommand,
+      forbids: gradle ? [] : gradleCommand,
+      output: valueAfter(args, "--output"),
+    };
+  },
   // `scip-dotnet index --output <path>`
   "scip-dotnet": (args) => ({
     leading: ["index"],
@@ -83,11 +129,55 @@ const contracts = {
     requires: ["--project-name"],
     output: valueAfter(args, "--output"),
   }),
-  // `scip-ruby . --index-file <path>`
-  "scip-ruby": (args) => ({
-    leading: ["."],
+  // `scip-ruby . --index-file <path> --gem-metadata <name@version>` for a
+  // project such as this fixture that has no Gemfile.lock or gemspec.
+  "scip-ruby": (args) => {
+    const declared =
+      fs.statSync(path.join(process.cwd(), "Gemfile.lock"), {
+        throwIfNoEntry: false,
+      })?.isFile() === true ||
+      fs
+        .readdirSync(process.cwd(), { withFileTypes: true })
+        .some((entry) => entry.isFile() && entry.name.endsWith(".gemspec"));
+    const expected = process.env.SAMCHON_GRAPH_FIXTURE_GEM_METADATA;
+    if (
+      expected !== undefined &&
+      valueAfter(args, "--gem-metadata") !== expected
+    ) {
+      throw new Error(
+        `fake standard provider: scip-ruby expected --gem-metadata ${expected}`,
+      );
+    }
+    return {
+      leading: ["."],
+      requires: declared ? [] : ["--gem-metadata"],
+      forbids: declared ? ["--gem-metadata"] : [],
+      output: valueAfter(args, "--index-file"),
+    };
+  },
+  // `scip_dart --output <path> .`
+  //
+  // The flag exists despite pub.dev listing none: `bin/scip_dart.dart` declares
+  // `addOption('output', abbr: 'o', defaultsTo: 'index.scip')`. Taking the
+  // published summary at its word would have put dart behind a shim it does not
+  // need.
+  scip_dart: (args) => ({
+    leading: [],
+    requires: ["."],
+    // A positional, not a flag: nothing follows it, and the required-argument
+    // check otherwise demands a value after every non-`=` entry.
+    valueless: ["."],
+    output: valueAfter(args, "--output"),
+  }),
+  // `scip-php` — no output flag at all. `bin/scip-php` declares only `--help`
+  // and `--memory-limit`, takes `getcwd()` as the project root, and ends with
+  // `file_put_contents('index.scip', …)`. The fixture writes exactly where the
+  // real tool would, which is what makes the session's `artifactFrom` move a
+  // tested path rather than an assumed one.
+  "scip-php": () => ({
+    leading: [],
     requires: [],
-    output: valueAfter(args, "--index-file"),
+    output: path.join(process.cwd(), "index.scip"),
   }),
   // `rust-analyzer scip . --exclude-vendored-libraries --output <path>`
   "rust-analyzer": (args) => ({
@@ -134,6 +224,23 @@ if (scip !== undefined) {
       );
     }
   }
+  for (const forbidden of contract.forbids ?? []) {
+    if (forwarded.includes(forbidden)) {
+      throw new Error(
+        `fake standard provider: ${producer} was invoked with forbidden ${forbidden}`,
+      );
+    }
+  }
+  // A forbidden option family, not one spelling of it. `--jobs=1`, `--jobs 1`,
+  // `-j1` and `-j 1` all reach the same upstream setting, so an exact-string
+  // refusal would pass for three of the four.
+  for (const forbidden of contract.forbidsPrefix ?? []) {
+    if (forwarded.some((argument) => argument.startsWith(forbidden))) {
+      throw new Error(
+        `fake standard provider: ${producer} was invoked with forbidden ${forbidden}`,
+      );
+    }
+  }
   const output = contract.output;
   if (output === undefined) {
     throw new Error(
@@ -150,7 +257,16 @@ if (scip !== undefined) {
         path.join(process.cwd(), document.file),
         "utf8",
       );
-      const semantic = scipCorpus(index, text);
+      const semantic = scipCorpus(index, text, {
+        // These are the pinned producers that actually populate
+        // occurrence.enclosing_range, which is the common adapter's only
+        // grounded origin for a reference occurrence.
+        groundReferences: [
+          "scip-java",
+          "scip-python",
+          "rust-analyzer",
+        ].includes(producer),
+      });
       return {
         language: document.language,
         relativePath: document.file,
@@ -163,7 +279,116 @@ if (scip !== undefined) {
   process.exit(0);
 }
 
-const sidecarLanguages = new Set(["go", "swift", "zig", "php", "lua", "dart"]);
+// dart is absent: it is a SCIP producer now, driven through the `contracts`
+// table above like every other one, rather than a sidecar named after a program
+// that was never written.
+// Lua's producer is lua-language-server driven through its own `--doc` export,
+// so the fixture stands in for the server rather than for a sidecar binary. It
+// holds the invocation to the exact shape the provider builds and writes the
+// exporter's artifact where `--doc_out_path` says, which is what makes the
+// session's contract a tested path instead of an assumed one.
+if (producer === "lua-language-server") {
+  const outDir = valueOf(forwarded, "--doc_out_path=");
+  const doc = valueOf(forwarded, "--doc=");
+  const config = valueOf(forwarded, "--configpath=");
+  for (const [flag, value] of [
+    ["--doc=", doc],
+    ["--doc_out_path=", outDir],
+    ["--configpath=", config],
+  ]) {
+    if (value === undefined || value === "") {
+      throw new Error(
+        `fake standard provider: lua-language-server was invoked without ${flag}`,
+      );
+    }
+  }
+  // The config is what points the server at our exporter. A run that never
+  // wrote it would silently use the stock documentation export, which emits no
+  // references at all.
+  if (!fs.existsSync(config)) {
+    throw new Error(
+      `fake standard provider: lua-language-server config ${config} does not exist`,
+    );
+  }
+  const script = JSON.parse(fs.readFileSync(config, "utf8"))[
+    "Lua.docScriptPath"
+  ];
+  if (typeof script !== "string" || !script.startsWith("/")) {
+    throw new Error(
+      "fake standard provider: the lua config carries no rooted docScriptPath",
+    );
+  }
+  // Derived from the shared corpus rather than hard-coded, so the fixture
+  // cannot drift from the source every provider is measured against. The real
+  // exporter reports a declaration's name span and, separately, the span of the
+  // function it holds — the probe measured a six-character `setglobal` whose
+  // `.value` was a thirty-character `function` — and the containing span is
+  // what lets a reference be attributed to the declaration it sits inside.
+  const file = "src/main.lua";
+  const text = fs.readFileSync(path.join(process.cwd(), file), "utf8");
+  const lines = text.split(/\r?\n/);
+  const nodes = [];
+  const edges = [];
+  for (const [line, body] of lines.entries()) {
+    const declared = /^function\s+([A-Za-z_]\w*)/.exec(body);
+    if (declared === null) continue;
+    const name = declared[1];
+    const at = body.indexOf(name);
+    nodes.push({
+      name,
+      kind: "function",
+      sourceType: "function",
+      location: {
+        file,
+        startLine: line,
+        startColumn: at,
+        endLine: line,
+        endColumn: at + name.length,
+      },
+      body: {
+        file,
+        startLine: line,
+        startColumn: 0,
+        endLine: line,
+        endColumn: body.length,
+      },
+    });
+  }
+  // `callee()` is used inside `caller`'s body, which is the relationship the
+  // shared corpus checks: the edge runs from the declaration containing the use
+  // to the one it names.
+  for (const [index, node] of nodes.entries()) {
+    for (const [line, body] of lines.entries()) {
+      if (line === node.location.startLine) continue;
+      const used = body.indexOf(`${node.name}(`);
+      if (used === -1) continue;
+      edges.push({
+        from: index + 1,
+        kind: "references",
+        sourceType: "getglobal",
+        location: {
+          file,
+          startLine: line,
+          startColumn: used,
+          endLine: line,
+          endColumn: used + node.name.length,
+        },
+      });
+    }
+  }
+  write(path.join(outDir, "samchon-graph-lua.json"), {
+    schemaVersion: 2,
+    compilerVersion: "Lua 5.4",
+    files: [file],
+    nodes,
+    edges,
+    skipped: { unnamed: 0, outsideRoot: 0, refsFailed: 0 },
+    warnings: [],
+  });
+  process.exit(0);
+}
+
+const sidecarLanguages = new Set(["go", "swift", "zig"]);
 const sidecarLanguage = producer.startsWith("samchon-graph-")
   ? producer.slice("samchon-graph-".length)
   : producer;
@@ -216,13 +441,14 @@ throw new Error(`fake standard provider: unknown producer ${producer}`);
 /**
  * The common strict-fixture corpus.
  *
- * Its positive reference and comment-only negative twin are deliberately
- * simple enough for every registered standard provider to state.  The
- * `heuristic` form is still schema-valid: it models the exact bad provider the
- * conformance gate exists to reject, one that turns a prose mention into a
- * declaration and reference.
+ * Its declarations and comment-only negative twin are deliberately simple
+ * enough for every registered standard provider to state. Providers that
+ * claim references also ground the positive occurrence. The `heuristic` form
+ * is still schema-valid: it models the exact bad provider the conformance gate
+ * exists to reject, one that turns a prose mention into a declaration and,
+ * where supported, a reference.
  */
-function scipCorpus(scope, text) {
+function scipCorpus(scope, text, { groundReferences }) {
   const packageName = `pkg${scope}`;
   const caller = `scip-fake fake example v1 \`${packageName}\`/caller().`;
   const callee = `scip-fake fake example v1 \`${packageName}\`/callee().`;
@@ -253,7 +479,7 @@ function scipCorpus(scope, text) {
   const occurrences = [
     {
       range: callerRange,
-      enclosingRange: callerScope,
+      ...(groundReferences ? { enclosingRange: callerScope } : {}),
       symbol: caller,
       symbolRoles: 1,
     },

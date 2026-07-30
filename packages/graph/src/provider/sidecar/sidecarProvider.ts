@@ -5,6 +5,7 @@ import {
 } from "../../typings";
 import { assertGraphSnapshotContract } from "../assertGraphSnapshotContract";
 import { IGraphProvider } from "../IGraphProvider";
+import { toolchainVersion } from "../toolchainVersion";
 import { SidecarSession } from "./SidecarSession";
 
 /** Build one registry entry for a normalized compiler/analyzer sidecar. */
@@ -23,8 +24,15 @@ export function sidecarProvider(
     ...(configuration === undefined
       ? {}
       : {
-          configuration: (root, env) =>
-            configuration(root, props.languages, env),
+          configuration: (root, env) => [
+            ...toolchainVersion.normalize(
+              configuration(root, props.languages, env),
+            ).rows,
+          ],
+          configurationDerivation: (root, env) =>
+            toolchainVersion.normalize(
+              configuration(root, props.languages, env),
+            ),
         }),
     refuse: (options) => {
       const refused: string[] = [];
@@ -93,6 +101,6 @@ export namespace sidecarProvider {
       root: string,
       languages: readonly GraphLanguage[],
       env?: NodeJS.ProcessEnv,
-    ) => readonly string[];
+    ) => readonly string[] | toolchainVersion.IDerivation;
   }
 }

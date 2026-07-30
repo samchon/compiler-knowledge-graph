@@ -18,6 +18,7 @@ export function parseGraphArgs(argv: readonly string[]): IGraphArguments {
     };
     if (arg === "--cwd") options.cwd = next();
     else if (arg.startsWith("--cwd=")) options.cwd = arg.slice("--cwd=".length);
+    else if (arg === "--no-strict") options.strict = false;
     else if (arg === "--mode") options.mode = parseMode(next());
     else if (arg.startsWith("--mode="))
       options.mode = parseMode(arg.slice("--mode=".length));

@@ -16,16 +16,34 @@ export function providerInputFiles(
 ): string[] {
   const resolved = path.resolve(root);
   const extensions = allExtensions(languages);
+  const compoundSuffixes: string[] = [];
   for (const extension of extraExtensions) {
-    extensions.add(extension.toLowerCase());
+    const normalized = extension.toLowerCase();
+    if (normalized.indexOf(".", 1) === -1) extensions.add(normalized);
+    else compoundSuffixes.push(normalized);
   }
   const inputs = new Set(
     walkSourceFiles(resolved, { extensions }).map(
       (file) => normalizePath(path.relative(resolved, file)),
     ),
   );
-  const names = new Set(buildFileNames);
-  visitBuildInputs(resolved, resolved, names, inputs);
+  const names = new Set(
+    buildFileNames.filter((name) => !/[\\/]/.test(name)),
+  );
+  const paths = new Set(
+    buildFileNames
+      .filter((name) => /[\\/]/.test(name))
+      .map((name) => normalizePath(name)),
+  );
+  visitBuildInputs(
+    resolved,
+    resolved,
+    names,
+    paths,
+    compoundSuffixes,
+    false,
+    inputs,
+  );
   return [...inputs].sort(compareOrdinal);
 }
 
@@ -33,6 +51,9 @@ function visitBuildInputs(
   root: string,
   directory: string,
   names: ReadonlySet<string>,
+  paths: ReadonlySet<string>,
+  compoundSuffixes: readonly string[],
+  exactOnly: boolean,
   inputs: Set<string>,
 ): void {
   let entries: fs.Dirent[];
@@ -47,12 +68,36 @@ function visitBuildInputs(
   entries.sort((left, right) => compareOrdinal(left.name, right.name));
   for (const entry of entries) {
     const absolute = path.join(directory, entry.name);
+    const relative = normalizePath(path.relative(root, absolute));
     if (entry.isDirectory()) {
-      if (DEFAULT_IGNORES.has(entry.name)) continue;
+      const ignored = DEFAULT_IGNORES.has(entry.name);
+      const declaredDescendant = [...paths].some((input) =>
+        input.startsWith(`${relative}/`),
+      );
+      if (ignored && (entry.name === ".git" || !declaredDescendant)) {
+        continue;
+      }
       if (fs.existsSync(path.join(absolute, ".git"))) continue;
-      visitBuildInputs(root, absolute, names, inputs);
-    } else if (entry.isFile() && names.has(entry.name)) {
-      inputs.add(normalizePath(path.relative(root, absolute)));
+      visitBuildInputs(
+        root,
+        absolute,
+        names,
+        paths,
+        compoundSuffixes,
+        exactOnly || ignored,
+        inputs,
+      );
+    } else if (entry.isFile()) {
+      if (entry.name === ".git") continue;
+      const lower = entry.name.toLowerCase();
+      if (
+        paths.has(relative) ||
+        (!exactOnly &&
+          (names.has(entry.name) ||
+            compoundSuffixes.some((suffix) => lower.endsWith(suffix))))
+      ) {
+        inputs.add(relative);
+      }
     }
   }
 }

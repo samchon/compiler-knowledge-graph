@@ -1,5 +1,6 @@
 import { IGraphProvider } from "./IGraphProvider";
 import { goGraphProvider } from "./go/goGraphProvider";
+import { luaGraphProvider } from "./lua/luaGraphProvider";
 import { rustScipProvider } from "./rust/rustScipProvider";
 import { standardScipProviders } from "./scip/standardScipProviders";
 import { standardSidecarProviders } from "./sidecar/standardSidecarProviders";
@@ -23,6 +24,7 @@ import { ttscGraphProvider } from "./ttscgraph/ttscGraphProvider";
 export const GRAPH_PROVIDERS: readonly IGraphProvider[] = [
   ttscGraphProvider,
   goGraphProvider,
+  luaGraphProvider,
   rustScipProvider,
   ...standardScipProviders,
   ...standardSidecarProviders,

@@ -8,6 +8,7 @@ import {
   providerInputFiles,
   resolveProviderCommand,
 } from "@samchon/graph";
+import { languageBuildInputs } from "../../../../packages/graph/src/indexer/languageBuildInputs";
 import { spawnableCommand } from "../../../../packages/graph/src/utils/spawnableCommand";
 
 import { GraphPaths } from "../internal/GraphPaths";
@@ -42,6 +43,14 @@ export const test_provider_commands_and_inputs_respect_project_boundaries =
       fs.writeFileSync(path.join(root, "ignored", "node_modules", "go.mod"), "ignored\n");
       fs.writeFileSync(path.join(root, "foreign", "go.mod"), "foreign\n");
       fs.writeFileSync(path.join(root, "foreign", "foreign.go"), "package foreign\n");
+      fs.writeFileSync(
+        path.join(root, "src", "nested", "model.rb"),
+        "class Model; end\n",
+      );
+      fs.mkdirSync(path.join(root, "sorbet"), { recursive: true });
+      fs.mkdirSync(path.join(root, "other"), { recursive: true });
+      fs.writeFileSync(path.join(root, "sorbet", "config"), "--dir=.\n");
+      fs.writeFileSync(path.join(root, "other", "config"), "--ignore=.\n");
 
       TestValidator.equals(
         "source and nested build inputs are sorted inside one checkout",
@@ -53,6 +62,107 @@ export const test_provider_commands_and_inputs_respect_project_boundaries =
           "src/nested/go.mod",
           "src/nested/worker.go",
         ],
+      );
+      TestValidator.equals(
+        "a path-qualified build input watches only that exact relative file",
+        providerInputFiles(root, [], ["sorbet/config"]),
+        ["sorbet/config"],
+      );
+      TestValidator.equals(
+        "a generic lane keeps a path-qualified build input at its root",
+        languageBuildInputs(root, ["ruby"]).filter((input) =>
+          input.endsWith("sorbet/config"),
+        ),
+        ["sorbet/config"],
+      );
+      fs.mkdirSync(path.join(root, ".mvn"), { recursive: true });
+      fs.mkdirSync(path.join(root, "gradle", "conventions"), {
+        recursive: true,
+      });
+      for (const [file, contents] of [
+        [".mvn/maven.config", "-Pfixture\n"],
+        [
+          ".mvn/wrapper/MavenWrapperDownloader.java",
+          "final class MavenWrapperDownloader {}\n",
+        ],
+        ["mvnw", "#!/bin/sh\n"],
+        ["mvnw.cmd", "@echo off\r\n"],
+        ["gradle.lockfile", "empty=1\n"],
+        ["gradle/libs.versions.toml", "[versions]\n"],
+        [
+          "gradle/wrapper/gradle-wrapper.properties",
+          "distributionUrl=x\n",
+        ],
+        ["gradle/conventions/java.gradle", "allprojects {}\n"],
+        ["gradle/conventions/kotlin.gradle.kts", "allprojects {}\n"],
+        ["gradlew.bat", "@echo off\r\n"],
+        ["gradle-wrapper.properties", "unrelated=1\n"],
+        [".mvn/unrelated.gradle.kts", "allprojects {}\n"],
+        ["unrelated.kts", "println(\"not a Gradle script\")\n"],
+      ] as const) {
+        const absolute = path.join(root, file);
+        fs.mkdirSync(path.dirname(absolute), { recursive: true });
+        fs.writeFileSync(absolute, contents);
+      }
+      const javaBuildInputs = languageBuildInputs(root, ["java"]);
+      fs.mkdirSync(path.join(root, ".git"), { recursive: true });
+      fs.writeFileSync(path.join(root, ".git", "declared.txt"), "private\n");
+      TestValidator.equals(
+        "exact build paths cross ignored directories but never Git metadata",
+        providerInputFiles(root, [], [
+          ".mvn/maven.config",
+          ".git/declared.txt",
+        ]),
+        [".mvn/maven.config"],
+      );
+      fs.rmSync(path.join(root, ".git"), { recursive: true });
+      fs.writeFileSync(path.join(root, ".git"), "gitdir: elsewhere\n");
+      TestValidator.predicate(
+        "a Git worktree marker is neither a named nor extensionless input",
+        providerInputFiles(root, [], [".git"], [""]).includes(".git") ===
+          false,
+      );
+      // Only scip-clang asks for the empty extension, and it asks because a C++
+      // include universe really does contain files with no suffix. `extname`
+      // reports no extension for a leading-dot name too, so every configuration
+      // file in the project answered the same request and entered the strict
+      // provider's input manifest — after which editing `.gitignore` rebuilt an
+      // index that never read it. The worktree marker above was one witness of
+      // that class; these are the rest of it.
+      fs.mkdirSync(path.join(root, "include"), { recursive: true });
+      for (const [file, contents] of [
+        [".gitignore", "build/\n"],
+        [".clang-format", "BasedOnStyle: LLVM\n"],
+        ["include/api", "#pragma once\n"],
+        ["LICENSE", "MIT\n"],
+      ] as const) {
+        fs.writeFileSync(path.join(root, file), contents);
+      }
+      const extensionless = providerInputFiles(root, [], [], [""]);
+      TestValidator.predicate(
+        "an extensionless include is watched and a dotfile is not",
+        extensionless.includes("include/api") &&
+          extensionless.includes("LICENSE") &&
+          extensionless.includes(".gitignore") === false &&
+          extensionless.includes(".clang-format") === false,
+      );
+      TestValidator.predicate(
+        "generic JVM lanes watch Maven and Gradle build-universe inputs",
+        [
+          ".mvn/maven.config",
+          ".mvn/wrapper/MavenWrapperDownloader.java",
+          "mvnw",
+          "mvnw.cmd",
+          "gradle.lockfile",
+          "gradle/libs.versions.toml",
+          "gradle/wrapper/gradle-wrapper.properties",
+          "gradle/conventions/java.gradle",
+          "gradle/conventions/kotlin.gradle.kts",
+          "gradlew.bat",
+        ].every((input) => javaBuildInputs.includes(input)) &&
+          javaBuildInputs.includes("gradle-wrapper.properties") === false &&
+          javaBuildInputs.includes(".mvn/unrelated.gradle.kts") === false &&
+          javaBuildInputs.includes("unrelated.kts") === false,
       );
       fs.mkdirSync(path.join(root, "vendor"), { recursive: true });
       fs.mkdirSync(path.join(root, "vendor", "example.com", "dep"), {
@@ -191,6 +301,16 @@ export const test_provider_commands_and_inputs_respect_project_boundaries =
           args: ["serve"],
         }),
         expectedCommand(local, ["serve"]),
+      );
+      const attempted = resolveProviderCommand.attempt(root, emptyPath, {
+        command,
+        override: "SAMCHON_TEST_PROVIDER",
+        args: ["serve"],
+      });
+      TestValidator.equals(
+        "resolution retains the exact executable before platform wrapping",
+        [attempted.command, attempted.executable, attempted.asked],
+        [expectedCommand(local, ["serve"]), local, true],
       );
 
       const goCommand = platformExecutable(privateBin, "samchon-graph-go");
@@ -372,6 +492,21 @@ export const test_provider_commands_and_inputs_respect_project_boundaries =
         ),
         expectedCommand(onPath),
       );
+      if (process.platform !== "win32") {
+        const injectionMarker = path.join(root, "lookup-injected.txt");
+        const shellSyntax =
+          `definitely-absent; printf injected > "${injectionMarker}"`;
+        TestValidator.equals(
+          "a POSIX PATH lookup treats project-derived shell syntax as one name",
+          [
+            resolveProviderCommand(root, pathEnvironment(pathBin), {
+              command: shellSyntax,
+            }),
+            fs.existsSync(injectionMarker),
+          ],
+          [undefined, false],
+        );
+      }
       TestValidator.equals(
         "an unavailable provider resolves to no command",
         resolveProviderCommand(root, emptyPath, {

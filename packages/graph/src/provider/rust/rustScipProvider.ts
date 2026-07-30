@@ -134,15 +134,22 @@ function rustProviderConfiguration(
   root: string,
   _languages?: readonly GraphLanguage[],
   env: NodeJS.ProcessEnv = process.env,
-): readonly string[] {
-  return rustScipConfiguration(root, env);
+): toolchainVersion.IDerivation {
+  return rustScipConfigurationDerivation(root, env);
 }
 
 function rustScipConfiguration(
   root: string = process.cwd(),
   env: NodeJS.ProcessEnv = process.env,
 ): string[] {
-  return [
+  return [...rustScipConfigurationDerivation(root, env).rows];
+}
+
+function rustScipConfigurationDerivation(
+  root: string,
+  env: NodeJS.ProcessEnv,
+): toolchainVersion.IDerivation {
+  return toolchainVersion.derive([
     ...RUST_ENVIRONMENT_KEYS.map((key) => `${key}=${env[key] ?? ""}`),
     ...Object.entries(env)
       .filter(
@@ -167,17 +174,23 @@ function rustScipConfiguration(
             .digest("hex")}`,
       ),
     ...cargoConfigurationSnapshot(root, env),
-    toolVersion(
+    toolObservation(
       root,
       env,
       "rust-analyzer",
       "SAMCHON_GRAPH_RUST_ANALYZER",
       ["--version"],
     ),
-    toolVersion(root, env, "scip", "SAMCHON_GRAPH_SCIP", ["--version"]),
-    toolVersion(root, env, "rustc", "SAMCHON_GRAPH_RUSTC", ["-vV"]),
-    toolVersion(root, env, "cargo", "SAMCHON_GRAPH_CARGO", ["-V"]),
-  ];
+    toolObservation(
+      root,
+      env,
+      "scip",
+      "SAMCHON_GRAPH_SCIP",
+      ["--version"],
+    ),
+    toolObservation(root, env, "rustc", "SAMCHON_GRAPH_RUSTC", ["-vV"]),
+    toolObservation(root, env, "cargo", "SAMCHON_GRAPH_CARGO", ["-V"]),
+  ]);
 }
 
 function cargoConfigurationSnapshot(
@@ -220,8 +233,24 @@ function portablePath(file: string): string {
   return path.resolve(file).replaceAll("\\", "/");
 }
 
-function rustCompilerVersion(root: string): string {
-  return rustCompilerVersionFor(root, process.env);
+/**
+ * Selected from the rows this universe was computed from, not probed again.
+ *
+ * rustc and cargo already appear in the configuration, so re-deriving them was
+ * a second instant that could disagree with the first — a row held to its last
+ * established value beside one that re-asks publishes a compiler the universe
+ * never saw. Labelled rather than positional, since the configuration also
+ * carries environment keys and the indexer's own version.
+ */
+function rustCompilerVersion(
+  _root: string,
+  _languages: readonly GraphLanguage[] | undefined,
+  configuration: readonly string[],
+): string {
+  const wanted = new Set(["rustc", "cargo"]);
+  return configuration
+    .filter((row) => wanted.has(row.slice(0, Math.max(0, row.indexOf("=")))))
+    .join("; ");
 }
 
 function rustCompilerVersionFor(
@@ -248,6 +277,22 @@ function toolVersion(
   args: readonly string[],
 ): string {
   return toolchainVersion({ root, env, command, override, args });
+}
+
+function toolObservation(
+  root: string,
+  env: NodeJS.ProcessEnv,
+  command: string,
+  override: string,
+  args: readonly string[],
+): toolchainVersion.IObservation {
+  return toolchainVersion.observe({
+    root,
+    env,
+    command,
+    override,
+    args,
+  });
 }
 
 function resolveTool(

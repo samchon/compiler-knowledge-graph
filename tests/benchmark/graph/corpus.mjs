@@ -32,7 +32,7 @@ export const CORPUS = [
     name: "excalidraw",
     language: "typescript",
     url: "https://github.com/samchon/ttsc-benchmark-excalidraw.git",
-    commit: "98a2730b197873d43fddbe3fad6f0812df84b451",
+    commit: "e576ee0ecbdec2b3de3b7378f2cc08038026531b",
     preflight: preflightMinimums(1_000, 5_000, 3_000, 4),
   },
   {
@@ -60,7 +60,20 @@ export const CORPUS = [
     name: "gson",
     language: "java",
     url: "https://github.com/samchon/graph-benchmark-gson.git",
-    commit: "c9f3fd55854a743b66f857ace3c7b268ea3e2ef7",
+    // Pinned past a `.mvn/maven.config` selecting gson's own
+    // `disable-error-prone` profile. scip-java runs the project's real Maven
+    // build with a SemanticDB plugin attached, and under it javac rejects
+    // gson's Error Prone compiler arguments outright — `invalid flag:
+    // -XepExcludedPaths:...` — so the lane never reached its strict provider.
+    //
+    // Nothing was removed to fix it: that profile is gson's, activated on JDK
+    // below 21, and the benchmark provisions 21 so it never fired. Selecting it
+    // explicitly asks for a configuration the project already supports.
+    // SemanticDB then introduces warnings under the project's independent
+    // fail-on-warning setting. The fork disables that setting inside the same
+    // profile's compiler-plugin configuration; `.mvn/maven.config` selects the
+    // profile unprompted, so no indexer learns a project-specific flag.
+    commit: "a32fbc7fce43841e859b14184984dacd382115e9",
     preflight: preflightMinimums(1_000, 5_000, 3_000, 4),
   },
   {
@@ -69,6 +82,16 @@ export const CORPUS = [
     url: "https://github.com/samchon/graph-benchmark-redis.git",
     commit: "6bf6224c3dad518329ddc893ef9c5d58dcbabdeb",
     preflight: preflightMinimums(3_000, 10_000, 5_000, 4),
+    // A Makefile emits no compilation database, and scip-clang declines without
+    // one. bear records the compiler invocations as the build runs, which means
+    // an actual build rather than leveldb's configure — minutes of job time, but
+    // none of the measured cell, since only the dump invocation is timed.
+    //
+    // The build's own outputs are covered by redis's .gitignore; the database it
+    // produces is not, so it is declared here rather than assumed.
+    prepare: "bear -- make -j$(nproc)",
+    prepareIgnores: ["compile_commands.json", ".cache/"],
+    prepareOptional: true,
   },
   {
     // codegraph's cpp pick (nlohmann/json) is a single-header library — it
@@ -80,6 +103,23 @@ export const CORPUS = [
     url: "https://github.com/samchon/graph-benchmark-leveldb.git",
     commit: "7ee830d02b623e8ffe0b95d59a74db1e58da04c5",
     preflight: preflightMinimums(500, 1_500, 800, 3),
+    // scip-clang consumes a compilation database and declines without one, so
+    // this lane could only ever reach the fallback. CMake writes one during
+    // configure — nothing is compiled — and `build/compile_commands.json` is
+    // already a path the provider looks in, so no provider change is involved.
+    //
+    // Tests and benchmarks off because they `add_subdirectory` into
+    // `third_party/googletest` and `third_party/benchmark`, which are git
+    // submodules the corpus clone does not fetch — configure died there and,
+    // being optional, said so only in the log. What is wanted here is leveldb's
+    // own translation units, which those options do not touch.
+    //
+    // Optional: without it the lane measures what it measures today rather than
+    // not measuring at all.
+    prepare:
+      "cmake -S . -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DLEVELDB_BUILD_TESTS=OFF -DLEVELDB_BUILD_BENCHMARKS=OFF",
+    prepareIgnores: ["build/", ".cache/"],
+    prepareOptional: true,
   },
   {
     name: "sinatra",
@@ -96,8 +136,25 @@ export const CORPUS = [
     name: "slim",
     language: "php",
     url: "https://github.com/samchon/graph-benchmark-slim.git",
-    commit: "0da7dd2fc66956730b6633f6a056b35e59126583",
+    commit: "44c0dabf36c0e971ae9bf17c7bc229fdb6a8b240",
     preflight: preflightMinimums(1_000, 3_000, 1_500, 3),
+    // scip-php goes inside the project it indexes — `composer require --dev`
+    // then `vendor/bin/scip-php` — because it resolves symbols through the
+    // project's own autoloader. The latest v0.0.2 tag breaks that documented
+    // layout; the pinned fixture defines immutable package metadata and source
+    // for the exact upstream revision containing its merged `cwd/vendor` fix.
+    //
+    // The dependency is therefore carried by the pinned fork rather than added
+    // here: composer.json is tracked, so adding it at measurement time would
+    // dirty the very tree this harness asserts. What remains is installing it,
+    // which writes only `vendor/` — already ignored by this project.
+    //
+    // Optional because this remains a third-party dependency solve: if
+    // Composer cannot satisfy the pinned indexer together with Slim's own dev
+    // tooling, the lane measures what it can instead of skipping the corpus.
+    prepare: "composer install --no-interaction",
+    prepareIgnores: ["vendor/"],
+    prepareOptional: true,
   },
   {
     name: "serilog",
@@ -126,8 +183,24 @@ export const CORPUS = [
     name: "koin",
     language: "kotlin",
     url: "https://github.com/samchon/graph-benchmark-koin.git",
-    commit: "dc86ef8dd8fbe8564fb7453c03f5b738da3450bb",
+    // Koin already declares its complete Google and Maven Central repository
+    // set in settings and has no project-level repositories. The pinned fork
+    // preserves that centralized boundary against scip-java's repository
+    // injection. It also disables only scip-java's optional dependency
+    // metadata task in Android modules, where resolving a live Gradle
+    // configuration container throws ConcurrentModificationException; the
+    // compiler-backed scipCompileAll task still indexes every module.
+    commit: "b6b55191a3fc380e616d7c9e91cf573af9f9b9a3",
     preflight: preflightMinimums(1_000, 3_000, 1_500, 3),
+    // koin keeps no build file at its checkout root — every module lives under
+    // `projects/`, which is where its own build and its contributors work. An
+    // indexer run at the root finds nothing to build and declines, which is
+    // exactly what scip-java reported: "No build tool detected in workspace".
+    //
+    // The clone stays the git root, so the pinned tree and the cleanup are
+    // unchanged; only the directory each tool is pointed at moves, and it moves
+    // for every tool so the comparison stays one.
+    indexRoot: "projects",
     // kotlin-language-server boots a JVM and imports the build via a Gradle
     // sync (kotlinLSPProjectDeps) before answering `initialize` at all; cold,
     // this took over ten minutes on a clean Gradle cache. With no timeout, that
@@ -139,7 +212,7 @@ export const CORPUS = [
     name: "lualine",
     language: "lua",
     url: "https://github.com/samchon/graph-benchmark-lualine.git",
-    commit: "221ce6b2d999187044529f49da6554a92f740a96",
+    commit: "fa111072655a5c669f466aa36c7dbd34e4f7012c",
     preflight: preflightMinimums(500, 1_500, 800, 3),
   },
   {

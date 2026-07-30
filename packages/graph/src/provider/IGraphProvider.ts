@@ -114,6 +114,21 @@ export interface IGraphProvider {
   ) => readonly string[];
 
   /**
+   * Internal evidence for configuration rows whose toolchain question could
+   * not be put.
+   *
+   * `configuration` remains the public, string-only diagnostic surface. This
+   * parallel derivation prevents arbitrary user settings such as
+   * `PATH=unasked` from being interpreted as control state while still letting
+   * resident topology retain a previously established toolchain answer across
+   * a transient launch failure.
+   */
+  readonly configurationDerivation?: (
+    root: string,
+    env: NodeJS.ProcessEnv,
+  ) => IGraphProvider.IConfigurationDerivation;
+
+  /**
    * Bring the project to the state this provider needs before it can answer —
    * a generated compilation database, a resolved package config.
    *
@@ -127,6 +142,13 @@ export interface IGraphProvider {
 }
 
 export namespace IGraphProvider {
+  export interface IConfigurationDerivation {
+    rows: readonly string[];
+    inconclusive: readonly number[];
+    /** Stable private row identities aligned with {@link rows}. */
+    identities: readonly (string | undefined)[];
+  }
+
   /** A resolved executable and the arguments that precede the provider's own. */
   export interface ICommand {
     command: string;

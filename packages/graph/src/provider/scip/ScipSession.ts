@@ -3,7 +3,11 @@ import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { GraphLanguage, GraphProviderAuthority } from "../../typings";
+import {
+  GraphEdgeKind,
+  GraphLanguage,
+  GraphProviderAuthority,
+} from "../../typings";
 import { fileFromUri } from "../../utils/fileFromUri";
 import { assertGraphSnapshotContract } from "../assertGraphSnapshotContract";
 import { BatchGraphSession } from "../BatchGraphSession";
@@ -50,10 +54,17 @@ export class ScipSession implements IBulkGraphSession {
         `${configured.provider}: maxArtifactBytes must be a positive safe integer`,
       );
     }
+    // Minus what this producer is known not to emit. Every SCIP entry
+    // inherited the same fact list, so a provider whose indexer never
+    // populates a field still advertised the family derived from it — a
+    // consumer degrading against scip-python was told containment was proven
+    // and then found none, which reads as a project with no structure rather
+    // than an indexer that cannot describe one.
+    const omitted = new Set(configured.omitFacts ?? []);
     const facts = [
       ...adaptScipIndex.EDGE_KINDS,
       ...(configured.enrichment?.facts ?? []),
-    ];
+    ].filter((fact) => !omitted.has(fact));
     this.maxArtifactBytes = maxArtifactBytes;
     this.batch = new BatchGraphSession({
       root: configured.root,
@@ -62,6 +73,9 @@ export class ScipSession implements IBulkGraphSession {
       command: configured.command,
       artifactName: "index.scip",
       indexArgs: configured.indexArgs,
+      ...(configured.artifactFrom === undefined
+        ? {}
+        : { artifactFrom: configured.artifactFrom }),
       inputs: configured.inputs,
       ...(configured.configuration === undefined
         ? {}
@@ -118,7 +132,16 @@ export class ScipSession implements IBulkGraphSession {
     const json = await props.run(this.options.decode, [props.artifact]);
     const decoded = JSON.parse(json) as unknown;
     this.bindInvocationProjectRoot(decoded);
-    const index = parseScipIndex(decoded, this.options.provider);
+    // Folding several translation units into one document is a fact about the
+    // index rather than a detail: a C source compiled more than once is indexed
+    // more than once, and a reader deserves to know which files that happened
+    // to before trusting an occurrence count.
+    const indexWarnings: string[] = [];
+    const index = parseScipIndex(
+      decoded,
+      this.options.provider,
+      indexWarnings,
+    );
     this.assertProjectRoot(index.metadata.projectRoot);
     const adapted = adaptScipIndex({
       index,
@@ -126,6 +149,9 @@ export class ScipSession implements IBulkGraphSession {
       provider: this.options.provider,
       languages: this.languages,
       languageOf: this.options.languageOf,
+      ...(this.options.preferFileLanguage === undefined
+        ? {}
+        : { preferFileLanguage: this.options.preferFileLanguage }),
     });
     const enriched = ScipEnrichment.apply({
       enrichment: this.options.enrichment,
@@ -152,12 +178,20 @@ export class ScipSession implements IBulkGraphSession {
         facts: [
           ...adaptScipIndex.EDGE_KINDS,
           ...(this.options.enrichment?.facts ?? []),
-        ],
+        ].filter((fact) => !(this.options.omitFacts ?? []).includes(fact)),
         schemaVersion: SCIP_SCHEMA_VERSION,
         tool: index.metadata.toolInfo?.name ?? this.options.provider,
         toolVersion: index.metadata.toolInfo?.version ?? "",
-        compilerVersion: this.options.compilerVersion?.() ?? "",
-        protocolVersion: SCIP_PROTOCOL_VERSION,
+        // Read from the rows this universe was computed from, never asked
+        // again. A second probe is a second instant: one row held to its last
+        // established value while the other re-asks can put a compiler in the
+        // provenance that this universe never saw.
+        compilerVersion:
+          this.options.compilerVersion?.(props.configuration) ?? "",
+        protocolVersion: protocolVersionOf(
+          index.metadata.version,
+          this.options.provider,
+        ),
         universe: props.universe,
         capabilities: manifest.proven
           ? [
@@ -175,8 +209,9 @@ export class ScipSession implements IBulkGraphSession {
             ],
       },
       warnings: manifest.proven
-        ? [...adapted.warnings, ...enriched.warnings]
+        ? [...indexWarnings, ...adapted.warnings, ...enriched.warnings]
         : [
+            ...indexWarnings,
             ...adapted.warnings,
             ...enriched.warnings,
             `${this.options.provider}: the index carries no document text, so its facts cannot be tied to the bytes they were computed from; source display falls back to what this graph can prove itself`,
@@ -284,12 +319,23 @@ export namespace ScipSession {
     command: IGraphProvider.ICommand;
     decode: IGraphProvider.ICommand;
     indexArgs: (artifact: string) => string[];
+    artifactFrom?: (root: string) => string;
     inputs: () => string[];
-    configuration?: () => readonly string[];
-    compilerVersion?: () => string;
+    configuration?: BatchGraphSession.IOptions["configuration"];
+    compilerVersion?: (configuration: readonly string[]) => string;
+
+    /**
+     * Fact families this indexer provably does not emit.
+     *
+     * Declared rather than inferred: an index with no containment edges may be
+     * a flat project or a producer that cannot describe nesting, and only
+     * reading the producer tells you which.
+     */
+    omitFacts?: readonly GraphEdgeKind[];
     sourceText?: boolean;
     projectRootFromInvocation?: boolean;
     languageOf: (file: string) => GraphLanguage;
+    preferFileLanguage?: boolean;
     enrichment?: ScipEnrichment.IContract;
     maxStdoutBytes?: number;
     maxArtifactBytes?: number;
@@ -299,9 +345,31 @@ export namespace ScipSession {
 
 const DEFAULT_MAX_ARTIFACT_BYTES = 256 * 1024 * 1024;
 const SCIP_SCHEMA_VERSION = 5;
-const SCIP_PROTOCOL_VERSION = 0;
 const SCIP_CAPABILITIES: readonly string[] = ["universe", "diskDigests"];
 const SOURCE_DIGESTS_CAPABILITY = "sourceDigests";
+
+/**
+ * Publish the producer's protocol, not the decoder's schema assumption.
+ *
+ * The parser retains unknown non-negative enum numbers so a newer producer can
+ * still be consumed. Named future versions cannot honestly be projected onto
+ * the public numeric provenance contract until this client learns their
+ * number, so they fail closed instead of being mislabeled as version zero.
+ */
+function protocolVersionOf(
+  version: string | undefined,
+  provider: string,
+): number {
+  if (version === undefined || version === "UnspecifiedProtocolVersion") {
+    return 0;
+  }
+  if (/^(?:0|[1-9]\d*)$/.test(version)) {
+    return Number(version);
+  }
+  throw new Error(
+    `${provider}: SCIP protocol version ${JSON.stringify(version)} cannot be represented as a non-negative integer`,
+  );
+}
 
 function samePath(left: string, right: string): boolean {
   const normalizedLeft = path.resolve(left);

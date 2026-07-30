@@ -88,5 +88,8 @@ jobs:
       - name: Test
         run: pnpm test
 
+      - name: Test deterministic benchmark contracts
+        run: pnpm --filter @samchon/graph-benchmark test
+
       - name: Coverage
         run: pnpm coverage

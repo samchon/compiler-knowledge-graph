@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { IDiagnostic, LspClient } from "../lsp";
+import { lspRequestTrace } from "../lsp/lspRequestTrace";
 import { SamchonGraphSourceReader } from "../SamchonGraphSourceReader";
 import {
   ISamchonGraphDiagnostic,
@@ -152,6 +153,14 @@ async function buildLspGraphAttempt(
       resolvedDependencies.providers,
     );
     appendAll(warnings, selection.warnings);
+    // Said before the work starts, not after it finishes.
+    //
+    // Everything else this build reports — the provenance line, every warning —
+    // is written once the dump is complete, so a run that never completes
+    // reports nothing at all. Two benchmark lanes spent an hour each and left an
+    // empty log three times over: no provider named, no reason recorded, and no
+    // way to tell a slow strict indexer from a slow fallback.
+    announceProviderSelection(selection.candidates, selection.warnings);
     for (const candidate of selection.candidates) {
       try {
         const { refresh, session } =
@@ -689,6 +698,7 @@ async function openLanguageSession(
     root,
     options.lspMaxMessageBytes,
     windowsVerbatimArguments,
+    lspRequestTrace(process.env, undefined, options.signal),
   );
   const diagnostics = new Map<string, ISamchonGraphDiagnostic[]>();
   let lastProgressAt = 0;
@@ -951,4 +961,43 @@ function resolveCommand(command: string, root: string): string | undefined {
     .filter((line) => line !== "");
   const executable = lines.filter((line) => /\.(exe|cmd|bat)$/i.test(line));
   return [...executable, ...lines][0];
+}
+
+/**
+ * Name the providers about to run, on stderr, before any of them does.
+ *
+ * A build that finishes explains itself; a build that is killed explains
+ * nothing, and the expensive cases are exactly the ones that get killed. One
+ * line up front costs nothing and turns "this lane timed out" into "this lane
+ * timed out running scip-ruby".
+ *
+ * stderr because stdout is the payload, and unconditional because a build with
+ * no strict candidate is the case most worth being able to see.
+ */
+function announceProviderSelection(
+  candidates: readonly {
+    provider: { name: string };
+    languages: readonly GraphLanguage[];
+  }[],
+  warnings: readonly string[],
+): void {
+  const named =
+    candidates.length === 0
+      ? "no strict provider selected"
+      : candidates
+          .map(
+            (candidate) =>
+              `${candidate.provider.name}(${candidate.languages.join(",")})`,
+          )
+          .join(" ");
+  process.stderr.write(`@samchon/graph: indexing with ${named}\n`);
+  // And why nothing better was chosen, in the same breath. Selection already
+  // records a sentence for every provider that declined — not installed, refused
+  // by an option, no build file it recognizes — and those sentences used to
+  // arrive only with the finished dump. A build killed before it finishes is
+  // precisely the one whose reader most needs them.
+  for (const warning of warnings)
+    process.stderr.write(
+      `@samchon/graph: ${warning.replace(/^@samchon\/graph:\s*/, "")}\n`,
+    );
 }

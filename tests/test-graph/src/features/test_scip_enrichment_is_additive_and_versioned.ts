@@ -953,11 +953,12 @@ async function assertTheSessionFence(): Promise<void> {
     indexArgs: () => [],
     inputs: () => [],
     languageOf: () => "go",
+    omitFacts: ["contains"],
   });
   TestValidator.equals(
-    "a registry entry without enrichment retains only bare SCIP facts",
+    "a registry entry can omit a fact its producer does not emit",
     bareProvider.facts,
-    ["contains", "references", "type_ref"],
+    ["references", "type_ref"],
   );
   await bareProvider
     .open({

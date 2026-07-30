@@ -52,6 +52,7 @@ const hangRequests = args.includes("--hang-requests") || ignoreThisProcess;
 const blankLine = args.includes("--blank-line");
 const splitFrame = args.includes("--split-frame");
 const nonJson = args.includes("--nonjson");
+const nonJsonLong = args.includes("--nonjson-long");
 const unknownId = args.includes("--unknown-id");
 const firstUnchanged = args.includes("--first-unchanged");
 const closeStdinAfterFirst = args.includes("--close-stdin-after-first");
@@ -349,6 +350,12 @@ const emit = (response) => {
   if (oversizedResponse !== undefined) {
     const terminated = oversizedResponse === "--oversized-response=terminated";
     process.stdout.write(`${"X".repeat(4096)}${terminated ? "\n" : ""}`);
+    return;
+  }
+  if (nonJsonLong) {
+    // Longer than the client will carry, so the tail has to be cut. A real
+    // producer reaches this length easily: one stack trace does it.
+    process.stdout.write(`NOT-A-FRAME ${"stack frame ".repeat(80)}\n`);
     return;
   }
   if (nonJson) {

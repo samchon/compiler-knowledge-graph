@@ -6,6 +6,7 @@ export * from "./graphSnapshotDigests";
 export * from "./go";
 export * from "./IBulkGraphSession";
 export * from "./IGraphProvider";
+export * from "./lua";
 export * from "./providerInputFiles";
 export * from "./resolveProviderCommand";
 export * from "./rust";

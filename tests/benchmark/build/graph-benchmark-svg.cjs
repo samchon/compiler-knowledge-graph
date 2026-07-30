@@ -3,6 +3,11 @@ const path = require("path");
 
 const { renderPng } = require("./svg-to-png.cjs");
 const { compareOrdinal } = require("../graph/ordinal.cjs");
+const {
+  fixtureRevisionsFromManifest,
+  selectCurrentAgentCells,
+  selectCurrentIndex,
+} = require("../graph/current-index.cjs");
 
 const ROOT = path.resolve(__dirname, "..");
 const INPUT = path.resolve(
@@ -23,6 +28,7 @@ const COLORS = {
   title: "#f8fafc",
   legend: "#111827",
   legendBorder: "#334155",
+  track: "#111827",
   muted: "#94a3b8",
   worse: "#fb7185",
   // Winner treatment, mirroring the React chart: a cyan crown glyph left of the
@@ -60,10 +66,16 @@ const TOOLS = [
 ];
 
 const INDEX_TOOLS = [
-  { key: "samchon-graph", label: "@samchon/graph", color: "#22d3ee" },
-  { key: "codegraph", label: "codegraph", color: "#f59e0b" },
-  { key: "codebase-memory", label: "codebase-memory", color: "#4ade80" },
-  { key: "serena", label: "serena", color: "#e879f9" },
+  {
+    key: "samchon-graph",
+    label: "strict providers enabled",
+    color: "#22d3ee",
+  },
+  {
+    key: "samchon-graph-fallback",
+    label: "strict providers disabled",
+    color: "#f59e0b",
+  },
 ];
 
 const REPO_LABELS = {
@@ -101,7 +113,24 @@ const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
 //   single:  graph-<repo>-<family>-<harness>-<modelVersion>.<ext>
 const EXPORT_PNG = process.argv.includes("--png");
 const report = JSON.parse(fs.readFileSync(INPUT, "utf8"));
-const allCells = report.agent?.cells ?? [];
+const manifest = JSON.parse(
+  fs.readFileSync(
+    path.join(ROOT, "graph", "questions", "manifest.json"),
+    "utf8",
+  ),
+);
+const selectedFixtures = fixtureRevisionsFromManifest(manifest);
+const { index: currentIndex } = selectCurrentIndex(
+  report.index,
+  selectedFixtures,
+);
+// The cold index and the answer must describe the same checkout. This also
+// keeps the standalone token charts from relabelling an old agent result after
+// the corpus advances.
+const allCells = selectCurrentAgentCells(
+  report.agent?.cells,
+  manifest,
+);
 
 const combos = new Map();
 for (const cell of allCells) {
@@ -119,6 +148,7 @@ for (const cell of allCells) {
 fs.mkdirSync(SVG_DIR, { recursive: true });
 fs.mkdirSync(PNG_DIR, { recursive: true });
 let written = 0;
+const expectedSvgs = new Set();
 // --png only re-renders charts whose SVG content changed (or whose PNG is
 // missing).
 const pngQueue = [];
@@ -158,24 +188,62 @@ for (const combo of combos.values()) {
 }
 // The index axis: what readiness costs before a tool can answer anything. It
 // is not a token chart, so it renders on its own scale (wall clock).
-if (report.index && (report.index.cells ?? []).length > 0) {
-  writeSvg("graph-time-to-answer.svg", renderTime(report.index, allCells));
-}
+const indexSvg =
+  currentIndex.cells.length > 0 ? renderIndex(currentIndex) : null;
+if (indexSvg !== null) writeSvg("graph-index-time.svg", indexSvg);
+const timeSvg =
+  currentIndex.cells.length > 0 ? renderTime(currentIndex, allCells) : null;
+if (timeSvg !== null) writeSvg("graph-time-to-answer.svg", timeSvg);
 
 const pngs = writePngs();
+const removed = pruneStaleCharts();
 console.log(
-  `[build:graph-svg] wrote ${written} chart(s)${EXPORT_PNG ? ` and ${pngs} png(s)` : ""} to ${path.relative(ROOT, OUT_DIR)}`,
+  `[build:graph-svg] wrote ${written} chart(s)${EXPORT_PNG ? ` and ${pngs} png(s)` : ""}` +
+    `${removed > 0 ? `; removed ${removed} stale artifact(s)` : ""} to ${path.relative(ROOT, OUT_DIR)}`,
 );
 
 function writeSvg(name, svg) {
+  expectedSvgs.add(name);
   const file = path.join(SVG_DIR, name);
   const content = `${svg}\n`;
   const changed =
     !fs.existsSync(file) || fs.readFileSync(file, "utf8") !== content;
   if (changed) fs.writeFileSync(file, content);
   const pngFile = path.join(PNG_DIR, name.replace(/\.svg$/, ".png"));
-  if (changed || !fs.existsSync(pngFile)) pngQueue.push(file);
+  if (EXPORT_PNG && (changed || !fs.existsSync(pngFile))) {
+    pngQueue.push(file);
+  } else if (changed) {
+    // A same-name PNG is still stale when its source SVG changed. An SVG-only
+    // render cannot refresh those pixels, so it must remove them.
+    fs.rmSync(pngFile, { force: true });
+  }
   written += 1;
+}
+
+function pruneStaleCharts() {
+  let removed = 0;
+  for (const [dir, extension] of [
+    [SVG_DIR, ".svg"],
+    [PNG_DIR, ".png"],
+  ]) {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (
+        !entry.isFile() ||
+        !entry.name.startsWith("graph-") ||
+        !entry.name.endsWith(extension)
+      ) {
+        continue;
+      }
+      const svgName =
+        extension === ".svg"
+          ? entry.name
+          : entry.name.replace(/\.png$/, ".svg");
+      if (expectedSvgs.has(svgName)) continue;
+      fs.rmSync(path.join(dir, entry.name));
+      removed += 1;
+    }
+  }
+  return removed;
 }
 
 function writePngs() {
@@ -254,14 +322,19 @@ function render(rows, title) {
           const isBest = hasData && value.value === lowest;
           const dataW = hasData ? Math.max(3, (value.value / max) * barFull) : 0;
           const rx = (barHeight / 2).toFixed(1);
-          const saved = hasData ? pctSaved(row.baseline, value.value) : 0;
+          const saved =
+            hasData && row.baseline > 0
+              ? pctSaved(row.baseline, value.value)
+              : null;
           const label = isBaseline
             ? `${formatTick(value.value)} tokens`
             : !hasData
               ? "no data"
-              : saved >= 0
-                ? `${saved}% saved`
-                : `${-saved}% over`;
+              : saved === null
+                ? `${formatTick(value.value)} tokens`
+                : saved >= 0
+                  ? `${saved}% saved`
+                  : `${-saved}% over`;
           const nameColor = isBaseline ? "#9aa3b2" : value.color;
           const valueColor = isBaseline
             ? COLORS.label
@@ -269,7 +342,7 @@ function render(rows, title) {
               ? COLORS.muted
               : isBest
                 ? COLORS.crown
-                : saved >= 0
+                : saved === null || saved >= 0
                   ? COLORS.label
                   : COLORS.worse;
           const glow = isBest
@@ -484,30 +557,53 @@ function escapeXml(value) {
     .replaceAll("'", "&apos;");
 }
 
-// Cold index build time, one bar per tool, repositories ordered by the size of
-// the program each index was built from — forty seconds on VS Code and one
-// second on a small backend are the same tool, not two. `serena` has no bar
-// because it has no build step: it starts a language server and resolves on
-// demand, and pays at query time instead.
+// Cold graph build time for the same checkout with strict providers enabled
+// and disabled. Every project pair comes from one matrix job and therefore one
+// recorded host. Repositories are ordered by the size of the program each
+// graph was built from.
 
 function renderIndex(index) {
   const rows = [...new Set(index.cells.map((cell) => cell.project))]
-    .map((project) => ({
-      project,
-      label: REPO_LABELS[project] ?? project,
-      scale: index.scale?.[project] ?? { files: 0, lines: 0 },
-      values: INDEX_TOOLS.map((tool) => {
-        const cell = index.cells.find(
-          (item) => item.project === project && item.tool === tool.key,
-        );
-        return { ...tool, ms: cell?.buildMs ?? 0 };
-      }),
-    }))
+    .map((project) => {
+      const cells = Object.fromEntries(
+        INDEX_TOOLS.map((tool) => [
+          tool.key,
+          index.cells.find(
+            (item) => item.project === project && item.tool === tool.key,
+          ),
+        ]),
+      );
+      if (
+        !sameIndexMeasurement(
+          cells["samchon-graph"],
+          cells["samchon-graph-fallback"],
+        )
+      ) {
+        return null;
+      }
+      const outcomes = Object.fromEntries(
+        INDEX_TOOLS.map((tool) => [tool.key, indexOutcome(cells[tool.key])]),
+      );
+      if (Object.values(outcomes).some((outcome) => outcome === null)) {
+        return null;
+      }
+      return {
+        project,
+        label: REPO_LABELS[project] ?? project,
+        scale: index.scale?.[project] ?? { files: 0, lines: 0 },
+        values: INDEX_TOOLS.map((tool) => ({
+          ...tool,
+          ...outcomes[tool.key],
+        })),
+      };
+    })
+    .filter((row) => row !== null)
     .sort((a, b) => a.scale.lines - b.scale.lines);
+  if (rows.length === 0) return null;
 
   const width = 1040;
   const height = 760;
-  const chart = { left: 160, right: 990, top: 120, bottom: 690 };
+  const chart = { left: 160, right: 930, top: 120, bottom: 690 };
   const plotWidth = chart.right - chart.left;
   const plotHeight = chart.bottom - chart.top;
   const max = niceMax(
@@ -517,10 +613,10 @@ function renderIndex(index) {
   const rowHeight = plotHeight / rows.length;
   const barHeight = 11;
   const barStep = 15;
-  const title = "Cold index build time (lower is better)";
-  const host = index.host
-    ? `${index.host.cpu}, ${index.host.cores} cores, ${index.host.ramGB} GB — ${index.host.os}`
-    : "";
+  const title =
+    "Cold graph build outcomes — strict providers enabled vs disabled";
+  const subtitle =
+    "Same-run outcomes only; outlined STATIC/HYBRID bars used syntax fallback, dashed bars exceeded the timeout.";
 
   const grid = ticks
     .map((tick) => {
@@ -543,13 +639,22 @@ function renderIndex(index) {
       row.values.forEach((value, i) => {
         const y = groupTop + i * barStep;
         const barWidth = value.ms > 0 ? (value.ms / max) * plotWidth : 0;
+        const outcome = value.timedOut
+          ? `>${fmtBuildMs(value.ms)}`
+          : value.nonSemantic !== null
+            ? `${value.nonSemantic} ${fmtBuildMs(value.ms)}`
+            : fmtBuildMs(value.ms);
+        const treatment = value.timedOut
+          ? ` fill-opacity="0.45" stroke="${value.color}" stroke-width="1.5" stroke-dasharray="5 3"`
+          : value.nonSemantic !== null
+            ? ` fill-opacity="0.12" stroke="${value.color}" stroke-width="1.5"`
+            : "";
         lines.push(
-          `  <rect x="${chart.left}" y="${y.toFixed(1)}" width="${barWidth.toFixed(1)}" height="${barHeight}" fill="${value.color}" rx="2"/>`,
+          `  <rect x="${chart.left}" y="${y.toFixed(1)}" width="${barWidth.toFixed(1)}" height="${barHeight}" fill="${value.color}"${treatment} rx="2"/>`,
         );
-        if (value.ms > 0)
-          lines.push(
-            `  <text x="${(chart.left + barWidth + 8).toFixed(1)}" y="${(y + barHeight - 1).toFixed(1)}" fill="${value.color}" font-size="11">${escapeXml(fmtBuildMs(value.ms))}</text>`,
-          );
+        lines.push(
+          `  <text x="${(chart.left + barWidth + 8).toFixed(1)}" y="${(y + barHeight - 1).toFixed(1)}" fill="${value.color}" font-size="11">${escapeXml(outcome)}</text>`,
+        );
       });
       return lines.join("\n");
     })
@@ -567,13 +672,56 @@ function renderIndex(index) {
     `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" version="1.1" role="img" aria-label="${escapeXml(title)}">`,
     ` <rect width="${width}" height="${height}" fill="#0b0f14"/>`,
     ` <text x="40" y="46" fill="#f8fafc" font-size="22" font-weight="bold" font-family="DejaVu Sans, Arial, sans-serif">${escapeXml(title)}</text>`,
-    ` <text x="40" y="68" fill="#64748b" font-size="13" font-family="DejaVu Sans, Arial, sans-serif">${escapeXml(host)}</text>`,
-    ` <text x="40" y="${height - 22}" fill="#64748b" font-size="11" font-family="DejaVu Sans, Arial, sans-serif">Every tool builds the index its own documentation prescribes; repositories are ordered by the size of the program each was built from.</text>`,
+    ` <text x="40" y="68" fill="#64748b" font-size="13" font-family="DejaVu Sans, Arial, sans-serif">${escapeXml(subtitle)}</text>`,
+    ` <text x="40" y="${height - 22}" fill="#64748b" font-size="11" font-family="DejaVu Sans, Arial, sans-serif">Repositories are ordered by source lines. Exact hosts, revisions, providers, and toolchains remain in graph.json.</text>`,
     legend,
     grid,
     bars,
     `</svg>`,
   ].join("\n");
+}
+
+function sameIndexMeasurement(left, right) {
+  return (
+    typeof left?.measurementId === "string" &&
+    left.measurementId.trim() !== "" &&
+    left.measurementId === right?.measurementId &&
+    typeof left.host === "object" &&
+    left.host !== null &&
+    typeof right?.host === "object" &&
+    right.host !== null &&
+    ["cpu", "cores", "ramGB", "os", "kernel", "node"].every(
+      (field) =>
+        Object.hasOwn(left.host, field) &&
+        Object.hasOwn(right.host, field) &&
+        left.host[field] === right.host[field],
+    )
+  );
+}
+
+function indexOutcome(cell) {
+  const measured =
+    typeof cell?.buildMs === "number" &&
+    Number.isFinite(cell.buildMs) &&
+    cell.buildMs >= 0;
+  const timedOut =
+    !measured &&
+    typeof cell?.timedOutMs === "number" &&
+    Number.isFinite(cell.timedOutMs) &&
+    cell.timedOutMs > 0;
+  if (timedOut) {
+    return { ms: cell.timedOutMs, timedOut: true, nonSemantic: null };
+  }
+  if (!measured) return null;
+  if (typeof cell.servedBy !== "string") return null;
+  if (cell.servedBy.startsWith("static")) {
+    return { ms: cell.buildMs, timedOut: false, nonSemantic: "STATIC" };
+  }
+  if (cell.servedBy.startsWith("hybrid")) {
+    return { ms: cell.buildMs, timedOut: false, nonSemantic: "HYBRID" };
+  }
+  if (!cell.servedBy.startsWith("lsp ")) return null;
+  return { ms: cell.buildMs, timedOut: false, nonSemantic: null };
 }
 
 // The wall clock a first answer costs from a cold checkout: build the tool's
@@ -591,18 +739,21 @@ function renderTime(index, cells) {
       label: REPO_LABELS[project] ?? project,
       scale: index.scale?.[project] ?? { files: 0, lines: 0 },
       values: TOOLS.map((tool) => {
+        const answerMs = medianAnswerMs(cells, project, tool.key);
+        if (answerMs <= 0) return null;
         const build = index.cells.find(
           (item) => item.project === project && item.tool === tool.key,
         );
-        return {
-          ...tool,
-          buildMs: build?.buildMs ?? 0,
-          answerMs: medianAnswerMs(cells, project, tool.key),
-        };
-      }).filter((value) => value.answerMs > 0),
+        const buildMs = finiteIndexBuildMs(tool.key, build);
+        // A timeout or absent comparator is not a zero-second success. Its
+        // bounded outcome remains visible in the index-time summary, while
+        // this finite-total chart admits only completed or no-build cells.
+        return buildMs === null ? null : { ...tool, buildMs, answerMs };
+      }).filter((value) => value !== null),
     }))
     .filter((row) => row.values.length > 0)
     .sort((a, b) => compareOrdinal(a.label, b.label));
+  if (rows.length === 0) return null;
 
   // Banded blocks like the grouped chart: repo header + one row per tool, the
   // two-tone bar (faded index build + solid LLM answer) inside a full-width
@@ -740,6 +891,21 @@ function medianAnswerMs(cells, project, tool) {
   return durations.length % 2 === 0
     ? (durations[mid - 1] + durations[mid]) / 2
     : durations[mid];
+}
+
+function finiteIndexBuildMs(tool, cell) {
+  if (tool === "baseline") return 0;
+  const measured =
+    typeof cell?.buildMs === "number" &&
+    Number.isFinite(cell.buildMs) &&
+    cell.buildMs >= 0;
+  const timedOut =
+    typeof cell?.timedOutMs === "number" &&
+    Number.isFinite(cell.timedOutMs) &&
+    cell.timedOutMs >= 0;
+  const noBuild = cell?.hasBuildStep === false;
+  if (Number(measured) + Number(timedOut) + Number(noBuild) !== 1) return null;
+  return measured ? cell.buildMs : noBuild ? 0 : null;
 }
 
 function fmtBuildMs(ms) {

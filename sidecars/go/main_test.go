@@ -54,6 +54,51 @@ func TestBuildSnapshotProvesWorkspaceSemantics(t *testing.T) {
 	if findNode(first, "GhostFromExcludedBuildTag") != nil {
 		t.Error("build-tag-excluded declaration entered the graph")
 	}
+	// The fixture declares two package-scope blank assertions. Nothing can
+	// reference a symbol with no name, and both would derive one identity, so
+	// the graph must contain neither rather than one of them.
+	if findNode(first, "_") != nil {
+		t.Error("the blank identifier entered the graph as a declaration")
+	}
+	// Two package initializers, which the language permits and forbids naming.
+	// They share one FullName, so identity has to come from where each is
+	// written or the second one collapses onto the first — and collapsing is
+	// what fails the build, since their nodes differ.
+	initializers := 0
+	for _, declaration := range first.Nodes {
+		if declaration.Name == "init" && declaration.Kind == "function" {
+			initializers++
+		}
+	}
+	if initializers != 2 {
+		t.Errorf("expected both package initializers, found %d", initializers)
+	}
+	// A testdata package is reachable by import and invisible to a package
+	// pattern, so scip-go never indexes one. Claiming its declarations would owe
+	// a corroboration the artifact cannot give — which is what refused gin — so
+	// the boundary excludes it on both sides rather than the rule bending.
+	// The manifest is what corroboration is owed for, so that is what must not
+	// contain it.
+	for _, input := range first.Sources {
+		if strings.Contains(filepath.ToSlash(input.File), "testdata/") {
+			t.Errorf("testdata source %s entered the manifest", input.File)
+		}
+	}
+	// It does still appear as an external symbol, and that is correct rather
+	// than a leak: a package reached only by import is a dependency, and
+	// dependencies are never corroborated. What must not happen is claiming one
+	// as project source.
+	for _, declaration := range first.Nodes {
+		if !declaration.External &&
+			strings.Contains(filepath.ToSlash(declaration.File), "testdata/") {
+			t.Errorf("node %s claims a testdata file as project source", declaration.ID)
+		}
+	}
+	// The caller is still ordinary project code and must survive intact; the
+	// exclusion is of what testdata declares, not of what reaches into it.
+	if findNode(first, "ReadProto") == nil {
+		t.Error("a function calling into testdata was dropped with it")
+	}
 	for _, kind := range []string{
 		"contains", "exports", "imports", "calls", "accesses", "instantiates",
 		"type_ref", "implements", "dispatches", "tests", "references",

@@ -6,42 +6,29 @@ import { IGraphProvider } from "./IGraphProvider";
 import { resolveProviderCommand } from "./resolveProviderCommand";
 
 /**
- * The version of one toolchain, as a single configuration row.
+ * Observe one toolchain as a single configuration row.
  *
- * Three providers derived this separately, and each one collapsed two different
- * states into one word: a tool that is not installed and a tool whose probe
- * happened not to answer both came back `unavailable`. A build universe
- * computed from that value rebuilt itself over a spawn failure, and the
- * resident source went further and discarded its whole index.
+ * A toolchain observation has four outcomes. Resolution completed and found
+ * nothing (`unavailable`), the command completed without a usable version
+ * (`unreported`), the command answered with a version, or the lookup/probe
+ * observation did not complete conclusively (`unasked`). The first three are
+ * conclusive configuration facts. The fourth says nothing about the tool and
+ * stays typed as inconclusive evidence instead of pretending absence or
+ * silence.
  *
- * Three states replace the one word, and each is a constant for as long as it
- * holds. Absence is decided by {@link resolveProviderCommand} rather than by
- * the probe, so `unavailable` means the tool was not found. A probe that
- * answers is the version. A probe that resolves and does not answer is
- * `unreported`, because that is a third fact.
+ * Both process seams preserve that distinction.
+ * {@link resolveProviderCommand} reports whether its `PATH` lookup completed,
+ * and {@link probe} distinguishes normal completion from a `spawnSync` error,
+ * signal, or timeout. A transient launch failure therefore cannot move a build
+ * universe by changing an installed tool into an absent one.
  *
- * Two seams remain, and they are the same seam twice. Resolution consults
- * `PATH` by launching `where.exe` or `command -v`, so a lookup that fails to
- * run reports absence; and {@link probe} reads a non-zero exit, which a launch
- * that failed to start also produces, so it reports silence. Either one moves a
- * row that nothing about the project moved. Both predate this design and both
- * need the same repair — `spawnSync` distinguishes "ran and answered" from
- * "could not run", and neither call site asks it.
- *
- * Being constants is what makes them safe to fingerprint. The row a failing
- * probe produces does not depend on *why* it failed or on how many times it
- * has, so a build universe computed from it moves once when a toolchain stops
- * answering and once when it starts again. The old `unavailable` was a constant
- * too; what it cost was the conflation above, not extra movement.
- *
- * A remembered answer used to stand in for a failed probe, so that a single
- * blip moved nothing at all. It is gone. It bought one rebuild per outage in
- * exchange for a value that depended on process history: the same code answered
- * differently depending on what else had run, which is how it passed in
- * isolation and failed on all three platforms in the full suite. The defect it
- * was reaching for — a failed probe discarding the whole resident index — is
- * fixed where it belongs, in the topology snapshot that no longer re-derives a
- * serving provider's configuration at all.
+ * {@link toolchainVersion.reestablish} restores an unasked row only from the
+ * last conclusive row with the same private identity. It does not restore a
+ * sibling compiler that happens to share a display label, and it does not roll
+ * back other rows that were freshly established in the same derivation. A
+ * serving provider avoids the question entirely because its topology snapshot
+ * no longer re-derives configuration; non-serving candidates are reestablished
+ * row by row before the resident source compares their freshly probed topology.
  *
  * The probe runs every time, and deliberately. A version is not a property of
  * the file: `rustc`, `python3`, `ruby`, `java`, and `dotnet` are all normally
@@ -53,16 +40,58 @@ import { resolveProviderCommand } from "./resolveProviderCommand";
  * inputs.
  */
 export function toolchainVersion(props: toolchainVersion.IProps): string {
-  const label = props.label ?? props.command;
-  const resolved = props.resolved ?? toolchainVersion.resolve(props);
-  if (resolved === undefined) return `${label}=unavailable`;
-  const observed = probe(resolved, props);
-  return observed === undefined
-    ? `${label}=unreported`
-    : `${label}=${observed}`;
+  return toolchainVersion.observe(props).row;
 }
 
 export namespace toolchainVersion {
+  /**
+   * One visible configuration row together with whether its derivation
+   * established a fact.
+   *
+   * The row deliberately remains a string for fingerprints and provenance.
+   * Inconclusiveness is separate metadata: configuration values are public and
+   * arbitrary, so a literal setting such as `PATH=unasked` must never be
+   * mistaken for an internal probe outcome merely because its spelling
+   * resembles one.
+   */
+  export interface IObservation {
+    row: string;
+    inconclusive: boolean;
+    identity?: string;
+  }
+
+  /** Visible configuration rows plus the exact rows that established nothing. */
+  export interface IDerivation {
+    rows: readonly string[];
+    inconclusive: readonly number[];
+    /** Stable private identities aligned with {@link rows}. */
+    identities: readonly (string | undefined)[];
+  }
+
+  export type Input = string | IObservation;
+
+  /** Derive one toolchain row without discarding its evidence state. */
+  export function observe(props: IProps): IObservation {
+    const label = props.label ?? props.command;
+    const identity = props.identity ?? label;
+    const resolution =
+      props.resolved === undefined
+        ? attempt(props)
+        : { command: props.resolved, asked: true };
+    if (resolution.command === undefined) {
+      return resolution.asked
+        ? conclusive(`${label}=unavailable`, identity)
+        : unasked(label, identity);
+    }
+    const observed = probe(resolution.command, props);
+    if (observed.version !== undefined) {
+      return conclusive(`${label}=${observed.version}`, identity);
+    }
+    return observed.completed
+      ? conclusive(`${label}=unreported`, identity)
+      : unasked(label, identity);
+  }
+
   export interface IProps {
     root: string;
     env: NodeJS.ProcessEnv;
@@ -78,6 +107,15 @@ export namespace toolchainVersion {
 
     /** What the row is called, when that differs from the command's name. */
     label?: string;
+
+    /**
+     * Stable private identity used to match this tool across derivations.
+     *
+     * Distinct compiler paths can deliberately share one portable display
+     * label. Their path-derived identities stay internal while preventing one
+     * driver's failed probe from restoring a sibling driver's version.
+     */
+    identity?: string;
 
     /**
      * Probe exactly this file rather than resolving `command`.
@@ -112,25 +150,250 @@ export namespace toolchainVersion {
   export function resolve(
     props: IProps,
   ): IGraphProvider.ICommand | undefined {
+    return attempt(props).command;
+  }
+
+  /**
+   * The program, and whether finding out was possible at all.
+   *
+   * A named file is decided by reading the filesystem, so the question always
+   * gets put. A command may end in a `PATH` lookup, which is itself a process
+   * launch and can fail to run — and a lookup that never ran says nothing about
+   * whether the tool is installed.
+   */
+  export function attempt(props: IProps): resolveProviderCommand.IAttempt {
     if (props.executable !== undefined) {
       return isSpawnableFile(props.executable)
-        ? spawnableCommand(props.executable, [], props.env)
-        : undefined;
+        ? {
+            command: spawnableCommand(props.executable, [], props.env),
+            asked: true,
+          }
+        : { asked: true };
     }
-    return resolveProviderCommand(props.root, props.env, {
+    return resolveProviderCommand.attempt(props.root, props.env, {
       command: props.command,
       ...(props.override === undefined ? {} : { override: props.override }),
     });
+  }
+
+  /** The visible value used when a toolchain question could not be put. */
+  export const UNASKED = "=unasked";
+
+  /** Mark a visible row as an ordinary, established configuration fact. */
+  export function conclusive(
+    row: string,
+    identity: string = label(row),
+  ): IObservation {
+    return { row, inconclusive: false, identity };
+  }
+
+  /** Mark a toolchain question as one that could not be put. */
+  export function unasked(
+    label: string,
+    identity: string = label,
+  ): IObservation {
+    return {
+      row: `${label}${UNASKED}`,
+      inconclusive: true,
+      identity,
+    };
+  }
+
+  /**
+   * Preserve the evidence state of each row in one configuration derivation.
+   *
+   * Plain strings are intentionally conclusive. Public provider configuration
+   * accepts arbitrary strings, and no spelling inside that public value space
+   * is reserved for internal control flow.
+   */
+  export function derive(entries: readonly Input[]): IDerivation {
+    const rows: string[] = [];
+    const inconclusive: number[] = [];
+    const identities: (string | undefined)[] = [];
+    for (const entry of entries) {
+      const observation =
+        typeof entry === "string"
+          ? {
+              row: entry,
+              inconclusive: false,
+              identity: undefined,
+            }
+          : entry;
+      if (observation.inconclusive) inconclusive.push(rows.length);
+      rows.push(observation.row);
+      identities.push(observation.identity);
+    }
+    return { rows, inconclusive, identities };
+  }
+
+  /** Treat legacy string-only configuration as fully established evidence. */
+  export function normalize(
+    value: readonly string[] | IDerivation,
+  ): IDerivation {
+    if (!isDerivation(value)) return derive(value);
+    const inconclusive = [...value.inconclusive];
+    const derivation: IDerivation = {
+      rows: [...value.rows],
+      inconclusive,
+      identities: [...value.identities],
+    };
+    validate(derivation);
+    inconclusive.sort((left, right) => left - right);
+    return derivation;
+  }
+
+  /** Sort visible rows without detaching their evidence metadata. */
+  export function sort(value: readonly string[] | IDerivation): IDerivation {
+    const normalized = normalize(value);
+    const unresolved = new Set(normalized.inconclusive);
+    return derive(
+      normalized.rows
+        .map((row, index) =>
+          observation(
+            row,
+            unresolved.has(index),
+            normalized.identities[index],
+          ),
+        )
+        .sort((left, right) => compareOrdinal(left.row, right.row)),
+    );
+  }
+
+  /** Whether any row in this derivation failed to establish anything. */
+  export function inconclusive(derivation: IDerivation): boolean {
+    return derivation.inconclusive.length !== 0;
+  }
+
+  /** The visible rows whose derivations established nothing. */
+  export function unresolved(derivation: IDerivation): readonly string[] {
+    return derivation.inconclusive.map((index) => derivation.rows[index]!);
+  }
+
+  /**
+   * This derivation, with each unasked row restored from the last one that
+   * established something.
+   *
+   * Row by row, and that is the whole point. Substituting the entire previous
+   * derivation whenever any single row went unasked was wrong in a way that is
+   * worse than the bug it fixed: a configuration is several rows — an indexer,
+   * `scip`, and every toolchain program — so one probe failing to launch also
+   * discarded the rows that had just been derived successfully. A user who set
+   * `GOFLAGS` and whose `go` probe happened to fail in the same refresh got the
+   * old flags back, a universe that did not move, and an index built with
+   * settings they had changed. On a host where that probe always fails to
+   * start, the session would never notice a configuration change again.
+   *
+   * A tool observation carries a stable private identity independent of its
+   * visible label. This matters for compilation databases: two distinct driver
+   * paths can both publish `clang=...`, and a failed probe must restore only
+   * the same driver. A row with no matching established identity stays unasked
+   * rather than being invented.
+   */
+  export function reestablish(
+    live: IDerivation,
+    established: IDerivation | undefined,
+  ): IDerivation {
+    const current = normalize(live);
+    if (established === undefined || !inconclusive(current)) return current;
+    const previousEvidence = normalize(established);
+    const priorUnresolved = new Set(previousEvidence.inconclusive);
+    const prior = new Map<string, string[]>();
+    previousEvidence.rows.forEach((row, index) => {
+      const identity = previousEvidence.identities[index];
+      if (identity === undefined || priorUnresolved.has(index)) return;
+      const rows = prior.get(identity) ?? [];
+      rows.push(row);
+      prior.set(identity, rows);
+    });
+    const liveUnresolved = new Set(current.inconclusive);
+    return derive(
+      current.rows.map((row, index) => {
+        const identity = current.identities[index];
+        const previous =
+          identity === undefined ? undefined : prior.get(identity)?.shift();
+        if (!liveUnresolved.has(index)) {
+          return observation(row, false, identity);
+        }
+        return previous === undefined
+          ? observation(row, true, identity)
+          : conclusive(previous, identity);
+      }),
+    );
+  }
+
+  function observation(
+    row: string,
+    inconclusive: boolean,
+    identity: string | undefined,
+  ): IObservation {
+    return {
+      row,
+      inconclusive,
+      ...(identity === undefined ? {} : { identity }),
+    };
+  }
+
+  function isDerivation(
+    value: readonly string[] | IDerivation,
+  ): value is IDerivation {
+    return !Array.isArray(value);
+  }
+
+  function validate(derivation: IDerivation): void {
+    if (derivation.identities.length !== derivation.rows.length)
+      throw new Error(
+        "toolchain configuration identities must align with its rows",
+      );
+    const seen = new Set<number>();
+    for (const index of derivation.inconclusive) {
+      if (
+        !Number.isSafeInteger(index) ||
+        index < 0 ||
+        index >= derivation.rows.length
+      )
+        throw new Error(
+          "toolchain inconclusive evidence must index an existing row",
+        );
+      if (seen.has(index))
+        throw new Error(
+          "toolchain inconclusive evidence must not contain duplicates",
+        );
+      const identity = derivation.identities[index];
+      if (typeof identity !== "string" || identity.length === 0)
+        throw new Error(
+          "toolchain inconclusive evidence must carry a stable identity",
+        );
+      seen.add(index);
+    }
+  }
+
+  function label(row: string): string {
+    const at = row.indexOf("=");
+    return at === -1 ? row : row.slice(0, at);
+  }
+
+  function compareOrdinal(left: string, right: string): number {
+    /* c8 ignore next 2 -- sort outcomes are exhausted by caller fixtures. */
+    return left < right ? -1 : left > right ? 1 : 0;
   }
   /* c8 ignore start -- declaration merging emits an unreachable namespace
    * creation arm after the function object already exists. */
 }
 /* c8 ignore stop */
 
+/**
+ * Run the probe and say which of three things happened.
+ *
+ * A program that completed and printed a version answered. One that completed
+ * and printed nothing is silent. An observation that did not complete normally
+ * — `spawnSync` sets `error`, or reports a null status for a signal or timeout —
+ * said nothing about the toolchain at all. Reading only "the exit was not zero"
+ * made that inconclusive state the same fact as a conclusive silent answer.
+ */
 function probe(
   resolved: IGraphProvider.ICommand,
   props: toolchainVersion.IProps,
-): string | undefined {
+): { completed: boolean; version?: string } {
   const spawnable = spawnableCommand.append(
     { ...resolved, args: [...resolved.args] },
     props.args,
@@ -148,7 +411,12 @@ function probe(
    * string; the null arm exists only for Node's broader result type. */
   const output = oneLine(String(result.stdout ?? ""));
   /* c8 ignore stop */
-  return result.status === 0 && output !== "" ? output : undefined;
+  if (result.error !== undefined || result.status === null) {
+    return { completed: false };
+  }
+  return result.status === 0 && output !== ""
+    ? { completed: true, version: output }
+    : { completed: true };
 }
 
 /**

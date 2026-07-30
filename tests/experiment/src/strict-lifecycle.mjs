@@ -3,6 +3,7 @@ import path from "node:path";
 
 import { createResidentGraphSource } from "@samchon/graph";
 
+import { compilationDatabaseLifecycle } from "./compilation-database-lifecycle.mjs";
 import { isolateCorpus, shell } from "./process.mjs";
 
 /** Measure one strict provider without ever editing the pinned corpus clone. */
@@ -22,6 +23,10 @@ export const runStrictLifecycle = async (experiment, pinnedRoot) => {
   const createFile = path.join(lifecycleRoot, fixture.createFile);
   const renamedFile = path.join(lifecycleRoot, fixture.renamedFile);
   const buildFile = path.join(lifecycleRoot, fixture.buildFile);
+  const compilationDatabase =
+    fixture.compilationDatabase === undefined
+      ? undefined
+      : path.join(lifecycleRoot, fixture.compilationDatabase);
   const failureFile = path.join(
     lifecycleRoot,
     fixture.failureFile ?? fixture.sourceFile,
@@ -108,28 +113,57 @@ export const runStrictLifecycle = async (experiment, pinnedRoot) => {
     await load("edit", CHANGED_MODES);
 
     fs.writeFileSync(createFile, fixture.createText);
+    if (compilationDatabase !== undefined) {
+      compilationDatabaseLifecycle.add(
+        compilationDatabase,
+        sourceFile,
+        createFile,
+      );
+    }
     const created = await load("create", CHANGED_MODES);
     assertCreatedSymbol(
       created,
-      fixture,
       experiment.language,
       fixture.createFile,
+      fixture.createdSymbol,
     );
     assertCreatedEdge(created, fixture, experiment.language);
 
     fs.renameSync(createFile, renamedFile);
+    if (fixture.renamedText !== undefined) {
+      fs.writeFileSync(renamedFile, fixture.renamedText);
+    }
+    if (compilationDatabase !== undefined) {
+      compilationDatabaseLifecycle.move(
+        compilationDatabase,
+        createFile,
+        renamedFile,
+      );
+    }
     const renamed = await load("rename", CHANGED_MODES);
     assertCreatedSymbol(
       renamed,
-      fixture,
       experiment.language,
       fixture.renamedFile,
+      fixture.renamedSymbol ?? fixture.createdSymbol,
     );
+    if (
+      fixture.renamedSymbol !== undefined &&
+      fixture.renamedSymbol !== fixture.createdSymbol &&
+      renamed.nodes.some((node) => node.name === fixture.createdSymbol)
+    ) {
+      throw new Error(
+        `${experiment.language}: rename retained lifecycle declaration ${fixture.createdSymbol}`,
+      );
+    }
     assertCreatedEdge(renamed, fixture, experiment.language);
 
     fs.rmSync(renamedFile);
+    if (compilationDatabase !== undefined) {
+      compilationDatabaseLifecycle.remove(compilationDatabase, renamedFile);
+    }
     const deleted = await load("delete", CHANGED_MODES);
-    if (deleted.nodes.some((node) => node.name === fixture.createdSymbol)) {
+    if (hasLifecycleDeclaration(deleted, fixture)) {
       throw new Error(
         `${experiment.language}: deleted lifecycle declaration remained in the graph`,
       );
@@ -158,6 +192,58 @@ export const runStrictLifecycle = async (experiment, pinnedRoot) => {
         mode: resident.modes().get(experiment.strictProvider),
         elapsedMs: Math.round(performance.now() - failedAt),
         error: failure.message,
+      });
+    } else if (fixture.failurePolicy === "fallback") {
+      if (
+        typeof fixture.failureLimitation !== "string" ||
+        fixture.failureLimitation === ""
+      ) {
+        throw new Error(
+          `${experiment.language}: a fallback failure must state the limitation it accepts`,
+        );
+      }
+      let fallback;
+      try {
+        fallback = await resident.load();
+      } catch (error) {
+        throw new Error(
+          `${experiment.language}: the catalog records a strict-provider decline with fallback, but the resident rejected it: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+      if (
+        fallback.provenance?.some(
+          (row) => row.provider === experiment.strictProvider,
+        )
+      ) {
+        throw new Error(
+          `${experiment.language}: the declined strict provider still published provenance`,
+        );
+      }
+      const mode = resident.modes().get(experiment.strictProvider);
+      if (mode !== undefined) {
+        throw new Error(
+          `${experiment.language}: the declined strict provider still reported mode ${String(mode)}`,
+        );
+      }
+      const providerWarnings = (fallback.warnings ?? []).filter((warning) =>
+        warning.includes(experiment.strictProvider),
+      );
+      if (providerWarnings.length === 0) {
+        throw new Error(
+          `${experiment.language}: strict-provider fallback did not name ${experiment.strictProvider}`,
+        );
+      }
+      dump = fallback;
+      rows.push({
+        name: "failure",
+        status: "fallback-with-limitation",
+        mode,
+        elapsedMs: Math.round(performance.now() - failedAt),
+        nodeCount: fallback.nodes.length,
+        edgeCount: fallback.edges.length,
+        diagnosticCount: fallback.diagnostics?.length ?? 0,
+        warnings: providerWarnings,
+        limitation: fixture.failureLimitation,
       });
     } else if (fixture.failurePolicy === "tolerated") {
       // Some producers genuinely do not fail on this input class. Asserting a
@@ -254,6 +340,71 @@ export const runStrictLifecycle = async (experiment, pinnedRoot) => {
         diagnosticCount,
         limitation: fixture.failureLimitation,
       });
+    } else if (fixture.failurePolicy === "published") {
+      if (
+        typeof fixture.failureLimitation !== "string" ||
+        fixture.failureLimitation === ""
+      ) {
+        throw new Error(
+          `${experiment.language}: a published failure must state the limitation it accepts`,
+        );
+      }
+      const prior = previousProvenance;
+      const priorDump = dump;
+      let published;
+      try {
+        published = await resident.load();
+      } catch (error) {
+        throw new Error(
+          `${experiment.language}: the catalog records this input as published with a limitation, but the provider rejected it: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+      const provenance = strictProvenance(published, experiment);
+      const mode = resident.modes().get(experiment.strictProvider);
+      if (!CHANGED_MODES.includes(mode)) {
+        throw new Error(
+          `${experiment.language}: published failure reported ${String(mode)}`,
+        );
+      }
+      if (provenance.universe === prior.universe) {
+        throw new Error(
+          `${experiment.language}: the malformed input did not move the build universe, so this step compared a generation to itself`,
+        );
+      }
+      const changed = publicationChanges(
+        prior,
+        provenance,
+        priorDump,
+        published,
+        experiment.strictProvider,
+      );
+      if (changed.length === 0) {
+        throw new Error(
+          `${experiment.language}: the catalog records a degraded publication, but only the declared build input changed`,
+        );
+      }
+      dump = published;
+      previousIdentity = [
+        provenance.manifest,
+        provenance.content,
+        provenance.universe,
+      ].join(":");
+      previousProvenance = provenance;
+      previousDiagnostics = published.diagnostics?.length ?? 0;
+      rows.push({
+        name: "failure",
+        status: "published-with-limitation",
+        mode,
+        elapsedMs: Math.round(performance.now() - failedAt),
+        manifest: provenance.manifest,
+        content: provenance.content,
+        universe: provenance.universe,
+        nodeCount: published.nodes.length,
+        edgeCount: published.edges.length,
+        diagnosticCount: previousDiagnostics,
+        changed,
+        limitation: fixture.failureLimitation,
+      });
     } else if (
       fixture.failurePolicy === "diagnostic" ||
       fixture.failurePolicy === "reject-or-diagnostic"
@@ -319,12 +470,63 @@ export const runStrictLifecycle = async (experiment, pinnedRoot) => {
     fs.writeFileSync(failureFile, failureText);
     fs.writeFileSync(sourceFile, sourceText);
     fs.writeFileSync(buildFile, buildText);
-    const retried = await load("retry", CHANGED_MODES);
-    if (retried.nodes.some((node) => node.name === fixture.createdSymbol)) {
+    const retried = await load(
+      "retry",
+      fixture.failurePolicy === "fallback"
+        ? ["initial", ...CHANGED_MODES]
+        : CHANGED_MODES,
+    );
+    if (hasLifecycleDeclaration(retried, fixture)) {
       throw new Error(
         `${experiment.language}: retry retained a removed lifecycle declaration`,
       );
     }
+    const coldProvenance = strictProvenance(cold, experiment);
+    const retryProvenance = strictProvenance(retried, experiment);
+    // Restoring the sources restores the generation, or the row says why not.
+    //
+    // This was written as two claims, on the theory that a source manifest is a
+    // digest of files and so nothing about a producer's scheduling could move
+    // it. The C++ lane disproved that on its first complete run: the manifest
+    // moved too. It had to. scip-clang's own statistics flag warns that
+    // "non-determinism may affect the number of files skipped by individual
+    // indexing jobs", and a manifest lists the files the producer reported — so
+    // a schedule that skips a different set publishes a different manifest.
+    //
+    // One claim, then, and the same exemption covers both halves. Most
+    // producers reproduce their own generation and a silent difference in
+    // either half is a defect; a row that names its limitation may differ, and
+    // what actually moved is published either way rather than merely permitted.
+    const reproducedManifest =
+      coldProvenance.manifest === retryProvenance.manifest;
+    const reproducedContent =
+      coldProvenance.content === retryProvenance.content;
+    const reproduced = reproducedManifest && reproducedContent;
+    const limitation = experiment.regenerationLimitation;
+    if (!reproduced && limitation === undefined) {
+      throw new Error(
+        `${experiment.language}: restoring the original sources did not reproduce the generation ` +
+          `(manifest ${reproducedManifest ? "unchanged" : "moved"}, ` +
+          `facts ${reproducedContent ? "unchanged" : "moved"}; ` +
+          `cold ${String(cold.nodes.length)} nodes/${String(cold.edges.length)} edges, ` +
+          `retry ${String(retried.nodes.length)} nodes/${String(retried.edges.length)} edges)`,
+      );
+    }
+    rows.push({
+      name: "regeneration",
+      status: reproduced ? "reproduced" : "limited",
+      reproducedManifest,
+      reproducedContent,
+      coldManifest: coldProvenance.manifest,
+      retryManifest: retryProvenance.manifest,
+      coldContent: coldProvenance.content,
+      retryContent: retryProvenance.content,
+      coldNodes: cold.nodes.length,
+      retryNodes: retried.nodes.length,
+      coldEdges: cold.edges.length,
+      retryEdges: retried.edges.length,
+      ...(limitation === undefined ? {} : { limitation }),
+    });
     return { dump: cold, rows, project: lifecycleRoot };
   } finally {
     await resident.close();
@@ -344,34 +546,84 @@ function strictProvenance(dump, experiment) {
   return provenance;
 }
 
-function assertCreatedSymbol(dump, fixture, language, expectedFile) {
+function assertCreatedSymbol(
+  dump,
+  language,
+  expectedFile,
+  expectedSymbol,
+) {
   const created = dump.nodes.find(
-    (node) => node.name === fixture.createdSymbol,
+    (node) => node.name === expectedSymbol,
   );
   if (created === undefined || created.file !== expectedFile) {
     throw new Error(
-      `${language}: lifecycle declaration was not published from ${expectedFile}`,
+      `${language}: lifecycle declaration ${expectedSymbol} was not published from ${expectedFile}`,
     );
   }
+}
+
+function hasLifecycleDeclaration(dump, fixture) {
+  const symbols = new Set([
+    fixture.createdSymbol,
+    fixture.renamedSymbol ?? fixture.createdSymbol,
+  ]);
+  return dump.nodes.some((node) => symbols.has(node.name));
 }
 
 function assertCreatedEdge(dump, fixture, language) {
   if (fixture.createdEdge === undefined) return;
   const nodes = new Map(dump.nodes.map((node) => [node.id, node]));
-  const found = dump.edges.some((edge) => {
+  const found = dump.edges.find((edge) => {
     const from = nodes.get(edge.from);
     const to = nodes.get(edge.to);
     return (
       edge.kind === fixture.createdEdge.kind &&
       from?.name === fixture.createdEdge.from &&
-      to?.name === fixture.createdEdge.to
+      to?.name === fixture.createdEdge.to &&
+      (fixture.createdEdge.crossFile !== true ||
+        (typeof from.file === "string" &&
+          from.file !== "" &&
+          typeof to.file === "string" &&
+          to.file !== "" &&
+          from.file !== to.file))
     );
   });
-  if (!found) {
+  if (found === undefined) {
     throw new Error(
-      `${language}: lifecycle lost ${fixture.createdEdge.kind} ${fixture.createdEdge.from} -> ${fixture.createdEdge.to}`,
+      `${language}: lifecycle lost ${fixture.createdEdge.crossFile === true ? "cross-file " : ""}${fixture.createdEdge.kind} ${fixture.createdEdge.from} -> ${fixture.createdEdge.to}`,
     );
   }
+}
+
+function publicationChanges(
+  prior,
+  next,
+  priorDump,
+  nextDump,
+  provider,
+) {
+  const changed = [];
+  if (prior.manifest !== next.manifest) changed.push("manifest");
+  if (prior.content !== next.content) changed.push("content");
+  if (
+    [...prior.capabilities].sort().join(",") !==
+    [...next.capabilities].sort().join(",")
+  ) {
+    changed.push("capabilities");
+  }
+  const spoken = (report) =>
+    (report.warnings ?? [])
+      .filter((warning) => warning.startsWith(`${provider}:`))
+      .sort()
+      .join(SEPARATOR);
+  if (spoken(priorDump) !== spoken(nextDump)) changed.push("warnings");
+  if (
+    (priorDump.diagnostics?.length ?? 0) !==
+    (nextDump.diagnostics?.length ?? 0)
+  ) {
+    changed.push("diagnostics");
+  }
+  return changed;
 }
 
 /** A separator no warning can contain, so two lists cannot collide. */

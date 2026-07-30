@@ -6,7 +6,7 @@
       "repo": "excalidraw",
       "family": "dedicated",
       "file": "excalidraw.md",
-      "fixtureCommit": "98a2730b197873d43fddbe3fad6f0812df84b451",
+      "fixtureCommit": "e576ee0ecbdec2b3de3b7378f2cc08038026531b",
       "language": "typescript",
       "questionSha256": "e4f3b02a5d3a1e86a9136d90a4b8bd9c73774733f9f1c021faee61b3ea6e83b5"
     },
@@ -15,7 +15,7 @@
       "repo": "excalidraw",
       "family": "common",
       "file": "common.md",
-      "fixtureCommit": "98a2730b197873d43fddbe3fad6f0812df84b451",
+      "fixtureCommit": "e576ee0ecbdec2b3de3b7378f2cc08038026531b",
       "language": "typescript",
       "questionSha256": "efe22b2b8f0d37d2e74fc2391ba689b5c455e16a1f261fd821f209bd7ad20517"
     },
@@ -78,7 +78,7 @@
       "repo": "gson",
       "family": "dedicated",
       "file": "gson.md",
-      "fixtureCommit": "c9f3fd55854a743b66f857ace3c7b268ea3e2ef7",
+      "fixtureCommit": "a32fbc7fce43841e859b14184984dacd382115e9",
       "language": "java",
       "questionSha256": "808a7b9d8d684cdd2b01cc8391f94893b330d4495a70b0894f9b8a16dab3d2c5"
     },
@@ -87,7 +87,7 @@
       "repo": "gson",
       "family": "common",
       "file": "common.md",
-      "fixtureCommit": "c9f3fd55854a743b66f857ace3c7b268ea3e2ef7",
+      "fixtureCommit": "a32fbc7fce43841e859b14184984dacd382115e9",
       "language": "java",
       "questionSha256": "efe22b2b8f0d37d2e74fc2391ba689b5c455e16a1f261fd821f209bd7ad20517"
     },
@@ -150,7 +150,7 @@
       "repo": "slim",
       "family": "dedicated",
       "file": "slim.md",
-      "fixtureCommit": "0da7dd2fc66956730b6633f6a056b35e59126583",
+      "fixtureCommit": "44c0dabf36c0e971ae9bf17c7bc229fdb6a8b240",
       "language": "php",
       "questionSha256": "5b8775bb84f2629a2413bf4bb522281d344c7781020660b739814c751c5cc0f5"
     },
@@ -159,7 +159,7 @@
       "repo": "slim",
       "family": "common",
       "file": "common.md",
-      "fixtureCommit": "0da7dd2fc66956730b6633f6a056b35e59126583",
+      "fixtureCommit": "44c0dabf36c0e971ae9bf17c7bc229fdb6a8b240",
       "language": "php",
       "questionSha256": "efe22b2b8f0d37d2e74fc2391ba689b5c455e16a1f261fd821f209bd7ad20517"
     },
@@ -186,7 +186,7 @@
       "repo": "koin",
       "family": "dedicated",
       "file": "koin.md",
-      "fixtureCommit": "dc86ef8dd8fbe8564fb7453c03f5b738da3450bb",
+      "fixtureCommit": "b6b55191a3fc380e616d7c9e91cf573af9f9b9a3",
       "language": "kotlin",
       "questionSha256": "03f32f552a7d88639cf9fd27ff334e0532d0bd3a979f05a6ad5e432c636afeb7"
     },
@@ -195,7 +195,7 @@
       "repo": "koin",
       "family": "common",
       "file": "common.md",
-      "fixtureCommit": "dc86ef8dd8fbe8564fb7453c03f5b738da3450bb",
+      "fixtureCommit": "b6b55191a3fc380e616d7c9e91cf573af9f9b9a3",
       "language": "kotlin",
       "questionSha256": "efe22b2b8f0d37d2e74fc2391ba689b5c455e16a1f261fd821f209bd7ad20517"
     },
@@ -204,7 +204,7 @@
       "repo": "lualine",
       "family": "dedicated",
       "file": "lualine.md",
-      "fixtureCommit": "221ce6b2d999187044529f49da6554a92f740a96",
+      "fixtureCommit": "fa111072655a5c669f466aa36c7dbd34e4f7012c",
       "language": "lua",
       "questionSha256": "709c330ccc5210a69034a9fd99e8b4f2a5edbe722721b597197a5180116d0db3"
     },
@@ -213,7 +213,7 @@
       "repo": "lualine",
       "family": "common",
       "file": "common.md",
-      "fixtureCommit": "221ce6b2d999187044529f49da6554a92f740a96",
+      "fixtureCommit": "fa111072655a5c669f466aa36c7dbd34e4f7012c",
       "language": "lua",
       "questionSha256": "efe22b2b8f0d37d2e74fc2391ba689b5c455e16a1f261fd821f209bd7ad20517"
     },

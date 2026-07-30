@@ -205,6 +205,27 @@ func rejectPackageErrors(loaded []*packages.Package) error {
 	return fmt.Errorf("go/packages reported an incomplete program: %s", strings.Join(messages, "; "))
 }
 
+// Whether a source lies inside a directory the go tool ignores.
+//
+// Directory segments only: the final element is the file itself, and a Go
+// source is named `*.go`, so a file could never be the `testdata` in question.
+func underTestdata(root, filename string) bool {
+	relative, err := filepath.Rel(root, filepath.Clean(filename))
+	if err != nil {
+		return false
+	}
+	segments := strings.Split(filepath.ToSlash(relative), "/")
+	if len(segments) < 2 {
+		return false
+	}
+	for _, segment := range segments[:len(segments)-1] {
+		if segment == "testdata" {
+			return true
+		}
+	}
+	return false
+}
+
 func (c *collector) units(loaded []*packages.Package) ([]unit, error) {
 	var units []unit
 	seenUnit := map[string]bool{}
@@ -215,6 +236,22 @@ func (c *collector) units(loaded []*packages.Package) ([]unit, error) {
 		for _, file := range pkg.Syntax {
 			position := pkg.Fset.PositionFor(file.Pos(), true)
 			if position.Filename == "" || !within(c.root, position.Filename) {
+				continue
+			}
+			// `go help packages`: "The go tool will ignore a directory named
+			// testdata". scip-go enumerates by pattern and so never indexes one,
+			// while the checker reaches it through an ordinary import — gin's
+			// tests import .../testdata/protoexample, which is legal because
+			// testdata is skipped by pattern matching and not by the importer.
+			//
+			// The two therefore disagreed about what the project is, and the
+			// corroboration rule refused every build containing the idiom. This
+			// settles the disagreement at the boundary instead of weakening the
+			// rule: nothing here is owned, nothing is emitted, and nothing is
+			// owed. What a package pattern does not cover is not what this index
+			// describes, and a package reached only by import is a dependency
+			// like any other.
+			if underTestdata(c.root, position.Filename) {
 				continue
 			}
 			absolute := filepath.Clean(position.Filename)
@@ -362,6 +399,17 @@ func (c *collector) addType(current *unit, spec *ast.TypeSpec) {
 
 func (c *collector) addValues(current *unit, tokenKind token.Token, spec *ast.ValueSpec) {
 	for _, name := range spec.Names {
+		// The blank identifier declares nothing. `var _ Iface = T{}` exists
+		// precisely so the assertion binds no name, and go/types still records
+		// it in Defs — so it arrives here with an object like any other.
+		//
+		// Emitting it as a node is wrong twice over: nothing can ever reference
+		// a symbol with no name, and every blank at package scope derives the
+		// same qualified identity, so the second one is a conflict that fails
+		// the build rather than a graph missing an edge.
+		if name.Name == "_" {
+			continue
+		}
 		object := current.pkg.TypesInfo.Defs[name]
 		if object == nil {
 			continue
@@ -436,6 +484,19 @@ func (c *collector) addObjectNode(
 	extraModifiers ...string,
 ) string {
 	symbol := objectSymbol(object, qualified)
+	// Go allows many `func init()` in one package and forbids referring to any
+	// of them, so every one shares a FullName and they all derive one identity.
+	// gin has several and the second one failed the build.
+	//
+	// Unlike the blank identifier this cannot be skipped: an init body runs and
+	// what it calls are edges worth having. So it is disambiguated by where it
+	// is written, the same way a closure is — position is the only thing that
+	// distinguishes two declarations the language deliberately left
+	// indistinguishable by name.
+	if isPackageInit(object, kind) {
+		position := current.pkg.Fset.PositionFor(positioned.Pos(), true)
+		symbol += "::" + current.fileName + "::" + strconv.Itoa(position.Offset)
+	}
 	id := semanticID(kind, symbol, qualified, "")
 	exported := object.Exported() && kind != "parameter" && !(kind == "type" && owner != nil)
 	modifiers := []string{}
@@ -931,6 +992,24 @@ func (c *collector) snapshotParts() ([]source, []node, []edge) {
 		edges = append(edges, value)
 	}
 	return sources, nodes, edges
+}
+
+// Whether this is a package initializer, which the language lets a package
+// declare more than once and lets nothing refer to.
+//
+// The kind check already excludes methods, and a method named `init` is an
+// ordinary referenceable method that must keep its name-based identity; the
+// receiver check says so directly rather than leaving it to that coincidence.
+func isPackageInit(object types.Object, kind string) bool {
+	if kind != "function" {
+		return false
+	}
+	function, ok := object.(*types.Func)
+	if !ok || function.Name() != "init" {
+		return false
+	}
+	signature, ok := function.Type().(*types.Signature)
+	return ok && signature.Recv() == nil
 }
 
 func objectSymbol(object types.Object, qualified string) string {

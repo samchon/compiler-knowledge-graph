@@ -9,8 +9,10 @@ import {
   appendGithubPath,
   ensureDir,
   parseArgs,
+  recordProvisionedEnvironment,
   recordTool,
   repositoryRoot,
+  resetProvisionedEnvironment,
   run,
   shell,
   resetToolManifest,
@@ -22,6 +24,7 @@ const experiment = findExperiment(args.language);
 const toolsRoot = path.join(workRoot, "tools");
 const binRoot = path.join(toolsRoot, "bin");
 ensureDir(binRoot);
+resetProvisionedEnvironment();
 appendGithubPath(binRoot);
 resetToolManifest(experiment.language);
 
@@ -182,6 +185,43 @@ const installKotlinLanguageServer = async () => {
   fs.symlinkSync(launcher, link);
 };
 
+const installGradle = async () => {
+  const version = "9.4.1";
+  const url = `https://services.gradle.org/distributions/gradle-${version}-bin.zip`;
+  const archive = path.join(toolsRoot, `gradle-${version}-bin.zip`);
+  const target = path.join(toolsRoot, `gradle-${version}`);
+  await downloadFile(url, archive);
+  verifySha256(
+    archive,
+    "2ab2958f2a1e51120c326cad6f385153bb11ee93b3c216c5fccebfdfbb7ec6cb",
+  );
+  fs.rmSync(target, { force: true, recursive: true });
+  run("unzip", ["-q", archive, "-d", toolsRoot]);
+  const executable = path.join(target, "bin", "gradle");
+  if (!fs.statSync(executable, { throwIfNoEntry: false })?.isFile()) {
+    throw new Error(`Gradle ${version} was not extracted at ${executable}`);
+  }
+  fs.chmodSync(executable, 0o755);
+  const link = path.join(binRoot, "gradle");
+  fs.rmSync(link, { force: true });
+  fs.symlinkSync(executable, link);
+  const output = String(
+    run(link, ["--version"], { stdio: "pipe" }).stdout,
+  );
+  if (!output.includes(`Gradle ${version}`)) {
+    throw new Error(`Expected Gradle ${version}, received:\n${output}`);
+  }
+  console.log(output.trim());
+  record({
+    tool: "gradle",
+    version,
+    source: url,
+    digest:
+      "sha256:2ab2958f2a1e51120c326cad6f385153bb11ee93b3c216c5fccebfdfbb7ec6cb",
+  });
+  return executable;
+};
+
 const installZls = async () => {
   const url = await latestAsset("zigtools/zls", /x86_64.*linux.*\.tar\.xz$/);
   const archive = path.join(toolsRoot, "zls.tar.xz");
@@ -202,23 +242,26 @@ const installZls = async () => {
 };
 
 const installScip = async () => {
-  const archive = path.join(toolsRoot, "scip-v0.7.1-linux-amd64.tar.gz");
-  const target = path.join(toolsRoot, "scip-v0.7.1");
+  // scip-java v0.13.1 emits the typed-range oneof introduced by SCIP v0.9.
+  // An older decoder silently discards those unknown protobuf fields before
+  // printing JSON, making valid occurrences appear to have no source range.
+  const archive = path.join(toolsRoot, "scip-v0.9.0-linux-amd64.tar.gz");
+  const target = path.join(toolsRoot, "scip-v0.9.0");
   await downloadFile(
-    "https://github.com/scip-code/scip/releases/download/v0.7.1/scip-linux-amd64.tar.gz",
+    "https://github.com/scip-code/scip/releases/download/v0.9.0/scip-linux-amd64.tar.gz",
     archive,
   );
   verifySha256(
     archive,
-    "7bb1a566787478641a13bd9c93c2f571337556c76d659206f2225dc7d71a648b",
+    "fc2e7273e110be9f35924da1066000183791e8bfdb0391355de6eaaa070fec75",
   );
   record({
     tool: "scip",
-    version: "v0.7.1",
+    version: "v0.9.0",
     source:
-      "https://github.com/scip-code/scip/releases/download/v0.7.1/scip-linux-amd64.tar.gz",
+      "https://github.com/scip-code/scip/releases/download/v0.9.0/scip-linux-amd64.tar.gz",
     digest:
-      "sha256:7bb1a566787478641a13bd9c93c2f571337556c76d659206f2225dc7d71a648b",
+      "sha256:fc2e7273e110be9f35924da1066000183791e8bfdb0391355de6eaaa070fec75",
   });
   fs.rmSync(target, { force: true, recursive: true });
   ensureDir(target);
@@ -232,6 +275,129 @@ const installScip = async () => {
   fs.rmSync(link, { force: true });
   fs.symlinkSync(binary, link);
 };
+
+// The strict Ruby producer, which `GRAPH_PROVIDERS` has registered since the
+// registry existed and which no runner has ever installed. Until now every Ruby
+// build fell through to the generic language-server lane, where a
+// `textDocument/references` per symbol against a server with no persistent
+// cross-file index made sinatra exceed an hour twice — at a thirty minute cap
+// and again at sixty.
+//
+// The standalone binary rather than the gem, because it is the one artifact
+// GitHub publishes a digest for, and this setup pins what it installs. Upstream
+// ships x86_64 Linux and arm64 Darwin only: there is no Windows build, which
+// matters for the product beyond this runner and is recorded rather than
+// discovered later.
+// Every SCIP producer upstream publishes as a single self-contained executable
+// installs the same way, so the shape is written once. The digest is taken from
+// the release API rather than computed here: GitHub reports it per asset, which
+// pins the bytes without this setup having to fetch them twice.
+const installPinnedBinary = async ({ tool, version, url, digest }) => {
+  const binary = path.join(toolsRoot, `${tool}-${version}`);
+  await downloadFile(url, binary);
+  verifySha256(binary, digest);
+  record({ tool, version, source: url, digest: `sha256:${digest}` });
+  fs.chmodSync(binary, 0o755);
+  const link = path.join(binRoot, tool);
+  fs.rmSync(link, { force: true });
+  fs.symlinkSync(binary, link);
+};
+
+const installScipRuby = () =>
+  installPinnedBinary({
+    tool: "scip-ruby",
+    version: "v0.4.7",
+    url: "https://github.com/sourcegraph/scip-ruby/releases/download/scip-ruby-v0.4.7/scip-ruby-x86_64-linux",
+    digest:
+      "a068c7c3b2042b9eac563ce77ce35dcaca666b418530b1db9f932a3dbc7175dd",
+  });
+
+// Indexes through the real compiler: it drives Gradle or Maven with the
+// SemanticDB plugin injected, so the JVM lanes pay a build rather than skipping
+// one. That is the trade — wall clock for facts the compiler itself produced —
+// and it has to be measured rather than assumed. Kotlin support is upstream's
+// own "less mature" than Java's, and Maven cannot index Kotlin at all; koin is
+// Gradle, so it is on the supported path.
+const installScipJava = () =>
+  installPinnedBinary({
+    tool: "scip-java",
+    version: "v0.13.1",
+    url: "https://github.com/scip-code/scip-java/releases/download/v0.13.1/scip-java-v0.13.1",
+    digest:
+      "a694cae143c32c5b6226362fb4bd268a8d13d3cd9b482819b3b0029a9a97b8fe",
+  });
+
+// scip-java v0.13.1 predates Kotlin 2.3's CompilerPluginRegistrar.pluginId
+// contract, so it cannot index current Koin. Compiler plugins are also coupled
+// to the compiler minor that loads them: #973's merged 2.4.0 tree builds but
+// fails inside Koin's 2.3.20 compiler with NoClassDefFoundError. Pin the exact
+// upstream #973 commit that completed the 2.3.20 port, before its next commit
+// moved the plugin and fixture to 2.4.0. The source archive, compiler minor and
+// fixture revision are then one reviewable generation instead of a local patch.
+const SCIP_JAVA_KOTLIN_COMMIT =
+  "e940c1889767a81347387067a375320dc6f5d83e";
+const SCIP_JAVA_KOTLIN_VERSION = "2.3.20";
+const installScipJavaKotlinSnapshot = async (gradle) => {
+  const url =
+    `https://codeload.github.com/scip-code/scip-java/tar.gz/${SCIP_JAVA_KOTLIN_COMMIT}`;
+  const archive = path.join(
+    toolsRoot,
+    `scip-java-${SCIP_JAVA_KOTLIN_COMMIT}.tar.gz`,
+  );
+  const source = path.join(
+    toolsRoot,
+    `scip-java-${SCIP_JAVA_KOTLIN_COMMIT}`,
+  );
+  await downloadFile(url, archive);
+  verifySha256(
+    archive,
+    "985eb03ef165864dbae3db4453d4566e699f78761bace3e4614bf67d38ce76cf",
+  );
+  fs.rmSync(source, { force: true, recursive: true });
+  ensureDir(source);
+  run(
+    "tar",
+    ["-xzf", archive, "--strip-components=1", "-C", source],
+  );
+  run(gradle, ["--no-daemon", ":scip-java:installDist"], { cwd: source });
+  const launcher = path.join(
+    source,
+    "scip-java",
+    "build",
+    "install",
+    "scip-java",
+    "bin",
+    "scip-java",
+  );
+  if (!fs.statSync(launcher, { throwIfNoEntry: false })?.isFile()) {
+    throw new Error(`scip-java snapshot launcher not found at ${launcher}`);
+  }
+  fs.chmodSync(launcher, 0o755);
+  const link = path.join(binRoot, "scip-java");
+  fs.rmSync(link, { force: true });
+  fs.symlinkSync(launcher, link);
+  run(link, ["--version"]);
+  record({
+    tool: "scip-java",
+    version:
+      `${SCIP_JAVA_KOTLIN_COMMIT}+kotlin-${SCIP_JAVA_KOTLIN_VERSION}`,
+    source: url,
+    digest:
+      "sha256:985eb03ef165864dbae3db4453d4566e699f78761bace3e4614bf67d38ce76cf",
+  });
+};
+
+// Needs a compilation database, which is why the provider carries
+// `--compdb-path` and the corpus fixtures for redis and leveldb have to produce
+// `compile_commands.json` before this can say anything.
+const installScipClang = () =>
+  installPinnedBinary({
+    tool: "scip-clang",
+    version: "v0.4.0",
+    url: "https://github.com/sourcegraph/scip-clang/releases/download/v0.4.0/scip-clang-x86_64-linux",
+    digest:
+      "06fd18c576f979a726c651594644ec4a35db4f471f2160b3f72eb89fa6001784",
+  });
 
 // The published tarball is a webpack bundle whose only runtime `require`s are
 // Node built-ins, so extracting the integrity-verified archive installs exactly
@@ -289,8 +455,47 @@ const findFile = (dir, name) => {
 };
 
 switch (experiment.language) {
-  case "typescript":
+  case "typescript": {
+    // This case used to be `break;` — the flagship language provisioned
+    // nothing, so excalidraw came back `indexer=static` and its 172,012 lines
+    // in 2.8 s read as the compiler-owned provider being fast when the
+    // best-effort syntax reader had produced it.
+    //
+    // `resolveTtscGraphCommand` prefers the indexed project's own `ttsc`
+    // installation, then a `ttscserver` beside it, and only then `ttscgraph` on
+    // PATH. A corpus fixture on stock TypeScript has neither of the first two,
+    // so the PATH fallback is the only route — and the binary lives inside the
+    // platform package rather than in `@ttsc/graph`, whose npm `bin` publishes
+    // `ttsc-graph` and not this.
+    const ttscVersion = "0.22.0";
+    shell(`npm install -g @ttsc/linux-x64@${ttscVersion}`);
+    const globalRoot = shell("npm root -g", {
+      stdio: ["ignore", "pipe", "inherit"],
+    })
+      .stdout.toString()
+      .trim();
+    const ttscGraph = path.join(
+      globalRoot,
+      "@ttsc",
+      "linux-x64",
+      "bin",
+      "ttscgraph",
+    );
+    if (!fs.existsSync(ttscGraph)) {
+      throw new Error(`ttscgraph not found after install at ${ttscGraph}`);
+    }
+    fs.chmodSync(ttscGraph, 0o755);
+    const link = path.join(binRoot, "ttscgraph");
+    fs.rmSync(link, { force: true });
+    fs.symlinkSync(ttscGraph, link);
+    record({
+      tool: "ttscgraph",
+      version: ttscVersion,
+      source: `npm install -g @ttsc/linux-x64@${ttscVersion}`,
+      digest: "unpinned",
+    });
     break;
+  }
   case "go": {
     const archive = path.join(
       toolsRoot,
@@ -356,13 +561,25 @@ switch (experiment.language) {
     break;
   case "cpp":
   case "c":
-    apt(["clangd"]);
+    // `bear` alongside clangd because scip-clang declines without a compilation
+    // database, and a Makefile project has no way to emit one — bear records
+    // the compiler invocations as the build runs. A CMake project needs nothing
+    // extra, since configure writes the database on its own.
+    apt(["clangd", "bear"]);
     record({
       tool: "clangd",
       version: "unpinned",
       source: "apt clangd",
       digest: "unpinned",
     });
+    record({
+      tool: "bear",
+      version: "unpinned",
+      source: "apt bear",
+      digest: "unpinned",
+    });
+    await installScipClang();
+    await installScip();
     break;
   case "java": {
     // jdtls is not an apt package and requires Java 21+; install the JDK and the
@@ -373,6 +590,7 @@ switch (experiment.language) {
     // jdtls crashes on the runner's default JDK; point it at Java 21.
     const javaHome = "/usr/lib/jvm/java-21-openjdk-amd64";
     process.env.JAVA_HOME = javaHome;
+    recordProvisionedEnvironment("JAVA_HOME", javaHome);
     if (process.env.GITHUB_ENV !== undefined) {
       fs.appendFileSync(process.env.GITHUB_ENV, `JAVA_HOME=${javaHome}${os.EOL}`);
     }
@@ -394,6 +612,8 @@ switch (experiment.language) {
         "https://download.eclipse.org/jdtls/snapshots/jdt-language-server-latest.tar.gz",
       digest: "unpinned",
     });
+    await installScipJava();
+    await installScip();
     break;
   }
   case "csharp": {
@@ -420,10 +640,41 @@ switch (experiment.language) {
       source: "dotnet tool install --global csharp-ls",
       digest: "unpinned",
     });
+    // The strict C# producer, built on Roslyn like csharp-ls but reading the
+    // solution once instead of answering a request per symbol. Installed as a
+    // global dotnet tool, so the SDK above is its only prerequisite.
+    shell(`"${dotnet}" tool install --global scip-dotnet || "${dotnet}" tool update --global scip-dotnet`);
+    record({
+      tool: "scip-dotnet",
+      version: "unpinned",
+      source: "dotnet tool install --global scip-dotnet",
+      digest: "unpinned",
+    });
+    await installScip();
     break;
   }
   case "kotlin":
     await installKotlinLanguageServer();
+    const gradle = await installGradle();
+    // scip-java covers Kotlin through semanticdb-kotlinc, and it needs a JDK to
+    // run the Gradle build it indexes through. koin is the worst lane measured
+    // at 1349 s, almost all of it kotlin-language-server's Gradle sync before it
+    // answers `initialize` at all. The strict path does not skip that build; it
+    // performs one. Whether that is faster, slower, or merely truer is the thing
+    // to find out.
+    apt(["openjdk-21-jdk"]);
+    const javaHome = "/usr/lib/jvm/java-21-openjdk-amd64";
+    process.env.JAVA_HOME = javaHome;
+    recordProvisionedEnvironment("JAVA_HOME", javaHome);
+    if (process.env.GITHUB_ENV !== undefined) {
+      fs.appendFileSync(
+        process.env.GITHUB_ENV,
+        `JAVA_HOME=${javaHome}${os.EOL}`,
+      );
+    }
+    appendGithubPath(path.join(javaHome, "bin"));
+    await installScipJavaKotlinSnapshot(gradle);
+    await installScip();
     break;
   case "swift":
     // sourcekit-lsp ships with the toolchain installed by the workflow's Setup
@@ -477,6 +728,8 @@ switch (experiment.language) {
       source: "gem install ruby-lsp",
       digest: "unpinned",
     });
+    await installScipRuby();
+    await installScip();
     break;
   case "php":
     shell("npm install -g intelephense");
@@ -486,7 +739,24 @@ switch (experiment.language) {
       source: "npm install -g intelephense",
       digest: "unpinned",
     });
+    // Composer, but not scip-php: the indexer is a dependency of the project it
+    // indexes, not a tool beside it. Its instructions are `composer require
+    // --dev` followed by `vendor/bin/scip-php`, and the post-v0.0.2 dependency
+    // install fix reads the analyzed project's flattened vendor and autoloader.
+    //
+    // The corpus fixture pins that upstream fix and this only supplies the
+    // runtime and Composer to install it with. `resolveProviderCommand` looks
+    // in `vendor/bin` for the same reason it looks in `node_modules/.bin`.
+    apt(["php-cli", "php-xml", "php-mbstring", "composer"]);
+    record({
+      tool: "composer",
+      version: "unpinned",
+      source: "apt composer",
+      digest: "unpinned",
+    });
+    await installScip();
     break;
+
   case "lua": {
     const url = await latestAsset("LuaLS/lua-language-server", /linux-x64\.tar\.gz$/);
     const archive = path.join(toolsRoot, "lua-language-server.tar.gz");
@@ -522,6 +792,20 @@ switch (experiment.language) {
         "https://storage.googleapis.com/dart-archive/channels/stable/release/latest/sdk/dartsdk-linux-x64-release.zip",
       digest: "unpinned",
     });
+    // scip_dart is a pub package rather than a released binary, so it activates
+    // through the SDK just installed and lands in the pub cache's bin directory.
+    // The registry used to name a `samchon-graph-dart` sidecar that was never
+    // written; darthttp exceeded an hour on the language-server lane while a
+    // real indexer for the language already existed on pub.dev.
+    shell("dart pub global activate scip_dart 1.6.2");
+    appendGithubPath(path.join(os.homedir(), ".pub-cache", "bin"));
+    record({
+      tool: "scip_dart",
+      version: "1.6.2",
+      source: "dart pub global activate scip_dart 1.6.2",
+      digest: "unpinned",
+    });
+    await installScip();
     break;
   }
   default:

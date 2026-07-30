@@ -16,6 +16,43 @@ export const test_language_registry_lists_advertised_targets = () => {
       fixture.language,
     );
   }
+  for (const extension of [".ipp", ".tpp", ".tcc", ".inl"]) {
+    TestValidator.equals(
+      `${extension} implementation header maps to C++`,
+      languageOf(`include/implementation${extension}`),
+      "cpp",
+    );
+  }
+  TestValidator.equals(
+    "uppercase .C remains a case-sensitive C++ identity",
+    languageOf("src/implementation.C"),
+    "cpp",
+  );
+  TestValidator.equals(
+    "uppercase .H remains a case-sensitive C++ identity",
+    languageOf("include/interface.H"),
+    "cpp",
+  );
+  TestValidator.equals(
+    "ordinary C++ suffixes remain case-insensitive",
+    languageOf("src/implementation.CPP"),
+    "cpp",
+  );
+  TestValidator.equals(
+    "lowercase .c remains a C identity",
+    languageOf("src/implementation.c"),
+    "c",
+  );
+  TestValidator.equals(
+    "lowercase .h remains a C identity",
+    languageOf("include/interface.h"),
+    "c",
+  );
+  TestValidator.equals(
+    "an unregistered uppercase suffix remains unknown after folded lookup",
+    languageOf("README.MD"),
+    "unknown",
+  );
   TestValidator.equals(
     "typescript default server",
     LANGUAGE_SPECS.find((spec) => spec.language === "typescript")?.lsp,

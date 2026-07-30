@@ -15,8 +15,8 @@
     "./package.json": "./package.json"
   },
   "scripts": {
-    "build": "pnpm --filter @samchon/graph-sitter build && rimraf lib && ttsc -p tsconfig.json && node build/copy-go-sidecar.mjs && node build/bundle-viewer.mjs && node -e \"require('node:fs').copyFileSync('../../README.md', 'README.md')\"",
-    "prepublishOnly": "node build/copy-go-sidecar.mjs && node -e \"require('node:fs').copyFileSync('../../README.md', 'README.md')\""
+    "build": "pnpm --filter @samchon/graph-sitter build && rimraf lib && ttsc -p tsconfig.json && node build/copy-sidecars.mjs && node build/bundle-viewer.mjs && node -e \"require('node:fs').copyFileSync('../../README.md', 'README.md')\"",
+    "prepublishOnly": "node build/copy-sidecars.mjs && node -e \"require('node:fs').copyFileSync('../../README.md', 'README.md')\""
   },
   "keywords": [
     "mcp",

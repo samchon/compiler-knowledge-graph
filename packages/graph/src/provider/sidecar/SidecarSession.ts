@@ -84,7 +84,7 @@ export class SidecarSession implements IBulkGraphSession {
       );
     }
     const wire = parseSidecarSnapshot(
-      JSON.parse(fs.readFileSync(props.artifact, "utf8")),
+      this.decode(fs.readFileSync(props.artifact, "utf8")),
     );
     this.assertProjectRoot(wire.projectRoot);
     assertSameLanguages(wire.languages, this.languages, this.options.provider);
@@ -139,6 +139,31 @@ export class SidecarSession implements IBulkGraphSession {
     });
   }
 
+  /**
+   * Read the artifact, saying whose it is and what was in it when it will not.
+   *
+   * A raw `JSON.parse` throws `Unexpected token …` with no provider name and no
+   * trace of the bytes, which is the least useful sentence available about a
+   * producer that crashed mid-write or printed a message where its snapshot
+   * should be. The head rather than the tail, because that is where a stray
+   * line starts, and bounded because the rest of the file is a graph.
+   */
+  private decode(text: string): unknown {
+    try {
+      return JSON.parse(text) as unknown;
+    } catch (error) {
+      const head = text.trimStart().slice(0, 400);
+      // Native JSON.parse rejects with SyntaxError; there is no alternate
+      // thrown shape to branch on at this boundary.
+      const message = (error as SyntaxError).message;
+      throw new Error(
+        `${this.options.provider}: the snapshot artifact is not JSON: ${message}${
+          head === "" ? " (the file is empty)" : `: ${head}`
+        }`,
+      );
+    }
+  }
+
   private assertProjectRoot(projectRoot: string): void {
     if (projectRoot === "") {
       throw new Error(
@@ -166,7 +191,7 @@ export namespace SidecarSession {
     command: IGraphProvider.ICommand;
     indexArgs: (artifact: string) => string[];
     inputs: () => string[];
-    configuration?: () => readonly string[];
+    configuration?: BatchGraphSession.IOptions["configuration"];
     maxStdoutBytes?: number;
     maxArtifactBytes?: number;
     validate?: (snapshot: IBulkGraphSession.ISnapshot) => void;

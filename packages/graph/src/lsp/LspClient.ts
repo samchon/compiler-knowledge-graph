@@ -35,6 +35,7 @@ export class LspClient {
     cwd?: string,
     maxMessageBytes = DEFAULT_MAX_MESSAGE_BYTES,
     windowsVerbatimArguments?: boolean,
+    private readonly requestObserver?: LspClient.IRequestObserver,
   ) {
     if (!Number.isSafeInteger(maxMessageBytes) || maxMessageBytes < 1) {
       throw new TypeError(
@@ -95,9 +96,12 @@ export class LspClient {
     // forever without changing the normal unlimited request contract.
     const id = this.nextId++;
     const payload = { jsonrpc: "2.0", id, method, params };
+    const started = process.hrtime.bigint();
+    this.observeRequest({ phase: "start", id, method });
+    let pending!: IRequest;
     const promise = new Promise<T>((resolve, reject) => {
       const effectiveTimeoutMs = timeoutMs ?? this.timeoutMs;
-      const pending: IRequest = {
+      pending = {
         resolve: (value) => resolve(value as T),
         reject,
         timer: undefined,
@@ -118,8 +122,36 @@ export class LspClient {
         signal.addEventListener("abort", pending.abort, { once: true });
       }
     });
-    this.write(payload);
-    return promise;
+    try {
+      this.write(payload);
+    } catch (error) {
+      // JSON serialization can fail synchronously for a cyclic value, BigInt,
+      // or throwing accessor. The request already has an identity, observer
+      // start event, timeout, and abort listener at this point, so settle that
+      // same promise rather than escaping around all four cleanup owners.
+      this.deletePending(id, pending);
+      pending.reject(asError(error));
+    }
+    try {
+      const result = await promise;
+      this.observeRequest({
+        phase: "end",
+        id,
+        method,
+        status: "success",
+        durationMs: Number(process.hrtime.bigint() - started) / 1e6,
+      });
+      return result;
+    } catch (error) {
+      this.observeRequest({
+        phase: "end",
+        id,
+        method,
+        status: "error",
+        durationMs: Number(process.hrtime.bigint() - started) / 1e6,
+      });
+      throw error;
+    }
   }
 
   public notify(method: string, params: unknown): void {
@@ -136,6 +168,14 @@ export class LspClient {
   public close(): Promise<void> {
     this.closing ??= this.closeOnce();
     return this.closing;
+  }
+
+  private observeRequest(event: LspClient.IRequestTrace): void {
+    try {
+      this.requestObserver?.(event);
+    } catch {
+      // Diagnostics must never change transport behavior.
+    }
   }
 
   private async closeOnce(): Promise<void> {
@@ -346,6 +386,24 @@ export class LspClient {
   }
 }
 
+export namespace LspClient {
+  export type IRequestObserver = (event: IRequestTrace) => void;
+
+  export type IRequestTrace =
+    | {
+        phase: "start";
+        id: number;
+        method: string;
+      }
+    | {
+        phase: "end";
+        id: number;
+        method: string;
+        status: "success" | "error";
+        durationMs: number;
+      };
+}
+
 function abortedError(method: string): Error {
   const error = new Error(`LSP request aborted: ${method}`);
   error.name = "AbortError";
@@ -355,6 +413,10 @@ function abortedError(method: string): Error {
 function stdinError(error: unknown): Error {
   const message = error instanceof Error ? error.message : String(error);
   return new Error(`Language server stdin failed: ${message}`);
+}
+
+function asError(error: unknown): Error {
+  return error instanceof Error ? error : new Error(String(error));
 }
 
 function waitForExit(exit: Promise<void>, timeoutMs: number): Promise<boolean> {

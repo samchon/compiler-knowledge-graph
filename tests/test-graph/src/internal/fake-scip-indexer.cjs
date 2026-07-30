@@ -51,6 +51,22 @@ if (mode === "silent-fail") {
   process.exit(3);
 }
 
+if (mode === "short-stdout-fail") {
+  // The ordinary case: a tool that fails with one line and prints it on stdout.
+  // Nothing to truncate, so nothing should be marked as truncated.
+  process.stdout.write("cannot open project\n");
+  process.exit(3);
+}
+
+if (mode === "stdout-fail") {
+  // A build wrapper's shape: a long log on stdout, the failure at the end of
+  // it, and nothing on stderr at all. `scip-java` runs the project's real
+  // Gradle build and reports exactly this way.
+  process.stdout.write(`OPENING LINE\n${"noise\n".repeat(600)}`);
+  process.stdout.write("FAILURE: compilation failed\n");
+  process.exit(3);
+}
+
 if (mode === "silent") {
   // Exits cleanly having written nothing. The session must notice the missing
   // artifact rather than decoding whatever was there before.
@@ -58,6 +74,25 @@ if (mode === "silent") {
 }
 
 if (mode === "hang") {
+  // Says something first when asked to. A real indexer that never finishes has
+  // usually been reporting progress the whole time, and an abort that discards
+  // it leaves the one case that most needs a diagnosis with none.
+  //
+  // The sentinel is how the caller knows it has. Aborting on a timer would race
+  // this write against process start-up, and lose on a loaded Windows runner
+  // where the job object kills without the grace period POSIX gives.
+  const announce = options.get("announce");
+  if (announce !== undefined) {
+    const sentinel = options.get("announce-sentinel");
+    // The sentinel says the announcement has left, not that it was queued.
+    // A write to a pipe is not synchronous on every platform, and a caller
+    // that aborts the moment it sees the file would otherwise race the flush
+    // it is waiting for — worst for the long announcement, which is the one
+    // that exists to fill a buffer.
+    process.stderr.write(`${announce}\n`, () => {
+      if (sentinel !== undefined) fs.writeFileSync(sentinel, announce);
+    });
+  }
   // Ignores the first termination signal, so close() has to escalate.
   process.on("SIGTERM", () => {});
   setInterval(() => {}, 1_000);
@@ -80,6 +115,14 @@ function indexOf(generation) {
   const name = generation === 0 ? "first" : "second";
   const symbol = `scip-fake fake example v1 \`pkg\`/${name}().`;
   const relativePath = options.get("document") ?? "main.go";
+  const protocolVersion =
+    generation > 0 && options.has("next-protocol-version-name")
+      ? options.get("next-protocol-version-name")
+      : options.has("protocol-version-name")
+        ? options.get("protocol-version-name")
+        : options.has("protocol-version")
+          ? Number(options.get("protocol-version"))
+          : undefined;
   // Most indexers omit `text`. The ones that carry it are the only ones whose
   // facts can be tied to the bytes they were computed from, so both shapes are
   // producible here.
@@ -96,6 +139,7 @@ function indexOf(generation) {
         : plainRoot
           ? root
           : `file://${root.startsWith("/") ? "" : "/"}${root.replace(/\\/g, "/")}`,
+      ...(protocolVersion === undefined ? {} : { version: protocolVersion }),
       ...(bare ? {} : { toolInfo: { name: "fake-scip", version: "1.2.3" } }),
     },
     documents: [

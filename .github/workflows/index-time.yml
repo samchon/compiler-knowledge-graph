@@ -1,0 +1,358 @@
+name: index-time
+
+# The readiness measurement, not a gate.
+#
+# `tests/benchmark/graph/index-time.mjs` times what it costs to build the index
+# before a tool can answer its first question. It has existed complete and unrun;
+# this workflow is what runs it. It is deliberately not attached to every push:
+# a measurement that gates a merge becomes a thing people make green, and the
+# number stops meaning what it says.
+#
+# One language per job, and one job per runner. That matters more here than
+# anywhere else in this repository: a cold build is one sample with no median to
+# hide behind, so two lanes sharing a machine would corrupt each other's wall
+# clock. A GitHub-hosted runner is a single-tenant VM, which is the strongest
+# quietness claim available without a dedicated host — and its CPU model varies
+# between runs, which is why every cell carries the host block that records it.
+# A reader comparing two cells has to be able to see whether they ran on the same
+# machine, and cells from different hosts are not one comparison.
+on:
+  workflow_dispatch:
+    inputs:
+      project:
+        description: "Single corpus project to measure, or all."
+        required: false
+        default: "all"
+  pull_request:
+    branches: [master]
+    paths:
+      - ".github/workflows/index-time.yml"
+      - ".github/scripts/latest-workflow-update.mjs"
+      - "config/**"
+      - "package.json"
+      - "packages/graph/**"
+      - "packages/graph-sitter/**"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "sidecars/**"
+      - "tests/benchmark/**"
+      - "tests/experiment/**"
+      # This exclusion prevents a result-only topic branch from starting the
+      # workflow. For a follow-up commit on this PR, GitHub still evaluates the
+      # whole base-to-topic diff; the latest_update job therefore classifies the
+      # exact synchronize boundary before another matrix can start.
+      - "!tests/benchmark/results/**"
+
+# One measurement at a time, and never cancelled once it has started.
+#
+# Cancelling in progress is right for a gate: a superseded check is wasted work.
+# It is wrong for a measurement. A lane that is killed at minute fifty has spent
+# provisioning, a checkout and most of an hour to produce nothing, and during
+# active work every push kills the run before it — eleven consecutive runs of
+# this workflow were cancelled without one of them finishing, so the numbers
+# stopped moving while the code that produces them changed underneath.
+#
+# Serialized instead. The running measurement is never killed. GitHub keeps at
+# most one pending member of a concurrency group, so a new push replaces an
+# older pending run and leaves the latest head waiting behind the measurement
+# already underway.
+concurrency:
+  group: index-time-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  latest_update:
+    name: latest update
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      run: ${{ steps.classify.outputs.run }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Classify the exact pushed update
+        id: classify
+        run: |
+          node .github/scripts/latest-workflow-update.mjs \
+            --carry-forward-workflow=index-time.yml \
+            --include=.github/workflows/index-time.yml \
+            --include=.github/scripts/latest-workflow-update.mjs \
+            --include=config/** \
+            --include=package.json \
+            --include=packages/graph/** \
+            --include=packages/graph-sitter/** \
+            --include=pnpm-lock.yaml \
+            --include=pnpm-workspace.yaml \
+            --include=sidecars/** \
+            --include=tests/benchmark/** \
+            --include=tests/experiment/** \
+            --exclude=tests/benchmark/results/**
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+
+  measure:
+    needs: latest_update
+    if: ${{ needs.latest_update.outputs.run == 'true' }}
+    # A skipped lane says so in its own name. Dispatching one project leaves the
+    # other twelve jobs running nothing but an echo, with every later step gated
+    # off, and they finish green — indistinguishable in the job list from lanes
+    # that measured something. I misread exactly that: two languages known to be
+    # failing appeared as successes because they had been skipped, and a run
+    # that measures one project should not look like a run that measured
+    # thirteen.
+    name: >-
+      ${{ (github.event_name == 'workflow_dispatch' && inputs.project != 'all'
+      && inputs.project != matrix.project)
+      && format('{0} (skipped)', matrix.project)
+      || format('{0} index', matrix.project) }}
+    runs-on: ubuntu-latest
+    # Two columns can consume two 30-minute process caps. Leave another hour for
+    # tool provisioning, both quiet-host waits, the bounded Ruby/Dart diagnosis,
+    # cleanup, and artifact upload. The process cap below is the measurement
+    # verdict; this job cap is only the outer lifecycle backstop.
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { project: excalidraw, language: typescript }
+          - { project: gin, language: go }
+          - { project: flask, language: python }
+          - { project: tokio, language: rust }
+          - { project: gson, language: java }
+          - { project: redis, language: c }
+          - { project: leveldb, language: cpp }
+          - { project: sinatra, language: ruby }
+          - { project: slim, language: php }
+          - { project: serilog, language: csharp }
+          - { project: koin, language: kotlin }
+          - { project: lualine, language: lua }
+          - { project: darthttp, language: dart }
+
+    steps:
+      - name: Skip unselected project
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.project != 'all' && inputs.project != matrix.project }}
+        run: echo "Skipping ${{ matrix.project }}"
+
+      - name: Checkout
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.project == 'all' || inputs.project == matrix.project }}
+        uses: actions/checkout@v7
+
+      - name: Enable pnpm
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.project == 'all' || inputs.project == matrix.project }}
+        run: corepack enable
+
+      - name: Setup Node
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.project == 'all' || inputs.project == matrix.project }}
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22.x
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      # The Go provider builds its sidecar from source, so the toolchain has to
+      # be present before the language setup runs.
+      - name: Setup Go
+        if: ${{ matrix.language == 'go' && (github.event_name != 'workflow_dispatch' || inputs.project == 'all' || inputs.project == matrix.project) }}
+        uses: actions/setup-go@v7
+        with:
+          go-version: 1.26.5
+          cache-dependency-path: sidecars/go/go.sum
+
+      - name: Install
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.project == 'all' || inputs.project == matrix.project }}
+        run: pnpm install --frozen-lockfile
+
+      - name: Build package
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.project == 'all' || inputs.project == matrix.project }}
+        run: pnpm build
+
+      # The same provisioning the experiment matrix uses. It appends each tool's
+      # directory to GITHUB_PATH, so the benchmark's own child processes resolve
+      # the server without a machine-global install.
+      - name: Install language server
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.project == 'all' || inputs.project == matrix.project }}
+        run: pnpm --filter @samchon/graph-experiment run setup -- --language ${{ matrix.language }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # What actually got installed, printed where the run can be read.
+      # `recordTool` has always written this manifest and nothing ever surfaced
+      # it, so a lane that quietly failed to install its strict producer was
+      # indistinguishable from one that installed it and fell back anyway. An
+      # hour of sinatra was spent on exactly that ambiguity: the measurement
+      # timed out and its log could not say which of the two had happened.
+      - name: Show the installed toolchain
+        if: ${{ always() && (github.event_name != 'workflow_dispatch' || inputs.project == 'all' || inputs.project == matrix.project) }}
+        run: |
+          manifest="tests/experiment/.work/tools/manifest-${{ matrix.language }}.json"
+          if [ -f "$manifest" ]; then
+            cat "$manifest"
+          else
+            echo "::warning::no tool manifest for ${{ matrix.language }}"
+          fi
+
+      # `--tools samchon-graph` needs no comparator installed. The comparator
+      # arms are a separate decision with their own installation surface, and
+      # measuring this product's own readiness does not wait on it.
+      #
+      # `--no-website` keeps every job's result in its own report; folding them
+      # into one publication is the collect job's work, because a cell written by
+      # thirteen concurrent jobs would race on one file.
+      - name: Measure cold index build
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.project == 'all' || inputs.project == matrix.project }}
+        # `=` on every valued option, deliberately. `index-time.mjs`'s parser
+        # special-cases `--project` and otherwise takes `--name=value`; a bare
+        # `--name` becomes a flag and its would-be value becomes a positional,
+        # which the project selector then reads as a corpus name. Written the
+        # other way, `--tools samchon-graph` asks for a project called
+        # `samchon-graph` and the run dies before it measures anything.
+        run: |
+          node tests/benchmark/graph/index-time.mjs \
+            --project=${{ matrix.project }} \
+            --tools=samchon-graph,samchon-graph-fallback \
+            --toolchain-manifest="$GITHUB_WORKSPACE/tests/experiment/.work/tools/manifest-${{ matrix.language }}.json" \
+            --await-quiet=240 \
+            --no-website \
+            --out="$GITHUB_WORKSPACE/index-time-out/${{ matrix.project }}"
+        env:
+          # A dedicated runner is the quietest host available here, so hold the
+          # measurement to it rather than warning and continuing.
+          #
+          # It has to be *allowed* to become quiet first. The steps above — a
+          # checkout, a dependency install, a build, and a language-server
+          # download — leave a one-minute load average several times the CPU
+          # count, and the first run of this workflow was refused by its own gate
+          # at ratio 1.60 on a four-core runner. `--await-quiet` waits for that
+          # to decay so the gate's claim is true; turning the gate off would only
+          # have stopped it being checked.
+          SAMCHON_BENCH_REQUIRE_QUIET: "1"
+          # Thirty minutes is more than twice the slowest completed cell in the
+          # settled publication. A later same-toolchain cold sweep also showed
+          # why this is a verdict rather than an adaptive ceiling: host variance
+          # can push a formerly completed cell past it. Ruby and Dart have each
+          # reached a one-hour cap in both columns, and the post-measurement trace
+          # identifies stalled textDocument/references requests. Crossing this
+          # cap is the measured failure result, not a reason to extend it again.
+          SAMCHON_GRAPH_BENCH_TIMEOUT_MS: "1800000"
+
+      # Request tracing is deliberately outside the stopwatch above. Generic
+      # LSP pays two stderr writes per request while strict bulk providers pay
+      # none, so enabling it in the measured process would bias the comparison.
+      # The two lanes that repeatedly reached the outer timeout get a short
+      # post-measurement sample instead: completed requests versus the exact
+      # request(s) still in flight distinguish a slow client lane from one
+      # server request that never returned without publishing the trace cost.
+      - name: Diagnose slow LSP requests outside the measurement
+        if: ${{ always() && (matrix.project == 'sinatra' || matrix.project == 'darthttp') && (github.event_name != 'workflow_dispatch' || inputs.project == 'all' || inputs.project == matrix.project) }}
+        timeout-minutes: 10
+        run: |
+          node tests/benchmark/graph/lsp-request-diagnosis.mjs \
+            --project=${{ matrix.project }} \
+            --timeout-ms=300000 \
+            --out="$GITHUB_WORKSPACE/index-time-out/${{ matrix.project }}"
+
+      # The whole output directory, not just the report. A lane that fails
+      # writes its diagnosis to `<label>.err.log` beside the report, and
+      # uploading only `report.json` meant a failed lane produced no report and
+      # therefore no artifact — so the one run where something went wrong was
+      # the one run that told you nothing. serilog's dump exited 1 with its
+      # reason sitting in a file this step used to discard.
+      #
+      # The collect job's glob is unaffected: the report is still at the root of
+      # the artifact, and the logs are extra files beside it.
+      - name: Upload report and logs
+        if: ${{ always() && (github.event_name != 'workflow_dispatch' || inputs.project == 'all' || inputs.project == matrix.project) }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: index-time-${{ matrix.project }}
+          path: index-time-out/${{ matrix.project }}
+          if-no-files-found: ignore
+
+  collect:
+    name: collect
+    needs: [latest_update, measure]
+    if: ${{ always() && needs.latest_update.outputs.run == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Enable pnpm
+        run: corepack enable
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22.x
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install renderer dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Download reports
+        uses: actions/download-artifact@v8
+        with:
+          pattern: index-time-*
+          path: index-time-reports
+
+      # A complete matrix owns the complete index axis. Reset it before folding
+      # so a lane that failed before writing a report is visibly absent instead
+      # of inheriting a stale cell from the checkout. A one-project manual
+      # dispatch remains a preserving update of that project.
+      - name: Reset complete-matrix publication
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.project == 'all' }}
+        run: node tests/benchmark/graph/index-time.mjs --reset-index-only
+
+      # Folded one report at a time through the harness's own `--publish` path,
+      # which merges cells by (project, tool) and leaves `structural` and `agent`
+      # untouched. The complete matrix was reset above, so a project whose job
+      # failed contributes no report and therefore has no cell: the honest
+      # record of a language that could not be measured, not a stale result and
+      # not a zero.
+      #
+      # `--publish=` with the `=`, for the same reason the measure step spells its
+      # options that way, and this step got it wrong while the one above it
+      # explained why. Written `--publish "$report"` the parser files `--publish`
+      # as a valueless flag and the path as a positional, and `selectProjects` —
+      # which runs at module scope, above the publish branch — rejects it as an
+      # unknown project. The mistake hid because it needs a report to reveal it:
+      # with none, `nullglob` skips the loop entirely and the step passes. It
+      # would have failed on the first language that ever measured successfully,
+      # which is the only run this workflow exists to produce.
+      - name: Fold reports into the publication
+        run: |
+          shopt -s nullglob
+          found=0
+          for report in index-time-reports/*/report.json; do
+            echo "folding $report"
+            node tests/benchmark/graph/index-time.mjs --publish="$report"
+            found=$((found + 1))
+          done
+          echo "folded $found report(s)"
+          if [ "$found" = "0" ]; then
+            echo "::warning::no index-time report was produced"
+          fi
+
+      - name: Show what was measured
+        run: node tests/benchmark/graph/index-time-summary.mjs
+
+      - name: Render publication charts
+        run: pnpm --filter @samchon/graph-benchmark render:png
+
+      - name: Upload publication
+        uses: actions/upload-artifact@v7
+        with:
+          name: index-time-publication
+          path: |
+            tests/benchmark/results/graph.json
+            tests/benchmark/results/svg
+            tests/benchmark/results/png
+          if-no-files-found: error

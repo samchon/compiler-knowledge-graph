@@ -35,6 +35,7 @@ import {
   sanitizeWebsiteSamples,
   websiteCellKey,
 } from "./graph/website-cell.mjs";
+import { agentPublicationDocument } from "./graph/publication-document.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, "../..");
@@ -387,12 +388,7 @@ function publishWebsiteCells(candidates, { audited = false } = {}) {
   const prior =
     !resetWebsite && fs.existsSync(websiteJson) ? loadJson(websiteJson) : null;
   resetWebsite = false;
-  const out = {
-    schemaVersion: 1,
-    generatedAt: new Date().toISOString(),
-    structural: prior?.structural ?? null,
-    agent: { cells: [...(prior?.agent?.cells ?? [])] },
-  };
+  const out = agentPublicationDocument(prior);
   for (const cell of cells) {
     if (
       !cell ||

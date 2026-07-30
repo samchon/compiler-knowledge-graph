@@ -4,7 +4,6 @@ import {
   LANGUAGE_SPECS,
   assertGraphSnapshotContract,
   buildLspGraph,
-  compareOrdinal,
   dumpProvenanceOf,
   graphSnapshotDigests,
   selectGraphProviders,
@@ -83,6 +82,32 @@ async function assertStrictBuildCanonicalizesMultiProviderState(): Promise<void>
 }
 
 async function assertSelection(): Promise<void> {
+  TestValidator.equals(
+    "every standard SCIP provider claims only its producer-backed families",
+    Object.fromEntries(
+      GRAPH_PROVIDERS.filter((provider) =>
+        [
+          "scip-clang",
+          "scip-java",
+          "scip-dotnet",
+          "scip-python",
+          "scip-ruby",
+          "scip-dart",
+          "scip-php",
+        ].includes(provider.name),
+      ).map((provider) => [provider.name, provider.facts]),
+    ),
+    {
+      "scip-clang": [],
+      "scip-java": ["contains", "references"],
+      "scip-dotnet": [],
+      "scip-python": ["references"],
+      "scip-ruby": [],
+      "scip-dart": [],
+      "scip-php": [],
+    },
+  );
+
   const typescript = ProviderFixtures.provider({
     name: "fake-ts",
     languages: ["typescript"],
@@ -114,6 +139,29 @@ async function assertSelection(): Promise<void> {
     ["fake-clang"],
   );
   TestValidator.equals("nothing declined, nothing said", partial.warnings, []);
+
+  // Stood down by request, which is a measurement instrument rather than a
+  // fallback: it is the only way to index a project without its strict provider
+  // that does not work by tripping a refusal, and a refusal is a different
+  // thing to measure. The benchmark needs both cells from one run on one host
+  // to say what a strict provider is worth.
+  const relaxed = selectGraphProviders(
+    "/root",
+    ["typescript", "c"],
+    { strict: false },
+    {},
+    [typescript, clang],
+  );
+  TestValidator.equals(
+    "standing strict providers down selects none",
+    relaxed.candidates,
+    [],
+  );
+  TestValidator.predicate(
+    "and says it was asked to rather than leaving an empty silence",
+    relaxed.warnings.length === 1 &&
+      relaxed.warnings[0]!.includes("stood down by request"),
+  );
 
   const both = selectGraphProviders(
     "/root",
@@ -308,12 +356,15 @@ async function assertSelection(): Promise<void> {
       owners.set(language, [...(owners.get(language) ?? []), provider.name]);
     }
   }
+  const publicLanguages = LANGUAGE_SPECS.map((spec) => spec.language);
+  TestValidator.predicate(
+    "every strict owner names a public language",
+    [...owners.keys()].every((language) => publicLanguages.includes(language)),
+  );
   TestValidator.equals(
-    "the shipped registry assigns exactly one strict owner to every public language",
-    [...owners.entries()].sort(([x], [y]) => compareOrdinal(x, y)),
-    LANGUAGE_SPECS.map((spec) => spec.language)
-      .sort(compareOrdinal)
-      .map((language) => [language, [owners.get(language)?.[0]]]),
+    "only languages without a truthful strict producer remain unowned",
+    publicLanguages.filter((language) => !owners.has(language)),
+    ["swift", "scala", "zig"],
   );
   TestValidator.equals(
     "C and C++ share one compilation-universe provider",
@@ -321,12 +372,12 @@ async function assertSelection(): Promise<void> {
     owners.get("cpp"),
   );
   TestValidator.equals(
-    "the JVM languages share one build-universe provider",
+    "only the JVM languages scip-java actually indexes share its universe",
     [owners.get("java"), owners.get("kotlin"), owners.get("scala")],
     [
       ["scip-java"],
       ["scip-java"],
-      ["scip-java"],
+      undefined,
     ],
   );
 }

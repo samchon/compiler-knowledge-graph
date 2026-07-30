@@ -1,8 +1,9 @@
 import { TestValidator } from "@nestia/e2e";
-import { ChildProcess, spawn } from "node:child_process";
+import { ChildProcess, spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { Worker } from "node:worker_threads";
 
 import { GraphPaths } from "../internal/GraphPaths";
 
@@ -26,6 +27,20 @@ interface ILspClientInternals {
     };
   };
 }
+
+type LspRequestTrace =
+  | {
+      phase: "start";
+      id: number;
+      method: string;
+    }
+  | {
+      phase: "end";
+      id: number;
+      method: string;
+      status: "success" | "error";
+      durationMs: number;
+    };
 
 interface IOwnedProcess {
   command(
@@ -60,6 +75,8 @@ type LspClientConstructor = new (
   timeoutMs?: number,
   cwd?: string,
   maxMessageBytes?: number,
+  windowsVerbatimArguments?: boolean,
+  requestObserver?: (event: LspRequestTrace) => void,
 ) => ILspClient;
 
 /** `LspClient` is internal transport, reached through the shipped artifact. */
@@ -139,6 +156,8 @@ export const test_lsp_client_closes_servers_that_break_the_shutdown_handshake =
     await assertPerRequestDeadlineCleansUpTheTransport(LspClient);
     await assertOversizedFrameTerminatesTransport(LspClient);
     await assertOversizedHeadersTerminateTransport(LspClient);
+    await assertRequestTracing(LspClient);
+    await assertRequestTraceFormatting();
 
     // An already-cancelled request never enters the wire or waits for the
     // otherwise-unlimited default deadline. The client still owns its child and
@@ -160,6 +179,303 @@ export const test_lsp_client_closes_servers_that_break_the_shutdown_handshake =
     );
     await cancelled.close();
   };
+
+const assertRequestTracing = async (
+  LspClient: LspClientConstructor,
+): Promise<void> => {
+  const events: LspRequestTrace[] = [];
+  const client = new LspClient(
+    process.execPath,
+    [GraphPaths.fakeLspServer],
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    (event) => events.push(event),
+  );
+  let serializationFailure: Error | undefined;
+  await client
+    .request("workspace/executeCommand", { argument: 1n })
+    .catch((error: Error) => void (serializationFailure = error));
+  TestValidator.predicate(
+    "an unserializable request rejects through its own promise",
+    serializationFailure?.message.includes("BigInt") === true,
+  );
+  let nonErrorSerializationFailure: Error | undefined;
+  const throwingParams = Object.defineProperty({}, "argument", {
+    enumerable: true,
+    get: () => {
+      throw "synthetic serialization failure";
+    },
+  });
+  await client
+    .request("workspace/executeCommand", throwingParams)
+    .catch(
+      (error: Error) =>
+        void (nonErrorSerializationFailure = error),
+    );
+  TestValidator.predicate(
+    "a non-Error serialization failure is normalized on the same boundary",
+    nonErrorSerializationFailure?.message ===
+      "synthetic serialization failure",
+  );
+  TestValidator.equals(
+    "an unserializable request removes its pending transport state",
+    (client as unknown as ILspClientInternals).pending.size,
+    0,
+  );
+  await client.request("initialize", {});
+  await client.close();
+  const unserializable = events.filter(
+    (event) => event.method === "workspace/executeCommand",
+  );
+  TestValidator.equals(
+    "a synchronous serialization failure still closes its trace",
+    unserializable.map((event) => [
+      event.phase,
+      event.id,
+      event.phase === "end" ? event.status : undefined,
+    ]),
+    [
+      ["start", 1, undefined],
+      ["end", 1, "error"],
+      ["start", 2, undefined],
+      ["end", 2, "error"],
+    ],
+  );
+  const initialize = events.filter(
+    (event) => event.method === "initialize",
+  );
+  TestValidator.equals(
+    "request tracing pairs the exact request identity and outcome",
+    initialize.map((event) => [
+      event.phase,
+      event.id,
+      event.phase === "end" ? event.status : undefined,
+    ]),
+    [
+      ["start", 3, undefined],
+      ["end", 3, "success"],
+    ],
+  );
+  TestValidator.predicate(
+    "a completed request trace carries a finite non-negative duration",
+    initialize[1]?.phase === "end" &&
+      Number.isFinite(initialize[1].durationMs) &&
+      initialize[1].durationMs >= 0,
+  );
+
+  const throwingObserver = new LspClient(
+    process.execPath,
+    [GraphPaths.fakeLspServer],
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    () => {
+      throw new Error("diagnostic observer failed");
+    },
+  );
+  await throwingObserver.request("initialize", {});
+  await throwingObserver.close();
+};
+
+const assertRequestTraceFormatting = async (): Promise<void> => {
+  const { lspRequestTrace } = await importLib<{
+    lspRequestTrace(
+      env?: NodeJS.ProcessEnv,
+      write?: (line: string) => unknown,
+      signal?: AbortSignal,
+    ): ((event: LspRequestTrace) => void) | undefined;
+  }>("lsp/lspRequestTrace.js");
+  const LSP_REQUEST_TRACE_ENV = "SAMCHON_GRAPH_LSP_REQUEST_TRACE";
+  const previous = process.env[LSP_REQUEST_TRACE_ENV];
+  delete process.env[LSP_REQUEST_TRACE_ENV];
+  try {
+    TestValidator.equals(
+      "request timing is silent unless explicitly enabled",
+      lspRequestTrace(),
+      undefined,
+    );
+  } finally {
+    if (previous === undefined) delete process.env[LSP_REQUEST_TRACE_ENV];
+    else process.env[LSP_REQUEST_TRACE_ENV] = previous;
+  }
+
+  const lines: string[] = [];
+  const cutoff = new AbortController();
+  const trace = lspRequestTrace(
+    { [LSP_REQUEST_TRACE_ENV]: "1" },
+    (line) => lines.push(line),
+    cutoff.signal,
+  );
+  trace?.({
+    phase: "start",
+    id: 7,
+    method: "textDocument/references",
+  });
+  trace?.({
+    phase: "end",
+    id: 7,
+    method: "textDocument/references",
+    status: "success",
+    durationMs: 12.3456,
+  });
+  cutoff.abort();
+  const traceClient = /client=(\d+)/.exec(lines[0] ?? "")?.[1];
+  TestValidator.predicate(
+    "request timing gives each client a trace identity",
+    traceClient !== undefined,
+  );
+  TestValidator.equals(
+    "request timing names no parameters or paths and marks the abort cutoff",
+    lines,
+    [
+      `@samchon/graph: lsp-request client=${traceClient} id=7 method="textDocument/references" phase=start\n`,
+      `@samchon/graph: lsp-request client=${traceClient} id=7 method="textDocument/references" phase=end status=success durationMs=12.346\n`,
+      "@samchon/graph: lsp-request phase=cutoff\n",
+    ],
+  );
+  const secondTrace = lspRequestTrace(
+    { [LSP_REQUEST_TRACE_ENV]: "1" },
+    (line) => lines.push(line),
+    cutoff.signal,
+  );
+  secondTrace?.({
+    phase: "start",
+    id: 7,
+    method: "shutdown",
+  });
+  secondTrace?.({
+    phase: "end",
+    id: 7,
+    method: "shutdown",
+    status: "success",
+    durationMs: 1,
+  });
+  const secondClient = /client=(\d+)/.exec(lines[3] ?? "")?.[1];
+  TestValidator.equals(
+    "one abort signal emits one cutoff while request identities stay unique across clients",
+    [
+      lines.filter(
+        (line) => line === "@samchon/graph: lsp-request phase=cutoff\n",
+      ).length,
+      traceClient !== secondClient,
+      lines.at(-1),
+    ],
+    [
+      1,
+      true,
+      `@samchon/graph: lsp-request client=${secondClient} id=7 method="shutdown" phase=end status=success durationMs=1.000\n`,
+    ],
+  );
+
+  const alreadyAborted = new AbortController();
+  alreadyAborted.abort();
+  const alreadyAbortedLines: string[] = [];
+  lspRequestTrace(
+    { [LSP_REQUEST_TRACE_ENV]: "1" },
+    (line) => alreadyAbortedLines.push(line),
+    alreadyAborted.signal,
+  );
+  TestValidator.equals(
+    "an already-aborted trace marks its cutoff immediately",
+    alreadyAbortedLines,
+    ["@samchon/graph: lsp-request phase=cutoff\n"],
+  );
+
+  const unbounded = lspRequestTrace(
+    { [LSP_REQUEST_TRACE_ENV]: "1" },
+    () => undefined,
+  );
+  TestValidator.predicate(
+    "an enabled trace does not require a cutoff signal",
+    unbounded !== undefined,
+  );
+
+  const resilientCutoff = new AbortController();
+  lspRequestTrace(
+    { [LSP_REQUEST_TRACE_ENV]: "1" },
+    () => {
+      throw new Error("diagnostic cutoff failed");
+    },
+    resilientCutoff.signal,
+  );
+  resilientCutoff.abort();
+  TestValidator.predicate(
+    "a cutoff observer cannot change abort behavior",
+    resilientCutoff.signal.aborted,
+  );
+
+  const traceModule = pathToFileURL(
+    path.join(
+      GraphPaths.graphPackageRoot,
+      "lib",
+      "lsp",
+      "lspRequestTrace.js",
+    ),
+  ).href;
+  const immediateExit = spawnSync(
+    process.execPath,
+    [
+      "--input-type=module",
+      "--eval",
+      [
+        `const { lspRequestTrace } = await import(${JSON.stringify(traceModule)});`,
+        "const cutoff = new AbortController();",
+        `lspRequestTrace({ ${LSP_REQUEST_TRACE_ENV}: "1" }, undefined, cutoff.signal);`,
+        "cutoff.abort();",
+        "process.exit(0);",
+      ].join("\n"),
+    ],
+    {
+      encoding: "utf8",
+      windowsHide: true,
+    },
+  );
+  TestValidator.equals(
+    "the default cutoff writer survives an immediate process exit",
+    [immediateExit.status, immediateExit.signal, immediateExit.stderr],
+    [0, null, "@samchon/graph: lsp-request phase=cutoff\n"],
+  );
+
+  const worker = new Worker(
+    [
+      "(async () => {",
+      `  const { lspRequestTrace } = await import(${JSON.stringify(traceModule)});`,
+      "  const cutoff = new AbortController();",
+      `  lspRequestTrace({ ${LSP_REQUEST_TRACE_ENV}: "1" }, undefined, cutoff.signal);`,
+      "  cutoff.abort();",
+      "})().catch((error) => { throw error; });",
+    ].join("\n"),
+    {
+      eval: true,
+      stderr: true,
+    },
+  );
+  worker.stderr.setEncoding("utf8");
+  let workerStderr = "";
+  worker.stderr.on("data", (chunk: string) => {
+    workerStderr += chunk;
+  });
+  const workerExitPromise = new Promise<number>((resolve, reject) => {
+    worker.once("error", reject);
+    worker.once("exit", resolve);
+  });
+  const workerStderrEnd = new Promise<void>((resolve, reject) => {
+    worker.stderr.once("error", reject);
+    worker.stderr.once("end", resolve);
+  });
+  const [workerExit] = await Promise.all([
+    workerExitPromise,
+    workerStderrEnd,
+  ]);
+  TestValidator.equals(
+    "a Worker without process.stderr.fd preserves its redirected trace",
+    [workerExit, workerStderr],
+    [0, "@samchon/graph: lsp-request phase=cutoff\n"],
+  );
+};
 
 const assertWindowsOwnershipPreservesTheOriginalCommandLine =
   async (): Promise<void> => {

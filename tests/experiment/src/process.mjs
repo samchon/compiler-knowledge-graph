@@ -8,6 +8,11 @@ export const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.met
 export const experimentRoot = path.join(repositoryRoot, "tests", "experiment");
 export const workRoot = path.join(experimentRoot, ".work");
 export const resultsRoot = path.join(experimentRoot, "results");
+const provisionedEnvironmentFile = path.join(
+  workRoot,
+  "tools",
+  "environment.json",
+);
 
 export const parseArgs = (argv) => {
   const out = {};
@@ -47,10 +52,89 @@ export const ensureDir = (dir) => {
 };
 
 export const appendGithubPath = (dir) => {
-  process.env.PATH = `${dir}${path.delimiter}${process.env.PATH ?? ""}`;
+  const resolved = path.resolve(dir);
+  process.env.PATH = `${resolved}${path.delimiter}${process.env.PATH ?? ""}`;
   if (process.env.GITHUB_PATH !== undefined) {
-    fs.appendFileSync(process.env.GITHUB_PATH, `${dir}${os.EOL}`);
+    fs.appendFileSync(process.env.GITHUB_PATH, `${resolved}${os.EOL}`);
   }
+  const provisioned = readProvisionedEnvironment();
+  writeProvisionedEnvironment({
+    ...provisioned,
+    paths: [
+      resolved,
+      ...provisioned.paths.filter((candidate) => candidate !== resolved),
+    ],
+  });
+};
+
+/** Start one setup run without inheriting another language's tool contract. */
+export const resetProvisionedEnvironment = () => {
+  writeProvisionedEnvironment({ paths: [], environment: {} });
+};
+
+/**
+ * Re-enter the tool environment created by a prior setup process.
+ *
+ * GitHub carries `GITHUB_PATH` into the next step, but a local `pnpm setup`
+ * process cannot mutate the shell that later launches `pnpm start`. The setup
+ * manifest retains every path and required variable it provisioned, so the
+ * runner activates the exact same environment instead of depending on a
+ * machine-global installation.
+ */
+export const activateProvisionedTools = () => {
+  const bin = path.join(workRoot, "tools", "bin");
+  const provisioned = readProvisionedEnvironment();
+  const paths = [
+    bin,
+    ...provisioned.paths,
+  ].filter((candidate, index, all) => all.indexOf(candidate) === index);
+  process.env.PATH = `${paths.join(path.delimiter)}${path.delimiter}${process.env.PATH ?? ""}`;
+  for (const [name, value] of Object.entries(provisioned.environment)) {
+    process.env[name] = value;
+  }
+};
+
+/** Retain one non-PATH value needed by a later local start process. */
+export const recordProvisionedEnvironment = (name, value) => {
+  const provisioned = readProvisionedEnvironment();
+  writeProvisionedEnvironment({
+    ...provisioned,
+    environment: { ...provisioned.environment, [name]: value },
+  });
+};
+
+const readProvisionedEnvironment = () => {
+  if (!fs.existsSync(provisionedEnvironmentFile)) {
+    return { paths: [], environment: {} };
+  }
+  const parsed = JSON.parse(
+    fs.readFileSync(provisionedEnvironmentFile, "utf8"),
+  );
+  if (
+    typeof parsed !== "object" ||
+    parsed === null ||
+    !Array.isArray(parsed.paths) ||
+    parsed.paths.some((entry) => typeof entry !== "string") ||
+    typeof parsed.environment !== "object" ||
+    parsed.environment === null ||
+    Array.isArray(parsed.environment) ||
+    Object.values(parsed.environment).some(
+      (entry) => typeof entry !== "string",
+    )
+  ) {
+    throw new Error(
+      `Invalid provisioned environment at ${provisionedEnvironmentFile}`,
+    );
+  }
+  return parsed;
+};
+
+const writeProvisionedEnvironment = (provisioned) => {
+  ensureDir(path.dirname(provisionedEnvironmentFile));
+  fs.writeFileSync(
+    provisionedEnvironmentFile,
+    `${JSON.stringify(provisioned, null, 2)}\n`,
+  );
 };
 
 export const localBin = (name) => {
@@ -97,18 +181,38 @@ export const toolManifest = (language) => {
 };
 
 /**
- * Copy one pinned clone into a workspace that preparation is allowed to change.
+ * Copy one pinned project into a workspace that preparation may change.
  *
  * A package manager run inside the clone itself writes locks, caches, generated
  * files, and build state, and the result still reports the pristine commit it no
- * longer has. Both lanes therefore prepare a copy: the clone exists only to
- * carry the commit, and `.git` is left behind so nothing can rewrite it.
+ * longer has. Both lanes therefore prepare a copy. A nested `projectRoot` is
+ * copied as the isolated root rather than returned beneath a copy of its parent:
+ * Gradle searches ancestors for settings files, so leaving the upstream
+ * monorepo around a standalone fixture changes which build the producer runs.
+ * The clone exists only to carry the commit, and `.git` is left behind so
+ * nothing can rewrite it.
  */
 export const isolateCorpus = (experiment, pinnedRoot, label) => {
   const root = path.join(workRoot, label, experiment.language);
+  const source = path.resolve(pinnedRoot, experiment.projectRoot ?? ".");
+  const relative = path.relative(pinnedRoot, source);
+  if (
+    relative === ".." ||
+    relative.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(relative)
+  ) {
+    throw new Error(
+      `${experiment.language}: projectRoot escapes its pinned corpus: ${String(experiment.projectRoot)}`,
+    );
+  }
+  if (!fs.statSync(source, { throwIfNoEntry: false })?.isDirectory()) {
+    throw new Error(
+      `${experiment.language}: projectRoot is not a directory in its pinned corpus: ${String(experiment.projectRoot)}`,
+    );
+  }
   fs.rmSync(root, { force: true, recursive: true });
   ensureDir(path.dirname(root));
-  fs.cpSync(pinnedRoot, root, {
+  fs.cpSync(source, root, {
     recursive: true,
     filter: (source) => path.basename(source) !== ".git",
   });

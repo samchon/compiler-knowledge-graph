@@ -11,6 +11,8 @@ import { IGraphSemanticIdentity, semanticGraphNodeId } from "../semanticIdentity
 import { IScipIndex } from "./IScipIndex";
 import { scipSymbol } from "./scipSymbol";
 
+const MAX_DUPLICATE_DEFINITION_WARNING_EXAMPLES = 10;
+
 /**
  * The edge families a bare SCIP index can prove.
  *
@@ -63,6 +65,16 @@ interface IAdaptScipIndexProps {
 
   /** Which file a document path belongs to, in the product's own vocabulary. */
   languageOf: (file: string) => GraphLanguage;
+
+  /**
+   * Prefer the file identity when this producer's document language is known
+   * to be unreliable.
+   *
+   * SCIP normally wins because it is an explicit producer fact. A producer
+   * that hard-codes one language for a multi-language indexer needs the inverse
+   * boundary or an owned C document can be discarded as foreign C++.
+   */
+  preferFileLanguage?: boolean;
 }
 
 /**
@@ -83,6 +95,7 @@ export function adaptScipIndex(
   const diagnostics: ISamchonGraphDiagnostic[] = [];
   const warnings: string[] = [];
   const unsupportedRoles = new Set<string>();
+  const duplicateDefinitionWarnings: string[] = [];
   const ownedDocuments = new Set<
     (typeof props.index.documents)[number]
   >();
@@ -95,8 +108,7 @@ export function adaptScipIndex(
   const definitions = new Map<string, IDefinition>();
   for (const document of props.index.documents) {
     const file = normalizeFile(document.relativePath);
-    const language =
-      languageFromScip(document.language) ?? props.languageOf(file);
+    const language = documentLanguage(props, document.language, file);
     if (!owned.has(language)) {
       warnings.push(
         `${props.provider}: ignoring ${file}, whose ${language} facts this provider does not own`,
@@ -139,7 +151,7 @@ export function adaptScipIndex(
       const symbolKey = definitionKey(parsed, file);
       const definition = definitions.get(symbolKey);
       if (definition !== undefined) {
-        warnings.push(
+        duplicateDefinitionWarnings.push(
           `${props.provider}: ${parsed.key} is defined in both ${definition.file} and ${file}; keeping the first`,
         );
         continue;
@@ -268,8 +280,7 @@ export function adaptScipIndex(
   for (const document of props.index.documents) {
     const file = normalizeFile(document.relativePath);
     if (!ownedDocuments.has(document)) continue;
-    const language =
-      languageFromScip(document.language) ?? props.languageOf(file);
+    const language = documentLanguage(props, document.language, file);
     const occurrences = document.occurrences ?? [];
 
     // A definition occurrence carries the span the declaration occupies, and
@@ -440,6 +451,12 @@ export function adaptScipIndex(
       `${props.provider}: ${String(unscopedLocalReferences)} reference(s) named a document-scoped local this index does not resolve, so they are omitted rather than attached to an invented declaration`,
     );
   }
+  warnings.push(
+    ...boundedDuplicateDefinitionWarnings(
+      duplicateDefinitionWarnings,
+      props.provider,
+    ),
+  );
 
   return {
     nodes: [...nodes.values()],
@@ -455,6 +472,65 @@ export function adaptScipIndex(
     files,
   };
 }
+
+function boundedDuplicateDefinitionWarnings(
+  examples: readonly string[],
+  provider: string,
+): string[] {
+  // The first declaration still wins for every duplicate. The public warning
+  // payload carries the total and representative evidence rather than one
+  // string per translation-unit definition.
+  const unique = [...new Set(examples)].sort(compareWarningText);
+  if (unique.length <= MAX_DUPLICATE_DEFINITION_WARNING_EXAMPLES) return unique;
+  return [
+    `${provider}: ${String(unique.length)} symbol definition(s) were repeated across files; keeping the first definition of each symbol; first ${String(MAX_DUPLICATE_DEFINITION_WARNING_EXAMPLES)} examples follow`,
+    ...unique.slice(0, MAX_DUPLICATE_DEFINITION_WARNING_EXAMPLES),
+  ];
+}
+
+function compareWarningText(left: string, right: string): number {
+  /* c8 ignore next 2 -- warning examples are distinct set members. */
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
+function documentLanguage(
+  props: IAdaptScipIndexProps,
+  stated: string | undefined,
+  file: string,
+): GraphLanguage {
+  const fromIndex = languageFromScip(stated);
+  if (props.preferFileLanguage !== true) {
+    return fromIndex ?? props.languageOf(file);
+  }
+  const fromFile = props.languageOf(file);
+  const exactExtension = path.extname(file);
+  const extension = exactExtension.toLowerCase();
+  if (
+    fromFile !== "unknown" &&
+    exactExtension !== ".h"
+  ) {
+    return fromFile;
+  }
+  // A hard-coded `CPP` value cannot turn every unrecognised document into C++.
+  // Only the three include identities whose paths genuinely cannot settle the
+  // C/C++ dialect are allowed to borrow the session's ownership boundary.
+  if (
+    fromFile === "unknown" &&
+    !AMBIGUOUS_C_FAMILY_EXTENSIONS.has(extension)
+  ) {
+    return fromFile;
+  }
+  // `.h`, `.inc`, and extensionless includes do not distinguish C from C++.
+  // When this session owns only one dialect, the ownership boundary settles
+  // them. When it owns both, retain the producer's statement because the path
+  // alone cannot improve on it.
+  const owned = props.languages.filter(
+    (language) => language === "c" || language === "cpp",
+  );
+  return owned.length === 1 ? owned[0]! : (fromIndex ?? fromFile);
+}
+
+const AMBIGUOUS_C_FAMILY_EXTENSIONS = new Set(["", ".h", ".inc"]);
 
 function languageFromScip(
   language: string | undefined,

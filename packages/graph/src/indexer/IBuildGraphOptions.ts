@@ -3,6 +3,15 @@ import { GraphLanguage } from "../typings";
 export interface IBuildGraphOptions {
   cwd?: string;
   mode?: "auto" | "lsp" | "static";
+
+  /**
+   * Whether strict providers may serve. Defaults to true.
+   *
+   * Standing them down is a measurement instrument, not a fallback: it is the
+   * only way to index a project without its strict provider that does not work
+   * by tripping a refusal, and a refusal is a different thing to measure.
+   */
+  strict?: boolean;
   languages?: GraphLanguage[];
   server?: string;
   serverArgs?: string[];

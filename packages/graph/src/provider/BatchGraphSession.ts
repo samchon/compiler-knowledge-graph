@@ -12,6 +12,7 @@ import { ownedProcess } from "../utils/ownedProcess";
 import { spawnableCommand } from "../utils/spawnableCommand";
 import { IBulkGraphSession } from "./IBulkGraphSession";
 import { IGraphProvider } from "./IGraphProvider";
+import { toolchainVersion } from "./toolchainVersion";
 
 /**
  * Atomic lifecycle shared by batch semantic providers.
@@ -34,6 +35,9 @@ export class BatchGraphSession implements IBulkGraphSession {
   private readonly children = new Set<ISpawned>();
   private snapshot: IBulkGraphSession.ISnapshot | undefined;
   private universe = "";
+
+  /** The last configuration derivation that produced a strict snapshot. */
+  private established: toolchainVersion.IDerivation | undefined;
   private version = 0;
   private closed = false;
   private closing: Promise<void> | undefined;
@@ -89,9 +93,49 @@ export class BatchGraphSession implements IBulkGraphSession {
         // exactly like a project that changed underneath the indexer. What that
         // check exists to catch is a source or build file edited while the
         // producer was running, and re-reading the files still catches it.
-        const configuration = [...(this.options.configuration?.() ?? [])];
-        const universe = this.fingerprint(configuration);
+        const configuration = toolchainVersion.normalize(
+          this.options.configuration?.() ?? [],
+        );
+        // A derivation that could not put its question establishes nothing, and
+        // a universe computed from "nothing" is not a smaller universe — it is
+        // a different one, which rebuilds an artifact the project never changed.
+        // The last row that did establish something stands in until the question
+        // can be put again.
+        //
+        // Row by row, never the whole derivation. A configuration is several
+        // rows, so substituting all of them because one went unasked would throw
+        // away the rows that had just been derived — including a setting the
+        // user genuinely changed in the same refresh.
+        //
+        // This is not the version memory that was removed: it is one field on
+        // one session, it applies only to a row whose derivation explicitly
+        // marks its question as unasked, and it never presents a stale answer
+        // as a fresh one.
+        //
+        // The inputs are hashed separately and always read from disk, so a
+        // source edited during that window still rebuilds. Declining to conclude
+        // about the toolchain must not let the session claim a file did not move.
+        const evidence = toolchainVersion.reestablish(
+          configuration,
+          this.established,
+        );
+        // Reestablishment can repair only a row this session proved before. On
+        // generation zero, or for a newly introduced row, `unasked` survives
+        // and says no configuration fact at all. Hashing and publishing that
+        // marker would give a strict snapshot an intentionally inconclusive
+        // compiler identity. Later transient failures still reach here as
+        // their established values and retain the current universe.
+        if (toolchainVersion.inconclusive(evidence)) {
+          throw new Error(
+            `${this.options.provider}: cannot build from inconclusive configuration rows: ${toolchainVersion
+              .unresolved(evidence)
+              .join("; ")}`,
+          );
+        }
+        const established = evidence.rows;
+        const universe = this.fingerprint(established);
         if (universe === this.universe && this.snapshot !== undefined) {
+          this.established = evidence;
           return {
             changed: false,
             generation: this.version,
@@ -99,10 +143,11 @@ export class BatchGraphSession implements IBulkGraphSession {
             snapshot: this.snapshot,
           };
         }
-        const next = await this.build(universe, configuration, signal);
+        const next = await this.build(universe, established, signal);
         this.assertOpen();
         this.snapshot = next;
         this.universe = universe;
+        this.established = evidence;
         this.version += 1;
         return {
           changed: true,
@@ -150,15 +195,54 @@ export class BatchGraphSession implements IBulkGraphSession {
     signal: AbortSignal | undefined,
   ): Promise<IBulkGraphSession.ISnapshot> {
     const output = fs.mkdtempSync(
-      path.join(os.tmpdir(), `samchon-graph-${this.options.provider}-`),
+      path.join(
+        this.options.temporaryParent ?? os.tmpdir(),
+        `samchon-graph-${this.options.provider}-`,
+      ),
     );
     try {
       const artifact = path.join(output, this.options.artifactName);
-      await this.run(
-        this.options.command,
-        this.options.indexArgs(artifact),
-        signal,
-      );
+      const produced = this.options.artifactFrom?.(this.root);
+      if (produced !== undefined && pathEntryExists(produced)) {
+        throw new Error(
+          `${this.options.provider}: refusing to overwrite the existing project artifact ${produced}`,
+        );
+      }
+      let producerFailure: Error | undefined;
+      try {
+        await this.run(
+          this.options.command,
+          this.options.indexArgs(artifact),
+          signal,
+        );
+      } catch (error) {
+        // `run` crosses the only unknown-rejection boundary through `enqueue`,
+        // which normalizes it before this promise can reject.
+        producerFailure = error as Error;
+      }
+      // Some producers cannot be told where to write. `scip-php` declares only
+      // `--help` and `--memory-limit`, takes `getcwd()` as the project root, and
+      // ends with `file_put_contents('index.scip', …)` — so it writes into the
+      // project being indexed and nowhere else. Naming that path here moves the
+      // artifact out before anything reads it, which keeps the tool honest
+      // rather than wrapping it in a shim a user would also have to install.
+      //
+      if (producerFailure !== undefined) {
+        if (produced !== undefined && pathEntryExists(produced)) {
+          try {
+            fs.rmSync(produced, { force: true });
+          } catch (cleanupFailure) {
+            throw new AggregateError(
+              [producerFailure, cleanupFailure],
+              `${this.options.provider}: the producer failed and its project artifact could not be removed`,
+            );
+          }
+        }
+        throw producerFailure;
+      }
+      if (produced !== undefined && pathEntryExists(produced)) {
+        relocateArtifact(produced, artifact);
+      }
       if (!fs.existsSync(artifact)) {
         throw new Error(
           `${this.options.provider}: the producer exited without writing ${artifact}`,
@@ -167,6 +251,12 @@ export class BatchGraphSession implements IBulkGraphSession {
       const snapshot = await this.options.load({
         artifact,
         universe,
+        // The exact rows the universe was computed from. A loader that wants
+        // to publish a toolchain version must read it from here rather than
+        // asking again: a second probe is a second instant, and one held to
+        // its last established value while the other re-asks can put a
+        // compiler in the provenance that this universe never saw.
+        configuration,
         signal,
         run: (command, args) => this.run(command, args, signal),
       });
@@ -326,8 +416,28 @@ export class BatchGraphSession implements IBulkGraphSession {
         }
         /* c8 ignore stop */
         if (signal?.aborted === true) {
+          // With whatever the producer had already said. An aborted run is the
+          // one case where nothing else will ever explain itself: the snapshot
+          // is never published, so its warnings are never printed, and the
+          // buffered output dies with the process that held it. Two benchmark
+          // lanes reached their hour cap four complete runs running and left
+          // one line between them — the provider's name — because this branch
+          // threw away the stderr sitting in scope.
           reject(
-            abortedProcessError(this.options.provider, command.command),
+            abortedProcessError(
+              this.options.provider,
+              command.command,
+              // Bounded before it is labelled, not after. A producer killed
+              // after an hour is the one most likely to have filled the whole
+              // 64 KiB stderr buffer with progress, and the last of that says
+              // where it had got to — but slicing the finished sentence would
+              // cut off the `(no stderr; last of stdout)` attribution whenever
+              // the fallback text is long, leaving a reader unable to tell a
+              // diagnosis from a scraped stdout tail. The exit-code path keeps
+              // its full text: a producer that chose to stop usually said why
+              // once, and this one did not choose to stop at all.
+              failureDetail(boundedTail(stderr), stdout),
+            ),
           );
           return;
         }
@@ -339,11 +449,10 @@ export class BatchGraphSession implements IBulkGraphSession {
           resolve(stdout);
           return;
         }
+        const detail = failureDetail(stderr, stdout);
         reject(
           new Error(
-            `${this.options.provider}: ${command.command} exited with code ${String(code)}${
-              stderr === "" ? "" : `: ${stderr.trim()}`
-            }`,
+            `${this.options.provider}: ${command.command} exited with code ${String(code)}${detail}`,
           ),
         );
       };
@@ -411,6 +520,57 @@ export class BatchGraphSession implements IBulkGraphSession {
   }
 }
 
+/** Directory-entry existence without following a fixed artifact symlink. */
+function pathEntryExists(file: string): boolean {
+  return fs.lstatSync(file, { throwIfNoEntry: false }) !== undefined;
+}
+
+/**
+ * Take a fixed-path producer artifact without assuming the checkout and the
+ * operating-system temporary directory share a filesystem.
+ */
+function relocateArtifact(produced: string, artifact: string): void {
+  try {
+    fs.renameSync(produced, artifact);
+    return;
+    /* c8 ignore start -- EXDEV requires a checkout and OS temporary directory
+     * on different mounted filesystems; hosted CI keeps both on one volume. */
+  } catch (error) {
+    if (
+      typeof error !== "object" ||
+      error === null ||
+      !("code" in error) ||
+      error.code !== "EXDEV"
+    ) {
+      try {
+        fs.rmSync(produced, { force: true });
+      } catch (cleanupFailure) {
+        throw new AggregateError(
+          [error, cleanupFailure],
+          `could not relocate or remove producer artifact ${produced}`,
+        );
+      }
+      throw error;
+    }
+    try {
+      fs.copyFileSync(produced, artifact, fs.constants.COPYFILE_EXCL);
+      fs.rmSync(produced, { force: true });
+    } catch (transferFailure) {
+      fs.rmSync(artifact, { force: true });
+      try {
+        fs.rmSync(produced, { force: true });
+      } catch (cleanupFailure) {
+        throw new AggregateError(
+          [transferFailure, cleanupFailure],
+          `could not transfer or remove producer artifact ${produced}`,
+        );
+      }
+      throw transferFailure;
+    }
+  }
+  /* c8 ignore stop */
+}
+
 export namespace BatchGraphSession {
   export interface IOptions {
     root: string;
@@ -419,9 +579,32 @@ export namespace BatchGraphSession {
     command: IGraphProvider.ICommand;
     artifactName: string;
     indexArgs: (artifact: string) => string[];
+
+    /**
+     * Existing directory that owns this session's unique generation children.
+     *
+     * Most producers use the OS temporary directory. A producer whose config
+     * accepts only a project-relative path may need a same-volume parent
+     * instead. The session still creates the unique child and removes the
+     * complete generation on every exit path.
+     */
+    temporaryParent?: string;
+
+    /**
+     * Where a producer that cannot be told an output path writes instead.
+     *
+     * Most indexers take a flag. A few are hard-wired to a filename relative to
+     * their working directory, which for those tools is the project root — so
+     * the artifact lands inside the tree being indexed. Declaring the path lets
+     * the session move it out immediately, rather than every caller learning to
+     * clean up after one awkward tool.
+     */
+    artifactFrom?: (root: string) => string;
     inputs: () => string[];
     /** Non-file build settings whose change invalidates the complete artifact. */
-    configuration?: () => readonly string[];
+    configuration?: () =>
+      | readonly string[]
+      | toolchainVersion.IDerivation;
     load: (props: ILoadProps) => Promise<IBulkGraphSession.ISnapshot>;
     /** Contract gate that must pass before this generation becomes current. */
     validate?: (snapshot: IBulkGraphSession.ISnapshot) => void;
@@ -431,6 +614,9 @@ export namespace BatchGraphSession {
   export interface ILoadProps {
     artifact: string;
     universe: string;
+
+    /** The configuration rows this universe was computed from. */
+    configuration: readonly string[];
     signal: AbortSignal | undefined;
     run: (
       command: IGraphProvider.ICommand,
@@ -448,8 +634,12 @@ interface ISpawned {
 const DEFAULT_MAX_PROCESS_STDOUT_BYTES = 256 * 1024 * 1024;
 const MAX_PROCESS_STDERR_CHARS = 64 * 1024;
 
-function abortedProcessError(provider: string, command: string): Error {
-  const error = new Error(`${provider}: ${command} was aborted`);
+function abortedProcessError(
+  provider: string,
+  command: string,
+  detail = "",
+): Error {
+  const error = new Error(`${provider}: ${command} was aborted${detail}`);
   error.name = "AbortError";
   return error;
 }
@@ -512,4 +702,39 @@ function combineSignals(
     },
     /* c8 ignore stop */
   } as AbortSignal;
+}
+
+/**
+ * What the tool said about its own failure, wherever it said it.
+ *
+ * stderr first, because that is where a well-behaved tool puts diagnostics. But
+ * a build wrapper is not one tool — `scip-java` runs the project's real Gradle
+ * or Maven build, and Gradle reports failures on stdout. The benchmark's java
+ * lane failed with `exited with code 1` and nothing else for exactly that
+ * reason: the whole explanation had been captured and then dropped because it
+ * arrived on the wrong stream.
+ *
+ * The tail rather than the head, since a build prints its failure last. Bounded
+ * because stdout is the artifact channel for some providers, and an index is not
+ * something to paste into an error message.
+ */
+function failureDetail(stderr: string, stdout: string): string {
+  const detail = stderr.trim();
+  if (detail !== "") return `: ${detail}`;
+  const fallback = stdout.trim();
+  if (fallback === "") return "";
+  const tail = fallback.slice(-FAILURE_DETAIL_LIMIT);
+  return `: (no stderr; last of stdout) ${
+    tail.length < fallback.length ? `…${tail}` : tail
+  }`;
+}
+
+/** Enough for a build tool's failure summary, short of an artifact. */
+const FAILURE_DETAIL_LIMIT = 2000;
+
+/** The end of a producer's output, which is where its last progress is. */
+function boundedTail(text: string): string {
+  const trimmed = text.trim();
+  if (trimmed.length <= FAILURE_DETAIL_LIMIT) return trimmed;
+  return `…${trimmed.slice(-FAILURE_DETAIL_LIMIT)}`;
 }

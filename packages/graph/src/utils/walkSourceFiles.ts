@@ -46,8 +46,30 @@ export function walkSourceFiles(root: string, options: IWalkOptions): string[] {
       }
       /* c8 ignore next */
       if (!entry.isFile()) continue;
+      const extension = path.extname(entry.name);
+      // GCC and Clang assign uppercase `.C` and `.H` to C++, while lowercase
+      // `.c` and `.h` are C identities. All other registered suffixes remain
+      // case-insensitive for discovery, as they were before.
+      const extensionKey =
+        extension === ".C" || extension === ".H"
+          ? extension
+          : extension.toLowerCase();
+      // Only one caller asks for the empty extension: scip-clang, whose C++
+      // include universe genuinely contains files with no suffix. But a leading
+      // dot is not an extension to `path.extname`, so `.gitignore`,
+      // `.clang-format` and every other configuration file answered to that
+      // request as well — which put them in the provider's input manifest and
+      // made editing one rebuild an index they never entered. A leading-dot
+      // name is metadata by universal convention and is never an include, so
+      // that is the boundary rather than a list of the names seen so far.
+      //
+      // An extensionless `LICENSE` or `AUTHORS` still matches, and stays
+      // matched: nothing structurally separates it from an extensionless
+      // header, and over-watching a file that almost never changes costs a
+      // rebuild that would otherwise be skipped, not a wrong answer.
       if (
-        options.extensions.has(path.extname(entry.name).toLowerCase()) &&
+        options.extensions.has(extensionKey) &&
+        !(extensionKey === "" && entry.name.startsWith(".")) &&
         !(insideCompilerOutput && isTypeScriptCompilerOutput(entry.name))
       ) {
         out.push(abs);

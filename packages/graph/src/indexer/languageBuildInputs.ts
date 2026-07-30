@@ -20,8 +20,12 @@ export function languageBuildInputs(
       extensions.add(extension);
     }
   }
+  const fileNames = [...names].filter((name) => !/[\\/]/.test(name));
+  const relativePaths = [...names]
+    .filter((name) => /[\\/]/.test(name))
+    .map((name) => normalizePath(name));
   const existing = providerInputFiles(root, [], [...names], [...extensions]);
-  const candidates = new Set(existing);
+  const candidates = new Set([...existing, ...relativePaths]);
   if (languages.includes("dart")) {
     for (const file of dartPackageConfigInputs(root)) candidates.add(file);
   }
@@ -45,7 +49,7 @@ export function languageBuildInputs(
     }
   }
   for (const directory of directories) {
-    for (const name of names) {
+    for (const name of fileNames) {
       candidates.add(
         normalizePath(path.relative(resolved, path.join(directory, name))),
       );
@@ -61,6 +65,30 @@ const COMMON_NODE_INPUTS = [
   "package-lock.json",
   "bun.lock",
   "bun.lockb",
+] as const;
+
+const JVM_BUILD_INPUTS = [
+  ".mvn/extensions.xml",
+  ".mvn/jvm.config",
+  ".mvn/maven.config",
+  ".mvn/wrapper/MavenWrapperDownloader.java",
+  ".mvn/wrapper/maven-wrapper.jar",
+  ".mvn/wrapper/maven-wrapper.properties",
+  "pom.xml",
+  "mvnw",
+  "mvnw.cmd",
+  "build.gradle",
+  "build.gradle.kts",
+  "settings.gradle",
+  "settings.gradle.kts",
+  "gradle.properties",
+  "gradle.lockfile",
+  "gradle/wrapper/gradle-wrapper.properties",
+  "gradle/verification-metadata.xml",
+  "gradle/wrapper/gradle-wrapper.jar",
+  "gradlew",
+  "gradlew.bat",
+  "libs.versions.toml",
 ] as const;
 
 const BUILD_INPUTS: Record<GraphLanguage, readonly string[]> = {
@@ -83,15 +111,7 @@ const BUILD_INPUTS: Record<GraphLanguage, readonly string[]> = {
     "Makefile",
     "meson.build",
   ],
-  java: [
-    "pom.xml",
-    "build.gradle",
-    "build.gradle.kts",
-    "settings.gradle",
-    "settings.gradle.kts",
-    "gradle.properties",
-    "gradle-wrapper.properties",
-  ],
+  java: JVM_BUILD_INPUTS,
   csharp: [
     "global.json",
     "Directory.Build.props",
@@ -133,25 +153,11 @@ const BUILD_INPUTS: Record<GraphLanguage, readonly string[]> = {
     "phpstan.neon.dist",
   ],
   swift: ["Package.swift", "Package.resolved", "project.pbxproj"],
-  kotlin: [
-    "pom.xml",
-    "build.gradle",
-    "build.gradle.kts",
-    "settings.gradle",
-    "settings.gradle.kts",
-    "gradle.properties",
-    "gradle-wrapper.properties",
-  ],
+  kotlin: JVM_BUILD_INPUTS,
   scala: [
     "build.sbt",
     "build.sc",
-    "pom.xml",
-    "build.gradle",
-    "build.gradle.kts",
-    "settings.gradle",
-    "settings.gradle.kts",
-    "gradle.properties",
-    "gradle-wrapper.properties",
+    ...JVM_BUILD_INPUTS,
   ],
   zig: ["build.zig", "build.zig.zon"],
   lua: [".luarc.json", ".luarc.jsonc"],
@@ -167,7 +173,7 @@ const BUILD_INPUT_EXTENSIONS: Record<GraphLanguage, readonly string[]> = {
   typescript: [],
   cpp: [".cmake"],
   c: [".cmake"],
-  java: [],
+  java: [".gradle", ".gradle.kts"],
   csharp: [".sln", ".csproj", ".fsproj", ".props", ".targets"],
   go: [],
   rust: [],
@@ -175,8 +181,8 @@ const BUILD_INPUT_EXTENSIONS: Record<GraphLanguage, readonly string[]> = {
   ruby: [".gemspec"],
   php: [],
   swift: [".xcodeproj"],
-  kotlin: [],
-  scala: [],
+  kotlin: [".gradle", ".gradle.kts"],
+  scala: [".gradle", ".gradle.kts"],
   zig: [],
   lua: [".rockspec"],
   dart: [],

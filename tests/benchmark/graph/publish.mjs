@@ -29,6 +29,7 @@ import {
   websiteCellKey,
 } from "./website-cell.mjs";
 import { assertPublicationCandidates } from "./publication-gate.mjs";
+import { agentPublicationDocument } from "./publication-document.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, "..", "..", "..");
@@ -57,13 +58,7 @@ const prior =
 // being generated at all. The site went on serving the SVGs left on disk from
 // the last build, which is worse than serving none, because a missing chart is
 // visible and a stale one is not.
-const out = {
-  schemaVersion: 1,
-  generatedAt: new Date().toISOString(),
-  structural: prior.structural ?? null,
-  agent: { cells: [...(prior.agent?.cells ?? [])] },
-  ...(prior.index !== undefined ? { index: prior.index } : {}),
-};
+const out = agentPublicationDocument(prior);
 const agentCandidates = [];
 for (const sourceDir of sourceDirs) {
   foldSourceDir(sourceDir);

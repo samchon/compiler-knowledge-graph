@@ -19,6 +19,9 @@ interface NativeChild {
   stdoutBytes: number;
   stderr: string;
   exit: Promise<void>;
+
+  /** Resolves when every stream is finished, not merely when the child left. */
+  closed: Promise<void>;
   termination?: Promise<void>;
 }
 
@@ -56,6 +59,20 @@ export class TtscGraphClient implements IBulkGraphSession {
   private snapshot: IBulkGraphSession.ISnapshot | undefined;
   private childHasSnapshot = false;
   private version = 0;
+
+  /**
+   * How a native child left, kept public so every silent-exit diagnosis is
+   * independently testable even where the host pipe cannot produce EPIPE.
+   */
+  public static exitSuffix(
+    process: Pick<ChildProcessWithoutNullStreams, "signalCode" | "exitCode">,
+  ): string {
+    const signal = process.signalCode;
+    if (signal !== null) return ` (killed by ${signal})`;
+    const code = process.exitCode;
+    if (code !== null) return ` (child exited ${String(code)})`;
+    return "";
+  }
 
   public constructor(options: TtscGraphClient.IOptions) {
     const requestTimeoutMs =
@@ -225,10 +242,36 @@ export class TtscGraphClient implements IBulkGraphSession {
          * POSIX-only and is exercised there. */
         if (error === null || error === undefined) return;
         if (this.pending.get(id) !== pending) return;
-        this.failChild(
-          child,
-          new Error(`ttscgraph: could not request snapshot: ${error.message}`),
-        );
+        // EPIPE says our end of the pipe closed, which is never the diagnosis:
+        // the child exited before it could accept the request, and why it did
+        // is whatever it printed on the way out. The timeout path beside this
+        // one already carries that; this one dropped it, so the benchmark's
+        // typescript lane failed with `write EPIPE` and nothing else and fell
+        // to the static reader.
+        //
+        // Waiting for `close` before reporting, because the write fails the
+        // instant the pipe breaks and that routinely precedes the last stderr
+        // chunk. Reading stderr at the moment of EPIPE reports what happened to
+        // have arrived, so an empty result meant "nothing yet" and was read as
+        // "nothing at all" — which is how the flagship lane came back saying
+        // only `write EPIPE` and fell to the static reader.
+        //
+        // The pending request's own timer bounds this: a child that never
+        // closes still fails, on the timeout rather than here.
+        //
+        // Raced against a short grace rather than awaited outright, because a
+        // broken pipe does not prove a dead child: a producer that closes its
+        // stdin and keeps running never fires `close`, and waiting for it would
+        // hold the request until the timeout for a fault that is already known.
+        void drained(child).then(() => {
+          if (this.pending.get(id) !== pending) return;
+          this.failChild(
+            child,
+            new Error(
+              `ttscgraph: could not request snapshot: ${error.message}${TtscGraphClient.exitSuffix(child.process)}${stderrSuffix(child)}`,
+            ),
+          );
+        });
         /* c8 ignore stop */
       });
     });
@@ -284,6 +327,13 @@ export class TtscGraphClient implements IBulkGraphSession {
       stdoutBytes: 0,
       stderr: "",
       exit: ownedProcess.exit(spawned),
+      // `close` and not `exit`, which is the whole point. `ownedProcess.exit`
+      // settles on whichever of error, exit or close arrives first, and exit
+      // fires before stdio is drained — so awaiting it can still read an empty
+      // stderr from a child that spoke. `close` is the event that means every
+      // stream is finished, and it is the only one worth waiting on before
+      // claiming a child died silently.
+      closed: closedPromise(spawned),
     };
     this.child = child;
     this.childHasSnapshot = false;
@@ -314,12 +364,19 @@ export class TtscGraphClient implements IBulkGraphSession {
     /* c8 ignore stop */
     spawned.on("exit", (code, signal) => {
       const status = signal ?? code;
-      this.failChild(
-        child,
-        new Error(
-          `ttscgraph: process exited (${status})${stderrSuffix(child)}`,
-        ),
-      );
+      // `exit` fires before stdio is drained, so reading stderr here reports
+      // whatever happened to have arrived — the reason a caller had to sleep
+      // before refreshing to see a crash's own diagnostics at all. Waiting for
+      // the streams to finish makes the message say what the child said rather
+      // than what had reached us by the time it left.
+      void drained(child).then(() => {
+        this.failChild(
+          child,
+          new Error(
+            `ttscgraph: process exited (${status})${stderrSuffix(child)}`,
+          ),
+        );
+      });
     });
     return child;
   }
@@ -348,10 +405,18 @@ export class TtscGraphClient implements IBulkGraphSession {
       try {
         value = JSON.parse(line);
       } catch (error) {
+        // The line itself, because "invalid NDJSON" describes the parser's
+        // disappointment and not the problem. A producer that printed a
+        // stack trace, a deprecation notice, or a shell error onto its protocol
+        // stream is diagnosed by reading what it printed, and dropping it leaves
+        // a message that is true of every possible cause.
+        //
+        // Bounded, since this stream is the artifact channel and a partial
+        // snapshot is not something to put in an error.
         this.failChild(
           child,
           new Error(
-            `ttscgraph: invalid NDJSON response: ${asError(error).message}`,
+            `ttscgraph: invalid NDJSON response: ${asError(error).message}: ${offendingLine(line)}`,
           ),
         );
         return;
@@ -541,6 +606,24 @@ function abortDetail(signal?: AbortSignal): string {
   }
 }
 
+/** The head of an unparseable line, which is where a stray message starts. */
+function offendingLine(line: string): string {
+  const limit = 400;
+  return line.length <= limit ? line : `${line.slice(0, limit)}…`;
+}
+
+/**
+ * Wait for the child's streams to finish, but not indefinitely.
+ *
+ * Long enough that an exited child's last stderr chunk has arrived, short
+ * enough that a child which merely closed its stdin does not hold the report.
+ */
+function drained(child: NativeChild): Promise<void> {
+  return Promise.race([child.closed, after(DRAIN_GRACE_MS)]);
+}
+
+const DRAIN_GRACE_MS = 250;
+
 function stderrSuffix(child: NativeChild): string {
   const stderr = child.stderr.trim();
   return stderr === "" ? "" : `: ${stderr}`;
@@ -564,4 +647,20 @@ function assertCapabilitiesMatch(
       "ttscgraph: response capabilities disagree with the snapshot provenance",
     );
   }
+}
+
+/** Resolves when the child's streams are finished, not when it merely left. */
+function closedPromise(spawned: ChildProcessWithoutNullStreams): Promise<void> {
+  return new Promise((resolve) => {
+    spawned.once("close", () => {
+      resolve();
+    });
+  });
+}
+
+/** A bare delay, unref'd so it never keeps a process alive on its own. */
+function after(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms).unref();
+  });
 }

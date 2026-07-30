@@ -71,6 +71,43 @@ export const test_sidecar_session_enforces_the_common_semantic_contract =
       await rejected(root, payload, "an oversized artifact is refused", {
         maxArtifactBytes: 1,
       });
+
+      // A producer that crashed mid-write, or printed a message where its
+      // snapshot should be, used to surface as a bare `Unexpected token` with
+      // no provider name and no trace of the bytes — the least useful sentence
+      // available about the failure.
+      const notJson = path.join(root, "not-json.txt");
+      fs.writeFileSync(notJson, "panic: sidecar exploded\n");
+      const broken = sessionOf(root, notJson);
+      let brokenMessage = "";
+      try {
+        await broken.refresh();
+      } catch (error) {
+        brokenMessage = error instanceof Error ? error.message : String(error);
+      }
+      await broken.close();
+      TestValidator.predicate(
+        "a snapshot that is not JSON names its provider and what was there",
+        brokenMessage.includes("is not JSON") &&
+          brokenMessage.includes("panic: sidecar exploded"),
+      );
+
+      // Nothing at all is its own failure, and quoting an empty string would
+      // leave a message trailing off after a colon.
+      const empty = path.join(root, "empty.txt");
+      fs.writeFileSync(empty, "");
+      const silent = sessionOf(root, empty);
+      let silentMessage = "";
+      try {
+        await silent.refresh();
+      } catch (error) {
+        silentMessage = error instanceof Error ? error.message : String(error);
+      }
+      await silent.close();
+      TestValidator.predicate(
+        "and an empty artifact says it is empty rather than quoting nothing",
+        silentMessage.includes("the file is empty"),
+      );
       TestValidator.error("zero artifact bounds are refused", () =>
         sessionOf(root, payload, { maxArtifactBytes: 0 }),
       );

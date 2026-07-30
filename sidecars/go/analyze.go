@@ -240,8 +240,9 @@ func (c *collector) units(loaded []*packages.Package) ([]unit, error) {
 			}
 			// `go help packages`: "The go tool will ignore a directory named
 			// testdata". scip-go enumerates by pattern and so never indexes one,
-			// while the checker reaches it through an ordinary import — gin's
-			// tests import .../testdata/protoexample, which is legal because
+			// while the checker reaches it through an ordinary import — a
+			// package may explicitly import a sibling under `testdata`, which is
+			// legal because
 			// testdata is skipped by pattern matching and not by the importer.
 			//
 			// The two therefore disagreed about what the project is, and the
@@ -486,7 +487,7 @@ func (c *collector) addObjectNode(
 	symbol := objectSymbol(object, qualified)
 	// Go allows many `func init()` in one package and forbids referring to any
 	// of them, so every one shares a FullName and they all derive one identity.
-	// gin has several and the second one failed the build.
+	// A real package can have several; the second used to collide.
 	//
 	// Unlike the blank identifier this cannot be skipped: an init body runs and
 	// what it calls are edges worth having. So it is disambiguated by where it

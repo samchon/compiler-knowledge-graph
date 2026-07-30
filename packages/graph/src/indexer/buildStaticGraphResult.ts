@@ -1,5 +1,6 @@
 import { SamchonGraphSourceReader } from "../SamchonGraphSourceReader";
 import { ISamchonGraphDump } from "../structures";
+import { fallbackCoverage } from "../provider/fallbackCoverage";
 import { dedupeEdges } from "./dedupeEdges";
 import { dedupeNodes } from "./dedupeNodes";
 import { finalizeGraph } from "./finalizeGraph";
@@ -30,6 +31,8 @@ export function buildStaticGraphResult(
     project: parts.root,
     languages: parts.languages,
     indexer: "static",
+    coverage: fallbackCoverage("@samchon/graph-sitter", parts.languages),
+    unresolved: [],
     nodes: wireNodes(nodes),
     edges: wireEdges(dedupeEdges(finalized.edges), nodes),
     warnings,

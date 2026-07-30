@@ -22,14 +22,20 @@ const CORPUS_NAMES = [
 ] as const;
 
 export const test_shipped_source_does_not_leak_benchmark_corpus_names = () => {
-  const sourceRoot = path.join(GraphPaths.graphPackageRoot, "src");
+  const roots = [
+    path.join(GraphPaths.graphPackageRoot, "src"),
+    path.join(GraphPaths.graphPackageRoot, "sidecars"),
+  ];
   const leaked: string[] = [];
-  for (const file of walk(sourceRoot)) {
-    const source = fs.readFileSync(file, "utf8").toLowerCase();
-    for (const name of CORPUS_NAMES)
-      if (new RegExp(`\\b${name}\\b`, "u").test(source))
-        leaked.push(`${path.relative(sourceRoot, file).replaceAll("\\", "/")}: ${name}`);
-  }
+  for (const root of roots)
+    for (const file of walk(root)) {
+      const source = fs.readFileSync(file, "utf8").toLowerCase();
+      for (const name of CORPUS_NAMES)
+        if (new RegExp(`\\b${name}\\b`, "u").test(source))
+          leaked.push(
+            `${path.relative(GraphPaths.graphPackageRoot, file).replaceAll("\\", "/")}: ${name}`,
+          );
+    }
   TestValidator.equals(
     "the published source carries no benchmark repository names",
     leaked,
@@ -44,5 +50,7 @@ function walk(directory: string): string[] {
       const file = path.join(directory, entry.name);
       return entry.isDirectory() ? walk(file) : [file];
     })
-    .filter((file) => /\.(?:ts|js|mjs|cjs|json|html)$/u.test(file));
+    .filter((file) =>
+      /\.(?:ts|js|mjs|cjs|json|html|go|lua|mod|sum)$/u.test(file),
+    );
 }

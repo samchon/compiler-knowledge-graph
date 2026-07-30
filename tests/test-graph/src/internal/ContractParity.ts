@@ -426,6 +426,26 @@ export namespace ContractParity {
     Application: [
       {
         reason:
+          "#63 adds the operation-scoped coverage summary and provider-universe provenance to the public application output, so the application imports their public structures.",
+        from:
+          'import { ISamchonGraphOverview } from "./ISamchonGraphOverview";',
+        to: [
+          'import { ISamchonGraphOverview } from "./ISamchonGraphOverview";',
+          'import { ISamchonGraphCoverageSummary } from "./ISamchonGraphCoverageSummary";',
+          'import { ISamchonGraphDump } from "./ISamchonGraphDump";',
+        ].join("\n"),
+      },
+      {
+        reason:
+          "#63 adds the bounded unresolved summary to the same versioned application output.",
+        from: 'import { ISamchonGraphTrace } from "./ISamchonGraphTrace";',
+        to: [
+          'import { ISamchonGraphTrace } from "./ISamchonGraphTrace";',
+          'import { ISamchonGraphUnresolvedSummary } from "./ISamchonGraphUnresolvedSummary";',
+        ].join("\n"),
+      },
+      {
+        reason:
           "The compiler resolves a fact and verifies it; the index checks it. The same guarantee, named for the authority that gives it.",
         layer: "prose",
         from: "is compiler-resolved and verified for the snapshot",
@@ -519,6 +539,46 @@ export namespace ContractParity {
         layer: "prose",
         from: "For the ranked operations (`lookup`, `entrypoints`, `tour`) it adds that the selection is heuristic — matched, scored, ranked, and limited against the question — so the facts are verified but the shortlist's coverage is the caller's to judge.",
         to: "For ranked operations (`lookup`, `entrypoints`, `tour`) it additionally says that selection was matched, scored, ranked, and limited against the question, so the facts are checked but shortlist coverage is yours to judge.",
+      },
+      {
+        reason:
+          "#63 replaces the compiler-completeness overclaim with the exact contract: returned facts are proved, while coverage and uncertainty say whether missing facts are meaningful.",
+        layer: "prose",
+        from:
+          "The graph holds every symbol, call, type, decorator and test, each with its file and line, resolved from the source on disk now. Submit exactly one request:",
+        to:
+          "The graph returns proved indexed facts plus structured coverage and uncertainty. Submit exactly one request:",
+      },
+      {
+        reason:
+          "#63 version 1 adds provider/universe identity plus operation-scoped coverage and unresolved summaries beside `audit`; optionality preserves escape and legacy dump compatibility.",
+        from: "audit: string;",
+        to: [
+          "audit: string;",
+          "provenance?: ISamchonGraphDump.IProvenance[];",
+          "coverage?: ISamchonGraphCoverageSummary;",
+          "unresolved?: ISamchonGraphUnresolvedSummary;",
+        ].join("\n"),
+      },
+      {
+        reason:
+          "The structure rule above adds the versioned trust fields; this prose rule records their exact public semantics without hiding them behind the English audit.",
+        layer: "prose",
+        from: [
+          "audit: string;",
+          "provenance?: ISamchonGraphDump.IProvenance[];",
+          "coverage?: ISamchonGraphCoverageSummary;",
+          "unresolved?: ISamchonGraphUnresolvedSummary;",
+        ].join("\n"),
+        to: [
+          "audit: string;",
+          "/** Strict producer, authority, compiler and build-universe identity for the synchronized graph. Absent only for `escape` or a legacy/fallback-only dump with no strict producer. */",
+          "provenance?: ISamchonGraphDump.IProvenance[];",
+          "/** Machine-readable completeness for the relationship families relevant to this operation. Absent only for `escape`. */",
+          "coverage?: ISamchonGraphCoverageSummary;",
+          "/** Bounded structured uncertainty for the same operation-scoped families. Absent only for `escape`. */",
+          "unresolved?: ISamchonGraphUnresolvedSummary;",
+        ].join("\n"),
       },
     ],
     Details: [
@@ -836,6 +896,51 @@ export namespace ContractParity {
         layer: "prose",
         from: "/** Expression span; its file is the one embedded in `from`. */",
         to: "/** Expression span; its file is the source node's declaration file. */",
+      },
+      {
+        reason:
+          "#63 makes normalized completeness part of the public dump contract.",
+        from: 'import { ISamchonGraphEdge } from "./ISamchonGraphEdge";',
+        to: [
+          'import { ISamchonGraphEdge } from "./ISamchonGraphEdge";',
+          'import { ISamchonGraphCoverage } from "./ISamchonGraphCoverage";',
+        ].join("\n"),
+      },
+      {
+        reason:
+          "#63 preserves structured unresolved sites in the public dump.",
+        from: 'import { ISamchonGraphSpan } from "./ISamchonGraphSpan";',
+        to: [
+          'import { ISamchonGraphSpan } from "./ISamchonGraphSpan";',
+          'import { ISamchonGraphUnresolved } from "./ISamchonGraphUnresolved";',
+        ].join("\n"),
+      },
+      {
+        reason:
+          "#63 adds additive optional coverage and unresolved fields after provider provenance so older dumps remain loadable during protocol migration.",
+        from: "provenance?: ISamchonGraphDump.IProvenance[];",
+        to: [
+          "provenance?: ISamchonGraphDump.IProvenance[];",
+          "coverage?: ISamchonGraphCoverage[];",
+          "unresolved?: ISamchonGraphUnresolved[];",
+        ].join("\n"),
+      },
+      {
+        reason:
+          "The structure rule above adds dump trust fields; their prose distinguishes migration absence from explicit empty uncertainty.",
+        layer: "prose",
+        from: [
+          "provenance?: ISamchonGraphDump.IProvenance[];",
+          "coverage?: ISamchonGraphCoverage[];",
+          "unresolved?: ISamchonGraphUnresolved[];",
+        ].join("\n"),
+        to: [
+          "provenance?: ISamchonGraphDump.IProvenance[];",
+          "/** Exhaustive per-provider, language, target and relationship-family completeness rows. Absent only on dumps written before protocol version 1. */",
+          "coverage?: ISamchonGraphCoverage[];",
+          "/** Structured relationship sites that a producer could not resolve exactly. An empty list is meaningful only together with exhaustive coverage. */",
+          "unresolved?: ISamchonGraphUnresolved[];",
+        ].join("\n"),
       },
     ],
     Edge: [

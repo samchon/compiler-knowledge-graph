@@ -4,12 +4,17 @@ import {
   ISamchonGraphDiagnostic,
   ISamchonGraphDump,
   ISamchonGraphEdge,
+  ISamchonGraphCoverage,
   ISamchonGraphNode,
+  ISamchonGraphUnresolved,
 } from "../structures";
 import { GraphLanguage } from "../typings";
 import { SamchonGraphSourceReader } from "../SamchonGraphSourceReader";
 import { assertGraphSnapshotContract } from "../provider/assertGraphSnapshotContract";
 import { dumpProvenanceOf } from "../provider/dumpProvenanceOf";
+import { fallbackCoverage } from "../provider/fallbackCoverage";
+import { graphCoverageOf } from "../provider/graphCoverageOf";
+import { graphUnresolvedOf } from "../provider/graphUnresolvedOf";
 import { IGraphProvider } from "../provider/IGraphProvider";
 import { GRAPH_PROVIDERS } from "../provider/GRAPH_PROVIDERS";
 import { IBulkGraphSession } from "../provider/IBulkGraphSession";
@@ -239,6 +244,8 @@ export function createResidentGraphSource(
     // dump whose own contract is that it is a function of its source (§6a). The
     // session holds them per file now, and a `didClose` drops the file's.
     const diagnostics: ISamchonGraphDiagnostic[] = [];
+    const coverage: ISamchonGraphCoverage[] = [];
+    const unresolved: ISamchonGraphUnresolved[] = [];
     const warnings: string[] = [];
     const sources = new Map<string, string>();
     const generations = new Map(current.generations);
@@ -285,6 +292,8 @@ export function createResidentGraphSource(
         // the edges, and for the same reason the LSP lane stopped carrying them
         // forward: a diagnostic belongs to the generation that produced it.
         diagnostics.push(...refresh.snapshot.diagnostics);
+        coverage.push(...graphCoverageOf(refresh.snapshot));
+        unresolved.push(...graphUnresolvedOf(refresh.snapshot));
         warnings.push(...refresh.snapshot.warnings);
         provenance.push(dumpProvenanceOf(refresh.snapshot));
         modes.set(refresh.snapshot.provenance.provider, refresh.mode);
@@ -303,6 +312,7 @@ export function createResidentGraphSource(
       nodes.push(...result.nodes);
       edges.push(...result.edges);
       diagnostics.push(...result.diagnostics);
+      coverage.push(...fallbackCoverage("@samchon/graph-lsp", [language]));
       warnings.push(...result.warnings);
       for (const opened of session.opened.values()) {
         sources.set(opened.abs, opened.text);
@@ -321,6 +331,9 @@ export function createResidentGraphSource(
       nodes.push(...fallback.nodes);
       edges.push(...fallback.edges);
       warnings.push(...fallback.warnings);
+      coverage.push(
+        ...fallbackCoverage("@samchon/graph-sitter", fallback.languages),
+      );
       for (const [file, text] of fallback.sources) sources.set(file, text);
     }
 
@@ -434,6 +447,8 @@ export function createResidentGraphSource(
       nodes: wireNodes(finalized.nodes),
       edges: wireEdges(finalized.edges, finalized.nodes),
       diagnostics,
+      coverage,
+      unresolved,
       warnings,
       ...dumpProvenanceOf.fieldOf(provenance),
     };

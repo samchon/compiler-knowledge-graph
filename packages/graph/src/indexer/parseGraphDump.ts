@@ -3,6 +3,7 @@ import path from "node:path";
 import typia from "typia";
 
 import { ISamchonGraphDump, ISamchonGraphSpan } from "../structures";
+import { GRAPH_EDGE_KINDS } from "../typings";
 import { validateSemanticGraphNode } from "../provider/semanticIdentity";
 import { fileOfNodeId } from "../utils/fileOfNodeId";
 
@@ -146,7 +147,113 @@ export function parseGraphDump(input: unknown): ISamchonGraphDump {
       }
     }
   }
+  const coverage = new Map<
+    string,
+    NonNullable<ISamchonGraphDump["coverage"]>[number]
+  >();
+  const coverageSlices = new Map<
+    string,
+    Pick<
+      NonNullable<ISamchonGraphDump["coverage"]>[number],
+      "provider" | "language" | "target"
+    >
+  >();
+  for (const row of dump.coverage ?? []) {
+    if (
+      row.provider === "" ||
+      row.provider.includes("\0") ||
+      row.target === "" ||
+      row.target.includes("\0") ||
+      !dumpLanguages.has(row.language)
+    ) {
+      throw new Error("@samchon/graph: coverage row has invalid ownership");
+    }
+    const key = coverageKey(row);
+    if (coverage.has(key)) {
+      throw new Error(`@samchon/graph: duplicate coverage row: ${key}`);
+    }
+    coverage.set(key, row);
+    coverageSlices.set(
+      coverageSliceKey(row),
+      {
+        provider: row.provider,
+        language: row.language,
+        target: row.target,
+      },
+    );
+  }
+  if (dump.coverage !== undefined) {
+    for (const slice of coverageSlices.values())
+      for (const family of GRAPH_EDGE_KINDS) {
+        const key = coverageKey({ ...slice, family });
+        if (!coverage.has(key)) {
+          throw new Error(`@samchon/graph: coverage is not exhaustive: ${key}`);
+        }
+      }
+    for (const provenance of dump.provenance ?? []) {
+      for (const language of provenance.languages) {
+        if (
+          ![...coverageSlices.values()].some(
+            (slice) =>
+              slice.provider === provenance.provider &&
+              slice.language === language,
+          )
+        ) {
+          throw new Error(
+            `@samchon/graph: coverage is missing for ${provenance.provider}/${language}`,
+          );
+        }
+      }
+    }
+  }
+  const unresolved = new Set<string>();
+  for (const row of dump.unresolved ?? []) {
+    validateSpan(row.evidence, undefined, "unresolved evidence");
+    assertUnique(row.candidates ?? [], "unresolved candidate");
+    const owner = (dump.provenance ?? []).find(
+      (candidate) =>
+        candidate.provider === row.provider &&
+        candidate.languages.includes(row.language),
+    );
+    if (
+      !/^[0-9a-f]{64}$/.test(row.universe) ||
+      owner === undefined ||
+      owner.universe !== row.universe
+    ) {
+      throw new Error(
+        "@samchon/graph: unresolved site has no matching provider universe",
+      );
+    }
+    const covered = coverage.get(coverageKey(row));
+    if (covered?.state !== "partial") {
+      throw new Error(
+        "@samchon/graph: unresolved site does not have partial coverage",
+      );
+    }
+    const key = JSON.stringify(row);
+    if (unresolved.has(key)) {
+      throw new Error("@samchon/graph: duplicate unresolved site");
+    }
+    unresolved.add(key);
+  }
   return dump;
+}
+
+function coverageKey(row: {
+  provider: string;
+  language: string;
+  target: string;
+  family: string;
+}): string {
+  return `${row.provider}\0${row.language}\0${row.target}\0${row.family}`;
+}
+
+function coverageSliceKey(row: {
+  provider: string;
+  language: string;
+  target: string;
+}): string {
+  return `${row.provider}\0${row.language}\0${row.target}`;
 }
 
 function validateEndpoint(

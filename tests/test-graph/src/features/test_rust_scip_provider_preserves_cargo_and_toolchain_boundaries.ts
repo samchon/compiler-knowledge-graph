@@ -234,7 +234,7 @@ async function assertProviderSnapshot(root: string): Promise<void> {
       [
         "rust-analyzer-scip",
         "semantic-index",
-        ["contains", "references", "type_ref"],
+        ["contains", "references"],
         "rustc=fixture rustc; cargo=fixture cargo",
         false,
         "",

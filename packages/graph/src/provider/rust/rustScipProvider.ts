@@ -34,6 +34,9 @@ export const rustScipProvider = Object.assign(
     // rust-analyzer writes the protobuf default empty string for every
     // document, not a copy of the source bytes it analyzed.
     sourceText: false,
+    // Stock rust-analyzer SCIP emits occurrences, definitions, and references,
+    // but no relationship that proves the referenced symbol is a type.
+    omitFacts: ["type_ref"],
     // Stock rust-analyzer omits the protobuf-default project_root. The session
     // invokes `rust-analyzer scip .` with the project root as its exact cwd and
     // an isolated output artifact, so that cwd is the missing root evidence; an

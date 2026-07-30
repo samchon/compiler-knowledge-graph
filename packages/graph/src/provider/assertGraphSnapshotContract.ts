@@ -3,6 +3,7 @@ import path from "node:path";
 import { parseGraphDump } from "../indexer/parseGraphDump";
 import { GraphLanguage } from "../typings";
 import { dumpProvenanceOf } from "./dumpProvenanceOf";
+import { GraphSnapshotProtocol } from "./GraphSnapshotProtocol";
 import { IBulkGraphSession } from "./IBulkGraphSession";
 import { IGraphProvider } from "./IGraphProvider";
 
@@ -40,6 +41,12 @@ export function assertGraphSnapshotContract(
     diagnostics: snapshot.diagnostics,
     warnings: snapshot.warnings,
     provenance: [dumpProvenanceOf(snapshot)],
+    ...(snapshot.coverage !== undefined
+      ? { coverage: snapshot.coverage }
+      : {}),
+    ...(snapshot.unresolved !== undefined
+      ? { unresolved: snapshot.unresolved }
+      : {}),
   });
   const claimed = new Set(languages);
   for (const language of snapshot.languages) {
@@ -95,6 +102,41 @@ export function assertGraphSnapshotContract(
   }
 
   assertSourceManifest(snapshot, project, label, files);
+  assertProtocol(snapshot, label);
+}
+
+function assertProtocol(
+  snapshot: IBulkGraphSession.ISnapshot,
+  label: string,
+): void {
+  const protocol = snapshot.protocol;
+  if (protocol === undefined) return;
+  if (
+    protocol.version !== GraphSnapshotProtocol.VERSION ||
+    protocol.generation === "" ||
+    protocol.targets.length === 0 ||
+    new Set(protocol.targets).size !== protocol.targets.length ||
+    !SHA256.test(protocol.manifest) ||
+    !SHA256.test(protocol.factDigest) ||
+    snapshot.coverage === undefined ||
+    snapshot.unresolved === undefined
+  ) {
+    throw new Error(`${label} published an invalid protocol generation`);
+  }
+  const shards = new Set<string>();
+  for (const shard of protocol.shards) {
+    if (
+      shard.key === "" ||
+      shards.has(shard.key) ||
+      !SHA256.test(shard.digest)
+    ) {
+      throw new Error(`${label} published an invalid protocol shard manifest`);
+    }
+    shards.add(shard.key);
+  }
+  if (GraphSnapshotProtocol.factDigest(snapshot) !== protocol.factDigest) {
+    throw new Error(`${label} published a mismatched protocol fact digest`);
+  }
 }
 
 function assertSourceManifest(
@@ -142,6 +184,9 @@ function assertSourceManifest(
   }
   for (const diagnostic of snapshot.diagnostics) {
     if (diagnostic.file !== "") requireHostSource(required, diagnostic.file);
+  }
+  for (const unresolved of snapshot.unresolved ?? []) {
+    requireHostSource(required, unresolved.evidence.file);
   }
 
   for (const file of required) {

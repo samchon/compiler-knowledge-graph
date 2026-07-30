@@ -1,0 +1,1026 @@
+import { TestValidator } from "@nestia/e2e";
+import {
+  GRAPH_EDGE_KINDS,
+  GraphSnapshotProtocol,
+  IBulkGraphSession,
+  assertGraphSnapshotContract,
+  graphCoverageOf,
+  graphSnapshotDigests,
+  graphUnresolvedOf,
+} from "@samchon/graph";
+import path from "node:path";
+
+const digest = (letter: string): string => letter.repeat(64);
+
+/**
+ * Graph Snapshot Protocol publishes one validated complete generation or keeps
+ * the prior one byte-for-byte. The fixture is an external producer oracle: all
+ * digests are computed from the public protocol helpers, never copied from the
+ * store under test.
+ */
+export const test_graph_snapshot_protocol_commits_atomic_shard_generations =
+  async () => {
+    const store = new GraphSnapshotProtocol.Store();
+    const initialFrames = transaction("generation-1");
+    const ndjson = initialFrames.map(JSON.stringify).join("\n");
+    const parsed = GraphSnapshotProtocol.parse(ndjson);
+    const initial = store.apply(parsed);
+    const provider = {
+      name: "fixture-compiler",
+      authority: "compiler" as const,
+      facts: ["calls" as const],
+    };
+    assertGraphSnapshotContract(
+      initial,
+      provider,
+      ["typescript"],
+      process.cwd(),
+    );
+
+    TestValidator.equals(
+      "the committed generation reconstructs every protocol plane",
+      [
+        initial.protocol?.generation,
+        initial.protocol?.manifest,
+        initial.protocol?.shards.map((shard) => shard.key),
+        initial.nodes.map((node) => node.name),
+        initial.coverage?.length,
+        initial.unresolved?.map((site) => site.reason),
+      ],
+      [
+        "generation-1",
+        digest("b"),
+        ["coverage", "source"],
+        ["run"],
+        GRAPH_EDGE_KINDS.length,
+        ["dynamic", "reflection"],
+      ],
+    );
+    TestValidator.equals(
+      "protocol-aware helpers preserve explicit coverage and uncertainty",
+      [
+        graphCoverageOf(initial).length,
+        graphUnresolvedOf(initial).length,
+        graphSnapshotDigests.contentOf(initial).length,
+        GraphSnapshotProtocol.factDigest({
+          languages: initial.languages,
+          nodes: initial.nodes,
+          edges: initial.edges,
+          diagnostics: initial.diagnostics,
+          provenance: initial.provenance,
+        }).length,
+      ],
+      [GRAPH_EDGE_KINDS.length, 2, 64, 64],
+    );
+    for (const [label, expected, mutateSnapshot] of invalidProtocolSnapshots()) {
+      let message = "";
+      try {
+        const candidate = cloneSnapshot(initial);
+        mutateSnapshot(candidate);
+        assertGraphSnapshotContract(
+          candidate,
+          provider,
+          ["typescript"],
+          process.cwd(),
+        );
+      } catch (error) {
+        message = error instanceof Error ? error.message : String(error);
+      }
+      TestValidator.predicate(
+        `${label} fails at the protocol publication gate: ${message}`,
+        message.includes(expected),
+      );
+    }
+    TestValidator.error("a published generation is deeply immutable", () => {
+      initial.nodes.push({ ...initial.nodes[0]! });
+    });
+
+    const editedFrames = transaction("generation-2", {
+      baseGeneration: "generation-1",
+      nodeName: "edited",
+    });
+    const edited = store.apply(editedFrames);
+    TestValidator.equals(
+      "a delta reuses unchanged shards and replaces only its upsert",
+      [
+        edited.nodes.map((node) => node.name),
+        edited.protocol?.baseGeneration,
+        edited.protocol?.shards[0]?.digest ===
+          initial.protocol?.shards[0]?.digest,
+      ],
+      [["edited"], "generation-1", true],
+    );
+
+    const deleted = store.apply(
+      transaction("generation-3", {
+        baseGeneration: "generation-2",
+        deleteSource: true,
+      }),
+    );
+    TestValidator.equals(
+      "an explicit delete removes the shard without disturbing coverage",
+      [deleted.nodes, deleted.coverage?.length],
+      [[], GRAPH_EDGE_KINDS.length],
+    );
+
+    await rejectedWithoutMovement(
+      store,
+      transaction("stale", { baseGeneration: "generation-1" }),
+      "a stale base",
+    );
+    await rejectedWithoutMovement(
+      store,
+      mutate(
+        transaction("changed-identity", {
+          baseGeneration: "generation-3",
+        }),
+        (frames) => {
+          (frames[0] as GraphSnapshotProtocol.IHello).producer = "other";
+        },
+      ),
+      "producer identity movement across a delta",
+    );
+    await rejectedWithoutMovement(
+      store,
+      transaction("missing-delete", {
+        baseGeneration: "generation-3",
+        deleteSource: true,
+      }),
+      "deleting an absent shard",
+    );
+    await rejectedWithoutMovement(
+      store,
+      mutate(
+        transaction("moved-universe", {
+          baseGeneration: "generation-3",
+        }),
+        (frames) => {
+          (frames[1] as GraphSnapshotProtocol.IBegin).universe = digest("d");
+        },
+      ),
+      "universe movement retaining an untouched shard",
+    );
+    await rejectedWithoutMovement(
+      store,
+      mutate(
+        transaction("moved-target", {
+          baseGeneration: "generation-3",
+        }),
+        (frames) => {
+          (frames[1] as GraphSnapshotProtocol.IBegin).targets.push("other");
+        },
+      ),
+      "target movement retaining an untouched shard",
+    );
+    await rejectedWithoutMovement(
+      store,
+      mutate(transaction("bad-shard", { baseGeneration: "generation-3" }), (frames) => {
+        upsert(frames, "source").digest = digest("f");
+      }),
+      "a shard digest mismatch",
+    );
+    await rejectedWithoutMovement(
+      store,
+      mutate(transaction("bad-facts", { baseGeneration: "generation-3" }), (frames) => {
+        commit(frames).factDigest = digest("f");
+      }),
+      "a fact digest mismatch",
+    );
+    await rejectedWithoutMovement(
+      store,
+      mutate(transaction("bad-manifest", { baseGeneration: "generation-3" }), (frames) => {
+        commit(frames).shards.reverse();
+      }),
+      "a non-canonical manifest",
+    );
+    await rejectedWithoutMovement(
+      store,
+      mutate(transaction("missing-coverage"), (frames) => {
+        coverageShard(frames).shard.coverage.pop();
+        refreshDigests(frames);
+      }),
+      "a missing coverage family",
+    );
+    await rejectedWithoutMovement(
+      store,
+      mutate(transaction("wrong-owner"), (frames) => {
+        coverageShard(frames).shard.coverage[0]!.provider = "other";
+        refreshDigests(frames);
+      }),
+      "foreign coverage ownership",
+    );
+    await rejectedWithoutMovement(
+      store,
+      mutate(transaction("wrong-uncertainty"), (frames) => {
+        coverageShard(frames).shard.coverage.find(
+          (row) => row.family === "calls",
+        )!.state = "complete";
+        refreshDigests(frames);
+      }),
+      "an unresolved site without partial coverage",
+    );
+    await rejectedWithoutMovement(
+      store,
+      mutate(transaction("missing-uncertainty"), (frames) => {
+        coverageShard(frames).shard.unresolved = [];
+        refreshDigests(frames);
+      }),
+      "partial coverage without unresolved evidence",
+    );
+    await rejectedWithoutMovement(
+      store,
+      mutate(transaction("wrong-universe"), (frames) => {
+        coverageShard(frames).shard.unresolved[0]!.universe = digest("d");
+        refreshDigests(frames);
+      }),
+      "an unresolved site from another universe",
+    );
+
+    const aborted = new AbortController();
+    aborted.abort();
+    await rejectedWithoutMovement(
+      store,
+      transaction("aborted"),
+      "an aborted transaction",
+      aborted.signal,
+    );
+    TestValidator.error("an empty stream is rejected", () =>
+      GraphSnapshotProtocol.parse(""),
+    );
+    TestValidator.error("a blank NDJSON frame is rejected", () =>
+      GraphSnapshotProtocol.parse("{}\n"),
+    );
+    TestValidator.error("malformed NDJSON is rejected", () =>
+      GraphSnapshotProtocol.parse("{"),
+    );
+
+    for (const [label, frames] of malformedTransactions()) {
+      await rejectedWithoutMovement(store, frames, label);
+    }
+
+    const deleteStore = new GraphSnapshotProtocol.Store();
+    deleteStore.apply(transaction("delete-generation-1"));
+    const duplicateDelete = transaction("delete-generation-2", {
+      baseGeneration: "delete-generation-1",
+      deleteSource: true,
+    });
+    duplicateDelete.splice(
+      duplicateDelete.length - 1,
+      0,
+      structuredClone(duplicateDelete[2]!),
+    );
+    await rejectedWithoutMovement(
+      deleteStore,
+      duplicateDelete,
+      "a duplicate delete delta",
+    );
+
+    const bundledStore = new GraphSnapshotProtocol.Store();
+    const bundledFrames = mutate(
+      transaction("bundled-generation"),
+      (frames) => {
+        const shard = upsert(frames, "source").shard;
+        const file = "bundled:///typescript/lib.d.ts";
+        Object.assign(shard.nodes[0]!, {
+          id: file,
+          kind: "file",
+          name: "lib.d.ts",
+          file,
+          external: true,
+        });
+        shard.sources[0]!.file = file;
+        refreshDigests(frames);
+      },
+    );
+    TestValidator.equals(
+      "a canonical bundled source identity commits",
+      [...bundledStore.apply(bundledFrames).sources.keys()],
+      ["bundled:///typescript/lib.d.ts"],
+    );
+  };
+
+interface ITransactionOptions {
+  baseGeneration?: string;
+  nodeName?: string;
+  deleteSource?: boolean;
+}
+
+function transaction(
+  generation: string,
+  options: ITransactionOptions = {},
+): GraphSnapshotProtocol.Frame[] {
+  const hello = validHello();
+  const begin: GraphSnapshotProtocol.IBegin = {
+    type: "begin",
+    generation,
+    ...(options.baseGeneration !== undefined
+      ? { baseGeneration: options.baseGeneration }
+      : {}),
+    universe: digest("a"),
+    manifest: digest("b"),
+    targets: ["app"],
+  };
+  const coverage: GraphSnapshotProtocol.IShard = {
+    key: "coverage",
+    target: "app",
+    languages: ["typescript"],
+    nodes: [],
+    edges: [],
+    diagnostics: [],
+    coverage: GRAPH_EDGE_KINDS.map((family) => ({
+      provider: hello.provider,
+      language: "typescript",
+      target: "app",
+      family,
+      state: family === "calls" ? "partial" : "unsupported",
+    })),
+    unresolved: [
+      {
+        provider: hello.provider,
+        language: "typescript",
+        target: "app",
+        universe: begin.universe,
+        family: "calls",
+        evidence: { file: "src/main.ts", startLine: 1, startCol: 1 },
+        reason: "dynamic",
+        candidates: ["src/main.ts#target:function"],
+      },
+      {
+        provider: hello.provider,
+        language: "typescript",
+        target: "app",
+        universe: begin.universe,
+        family: "calls",
+        evidence: { file: "src/main.ts", startLine: 2, startCol: 1 },
+        reason: "reflection",
+      },
+    ],
+    sources: [],
+  };
+  const source: GraphSnapshotProtocol.IShard = {
+    key: "source",
+    target: "app",
+    languages: ["typescript"],
+    nodes: [
+      {
+        id: "src/main.ts#run:function",
+        kind: "function",
+        language: "typescript",
+        name: options.nodeName ?? "run",
+        file: "src/main.ts",
+        external: false,
+      },
+    ],
+    edges: [],
+    diagnostics: [],
+    coverage: [],
+    unresolved: [],
+    sources: [
+      {
+        file: path.resolve("src/main.ts"),
+        checkerDigest: digest("c"),
+        diskDigest: digest("c"),
+      },
+    ],
+  };
+  const upserts: GraphSnapshotProtocol.IUpsertShard[] =
+    options.baseGeneration === undefined
+      ? [upsertOf(coverage), ...(options.deleteSource === true ? [] : [upsertOf(source)])]
+      : options.deleteSource === true
+        ? []
+        : [upsertOf(source)];
+  const middle: GraphSnapshotProtocol.Frame[] = [
+    ...upserts,
+    ...(options.deleteSource === true
+      ? [{ type: "deleteShard" as const, key: "source" }]
+      : []),
+  ];
+  const retained = new Map<string, GraphSnapshotProtocol.IShard>();
+  retained.set("coverage", coverage);
+  if (options.deleteSource !== true) retained.set("source", source);
+  const manifest = [...retained]
+    .sort(([left], [right]) => Number(left > right) - Number(left < right))
+    .map(([key, shard]) => ({
+      key,
+      digest: GraphSnapshotProtocol.shardDigest(shard),
+    }));
+  const snapshot = snapshotOf(hello, begin, [...retained.values()]);
+  return [
+    hello,
+    begin,
+    ...middle,
+    {
+      type: "commit",
+      generation,
+      shards: manifest,
+      factDigest: GraphSnapshotProtocol.factDigest(snapshot),
+    },
+  ];
+}
+
+function snapshotOf(
+  hello: GraphSnapshotProtocol.IHello,
+  begin: GraphSnapshotProtocol.IBegin,
+  shards: readonly GraphSnapshotProtocol.IShard[],
+): Pick<
+  IBulkGraphSession.ISnapshot,
+  | "languages"
+  | "nodes"
+  | "edges"
+  | "diagnostics"
+  | "coverage"
+  | "unresolved"
+  | "provenance"
+> {
+  return {
+    languages: [...hello.languages],
+    nodes: shards.flatMap((shard) => shard.nodes),
+    edges: shards.flatMap((shard) => shard.edges),
+    diagnostics: shards.flatMap((shard) => shard.diagnostics),
+    coverage: shards.flatMap((shard) => shard.coverage),
+    unresolved: shards.flatMap((shard) => shard.unresolved),
+    provenance: {
+      provider: hello.provider,
+      authority: hello.authority,
+      facts: [...hello.supportedFacts],
+      schemaVersion: hello.schemaVersion,
+      tool: hello.producer,
+      toolVersion: hello.producerVersion,
+      compilerVersion: hello.compilerVersion,
+      protocolVersion: hello.protocolVersion,
+      universe: begin.universe,
+      capabilities: [...hello.capabilities],
+    },
+  };
+}
+
+function validHello(): GraphSnapshotProtocol.IHello {
+  return {
+    type: "hello",
+    protocolVersion: 1,
+    schemaVersion: GraphSnapshotProtocol.SCHEMA_VERSION,
+    provider: "fixture-compiler",
+    producer: "fixture-exporter",
+    producerVersion: "1.0.0",
+    compilerVersion: "fixture-1",
+    languages: ["typescript"],
+    authority: "compiler",
+    supportedFacts: ["calls"],
+    capabilities: [
+      "universe",
+      "sourceDigests",
+      "diskDigests",
+      "shards",
+      "deltas",
+    ],
+  };
+}
+
+function upsertOf(
+  shard: GraphSnapshotProtocol.IShard,
+): GraphSnapshotProtocol.IUpsertShard {
+  return {
+    type: "upsertShard",
+    digest: GraphSnapshotProtocol.shardDigest(shard),
+    shard,
+  };
+}
+
+function mutate(
+  frames: GraphSnapshotProtocol.Frame[],
+  operation: (frames: GraphSnapshotProtocol.Frame[]) => void,
+): GraphSnapshotProtocol.Frame[] {
+  const cloned = structuredClone(frames);
+  operation(cloned);
+  return cloned;
+}
+
+function refreshDigests(frames: GraphSnapshotProtocol.Frame[]): void {
+  const hello = frames[0] as GraphSnapshotProtocol.IHello;
+  const begin = frames[1] as GraphSnapshotProtocol.IBegin;
+  const shards = frames
+    .filter(
+      (frame): frame is GraphSnapshotProtocol.IUpsertShard =>
+        frame.type === "upsertShard",
+    )
+    .map((frame) => {
+      frame.digest = GraphSnapshotProtocol.shardDigest(frame.shard);
+      return frame.shard;
+    });
+  const last = commit(frames);
+  last.shards = shards
+    .map((shard) => ({
+      key: shard.key,
+      digest: GraphSnapshotProtocol.shardDigest(shard),
+    }))
+    .sort((left, right) => Number(left.key > right.key) - Number(left.key < right.key));
+  last.factDigest = GraphSnapshotProtocol.factDigest(
+    snapshotOf(hello, begin, shards),
+  );
+}
+
+function commit(
+  frames: GraphSnapshotProtocol.Frame[],
+): GraphSnapshotProtocol.ICommit {
+  return frames.at(-1) as GraphSnapshotProtocol.ICommit;
+}
+
+function coverageShard(
+  frames: GraphSnapshotProtocol.Frame[],
+): GraphSnapshotProtocol.IUpsertShard {
+  return upsert(frames, "coverage");
+}
+
+function upsert(
+  frames: GraphSnapshotProtocol.Frame[],
+  key: string,
+): GraphSnapshotProtocol.IUpsertShard {
+  return frames.find(
+    (frame): frame is GraphSnapshotProtocol.IUpsertShard =>
+      frame.type === "upsertShard" && frame.shard.key === key,
+  )!;
+}
+
+function malformedTransactions(): Array<
+  [string, GraphSnapshotProtocol.Frame[]]
+> {
+  const valid = transaction("malformed");
+  return [
+    ["an incomplete transaction", valid.slice(0, 2)],
+    [
+      "a transaction not starting with hello",
+      [{ type: "deleteShard", key: "x" }, ...valid.slice(1)],
+    ],
+    [
+      "a transaction without begin second",
+      [valid[0]!, { type: "deleteShard", key: "x" }, ...valid.slice(2)],
+    ],
+    [
+      "a transaction not ending in commit",
+      [...valid.slice(0, -1), { type: "deleteShard", key: "x" }],
+    ],
+    [
+      "an unknown protocol version",
+      mutate(valid, (frames) => {
+        record(frames[0]!).protocolVersion = 2;
+      }),
+    ],
+    [
+      "an unknown schema version",
+      mutate(valid, (frames) => {
+        record(frames[0]!).schemaVersion = 2;
+      }),
+    ],
+    [
+      "duplicate hello languages",
+      mutate(valid, (frames) => {
+        record(frames[0]!).languages = ["typescript", "typescript"];
+      }),
+    ],
+    [
+      "an empty hello language set",
+      mutate(valid, (frames) => {
+        record(frames[0]!).languages = [];
+      }),
+    ],
+    [
+      "an unknown hello language",
+      mutate(valid, (frames) => {
+        record(frames[0]!).languages = ["future-language"];
+      }),
+    ],
+    [
+      "duplicate advertised facts",
+      mutate(valid, (frames) => {
+        record(frames[0]!).supportedFacts = ["calls", "calls"];
+      }),
+    ],
+    [
+      "an unknown advertised fact",
+      mutate(valid, (frames) => {
+        record(frames[0]!).supportedFacts = ["future-fact"];
+      }),
+    ],
+    [
+      "an unknown provider authority",
+      mutate(valid, (frames) => {
+        record(frames[0]!).authority = "future-authority";
+      }),
+    ],
+    [
+      "duplicate advertised capabilities",
+      mutate(valid, (frames) => {
+        record(frames[0]!).capabilities = ["universe", "universe"];
+      }),
+    ],
+    [
+      "an empty advertised capability",
+      mutate(valid, (frames) => {
+        record(frames[0]!).capabilities = ["universe", ""];
+      }),
+    ],
+    [
+      "an empty provider identity",
+      mutate(valid, (frames) => {
+        record(frames[0]!).provider = "";
+      }),
+    ],
+    [
+      "a NUL producer identity",
+      mutate(valid, (frames) => {
+        record(frames[0]!).producer = "bad\0producer";
+      }),
+    ],
+    [
+      "an empty base generation",
+      mutate(valid, (frames) => {
+        record(frames[1]!).baseGeneration = "";
+      }),
+    ],
+    [
+      "a malformed universe digest",
+      mutate(valid, (frames) => {
+        record(frames[1]!).universe = "bad";
+      }),
+    ],
+    [
+      "a malformed manifest digest",
+      mutate(valid, (frames) => {
+        record(frames[1]!).manifest = "bad";
+      }),
+    ],
+    [
+      "duplicate targets",
+      mutate(valid, (frames) => {
+        record(frames[1]!).targets = ["app", "app"];
+      }),
+    ],
+    [
+      "an empty target set",
+      mutate(valid, (frames) => {
+        record(frames[1]!).targets = [];
+      }),
+    ],
+    [
+      "an empty target identity",
+      mutate(valid, (frames) => {
+        record(frames[1]!).targets = [""];
+      }),
+    ],
+    [
+      "a mismatched commit generation",
+      mutate(valid, (frames) => {
+        commit(frames).generation = "other";
+      }),
+    ],
+    [
+      "an unknown target",
+      mutate(valid, (frames) => {
+        coverageShard(frames).shard.target = "other";
+        refreshDigests(frames);
+      }),
+    ],
+    [
+      "an empty shard language set",
+      mutate(valid, (frames) => {
+        coverageShard(frames).shard.languages = [];
+        refreshDigests(frames);
+      }),
+    ],
+    [
+      "a foreign shard language",
+      mutate(valid, (frames) => {
+        record(coverageShard(frames).shard).languages = ["go"];
+        refreshDigests(frames);
+      }),
+    ],
+    [
+      "a duplicated node inside one shard",
+      mutate(valid, (frames) => {
+        const shard = upsert(frames, "source").shard;
+        shard.nodes.push(structuredClone(shard.nodes[0]!));
+        refreshDigests(frames);
+      }),
+    ],
+    [
+      "a foreign-language node",
+      mutate(valid, (frames) => {
+        record(upsert(frames, "source").shard.nodes[0]!).language = "go";
+        refreshDigests(frames);
+      }),
+    ],
+    [
+      "a duplicated edge inside one shard",
+      mutate(valid, (frames) => {
+        const shard = upsert(frames, "source").shard;
+        const edge = {
+          kind: "calls" as const,
+          from: shard.nodes[0]!.id,
+          to: shard.nodes[0]!.id,
+        };
+        shard.edges.push(edge, { ...edge });
+        refreshDigests(frames);
+      }),
+    ],
+    [
+      "a duplicated source inside one shard",
+      mutate(valid, (frames) => {
+        const shard = upsert(frames, "source").shard;
+        shard.sources.push({ ...shard.sources[0]! });
+        refreshDigests(frames);
+      }),
+    ],
+    [
+      "a malformed source digest",
+      mutate(valid, (frames) => {
+        upsert(frames, "source").shard.sources[0]!.checkerDigest = "bad";
+        refreshDigests(frames);
+      }),
+    ],
+    [
+      "a relative source identity",
+      mutate(valid, (frames) => {
+        upsert(frames, "source").shard.sources[0]!.file = "src/main.ts";
+        refreshDigests(frames);
+      }),
+    ],
+    [
+      "a non-canonical bundled source identity",
+      mutate(valid, (frames) => {
+        upsert(frames, "source").shard.sources[0]!.file =
+          "bundled:///typescript/../lib";
+        refreshDigests(frames);
+      }),
+    ],
+    [
+      "shards disagreeing about source bytes",
+      mutate(valid, (frames) => {
+        coverageShard(frames).shard.sources.push({
+          file: path.resolve("src/main.ts"),
+          checkerDigest: digest("d"),
+          diskDigest: digest("d"),
+        });
+        refreshDigests(frames);
+      }),
+    ],
+    [
+      "shards disagreeing only about disk bytes",
+      mutate(valid, (frames) => {
+        coverageShard(frames).shard.sources.push({
+          file: path.resolve("src/main.ts"),
+          checkerDigest: digest("c"),
+          diskDigest: digest("d"),
+        });
+        refreshDigests(frames);
+      }),
+    ],
+    [
+      "duplicate coverage rows",
+      mutate(valid, (frames) => {
+        const shard = coverageShard(frames).shard;
+        shard.coverage.push({ ...shard.coverage[0]! });
+        refreshDigests(frames);
+      }),
+    ],
+    [
+      "an unknown coverage family",
+      mutate(valid, (frames) => {
+        record(coverageShard(frames).shard.coverage[0]!).family =
+          "future-fact";
+        refreshDigests(frames);
+      }),
+    ],
+    [
+      "an unknown coverage state",
+      mutate(valid, (frames) => {
+        record(coverageShard(frames).shard.coverage[0]!).state = "unknown";
+        refreshDigests(frames);
+      }),
+    ],
+    [
+      "an unadvertised partial family",
+      mutate(valid, (frames) => {
+        coverageShard(frames).shard.coverage.find(
+          (row) => row.family === "contains",
+        )!.state = "partial";
+        refreshDigests(frames);
+      }),
+    ],
+    [
+      "duplicate unresolved sites",
+      mutate(valid, (frames) => {
+        const shard = coverageShard(frames).shard;
+        shard.unresolved.push(structuredClone(shard.unresolved[0]!));
+        refreshDigests(frames);
+      }),
+    ],
+    [
+      "an unknown unresolved reason",
+      mutate(valid, (frames) => {
+        record(coverageShard(frames).shard.unresolved[0]!).reason = "unknown";
+        refreshDigests(frames);
+      }),
+    ],
+    [
+      "duplicate unresolved candidates",
+      mutate(valid, (frames) => {
+        coverageShard(frames).shard.unresolved[0]!.candidates = [
+          "candidate",
+          "candidate",
+        ];
+        refreshDigests(frames);
+      }),
+    ],
+    [
+      "a node duplicated across shards",
+      mutate(valid, (frames) => {
+        coverageShard(frames).shard.nodes.push(
+          structuredClone(upsert(frames, "source").shard.nodes[0]!),
+        );
+        refreshDigests(frames);
+      }),
+    ],
+    [
+      "an edge duplicated across shards",
+      mutate(valid, (frames) => {
+        const source = upsert(frames, "source").shard;
+        const edge = {
+          kind: "calls" as const,
+          from: source.nodes[0]!.id,
+          to: source.nodes[0]!.id,
+        };
+        source.edges.push(edge);
+        coverageShard(frames).shard.edges.push({ ...edge });
+        refreshDigests(frames);
+      }),
+    ],
+    [
+      "an edge with an absent endpoint",
+      mutate(valid, (frames) => {
+        const source = upsert(frames, "source").shard;
+        source.edges.push({
+          kind: "calls",
+          from: source.nodes[0]!.id,
+          to: "missing",
+        });
+        refreshDigests(frames);
+      }),
+    ],
+    [
+      "an edge with an absent source endpoint",
+      mutate(valid, (frames) => {
+        const source = upsert(frames, "source").shard;
+        source.edges.push({
+          kind: "calls",
+          from: "missing",
+          to: source.nodes[0]!.id,
+        });
+        refreshDigests(frames);
+      }),
+    ],
+    [
+      "a duplicate shard delta",
+      mutate(valid, (frames) => {
+        frames.splice(3, 0, structuredClone(frames[2]!));
+      }),
+    ],
+    [
+      "an unexpected middle frame",
+      mutate(valid, (frames) => {
+        frames.splice(2, 0, structuredClone(frames[0]!));
+      }),
+    ],
+  ];
+}
+
+function cloneSnapshot(
+  snapshot: IBulkGraphSession.ISnapshot,
+): IBulkGraphSession.ISnapshot {
+  const {
+    sources: _sources,
+    ...plain
+  } = snapshot;
+  return {
+    ...structuredClone(plain),
+    sources: new Map(
+      [...snapshot.sources].map(([file, value]) => [file, { ...value }]),
+    ),
+  };
+}
+
+function invalidProtocolSnapshots(): Array<
+  [string, string, (snapshot: IBulkGraphSession.ISnapshot) => void]
+> {
+  return [
+    [
+      "an unknown committed protocol version",
+      "invalid protocol generation",
+      (snapshot) => {
+        snapshot.protocol!.version = 2;
+      },
+    ],
+    [
+      "an empty committed generation",
+      "invalid protocol generation",
+      (snapshot) => {
+        snapshot.protocol!.generation = "";
+      },
+    ],
+    [
+      "an empty committed target set",
+      "invalid protocol generation",
+      (snapshot) => {
+        snapshot.protocol!.targets = [];
+      },
+    ],
+    [
+      "duplicate committed targets",
+      "invalid protocol generation",
+      (snapshot) => {
+        snapshot.protocol!.targets.push(snapshot.protocol!.targets[0]!);
+      },
+    ],
+    [
+      "a malformed committed manifest digest",
+      "invalid protocol generation",
+      (snapshot) => {
+        snapshot.protocol!.manifest = "bad";
+      },
+    ],
+    [
+      "a malformed committed fact digest",
+      "invalid protocol generation",
+      (snapshot) => {
+        snapshot.protocol!.factDigest = "bad";
+      },
+    ],
+    [
+      "missing committed coverage",
+      "invalid protocol generation",
+      (snapshot) => {
+        snapshot.coverage = undefined;
+        snapshot.unresolved = [];
+      },
+    ],
+    [
+      "missing committed uncertainty",
+      "invalid protocol generation",
+      (snapshot) => {
+        snapshot.unresolved = undefined;
+      },
+    ],
+    [
+      "unresolved evidence absent from the source manifest",
+      "without binding that file to its source manifest",
+      (snapshot) => {
+        snapshot.unresolved![0]!.evidence.file = "src/missing.ts";
+      },
+    ],
+    [
+      "an empty committed shard key",
+      "invalid protocol shard manifest",
+      (snapshot) => {
+        snapshot.protocol!.shards[0]!.key = "";
+      },
+    ],
+    [
+      "duplicate committed shard keys",
+      "invalid protocol shard manifest",
+      (snapshot) => {
+        snapshot.protocol!.shards[1]!.key =
+          snapshot.protocol!.shards[0]!.key;
+      },
+    ],
+    [
+      "a malformed committed shard digest",
+      "invalid protocol shard manifest",
+      (snapshot) => {
+        snapshot.protocol!.shards[0]!.digest = "bad";
+      },
+    ],
+    [
+      "a mismatched committed fact digest",
+      "mismatched protocol fact digest",
+      (snapshot) => {
+        snapshot.protocol!.factDigest = digest("f");
+      },
+    ],
+  ];
+}
+
+async function rejectedWithoutMovement(
+  store: GraphSnapshotProtocol.Store,
+  frames: readonly GraphSnapshotProtocol.Frame[],
+  label: string,
+  signal?: AbortSignal,
+): Promise<void> {
+  const before = store.current;
+  await TestValidator.error(`${label} rejects`, () =>
+    store.apply(frames, { signal }),
+  );
+  TestValidator.predicate(`${label} retains the prior generation`, store.current === before);
+}
+
+function record(value: object): Record<string, unknown> {
+  return value as Record<string, unknown>;
+}

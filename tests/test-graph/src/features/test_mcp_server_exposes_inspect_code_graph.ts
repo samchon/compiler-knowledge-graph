@@ -59,12 +59,12 @@ const overview = async (args: string[]) => {
       "the result arrives as structured content",
       payload !== undefined,
     );
-    // `audit` serializes first, so what was checked precedes any fact a reader
-    // might second-guess; `next` says where the result leaves the question.
+    // `audit` serializes first, then the structured completeness evidence,
+    // before `next` says where the result leaves the question.
     TestValidator.equals(
       "audit leads, then where it leaves the question, then the facts",
       Object.keys(payload),
-      ["audit", "next", "result"],
+      ["audit", "coverage", "unresolved", "next", "result"],
     );
     return payload;
   } finally {

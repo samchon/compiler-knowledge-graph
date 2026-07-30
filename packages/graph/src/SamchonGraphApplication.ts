@@ -4,6 +4,7 @@ import { RESULT_AUDIT_DETAILS } from "./operations/RESULT_AUDIT_DETAILS";
 import { RESULT_AUDIT_SELECTION } from "./operations/RESULT_AUDIT_SELECTION";
 import { RESULT_AUDIT_ESCAPE } from "./operations/RESULT_AUDIT_ESCAPE";
 import { resultNext } from "./operations/resultNext";
+import { graphTrust } from "./operations/graphTrust";
 import { runDetails } from "./operations/runDetails";
 import { runEntrypoints } from "./operations/runEntrypoints";
 import { runLookup } from "./operations/runLookup";
@@ -62,6 +63,7 @@ export class SamchonGraphApplication implements ISamchonGraphApplication {
         const r = runEntrypoints(graph, props.request);
         return {
           audit: RESULT_AUDIT_SELECTION(graph.indexer),
+          ...graphTrust(graph, props.request.type),
           next: r.next,
           result: r.result,
         };
@@ -72,6 +74,7 @@ export class SamchonGraphApplication implements ISamchonGraphApplication {
         const r = runLookup(graph, props.request);
         return {
           audit: RESULT_AUDIT_SELECTION(graph.indexer),
+          ...graphTrust(graph, props.request.type),
           next: r.next,
           result: r.result,
         };
@@ -80,6 +83,7 @@ export class SamchonGraphApplication implements ISamchonGraphApplication {
         const r = runTrace(graph, props.request);
         return {
           audit: RESULT_AUDIT(graph.indexer),
+          ...graphTrust(graph, props.request.type),
           next: r.next,
           result: r.result,
         };
@@ -88,6 +92,7 @@ export class SamchonGraphApplication implements ISamchonGraphApplication {
         const r = runDetails(graph, props.request);
         return {
           audit: RESULT_AUDIT_DETAILS(graph.indexer, props.request.memberLimit),
+          ...graphTrust(graph, props.request.type),
           next: r.next,
           result: r.result,
         };
@@ -96,6 +101,7 @@ export class SamchonGraphApplication implements ISamchonGraphApplication {
         const r = runOverview(graph, props.request);
         return {
           audit: RESULT_AUDIT(graph.indexer),
+          ...graphTrust(graph, props.request.type),
           next: r.next,
           result: r.result,
         };
@@ -107,6 +113,7 @@ export class SamchonGraphApplication implements ISamchonGraphApplication {
         const r = runTour(graph, props.request, props.question);
         return {
           audit: RESULT_AUDIT_SELECTION(graph.indexer),
+          ...graphTrust(graph, props.request.type),
           next: r.next,
           result: r.result,
         };

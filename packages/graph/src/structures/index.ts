@@ -20,4 +20,8 @@ export * from "./ISamchonGraphSpan";
 export * from "./ISamchonGraphTour";
 export * from "./ISamchonGraphTrace";
 export * from "./ISamchonGraphApplication";
+export * from "./ISamchonGraphCoverage";
+export * from "./ISamchonGraphCoverageSummary";
+export * from "./ISamchonGraphUnresolved";
+export * from "./ISamchonGraphUnresolvedSummary";
 export * from "./SamchonGraphNodeModifier";

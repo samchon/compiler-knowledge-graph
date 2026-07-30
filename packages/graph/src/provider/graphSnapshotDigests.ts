@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto";
 
+import { graphCoverageOf } from "./graphCoverageOf";
+import { graphUnresolvedOf } from "./graphUnresolvedOf";
 import { IBulkGraphSession } from "./IBulkGraphSession";
 
 /**
@@ -54,6 +56,12 @@ export namespace graphSnapshotDigests {
     for (const diagnostic of snapshot.diagnostics) {
       hash.update(`diagnostic\0${canonical(diagnostic)}\n`);
     }
+    for (const coverage of graphCoverageOf(snapshot)) {
+      hash.update(`coverage\0${canonical(coverage)}\n`);
+    }
+    for (const unresolved of graphUnresolvedOf(snapshot)) {
+      hash.update(`unresolved\0${canonical(unresolved)}\n`);
+    }
     return hash.digest("hex");
   }
 
@@ -77,8 +85,11 @@ export namespace graphSnapshotDigests {
           nodes: snapshot.nodes,
           edges: snapshot.edges,
           diagnostics: snapshot.diagnostics,
+          coverage: graphCoverageOf(snapshot),
+          unresolved: graphUnresolvedOf(snapshot),
           sources,
           provenance: snapshot.provenance,
+          protocol: snapshot.protocol,
           warnings: snapshot.warnings,
         }),
       )

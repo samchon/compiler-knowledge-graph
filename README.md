@@ -249,9 +249,8 @@ export interface ISamchonGraphApplication {
   /**
    * Answer a __LANG__ question from this repository's own program index.
    *
-   * The graph holds every symbol, call, type, decorator and test, each with its
-   * file and line, resolved from the source on disk now. Submit exactly one
-   * request:
+   * The graph returns proved indexed facts plus structured coverage and
+   * uncertainty. Submit exactly one request:
    *
    * - `tour`: architecture, the runtime flow from the public API to the code that
    *   does the work, nearby paths, and the tests to read — a whole orientation
@@ -334,6 +333,25 @@ export namespace ISamchonGraphApplication {
      * but shortlist coverage is yours to judge.
      */
     audit: string;
+
+    /**
+     * Strict producer, authority, compiler and build-universe identity for the
+     * synchronized graph. Absent only for `escape` or a legacy/fallback-only
+     * dump with no strict producer.
+     */
+    provenance?: ISamchonGraphDump.IProvenance[];
+
+    /**
+     * Machine-readable completeness for the relationship families relevant to
+     * this operation. Absent only for `escape`.
+     */
+    coverage?: ISamchonGraphCoverageSummary;
+
+    /**
+     * Bounded structured uncertainty for the same operation-scoped families.
+     * Absent only for `escape`.
+     */
+    unresolved?: ISamchonGraphUnresolvedSummary;
 
     /** What to do with `result`: answer, inspect one named request, or escape. */
     next: ISamchonGraphNext;

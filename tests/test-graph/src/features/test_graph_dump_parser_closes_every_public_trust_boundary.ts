@@ -1,5 +1,10 @@
 import { TestValidator } from "@nestia/e2e";
-import { parseGraphDump, semanticGraphNodeId } from "@samchon/graph";
+import {
+  GRAPH_EDGE_KINDS,
+  ISamchonGraphDump,
+  parseGraphDump,
+  semanticGraphNodeId,
+} from "@samchon/graph";
 import path from "node:path";
 
 const valid = () => ({
@@ -91,6 +96,15 @@ export const test_graph_dump_parser_closes_every_public_trust_boundary =
       "coherent provider provenance parses",
       parseGraphDump(provenance).provenance?.[0]?.provider,
       "scip-go",
+    );
+    const trusted = withTrust();
+    TestValidator.equals(
+      "exhaustive coverage and universe-bound uncertainty parse",
+      [
+        parseGraphDump(trusted).coverage?.length,
+        parseGraphDump(trusted).unresolved?.[0]?.reason,
+      ],
+      [GRAPH_EDGE_KINDS.length, "dynamic"],
     );
 
     await rejected("duplicate node identities", (candidate) => {
@@ -282,6 +296,74 @@ export const test_graph_dump_parser_closes_every_public_trust_boundary =
         candidate.provenance = [{ ...validProvenance(), [label]: "bad" }];
       });
     }
+    await rejectedTrust("empty coverage provider identities", (candidate) => {
+      candidate.coverage![0]!.provider = "";
+    });
+    await rejectedTrust(
+      "NUL-delimited coverage provider identities",
+      (candidate) => {
+        candidate.coverage![0]!.provider = "scip\0go";
+      },
+    );
+    await rejectedTrust("empty coverage targets", (candidate) => {
+      candidate.coverage![0]!.target = "";
+    });
+    await rejectedTrust("NUL-delimited coverage targets", (candidate) => {
+      candidate.coverage![0]!.target = "fixture\0other";
+    });
+    await rejectedTrust("coverage languages absent from the dump", (candidate) => {
+      record(candidate.coverage![0]!).language = "rust";
+    });
+    await rejectedTrust("duplicate coverage rows", (candidate) => {
+      candidate.coverage!.push({ ...candidate.coverage![0]! });
+    });
+    await rejectedTrust("missing provider coverage", (candidate) => {
+      candidate.coverage = [];
+      candidate.unresolved = [];
+    });
+    await rejectedTrust("non-exhaustive provider coverage", (candidate) => {
+      candidate.coverage!.pop();
+    });
+    await rejected(
+      "non-exhaustive fallback-only coverage",
+      (candidate) => {
+        candidate.coverage = GRAPH_EDGE_KINDS.slice(1).map((family) => ({
+          provider: "@samchon/graph-lsp",
+          language: "go",
+          target: "fallback/default",
+          family,
+          state: "partial",
+        }));
+        candidate.unresolved = [];
+      },
+    );
+    await rejectedTrust("invalid unresolved evidence", (candidate) => {
+      candidate.unresolved![0]!.evidence.startLine = 0;
+    });
+    await rejectedTrust("duplicate unresolved candidates", (candidate) => {
+      candidate.unresolved![0]!.candidates = ["candidate", "candidate"];
+    });
+    await rejectedTrust("malformed unresolved universes", (candidate) => {
+      candidate.unresolved![0]!.universe = "bad";
+    });
+    await rejectedTrust("unowned unresolved providers", (candidate) => {
+      candidate.unresolved![0]!.provider = "other";
+    });
+    await rejectedTrust("unresolved sites without provenance", (candidate) => {
+      candidate.provenance = undefined;
+    });
+    await rejectedTrust("mismatched unresolved universes", (candidate) => {
+      candidate.unresolved![0]!.universe = "b".repeat(64);
+    });
+    await rejectedTrust("unresolved sites without partial coverage", (candidate) => {
+      candidate.coverage!.find((row) => row.family === "calls")!.state =
+        "complete";
+    });
+    await rejectedTrust("duplicate unresolved sites", (candidate) => {
+      candidate.unresolved!.push(
+        structuredClone(candidate.unresolved![0]!),
+      );
+    });
     await rejected("semantic display suffix mismatches", (candidate) => {
       candidate.nodes[0]!.qualifiedName = "example.NotRun";
     });
@@ -302,6 +384,8 @@ type Candidate = ReturnType<typeof valid> & {
     message: string;
   }>;
   provenance?: Array<ReturnType<typeof validProvenance>>;
+  coverage?: NonNullable<ISamchonGraphDump["coverage"]>;
+  unresolved?: NonNullable<ISamchonGraphDump["unresolved"]>;
 };
 
 const rejected = async (
@@ -309,6 +393,17 @@ const rejected = async (
   mutate: (candidate: Candidate) => void,
 ): Promise<void> => {
   const candidate = withEdge();
+  mutate(candidate);
+  await TestValidator.error(`${label} fail closed`, () =>
+    parseGraphDump(candidate),
+  );
+};
+
+const rejectedTrust = async (
+  label: string,
+  mutate: (candidate: Candidate) => void,
+): Promise<void> => {
+  const candidate = withTrust();
   mutate(candidate);
   await TestValidator.error(`${label} fail closed`, () =>
     parseGraphDump(candidate),
@@ -323,6 +418,32 @@ function withEdge(): Candidate {
     kind: "calls",
   });
   return candidate as Candidate;
+}
+
+function withTrust(): Candidate {
+  const candidate = withEdge();
+  const provenance = validProvenance();
+  candidate.provenance = [provenance];
+  candidate.coverage = GRAPH_EDGE_KINDS.map((family) => ({
+    provider: provenance.provider,
+    language: "go",
+    target: "fixture",
+    family,
+    state: family === "calls" ? "partial" : "unsupported",
+  }));
+  candidate.unresolved = [
+    {
+      provider: provenance.provider,
+      language: "go",
+      target: "fixture",
+      universe: provenance.universe,
+      family: "calls",
+      evidence: { file: "src/run.go", startLine: 1, startCol: 1 },
+      reason: "dynamic",
+      candidates: ["candidate"],
+    },
+  ];
+  return candidate;
 }
 
 function record(value: object): Record<string, unknown> {

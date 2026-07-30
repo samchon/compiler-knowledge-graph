@@ -8,7 +8,9 @@ import {
   ISamchonGraphDiagnostic,
   ISamchonGraphDump,
   ISamchonGraphEdge,
+  ISamchonGraphCoverage,
   ISamchonGraphNode,
+  ISamchonGraphUnresolved,
 } from "../structures";
 import { GraphLanguage } from "../typings";
 import { projectRelative, readText } from "../utils/fs";
@@ -16,6 +18,9 @@ import { fileFromUri, fileUri, isSubPath } from "../utils/path";
 import { spawnableCommand } from "../utils/spawnableCommand";
 import { assertGraphSnapshotContract } from "../provider/assertGraphSnapshotContract";
 import { dumpProvenanceOf } from "../provider/dumpProvenanceOf";
+import { fallbackCoverage } from "../provider/fallbackCoverage";
+import { graphCoverageOf } from "../provider/graphCoverageOf";
+import { graphUnresolvedOf } from "../provider/graphUnresolvedOf";
 import { IBulkGraphSession } from "../provider/IBulkGraphSession";
 import { isBulkGraphSession } from "../provider/isBulkGraphSession";
 import { mergeGraphSlices } from "../provider/mergeGraphSlices";
@@ -112,6 +117,8 @@ async function buildLspGraphAttempt(
   const strictNodes: ISamchonGraphNode[] = [];
   const strictEdges: ISamchonGraphEdge[] = [];
   const diagnostics: ISamchonGraphDiagnostic[] = [];
+  const coverage: ISamchonGraphCoverage[] = [];
+  const unresolved: ISamchonGraphUnresolved[] = [];
   const warnings: string[] = [];
   const staticFallbackLanguages: GraphLanguage[] = [];
   const sessions = new Map<GraphLanguage, ILspSession | IBulkGraphSession>();
@@ -201,6 +208,8 @@ async function buildLspGraphAttempt(
         appendAll(strictNodes, snapshot.nodes);
         appendAll(strictEdges, snapshot.edges);
         appendAll(diagnostics, snapshot.diagnostics);
+        appendAll(coverage, graphCoverageOf(snapshot));
+        appendAll(unresolved, graphUnresolvedOf(snapshot));
         appendAll(warnings, snapshot.warnings);
         // The manifest names the files, and the provider owns the fact that it
         // does. Nothing reads their text here: the strict lane's facts are
@@ -334,6 +343,7 @@ async function buildLspGraphAttempt(
           appendAll(nodes, result.nodes);
           appendAll(edges, result.edges);
           appendAll(diagnostics, result.diagnostics);
+          appendAll(coverage, fallbackCoverage("@samchon/graph-lsp", [language]));
           appendAll(warnings, result.warnings);
           semanticSliceCount += 1;
           servedLanguages.add(language);
@@ -375,6 +385,10 @@ async function buildLspGraphAttempt(
       }
       appendAll(nodes, fallback.nodes);
       appendAll(edges, fallback.edges);
+      appendAll(
+        coverage,
+        fallbackCoverage("@samchon/graph-sitter", fallback.languages),
+      );
       appendAll(warnings, fallback.warnings);
     }
 
@@ -413,6 +427,8 @@ async function buildLspGraphAttempt(
         nodes: wireNodes(finalized.nodes),
         edges: wireEdges(finalized.edges, finalized.nodes),
         diagnostics,
+        coverage,
+        unresolved,
         warnings,
         ...dumpProvenanceOf.fieldOf(provenance),
       },
@@ -577,6 +593,8 @@ function staticDump(
     project: parts.root,
     languages: parts.languages,
     indexer: "static",
+    coverage: fallbackCoverage("@samchon/graph-sitter", parts.languages),
+    unresolved: [],
     nodes: wireNodes(nodes),
     edges: wireEdges(dedupeEdges(finalized.edges), nodes),
     warnings: [...parts.warnings, ...warnings, ...dedupeWarnings],

@@ -396,13 +396,21 @@ const delay = (milliseconds: number): Promise<void> =>
 
 const waitForFile = async (file: string): Promise<void> => {
   const deadline = Date.now() + 5_000;
-  while (!fs.existsSync(file)) {
+  while (!hasContents(file)) {
     if (Date.now() >= deadline) {
       throw new Error(`timed out waiting for ${file}`);
     }
     await delay(10);
   }
 };
+
+function hasContents(file: string): boolean {
+  try {
+    return fs.statSync(file).size > 0;
+  } catch {
+    return false;
+  }
+}
 
 const isProcessAlive = (pid: number): boolean => {
   try {

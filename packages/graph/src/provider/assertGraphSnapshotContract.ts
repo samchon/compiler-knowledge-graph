@@ -95,9 +95,26 @@ function assertProtocol(
   if (protocol === undefined) return;
   if (
     protocol.version !== GraphSnapshotProtocol.VERSION ||
+    !Number.isSafeInteger(protocol.sequence) ||
+    protocol.sequence < 1 ||
+    typeof protocol.generation !== "string" ||
     protocol.generation === "" ||
+    protocol.generation.includes("\0") ||
+    (protocol.baseSequence === undefined) !==
+      (protocol.baseGeneration === undefined) ||
+    (protocol.baseSequence !== undefined &&
+      (!Number.isSafeInteger(protocol.baseSequence) ||
+        protocol.baseSequence < 1 ||
+        protocol.baseSequence >= protocol.sequence ||
+        typeof protocol.baseGeneration !== "string" ||
+        protocol.baseGeneration === "" ||
+        protocol.baseGeneration.includes("\0"))) ||
     protocol.targets.length === 0 ||
     new Set(protocol.targets).size !== protocol.targets.length ||
+    protocol.targets.some(
+      (target) =>
+        typeof target !== "string" || target === "" || target.includes("\0"),
+    ) ||
     !SHA256.test(protocol.manifest) ||
     !SHA256.test(protocol.factDigest) ||
     snapshot.coverage === undefined ||
@@ -109,6 +126,7 @@ function assertProtocol(
   for (const shard of protocol.shards) {
     if (
       shard.key === "" ||
+      shard.key.includes("\0") ||
       shards.has(shard.key) ||
       !SHA256.test(shard.digest)
     ) {

@@ -873,7 +873,13 @@ func (c *collector) addEdge(value edge) {
 		return
 	}
 	key := value.Kind + "\x00" + value.From + "\x00" + value.To
-	if _, exists := c.edges[key]; !exists {
+	// One semantic relation may be observed at several source sites and through
+	// several go/packages variants. The relation is unique by kind/endpoints,
+	// but retaining whichever evidence arrived first makes the published fact
+	// depend on package traversal order. Keep the canonical proof instead:
+	// evidence beats no evidence, then the earliest complete source span wins.
+	if existing, exists := c.edges[key]; !exists ||
+		evidenceLess(value.Evidence, existing.Evidence) {
 		c.edges[key] = value
 	}
 }

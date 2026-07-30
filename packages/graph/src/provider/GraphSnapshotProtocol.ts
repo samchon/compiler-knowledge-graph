@@ -91,7 +91,9 @@ export namespace GraphSnapshotProtocol {
 
   export interface IBegin {
     type: "begin";
+    sequence: number;
     generation: string;
+    baseSequence?: number;
     baseGeneration?: string;
     universe: string;
     manifest: string;
@@ -129,6 +131,7 @@ export namespace GraphSnapshotProtocol {
 
   export interface ICommit {
     type: "commit";
+    sequence: number;
     generation: string;
     shards: IBulkGraphSession.IShard[];
     factDigest: string;
@@ -231,7 +234,6 @@ export namespace GraphSnapshotProtocol {
   export class Store {
     private committed = new Map<string, ICommittedShard>();
     private identity: IHello | undefined;
-    private readonly generations = new Set<string>();
     private readonly root: string;
     private snapshot: IBulkGraphSession.ISnapshot | undefined;
 
@@ -266,18 +268,27 @@ export namespace GraphSnapshotProtocol {
       }
       assertHello(hello);
       assertBegin(begin);
-      if (commit.generation !== begin.generation) {
-        throw new Error("graph snapshot protocol: commit generation does not match begin");
-      }
-      if (this.generations.has(begin.generation)) {
-        throw new Error("graph snapshot protocol: generation token was reused");
+      if (
+        commit.sequence !== begin.sequence ||
+        commit.generation !== begin.generation
+      ) {
+        throw new Error(
+          "graph snapshot protocol: commit generation does not match begin",
+        );
       }
       const priorGeneration = this.snapshot?.protocol?.generation;
+      const priorSequence = this.snapshot?.protocol?.sequence;
       if (
         begin.baseGeneration !== undefined &&
-        begin.baseGeneration !== priorGeneration
+        (begin.baseSequence !== priorSequence ||
+          begin.baseGeneration !== priorGeneration)
       ) {
         throw new Error("graph snapshot protocol: stale base generation");
+      }
+      if (priorSequence !== undefined && begin.sequence <= priorSequence) {
+        throw new Error(
+          "graph snapshot protocol: generation sequence did not advance",
+        );
       }
       if (
         begin.baseGeneration !== undefined &&
@@ -293,16 +304,17 @@ export namespace GraphSnapshotProtocol {
         begin.baseGeneration === undefined
           ? new Map<string, ICommittedShard>()
           : new Map(this.committed);
-      const changed = new Set<string>();
+      const touched = new Set<string>();
+      const invalidated = new Set<string>();
       for (const frame of frames.slice(2, -1)) {
         throwIfAborted(options.signal);
         if (frame.type === "upsertShard") {
-          if (changed.has(frame.shard.key)) {
+          if (touched.has(frame.shard.key)) {
             throw new Error(
               `graph snapshot protocol: duplicate shard delta: ${frame.shard.key}`,
             );
           }
-          changed.add(frame.shard.key);
+          touched.add(frame.shard.key);
           assertShard(frame.shard, hello, begin);
           const digest = shardDigest(frame.shard);
           if (frame.digest !== digest) {
@@ -310,23 +322,27 @@ export namespace GraphSnapshotProtocol {
               `graph snapshot protocol: shard digest mismatch: ${frame.shard.key}`,
             );
           }
+          if (this.committed.get(frame.shard.key)?.digest !== digest) {
+            invalidated.add(frame.shard.key);
+          }
           next.set(frame.shard.key, {
             digest,
             shard: clone(frame.shard),
           });
         } else if (frame.type === "deleteShard") {
           assertString(frame.key, "deleteShard.key");
-          if (changed.has(frame.key)) {
+          if (touched.has(frame.key)) {
             throw new Error(
               `graph snapshot protocol: duplicate shard delta: ${frame.key}`,
             );
           }
-          changed.add(frame.key);
+          touched.add(frame.key);
           if (!next.delete(frame.key)) {
             throw new Error(
               `graph snapshot protocol: deleted shard does not exist: ${frame.key}`,
             );
           }
+          invalidated.add(frame.key);
         } else {
           throw new Error(
             `graph snapshot protocol: unexpected ${frame.type} inside transaction`,
@@ -337,7 +353,7 @@ export namespace GraphSnapshotProtocol {
         begin.baseGeneration !== undefined &&
         this.snapshot !== undefined &&
         begin.manifest !== this.snapshot.protocol!.manifest &&
-        changed.size === 0
+        invalidated.size === 0
       ) {
         throw new Error(
           "graph snapshot protocol: manifest movement reported no shard delta",
@@ -350,7 +366,7 @@ export namespace GraphSnapshotProtocol {
           !sameList(begin.targets, this.snapshot.protocol!.targets))
       ) {
         const retained = [...this.committed.keys()].find(
-          (key) => !changed.has(key),
+          (key) => !invalidated.has(key),
         );
         if (retained !== undefined) {
           throw new Error(
@@ -380,7 +396,6 @@ export namespace GraphSnapshotProtocol {
       freezeDeep(assembled, "the graph snapshot protocol generation");
       this.committed = next;
       this.identity = clone(hello);
-      this.generations.add(begin.generation);
       this.snapshot = assembled;
       return assembled;
     }
@@ -451,9 +466,13 @@ export namespace GraphSnapshotProtocol {
       unresolved,
       protocol: {
         version: VERSION,
+        sequence: begin.sequence,
         generation: begin.generation,
         ...(begin.baseGeneration !== undefined
-          ? { baseGeneration: begin.baseGeneration }
+          ? {
+              baseSequence: begin.baseSequence,
+              baseGeneration: begin.baseGeneration,
+            }
           : {}),
         manifest: begin.manifest,
         targets: [...begin.targets],
@@ -500,9 +519,28 @@ export namespace GraphSnapshotProtocol {
   }
 
   function assertBegin(begin: IBegin): void {
+    if (!Number.isSafeInteger(begin.sequence) || begin.sequence < 1) {
+      throw new Error("graph snapshot protocol: invalid begin.sequence");
+    }
     assertString(begin.generation, "begin.generation");
-    if (begin.baseGeneration !== undefined)
+    if (
+      (begin.baseSequence === undefined) !==
+      (begin.baseGeneration === undefined)
+    ) {
+      throw new Error(
+        "graph snapshot protocol: base sequence and generation must appear together",
+      );
+    }
+    if (begin.baseGeneration !== undefined) {
+      if (
+        !Number.isSafeInteger(begin.baseSequence) ||
+        begin.baseSequence! < 1 ||
+        begin.baseSequence! >= begin.sequence
+      ) {
+        throw new Error("graph snapshot protocol: invalid begin.baseSequence");
+      }
       assertString(begin.baseGeneration, "begin.baseGeneration");
+    }
     assertDigest(begin.universe, "begin.universe");
     assertDigest(begin.manifest, "begin.manifest");
     assertUnique(begin.targets, "begin.targets");

@@ -172,6 +172,28 @@ func edgeKey(value edge) string {
 	return value.Kind + "\x00" + value.From + "\x00" + value.To + "\x00" + position
 }
 
+func evidenceLess(left, right *evidence) bool {
+	if left == nil {
+		return false
+	}
+	if right == nil {
+		return true
+	}
+	if left.File != right.File {
+		return left.File < right.File
+	}
+	if left.StartLine != right.StartLine {
+		return left.StartLine < right.StartLine
+	}
+	if left.StartCol != right.StartCol {
+		return left.StartCol < right.StartCol
+	}
+	if left.EndLine != right.EndLine {
+		return left.EndLine < right.EndLine
+	}
+	return left.EndCol < right.EndCol
+}
+
 func diagnosticKey(value diagnostic) string {
 	return value.File + "\x00" + strconv.Itoa(value.Line) + "\x00" +
 		strconv.Itoa(value.Column) + "\x00" + value.Message

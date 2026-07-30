@@ -126,7 +126,16 @@ export namespace IBulkGraphSession {
   /** Public identity of one committed Graph Snapshot Protocol generation. */
   export interface IProtocolGeneration {
     version: number;
+    /**
+     * Strictly increasing serial for this resident store.
+     *
+     * The serial makes a generation identity the bounded pair
+     * `(sequence, generation)`: stale ABA transactions can be rejected while
+     * the store retains only the current pair rather than every obsolete token.
+     */
+    sequence: number;
     generation: string;
+    baseSequence?: number;
     baseGeneration?: string;
     /** Ordered source/configuration/dependency manifest digest. */
     manifest: string;

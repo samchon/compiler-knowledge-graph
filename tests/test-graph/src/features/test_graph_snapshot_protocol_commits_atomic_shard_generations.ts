@@ -12,6 +12,11 @@ import path from "node:path";
 
 const digest = (letter: string): string => letter.repeat(64);
 
+function sequenceOf(generation: string): number {
+  const suffix = /-(\d+)$/u.exec(generation);
+  return suffix === null ? 4 : Number(suffix[1]);
+}
+
 /**
  * Graph Snapshot Protocol publishes one validated complete generation or keeps
  * the prior one byte-for-byte. The fixture is an external producer oracle: all
@@ -40,6 +45,7 @@ export const test_graph_snapshot_protocol_commits_atomic_shard_generations =
     TestValidator.equals(
       "the committed generation reconstructs every protocol plane",
       [
+        initial.protocol?.sequence,
         initial.protocol?.generation,
         initial.protocol?.manifest,
         initial.protocol?.shards.map((shard) => shard.key),
@@ -48,6 +54,7 @@ export const test_graph_snapshot_protocol_commits_atomic_shard_generations =
         initial.unresolved?.map((site) => site.reason),
       ],
       [
+        1,
         "generation-1",
         digest("b"),
         ["coverage", "source"],
@@ -97,6 +104,7 @@ export const test_graph_snapshot_protocol_commits_atomic_shard_generations =
 
     const editedFrames = transaction("generation-2", {
       baseGeneration: "generation-1",
+      baseSequence: 1,
       nodeName: "edited",
     });
     const edited = store.apply(editedFrames);
@@ -104,16 +112,18 @@ export const test_graph_snapshot_protocol_commits_atomic_shard_generations =
       "a delta reuses unchanged shards and replaces only its upsert",
       [
         edited.nodes.map((node) => node.name),
+        edited.protocol?.baseSequence,
         edited.protocol?.baseGeneration,
         edited.protocol?.shards[0]?.digest ===
           initial.protocol?.shards[0]?.digest,
       ],
-      [["edited"], "generation-1", true],
+      [["edited"], 1, "generation-1", true],
     );
 
     const deleted = store.apply(
       transaction("generation-3", {
         baseGeneration: "generation-2",
+        baseSequence: 2,
         deleteSource: true,
       }),
     );
@@ -125,7 +135,11 @@ export const test_graph_snapshot_protocol_commits_atomic_shard_generations =
 
     await rejectedWithoutMovement(
       store,
-      transaction("stale", { baseGeneration: "generation-1" }),
+      transaction("stale", {
+        sequence: 4,
+        baseSequence: 1,
+        baseGeneration: "generation-1",
+      }),
       "a stale base",
     );
     await rejectedWithoutMovement(
@@ -133,6 +147,7 @@ export const test_graph_snapshot_protocol_commits_atomic_shard_generations =
       mutate(
         transaction("changed-identity", {
           baseGeneration: "generation-3",
+          baseSequence: 3,
           coverageState: "complete",
         }),
         (frames) => {
@@ -145,6 +160,7 @@ export const test_graph_snapshot_protocol_commits_atomic_shard_generations =
       store,
       transaction("missing-delete", {
         baseGeneration: "generation-3",
+        baseSequence: 3,
         deleteSource: true,
       }),
       "deleting an absent shard",
@@ -152,6 +168,7 @@ export const test_graph_snapshot_protocol_commits_atomic_shard_generations =
     const manifestWithoutDelta = mutate(
       transaction("manifest-without-delta", {
         baseGeneration: "generation-3",
+        baseSequence: 3,
         deleteSource: true,
       }),
       (frames) => {
@@ -166,17 +183,15 @@ export const test_graph_snapshot_protocol_commits_atomic_shard_generations =
     );
     await rejectedWithoutMovement(
       store,
-      transaction("generation-3", {
-        baseGeneration: "generation-3",
-        coverageState: "complete",
-      }),
-      "a reused generation token",
+      transaction("generation-3", { sequence: 3 }),
+      "a non-advancing generation sequence",
     );
     await rejectedWithoutMovement(
       store,
       mutate(
         transaction("moved-universe", {
           baseGeneration: "generation-3",
+          baseSequence: 3,
           coverageState: "complete",
         }),
         (frames) => {
@@ -190,6 +205,7 @@ export const test_graph_snapshot_protocol_commits_atomic_shard_generations =
       mutate(
         transaction("moved-target", {
           baseGeneration: "generation-3",
+          baseSequence: 3,
           coverageState: "complete",
         }),
         (frames) => {
@@ -203,6 +219,7 @@ export const test_graph_snapshot_protocol_commits_atomic_shard_generations =
       mutate(
         transaction("bad-shard", {
           baseGeneration: "generation-3",
+          baseSequence: 3,
           coverageState: "complete",
         }),
         (frames) => {
@@ -216,6 +233,7 @@ export const test_graph_snapshot_protocol_commits_atomic_shard_generations =
       mutate(
         transaction("bad-facts", {
           baseGeneration: "generation-3",
+          baseSequence: 3,
           coverageState: "complete",
         }),
         (frames) => {
@@ -229,6 +247,7 @@ export const test_graph_snapshot_protocol_commits_atomic_shard_generations =
       mutate(
         transaction("bad-manifest", {
           baseGeneration: "generation-3",
+          baseSequence: 3,
           coverageState: "complete",
         }),
         (frames) => {
@@ -307,6 +326,7 @@ export const test_graph_snapshot_protocol_commits_atomic_shard_generations =
     const manifestEdit = mutate(
       transaction("manifest-generation-2", {
         baseGeneration: "manifest-generation-1",
+        baseSequence: 1,
         nodeName: "manifest-edited",
       }),
       (frames) => {
@@ -318,11 +338,75 @@ export const test_graph_snapshot_protocol_commits_atomic_shard_generations =
       manifestStore.apply(manifestEdit).nodes.map((node) => node.name),
       ["manifest-edited"],
     );
+    const replayedManifestShard = mutate(
+      transaction("manifest-generation-3", {
+        baseGeneration: "manifest-generation-2",
+        baseSequence: 2,
+        nodeName: "manifest-edited",
+      }),
+      (frames) => {
+        (frames[1] as GraphSnapshotProtocol.IBegin).manifest = digest("e");
+      },
+    );
+    await rejectedWithoutMovement(
+      manifestStore,
+      replayedManifestShard,
+      "manifest movement disguised as a byte-identical shard upsert",
+    );
+    const replayedUniverseShard = mutate(
+      transaction("manifest-generation-3", {
+        baseGeneration: "manifest-generation-2",
+        baseSequence: 2,
+        nodeName: "manifest-edited",
+      }),
+      (frames) => {
+        (frames[1] as GraphSnapshotProtocol.IBegin).universe = digest("d");
+      },
+    );
+    await rejectedWithoutMovement(
+      manifestStore,
+      replayedUniverseShard,
+      "universe movement disguised as a byte-identical shard upsert",
+    );
+
+    const boundedGenerationStore = new GraphSnapshotProtocol.Store(process.cwd());
+    boundedGenerationStore.apply(transaction("bounded-generation-1"));
+    boundedGenerationStore.apply(
+      transaction("bounded-generation-2", {
+        baseGeneration: "bounded-generation-1",
+        baseSequence: 1,
+        nodeName: "second",
+      }),
+    );
+    const returnedToken = boundedGenerationStore.apply(
+      transaction("bounded-generation-1", {
+        sequence: 3,
+        baseGeneration: "bounded-generation-2",
+        baseSequence: 2,
+        nodeName: "third",
+      }),
+    );
+    TestValidator.equals(
+      "a bounded generation pair can reuse an old spelling without retaining token history",
+      [returnedToken.protocol?.sequence, returnedToken.protocol?.generation],
+      [3, "bounded-generation-1"],
+    );
+    await rejectedWithoutMovement(
+      boundedGenerationStore,
+      transaction("stale-after-aba", {
+        sequence: 2,
+        baseGeneration: "bounded-generation-1",
+        baseSequence: 1,
+        nodeName: "stale",
+      }),
+      "an obsolete sequence cannot exploit a repeated generation spelling",
+    );
 
     const deleteStore = new GraphSnapshotProtocol.Store(process.cwd());
     deleteStore.apply(transaction("delete-generation-1"));
     const duplicateDelete = transaction("delete-generation-2", {
       baseGeneration: "delete-generation-1",
+      baseSequence: 1,
       deleteSource: true,
     });
     const deleteFrame = duplicateDelete.find(
@@ -369,6 +453,8 @@ export const test_graph_snapshot_protocol_commits_atomic_shard_generations =
   };
 
 interface ITransactionOptions {
+  sequence?: number;
+  baseSequence?: number;
   baseGeneration?: string;
   coverageState?: "complete" | "partial";
   nodeName?: string;
@@ -382,9 +468,14 @@ function transaction(
   const hello = validHello();
   const begin: GraphSnapshotProtocol.IBegin = {
     type: "begin",
+    sequence: options.sequence ?? sequenceOf(generation),
     generation,
     ...(options.baseGeneration !== undefined
-      ? { baseGeneration: options.baseGeneration }
+      ? {
+          baseSequence:
+            options.baseSequence ?? sequenceOf(options.baseGeneration),
+          baseGeneration: options.baseGeneration,
+        }
       : {}),
     universe: digest("a"),
     manifest: digest("b"),
@@ -490,6 +581,7 @@ function transaction(
     ...middle,
     {
       type: "commit",
+      sequence: begin.sequence,
       generation,
       shards: manifest,
       factDigest: GraphSnapshotProtocol.factDigest(snapshot),
@@ -711,8 +803,63 @@ function malformedTransactions(): Array<
       }),
     ],
     [
+      "a fractional begin sequence",
+      mutate(valid, (frames) => {
+        record(frames[1]!).sequence = 1.5;
+        record(commit(frames)).sequence = 1.5;
+      }),
+    ],
+    [
+      "a non-positive begin sequence",
+      mutate(valid, (frames) => {
+        record(frames[1]!).sequence = 0;
+        record(commit(frames)).sequence = 0;
+      }),
+    ],
+    [
+      "a base generation without its sequence",
+      mutate(valid, (frames) => {
+        record(frames[1]!).baseGeneration = "base";
+      }),
+    ],
+    [
+      "a base sequence without its generation",
+      mutate(valid, (frames) => {
+        record(frames[1]!).baseSequence = 3;
+      }),
+    ],
+    [
+      "a fractional base sequence",
+      mutate(valid, (frames) => {
+        record(frames[1]!).baseSequence = 1.5;
+        record(frames[1]!).baseGeneration = "base";
+      }),
+    ],
+    [
+      "a non-positive base sequence",
+      mutate(valid, (frames) => {
+        record(frames[1]!).baseSequence = 0;
+        record(frames[1]!).baseGeneration = "base";
+      }),
+    ],
+    [
+      "a base sequence not older than its generation",
+      mutate(valid, (frames) => {
+        record(frames[1]!).baseSequence = 4;
+        record(frames[1]!).baseGeneration = "base";
+      }),
+    ],
+    [
+      "a NUL base generation",
+      mutate(valid, (frames) => {
+        record(frames[1]!).baseSequence = 3;
+        record(frames[1]!).baseGeneration = "bad\0base";
+      }),
+    ],
+    [
       "an empty base generation",
       mutate(valid, (frames) => {
+        record(frames[1]!).baseSequence = 3;
         record(frames[1]!).baseGeneration = "";
       }),
     ],
@@ -744,6 +891,12 @@ function malformedTransactions(): Array<
       "an empty target identity",
       mutate(valid, (frames) => {
         record(frames[1]!).targets = [""];
+      }),
+    ],
+    [
+      "a mismatched commit sequence",
+      mutate(valid, (frames) => {
+        commit(frames).sequence += 1;
       }),
     ],
     [
@@ -1119,10 +1272,139 @@ function invalidProtocolSnapshots(): Array<
       },
     ],
     [
+      "a fractional protocol generation sequence",
+      "invalid protocol generation",
+      (snapshot) => {
+        snapshot.protocol!.sequence = 1.5;
+      },
+    ],
+    [
+      "a non-positive protocol generation sequence",
+      "invalid protocol generation",
+      (snapshot) => {
+        snapshot.protocol!.sequence = 0;
+      },
+    ],
+    [
+      "a fractional protocol base sequence",
+      "invalid protocol generation",
+      (snapshot) => {
+        Object.assign(snapshot.protocol!, {
+          sequence: 2,
+          baseSequence: 1.5,
+          baseGeneration: "base",
+        });
+      },
+    ],
+    [
+      "a non-positive protocol base sequence",
+      "invalid protocol generation",
+      (snapshot) => {
+        Object.assign(snapshot.protocol!, {
+          sequence: 2,
+          baseSequence: 0,
+          baseGeneration: "base",
+        });
+      },
+    ],
+    [
+      "a protocol base sequence not older than its generation",
+      "invalid protocol generation",
+      (snapshot) => {
+        Object.assign(snapshot.protocol!, {
+          sequence: 2,
+          baseSequence: 2,
+          baseGeneration: "base",
+        });
+      },
+    ],
+    [
+      "a non-string protocol base generation",
+      "invalid protocol generation",
+      (snapshot) => {
+        Object.assign(snapshot.protocol!, {
+          sequence: 2,
+          baseSequence: 1,
+          baseGeneration: 1,
+        });
+      },
+    ],
+    [
+      "an empty protocol base generation",
+      "invalid protocol generation",
+      (snapshot) => {
+        Object.assign(snapshot.protocol!, {
+          sequence: 2,
+          baseSequence: 1,
+          baseGeneration: "",
+        });
+      },
+    ],
+    [
+      "a NUL protocol base generation",
+      "invalid protocol generation",
+      (snapshot) => {
+        Object.assign(snapshot.protocol!, {
+          sequence: 2,
+          baseSequence: 1,
+          baseGeneration: "bad\0base",
+        });
+      },
+    ],
+    [
+      "a protocol base token without its sequence",
+      "invalid protocol generation",
+      (snapshot) => {
+        snapshot.protocol!.baseGeneration = "orphan";
+      },
+    ],
+    [
+      "a non-string protocol generation",
+      "invalid protocol generation",
+      (snapshot) => {
+        record(snapshot.protocol!).generation = 1;
+      },
+    ],
+    [
+      "a NUL protocol generation",
+      "invalid protocol generation",
+      (snapshot) => {
+        snapshot.protocol!.generation = "bad\0generation";
+      },
+    ],
+    [
+      "a non-string protocol target",
+      "invalid protocol generation",
+      (snapshot) => {
+        record(snapshot.protocol!).targets = [1];
+      },
+    ],
+    [
+      "an empty protocol target",
+      "invalid protocol generation",
+      (snapshot) => {
+        snapshot.protocol!.targets[0] = "";
+      },
+    ],
+    [
+      "a NUL protocol target",
+      "invalid protocol generation",
+      (snapshot) => {
+        snapshot.protocol!.targets[0] = "bad\0target";
+      },
+    ],
+    [
       "an empty committed shard key",
       "invalid protocol shard manifest",
       (snapshot) => {
         snapshot.protocol!.shards[0]!.key = "";
+      },
+    ],
+    [
+      "a NUL committed shard key",
+      "invalid protocol shard manifest",
+      (snapshot) => {
+        snapshot.protocol!.shards[0]!.key = "bad\0key";
       },
     ],
     [

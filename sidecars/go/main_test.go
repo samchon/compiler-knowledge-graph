@@ -444,6 +444,42 @@ func TestSidecarRejectsConflictingNodesAndPreservesFileAuthorities(t *testing.T)
 	}
 }
 
+func TestSidecarCanonicalizesDuplicateEdgeEvidence(t *testing.T) {
+	earlier := edge{
+		From: "from", To: "to", Kind: "calls",
+		Evidence: &evidence{
+			File: "a.go", StartLine: 2, StartCol: 3, EndLine: 2, EndCol: 9,
+		},
+	}
+	later := edge{
+		From: "from", To: "to", Kind: "calls",
+		Evidence: &evidence{
+			File: "z.go", StartLine: 8, StartCol: 1, EndLine: 8, EndCol: 7,
+		},
+	}
+	withoutEvidence := edge{From: "from", To: "to", Kind: "calls"}
+	for name, values := range map[string][]edge{
+		"later-first":       {later, earlier, withoutEvidence},
+		"earlier-first":     {earlier, withoutEvidence, later},
+		"no-evidence-first": {withoutEvidence, later, earlier},
+	} {
+		t.Run(name, func(t *testing.T) {
+			graph := &collector{edges: map[string]edge{}}
+			for _, value := range values {
+				graph.addEdge(value)
+			}
+			if len(graph.edges) != 1 {
+				t.Fatalf("duplicate semantic relation produced %d edges", len(graph.edges))
+			}
+			for _, actual := range graph.edges {
+				if !reflect.DeepEqual(actual, earlier) {
+					t.Fatalf("duplicate relation retained non-canonical evidence: %#v", actual)
+				}
+			}
+		})
+	}
+}
+
 func TestSemanticIdentityMatchesTheSharedProviderV2Codec(t *testing.T) {
 	if got, want := semanticID(
 		"function",

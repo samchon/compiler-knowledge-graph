@@ -160,29 +160,37 @@ export const test_experiment_corpora_are_commit_pinned = () => {
       runner.includes("crossFileEdge !== undefined") &&
       runner.includes("semanticLimitation.trim() ==="),
   );
-  // scip-python 0.6.6 recovers from a malformed `pyproject.toml` and emits no
-  // SCIP diagnostics, so a row claiming either boundary would assert behaviour
-  // the pinned producer does not have. A tolerated row earns its place only by
-  // proving the exact upstream claim instead — the producer ignored the input,
-  // so the build universe moved and the published facts did not — and by saying
-  // what it gave up rather than leaving a reader to infer it from a green lane.
+  // scip-python 0.6.6 recovers from a malformed `pyproject.toml`, falls back to
+  // Pyright defaults and emits no SCIP diagnostics. The pinned Click run proved
+  // that the fallback changes the analyzed program, so the row must exercise
+  // the degraded-publication branch rather than claim reject, diagnostic, or
+  // ignored-input behavior.
   TestValidator.predicate(
-    "a failure boundary the producer does not have is published as a limitation",
-    python.includes('failurePolicy: "tolerated"') &&
+    "Python's malformed configuration is a changed degraded publication",
+    python.includes('failurePolicy: "published"') &&
       declares(python, "failureLimitation") &&
-      lifecycle.includes('fixture.failurePolicy === "tolerated"') &&
-      lifecycle.includes('fixture.failureLimitation === ""') &&
+      python.includes("falling back to Pyright defaults") &&
+      lifecycle.includes('fixture.failurePolicy === "published"') &&
       lifecycle.includes("provenance.universe === prior.universe") &&
-      lifecycle.includes("provenance.content !== prior.content") &&
-      lifecycle.includes("diagnosticCount !== previousDiagnostics"),
+      lifecycle.includes("publicationChanges(") &&
+      lifecycle.includes("changed.length === 0"),
   );
   TestValidator.predicate(
     "a degraded publication is distinct from an input the producer ignored",
-    lua.includes('failurePolicy: "published"') &&
-      declares(lua, "failureLimitation") &&
+    [python, lua].every(
+      (row) =>
+        row.includes('failurePolicy: "published"') &&
+        declares(row, "failureLimitation"),
+    ) &&
       lifecycle.includes('fixture.failurePolicy === "published"') &&
       lifecycle.includes('status: "published-with-limitation"') &&
       lifecycle.includes("publicationChanges("),
+  );
+  TestValidator.predicate(
+    "a regeneration failure names its first differing fact",
+    lifecycle.includes("firstGenerationDifference(cold, retried)") &&
+      lifecycle.includes("first difference:") &&
+      lifecycle.includes("normalized dump fact planes are equal"),
   );
   TestValidator.predicate(
     "a malformed compilation database proves strict decline and warned fallback",

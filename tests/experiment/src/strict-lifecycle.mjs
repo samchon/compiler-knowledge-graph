@@ -504,12 +504,14 @@ export const runStrictLifecycle = async (experiment, pinnedRoot) => {
     const reproduced = reproducedManifest && reproducedContent;
     const limitation = experiment.regenerationLimitation;
     if (!reproduced && limitation === undefined) {
+      const difference = firstGenerationDifference(cold, retried);
       throw new Error(
         `${experiment.language}: restoring the original sources did not reproduce the generation ` +
           `(manifest ${reproducedManifest ? "unchanged" : "moved"}, ` +
           `facts ${reproducedContent ? "unchanged" : "moved"}; ` +
           `cold ${String(cold.nodes.length)} nodes/${String(cold.edges.length)} edges, ` +
-          `retry ${String(retried.nodes.length)} nodes/${String(retried.edges.length)} edges)`,
+          `retry ${String(retried.nodes.length)} nodes/${String(retried.edges.length)} edges; ` +
+          `first difference: ${difference})`,
       );
     }
     rows.push({
@@ -544,6 +546,53 @@ function strictProvenance(dump, experiment) {
     );
   }
   return provenance;
+}
+
+function firstGenerationDifference(left, right) {
+  for (const plane of [
+    "languages",
+    "nodes",
+    "edges",
+    "diagnostics",
+    "coverage",
+    "unresolved",
+  ]) {
+    const before = left[plane] ?? [];
+    const after = right[plane] ?? [];
+    if (before.length !== after.length) {
+      return `${plane}.length ${String(before.length)} -> ${String(after.length)}`;
+    }
+    for (let index = 0; index < before.length; index++) {
+      const prior = canonicalGenerationValue(before[index]);
+      const next = canonicalGenerationValue(after[index]);
+      if (prior !== next) {
+        return `${plane}[${String(index)}] ${boundedDifference(prior)} -> ${boundedDifference(next)}`;
+      }
+    }
+  }
+  return "normalized dump fact planes are equal; the strict slice moved before merge";
+}
+
+function canonicalGenerationValue(value) {
+  if (value === undefined) return "undefined";
+  if (value === null || typeof value !== "object") {
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map(canonicalGenerationValue).join(",")}]`;
+  }
+  return `{${Object.entries(value)
+    .filter(([, nested]) => nested !== undefined)
+    .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
+    .map(
+      ([key, nested]) =>
+        `${JSON.stringify(key)}:${canonicalGenerationValue(nested)}`,
+    )
+    .join(",")}}`;
+}
+
+function boundedDifference(value) {
+  return value.length <= 320 ? value : `${value.slice(0, 317)}...`;
 }
 
 function assertCreatedSymbol(

@@ -251,9 +251,10 @@ export const runStrictLifecycle = async (experiment, pinnedRoot) => {
       // itself, and so would asserting that provenance moved: this step edits a
       // declared build input, so the build universe cannot help but move. What
       // is worth proving is the precise claim the catalog makes about upstream —
-      // that the producer ignored the input completely. The universe moves, the
-      // facts and the source manifest do not, and the row publishes all three so
-      // a reader can see which one carried the change.
+      // it tolerates the invalid input without an observable publication-plane
+      // change. The universe moves, the facts and source manifest do not, and
+      // the row publishes all three so a reader can see which one carried the
+      // change.
       if (
         typeof fixture.failureLimitation !== "string" ||
         fixture.failureLimitation === ""
@@ -288,37 +289,24 @@ export const runStrictLifecycle = async (experiment, pinnedRoot) => {
           `${experiment.language}: the malformed input did not move the build universe, so this step compared a generation to itself`,
         );
       }
-      // The claim itself. Content and manifest cover the facts and the source
-      // evidence; capabilities and this provider's warnings are the rest of what
-      // a reader can observe, and neither digest carries them. A producer that
-      // quietly gave up a capability, or started explaining itself, has not
-      // ignored the input.
-      const spoken = (report) =>
-        (report.warnings ?? [])
-          .filter((warning) => warning.startsWith(`${experiment.strictProvider}:`))
-          .sort()
-          .join(SEPARATOR);
-      if (
-        provenance.content !== prior.content ||
-        provenance.manifest !== prior.manifest ||
-        [...provenance.capabilities].sort().join(",") !==
-          [...prior.capabilities].sort().join(",") ||
-        spoken(tolerated) !== spoken(priorDump)
-      ) {
+      // Compare the observable publication planes directly. The aggregate
+      // content digest is not independent evidence here: legacy coverage rows
+      // use the build-universe digest as their target, so content necessarily
+      // moves whenever the build input above moves even if every semantic fact
+      // remains byte-identical.
+      const changed = publicationChanges(
+        prior,
+        provenance,
+        priorDump,
+        tolerated,
+        experiment.strictProvider,
+      );
+      if (changed.length !== 0) {
         throw new Error(
-          `${experiment.language}: the catalog records this input as ignored, but the published facts, source manifest, capabilities, or provider warnings changed with it`,
+          `${experiment.language}: the catalog records this input as a tolerated unchanged publication, but these publication planes moved: ${changed.join(", ")}`,
         );
       }
-      // The other half of the catalog's claim, as a delta rather than an
-      // absolute: diagnostics this corpus already had are not evidence about
-      // this input, and the dump carries every lane's diagnostics, not only
-      // this provider's slice.
       const diagnosticCount = tolerated.diagnostics?.length ?? 0;
-      if (diagnosticCount !== previousDiagnostics) {
-        throw new Error(
-          `${experiment.language}: the catalog records this producer as reporting nothing about a malformed build input, but diagnostics moved from ${String(previousDiagnostics)} to ${String(diagnosticCount)}`,
-        );
-      }
       dump = tolerated;
       previousIdentity = [
         provenance.manifest,
@@ -653,7 +641,17 @@ function publicationChanges(
 ) {
   const changed = [];
   if (prior.manifest !== next.manifest) changed.push("manifest");
-  if (prior.content !== next.content) changed.push("content");
+  for (const plane of [
+    "nodes",
+    "edges",
+    "coverage",
+    "unresolved",
+    "diagnostics",
+  ]) {
+    const before = normalizedPublicationPlane(priorDump, plane);
+    const after = normalizedPublicationPlane(nextDump, plane);
+    if (before !== after) changed.push(plane);
+  }
   if (
     [...prior.capabilities].sort().join(",") !==
     [...next.capabilities].sort().join(",")
@@ -666,13 +664,25 @@ function publicationChanges(
       .sort()
       .join(SEPARATOR);
   if (spoken(priorDump) !== spoken(nextDump)) changed.push("warnings");
-  if (
-    (priorDump.diagnostics?.length ?? 0) !==
-    (nextDump.diagnostics?.length ?? 0)
-  ) {
-    changed.push("diagnostics");
-  }
   return changed;
+}
+
+function normalizedPublicationPlane(dump, plane) {
+  const rows = (dump[plane] ?? []).map((row) => {
+    if (
+      row === null ||
+      typeof row !== "object" ||
+      (plane !== "coverage" && plane !== "unresolved")
+    ) {
+      return row;
+    }
+    // These are generation coordinates, not an independently changed fact.
+    // The branch already proves the build universe moved. Compare the coverage
+    // state and unresolved evidence without counting that same movement twice.
+    const { target: _target, universe: _universe, ...fact } = row;
+    return fact;
+  });
+  return canonicalGenerationValue(rows);
 }
 
 /** A separator no warning can contain, so two lists cannot collide. */

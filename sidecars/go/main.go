@@ -128,12 +128,17 @@ func buildSnapshot(
 	for _, key := range keys {
 		universeParts = append(universeParts, key, normalizedEnvironmentValue(root, key, environment[key]))
 	}
-	for index, moduleRoot := range roots {
+	for _, moduleRoot := range roots {
 		identity, relativeErr := filepath.Rel(root, moduleRoot)
 		if relativeErr != nil {
 			return snapshot{}, fmt.Errorf("name Go module root %s: %w", moduleRoot, relativeErr)
 		}
-		universeParts = append(universeParts, filepath.ToSlash(identity), artifacts[index].Digest)
+		// The SCIP index is derived corroboration, not an input coordinate.
+		// Its protobuf bytes can move while the selected Go build universe and
+		// the compiler-owned facts remain identical. Keep the module identity
+		// in the universe and validate the artifact below, but do not turn a
+		// navigation artifact digest into a public coverage target.
+		universeParts = append(universeParts, filepath.ToSlash(identity))
 	}
 	for _, input := range inputs {
 		body, readErr := os.ReadFile(input)

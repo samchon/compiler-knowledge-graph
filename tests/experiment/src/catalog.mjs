@@ -399,12 +399,13 @@ export const LANGUAGE_EXPERIMENTS = [
       // `_attemptParseFile`, which retries the parse six times, logs
       // `Config file "..." could not be parsed`, and returns `undefined`.
       // Configuration then falls through to defaults and the index is written
-      // and published with exit code 0. That default program covers a different
-      // file set from the declared Pyright configuration, so this is a changed,
-      // degraded publication rather than an ignored input.
-      failurePolicy: "published",
+      // and published with exit code 0. On the pinned Click fixture the
+      // normalized source and fact planes remain unchanged; only the declared
+      // configuration coordinate moves. This is tolerated upstream behavior,
+      // not rejection, a diagnostic, or proof of a changed analyzed program.
+      failurePolicy: "tolerated",
       failureLimitation:
-        "scip-python 0.6.6 recovers from a malformed pyproject.toml by falling back to Pyright defaults and publishes a changed, degraded index; a broken Python build configuration is not a fail-closed boundary for this producer",
+        "scip-python 0.6.6 recovers from a malformed pyproject.toml by falling back to Pyright defaults and exits successfully; on the pinned Click fixture its normalized source and fact planes remain unchanged, so a broken Python build configuration is neither rejected nor diagnosed",
     },
   },
   {

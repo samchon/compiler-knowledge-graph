@@ -19,7 +19,6 @@ import (
 )
 
 type scipArtifact struct {
-	Digest      string
 	Documents   []string
 	Definitions map[string]int
 }
@@ -160,7 +159,6 @@ func validateScipIndex(moduleRoot string, body []byte) (scipArtifact, error) {
 	seen := make(map[string]bool, len(index.Documents))
 	documents := make([]string, 0, len(index.Documents))
 	definitions := make(map[string]int, len(index.Documents))
-	keptDocuments := make([]*scip.Document, 0, len(index.Documents))
 	for _, document := range index.Documents {
 		relative := filepath.FromSlash(document.RelativePath)
 		if document.RelativePath == "" {
@@ -183,7 +181,6 @@ func validateScipIndex(moduleRoot string, body []byte) (scipArtifact, error) {
 			return scipArtifact{}, fmt.Errorf("scip-go emitted a %s document: %s", document.Language, document.RelativePath)
 		}
 		absolute := filepath.Join(moduleRoot, cleaned)
-		keptDocuments = append(keptDocuments, document)
 		documents = append(documents, absolute)
 		for _, occurrence := range document.Occurrences {
 			if occurrence.SymbolRoles&int32(scip.SymbolRole_Definition) != 0 {
@@ -191,19 +188,9 @@ func validateScipIndex(moduleRoot string, body []byte) (scipArtifact, error) {
 			}
 		}
 	}
-	canonical := proto.Clone(index).(*scip.Index)
-	canonical.Metadata.ProjectRoot = ""
-	canonical.Documents = keptDocuments
-	if canonical.Metadata.ToolInfo != nil {
-		canonical.Metadata.ToolInfo.Arguments = nil
-	}
-	canonicalBody, err := proto.MarshalOptions{Deterministic: true}.Marshal(canonical)
-	if err != nil {
-		return scipArtifact{}, fmt.Errorf("canonicalize scip-go artifact: %w", err)
-	}
 	sort.Strings(documents)
 	return scipArtifact{
-		Digest: digestBytes(canonicalBody), Documents: documents, Definitions: definitions,
+		Documents: documents, Definitions: definitions,
 	}, nil
 }
 

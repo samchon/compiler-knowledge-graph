@@ -161,27 +161,31 @@ export const test_experiment_corpora_are_commit_pinned = () => {
       runner.includes("semanticLimitation.trim() ==="),
   );
   // scip-python 0.6.6 recovers from a malformed `pyproject.toml`, falls back to
-  // Pyright defaults and emits no SCIP diagnostics. The pinned Click run proved
-  // that the fallback changes the analyzed program, so the row must exercise
-  // the degraded-publication branch rather than claim reject, diagnostic, or
-  // ignored-input behavior.
+  // Pyright defaults and emits no SCIP diagnostics. On the pinned Click
+  // fixture, the source and semantic fact planes stay unchanged. The aggregate
+  // content digest is not evidence to the contrary because its legacy coverage
+  // target is the already-moved universe.
   TestValidator.predicate(
-    "Python's malformed configuration is a changed degraded publication",
-    python.includes('failurePolicy: "published"') &&
+    "Python's malformed configuration is a tolerated unchanged publication",
+    python.includes('failurePolicy: "tolerated"') &&
       declares(python, "failureLimitation") &&
       python.includes("falling back to Pyright defaults") &&
-      lifecycle.includes('fixture.failurePolicy === "published"') &&
+      lifecycle.includes('fixture.failurePolicy === "tolerated"') &&
       lifecycle.includes("provenance.universe === prior.universe") &&
       lifecycle.includes("publicationChanges(") &&
-      lifecycle.includes("changed.length === 0"),
+      lifecycle.includes("changed.length !== 0") &&
+      lifecycle.includes("normalizedPublicationPlane(") &&
+      !lifecycle.includes("provenance.content !== prior.content"),
   );
   TestValidator.predicate(
-    "a degraded publication is distinct from an input the producer ignored",
-    [python, lua].every(
+    "a degraded publication is distinct from an unchanged tolerated one",
+    [csharp, lua].every(
       (row) =>
         row.includes('failurePolicy: "published"') &&
         declares(row, "failureLimitation"),
     ) &&
+      python.includes('failurePolicy: "tolerated"') &&
+      lifecycle.includes('status: "tolerated"') &&
       lifecycle.includes('fixture.failurePolicy === "published"') &&
       lifecycle.includes('status: "published-with-limitation"') &&
       lifecycle.includes("publicationChanges("),

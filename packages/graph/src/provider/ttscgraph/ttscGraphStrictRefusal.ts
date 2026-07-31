@@ -43,7 +43,7 @@ export function ttscGraphStrictRefusal(
   // nothing — the reader needs the whole reason, not the first clause of it.
   return (
     `typescript: ttscgraph bulk indexing is disabled by ${refused.join(", ")}; ` +
-    `the compiler-owned provider publishes whole-program snapshots and has no bounded mode, ` +
+    `the compiler-owned provider publishes whole-program generations and has no bounded mode, ` +
     `so this language falls through to the generic ttscserver LSP lane (and static fallback if that lane cannot answer). ` +
     `These facts are not compiler-owned. Drop ${
       refused.length === 1 ? "that option" : "those options"

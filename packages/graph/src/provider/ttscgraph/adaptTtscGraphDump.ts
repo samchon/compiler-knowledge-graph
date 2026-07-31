@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import fs from "node:fs";
 import path from "node:path";
 import { compareOrdinal } from "@samchon/graph-sitter";
 
@@ -934,11 +935,28 @@ function validateNodeId(id: string, file: string, kind: GraphNodeKind): void {
 }
 
 function samePath(left: string, right: string): boolean {
-  const normalizedLeft = path.resolve(left);
-  const normalizedRight = path.resolve(right);
+  const normalizedLeft = physicalPath(left);
+  const normalizedRight = physicalPath(right);
   // Only one arm of this comparison runs on a given operating system.
   /* c8 ignore next 3 */
   return process.platform === "win32"
     ? normalizedLeft.toLowerCase() === normalizedRight.toLowerCase()
     : normalizedLeft === normalizedRight;
+}
+
+/** Resolve aliases through the longest existing ancestor, including missing leaves. */
+function physicalPath(location: string): string {
+  let candidate = path.resolve(location);
+  const suffix: string[] = [];
+  for (;;) {
+    try {
+      return path.join(fs.realpathSync.native(candidate), ...suffix.reverse());
+    } catch {
+      const parent = path.dirname(candidate);
+      /* c8 ignore next -- every supported platform has an existing filesystem root. */
+      if (parent === candidate) return path.resolve(location);
+      suffix.push(path.basename(candidate));
+      candidate = parent;
+    }
+  }
 }

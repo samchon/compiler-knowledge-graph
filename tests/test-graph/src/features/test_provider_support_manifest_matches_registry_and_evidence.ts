@@ -5,6 +5,14 @@ import { spawnSync } from "node:child_process";
 
 import { GraphPaths } from "../internal/GraphPaths";
 
+/**
+ * Provider claims are generated public data, so registry, evidence, platform,
+ * command-resolution, and README projections must remain one closed contract.
+ *
+ * 1. Validate the canonical manifest and both README line-ending forms.
+ * 2. Mutate each governed dimension independently through temporary manifests.
+ * 3. Require every drift to fail with the provider-specific reason.
+ */
 export const test_provider_support_manifest_matches_registry_and_evidence =
   () => {
     const root = GraphPaths.createTempDirectory(

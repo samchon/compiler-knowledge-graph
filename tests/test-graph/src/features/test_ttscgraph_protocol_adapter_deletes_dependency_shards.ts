@@ -69,8 +69,10 @@ function dump(
   dependency: boolean,
   globalDiagnostic: boolean,
 ): unknown {
+  const bundled = "bundled:///libs/lib.es2015.collection.d.ts";
   const files = [
     "src/main.ts",
+    bundled,
     ...(dependency ? ["vendor/dependency.d.ts"] : []),
   ];
   return {
@@ -101,8 +103,21 @@ function dump(
         diskDigest: sha256(`${file}:disk`),
       })),
     },
-    diagnostics: globalDiagnostic
-      ? [
+    diagnostics: [
+      ...(dependency
+        ? [
+            {
+              file: "src/main.ts",
+              line: 1,
+              column: 1,
+              code: 2322,
+              category: "error",
+              message: "synthetic source finding",
+            },
+          ]
+        : []),
+      ...(globalDiagnostic
+        ? [
           {
             file: "",
             line: 0,
@@ -111,8 +126,9 @@ function dump(
             category: "warning",
             message: "synthetic global finding",
           },
-        ]
-      : [],
+          ]
+        : []),
+    ],
     nodes: [
       {
         id: "src/main.ts#src/main.ts:module",
@@ -128,6 +144,13 @@ function dump(
         file: "src/main.ts",
         external: false,
       },
+      {
+        id: `${bundled}#Map:interface`,
+        kind: "interface",
+        name: "Map",
+        file: bundled,
+        external: true,
+      },
       ...(dependency
         ? [
             {
@@ -140,6 +163,21 @@ function dump(
           ]
         : []),
     ],
-    edges: [],
+    edges: [
+      {
+        from: "src/main.ts#run:function",
+        to: `${bundled}#Map:interface`,
+        kind: "type_ref",
+      },
+      ...(dependency
+        ? [
+            {
+              from: "src/main.ts#run:function",
+              to: "vendor/dependency.d.ts#Dependency:interface",
+              kind: "type_ref",
+            },
+          ]
+        : []),
+    ],
   };
 }

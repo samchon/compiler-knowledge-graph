@@ -32,14 +32,18 @@ export const test_ttscgraph_provider_reindexes_and_reassembles_streams =
     const blank = await refreshOnce(root, "--blank-line");
     TestValidator.predicate(
       "a blank NDJSON line is ignored and the real frame still applies",
-      blank.changed && blank.generation === 1 && blank.snapshot.nodes[0]?.name === "first",
+      blank.changed &&
+        blank.generation === 1 &&
+        blank.snapshot.nodes.some((node) => node.name === "first"),
     );
 
     // A frame split across two stream chunks is reassembled before parsing.
     const split = await refreshOnce(root, "--split-frame");
     TestValidator.predicate(
       "a frame split across stream chunks is reassembled",
-      split.changed && split.generation === 1 && split.snapshot.nodes[0]?.name === "first",
+      split.changed &&
+        split.generation === 1 &&
+        split.snapshot.nodes.some((node) => node.name === "first"),
     );
   };
 

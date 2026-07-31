@@ -540,6 +540,35 @@ export const test_ttscgraph_dump_adapter_rejects_malformed_facts = async () => {
       ),
     "a diagnostic without the diagnostics capability",
   );
+  rejectsWithMessage(
+    () =>
+      adaptTtscGraphDump(
+        mutate((d) => {
+          d.provenance.sources.push({ ...d.provenance.sources[0] });
+        }),
+        project,
+      ),
+    "a duplicate source manifest entry",
+    "duplicate source manifest entry",
+  );
+  rejectsWithMessage(
+    () =>
+      adaptTtscGraphDump(
+        mutate((d) => {
+          d.diagnostics.push({
+            file: "src/unloaded.ts",
+            line: 1,
+            column: 1,
+            code: 2322,
+            category: "error",
+            message: "unloaded finding",
+          });
+        }),
+        project,
+      ),
+    "a diagnostic outside the source manifest",
+    "source manifest never loaded",
+  );
 
   // Identity format and uniqueness.
   rejects(() => adaptTtscGraphDump(mutate((d) => ((d.nodes[1] as { id: string }).id = "no-hash-here")), project), "a node id that does not encode its file and kind");
@@ -569,6 +598,18 @@ export const test_ttscgraph_dump_adapter_rejects_malformed_facts = async () => {
 
   // Edge endpoints and uniqueness.
   rejects(() => adaptTtscGraphDump(mutate((d) => ((d.edges[0] as { from: string }).from = "src/a.ts#ghost:function")), project), "an edge from an unknown endpoint");
+  rejectsWithMessage(
+    () =>
+      adaptTtscGraphDump(
+        mutate((d) => {
+          (d.edges[0] as { to: string }).to =
+            "src/a.ts#src/a.ts:module";
+        }),
+        project,
+      ),
+    "an edge to a folded module endpoint",
+    "unknown or folded to endpoint",
+  );
   rejects(() => adaptTtscGraphDump(mutate((d) => d.edges.push({ ...(d.edges[0] as object) })), project), "a duplicate edge after module folding");
 
   // Evidence spans and decorator literals.

@@ -92,8 +92,10 @@ export function parseTtscGraphSnapshot(value: unknown): ITtscGraphSnapshot {
         "ttscgraph: error response cannot also report a changed graph",
       );
     }
-    if (raw.dump !== undefined) {
-      throw new Error("ttscgraph: error response unexpectedly included a dump");
+    if (raw.dump !== undefined || raw.snapshot !== undefined) {
+      throw new Error(
+        "ttscgraph: error response unexpectedly included snapshot state",
+      );
     }
     return { ...base, mode: "error", error: raw.error, changed: false };
   }
@@ -104,21 +106,28 @@ export function parseTtscGraphSnapshot(value: unknown): ITtscGraphSnapshot {
     );
   }
 
-  // `changed` decides whether a dump rides along; the producer stakes its whole
-  // atomicity claim on that pairing, so a frame that breaks it is rejected here
-  // rather than surfacing later as an absent dump nobody expected.
-  if (raw.changed && raw.dump === undefined) {
-    throw new Error(`ttscgraph: changed ${mode} response omitted its full dump`);
-  }
-  if (!raw.changed && raw.dump !== undefined) {
+  // `changed` decides whether a shard transaction rides along; the producer
+  // stakes its whole atomicity claim on that pairing, so a frame that breaks it
+  // is rejected here rather than surfacing later as absent state.
+  if (raw.dump !== undefined) {
     throw new Error(
-      `ttscgraph: unchanged ${mode} response unexpectedly included a dump`,
+      "ttscgraph: binary returned a legacy full dump instead of graph snapshot protocol v1; install a matching ttsc",
+    );
+  }
+  if (raw.changed && raw.snapshot === undefined) {
+    throw new Error(
+      `ttscgraph: changed ${mode} response omitted its native shard transaction`,
+    );
+  }
+  if (!raw.changed && raw.snapshot !== undefined) {
+    throw new Error(
+      `ttscgraph: unchanged ${mode} response unexpectedly included a native shard transaction`,
     );
   }
   return {
     ...base,
     mode: mode as ITtscGraphSnapshot.ComputationMode,
     changed: raw.changed,
-    ...(raw.dump === undefined ? {} : { dump: raw.dump }),
+    ...(raw.snapshot === undefined ? {} : { snapshot: raw.snapshot }),
   };
 }

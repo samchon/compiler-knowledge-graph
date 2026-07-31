@@ -69,6 +69,16 @@ export interface IGraphProvider {
   readonly facts: readonly GraphEdgeKind[];
 
   /**
+   * Machine-readable command-selection surface shared with public support
+   * documentation.
+   *
+   * These are resolver inputs, not prose copied out of a closure. Keeping them
+   * on the registry entry lets CI prove that every documented executable and
+   * environment override is the one runtime selection actually consults.
+   */
+  readonly resolution?: IGraphProvider.IResolution;
+
+  /**
    * Why this provider cannot serve a build with these options, or `undefined`
    * when it can.
    *
@@ -142,6 +152,11 @@ export interface IGraphProvider {
 }
 
 export namespace IGraphProvider {
+  export interface IResolution {
+    readonly commands: readonly string[];
+    readonly environmentOverrides: readonly string[];
+  }
+
   export interface IConfigurationDerivation {
     rows: readonly string[];
     inconclusive: readonly number[];

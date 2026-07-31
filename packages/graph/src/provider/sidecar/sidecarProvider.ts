@@ -18,6 +18,9 @@ export function sidecarProvider(
     languages: props.languages,
     authority: props.authority,
     facts: props.facts,
+    ...(props.resolution === undefined
+      ? {}
+      : { resolution: props.resolution }),
     ...(props.buildInputs === undefined
       ? {}
       : { buildInputs: props.buildInputs }),
@@ -88,6 +91,7 @@ export namespace sidecarProvider {
     languages: readonly GraphLanguage[];
     authority: GraphProviderAuthority;
     facts: readonly GraphEdgeKind[];
+    resolution?: IGraphProvider.IResolution;
     buildInputs?: IGraphProvider["buildInputs"];
     resolve: IGraphProvider["resolve"];
     prepare?: IGraphProvider["prepare"];

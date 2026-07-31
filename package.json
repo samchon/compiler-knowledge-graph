@@ -8,6 +8,8 @@
     "test": "pnpm --filter @samchon/graph-test start",
     "coverage": "pnpm --filter @samchon/graph build && pnpm --filter @samchon/graph-test build && pnpm exec c8 --all --src packages/graph/src --src packages/graph-sitter/src --exclude \"tests/**\" --exclude \"packages/graph/src/view.ts\" --exclude \"packages/graph/src/viewer/**\" --exclude-after-remap --reporter=text --reporter=lcov --check-coverage --lines 100 --functions 100 --branches 100 node tests/test-graph/lib/index.mjs",
     "parity": "pnpm --filter @samchon/graph-test build && node tests/test-graph/lib/parity.mjs",
+    "provider-support": "node packages/graph/build/provider-support.mjs --check",
+    "provider-support:write": "node packages/graph/build/provider-support.mjs --write",
     "experiment": "pnpm --filter @samchon/graph-experiment start",
     "benchmark": "pnpm --filter @samchon/graph-benchmark start",
     "release": "bumpp --r"

@@ -12,6 +12,33 @@ import { resolveProviderCommand } from "../resolveProviderCommand";
 import { toolchainVersion } from "../toolchainVersion";
 import { scipProvider } from "../scip";
 
+const RUST_GRAPH_TOOLS = Object.freeze({
+  analyzer: Object.freeze({
+    command: "rust-analyzer",
+    override: "SAMCHON_GRAPH_RUST_ANALYZER",
+  }),
+  decoder: Object.freeze({
+    command: "scip",
+    override: "SAMCHON_GRAPH_SCIP",
+  }),
+  compiler: Object.freeze({
+    command: "rustc",
+    override: "SAMCHON_GRAPH_RUSTC",
+  }),
+  cargo: Object.freeze({
+    command: "cargo",
+    override: "SAMCHON_GRAPH_CARGO",
+  }),
+});
+const RUST_GRAPH_RESOLUTION = Object.freeze({
+  commands: Object.freeze(
+    Object.values(RUST_GRAPH_TOOLS).map((tool) => tool.command),
+  ),
+  environmentOverrides: Object.freeze(
+    Object.values(RUST_GRAPH_TOOLS).map((tool) => tool.override),
+  ),
+}) satisfies IGraphProvider.IResolution;
+
 /**
  * rust-analyzer's stock SCIP export is a navigation artifact, not HIR facts.
  *
@@ -45,6 +72,7 @@ export const rustScipProvider = Object.assign(
     languageOf,
   }),
   {
+    resolution: RUST_GRAPH_RESOLUTION,
     indexArgs: rustScipIndexArgs,
     inputs: rustInputs,
     decodeCommand: rustScipDecoder,
@@ -60,12 +88,27 @@ function resolveRustScipCommand(
   const analyzer = resolveTool(
     root,
     env,
-    "rust-analyzer",
-    "SAMCHON_GRAPH_RUST_ANALYZER",
+    RUST_GRAPH_TOOLS.analyzer.command,
+    RUST_GRAPH_TOOLS.analyzer.override,
   );
-  const decoder = resolveTool(root, env, "scip", "SAMCHON_GRAPH_SCIP");
-  const rustc = resolveTool(root, env, "rustc", "SAMCHON_GRAPH_RUSTC");
-  const cargo = resolveTool(root, env, "cargo", "SAMCHON_GRAPH_CARGO");
+  const decoder = resolveTool(
+    root,
+    env,
+    RUST_GRAPH_TOOLS.decoder.command,
+    RUST_GRAPH_TOOLS.decoder.override,
+  );
+  const rustc = resolveTool(
+    root,
+    env,
+    RUST_GRAPH_TOOLS.compiler.command,
+    RUST_GRAPH_TOOLS.compiler.override,
+  );
+  const cargo = resolveTool(
+    root,
+    env,
+    RUST_GRAPH_TOOLS.cargo.command,
+    RUST_GRAPH_TOOLS.cargo.override,
+  );
   if (
     analyzer === undefined ||
     decoder === undefined ||
@@ -84,7 +127,12 @@ function rustScipDecoder(
   root: string,
   env: NodeJS.ProcessEnv = process.env,
 ): IGraphProvider.ICommand {
-  const decoder = resolveTool(root, env, "scip", "SAMCHON_GRAPH_SCIP");
+  const decoder = resolveTool(
+    root,
+    env,
+    RUST_GRAPH_TOOLS.decoder.command,
+    RUST_GRAPH_TOOLS.decoder.override,
+  );
   if (decoder === undefined) {
     throw new Error(
       "rust-analyzer-scip: the SCIP decoder disappeared after provider selection",
@@ -180,19 +228,31 @@ function rustScipConfigurationDerivation(
     toolObservation(
       root,
       env,
-      "rust-analyzer",
-      "SAMCHON_GRAPH_RUST_ANALYZER",
+      RUST_GRAPH_TOOLS.analyzer.command,
+      RUST_GRAPH_TOOLS.analyzer.override,
       ["--version"],
     ),
     toolObservation(
       root,
       env,
-      "scip",
-      "SAMCHON_GRAPH_SCIP",
+      RUST_GRAPH_TOOLS.decoder.command,
+      RUST_GRAPH_TOOLS.decoder.override,
       ["--version"],
     ),
-    toolObservation(root, env, "rustc", "SAMCHON_GRAPH_RUSTC", ["-vV"]),
-    toolObservation(root, env, "cargo", "SAMCHON_GRAPH_CARGO", ["-V"]),
+    toolObservation(
+      root,
+      env,
+      RUST_GRAPH_TOOLS.compiler.command,
+      RUST_GRAPH_TOOLS.compiler.override,
+      ["-vV"],
+    ),
+    toolObservation(
+      root,
+      env,
+      RUST_GRAPH_TOOLS.cargo.command,
+      RUST_GRAPH_TOOLS.cargo.override,
+      ["-V"],
+    ),
   ]);
 }
 
@@ -250,7 +310,10 @@ function rustCompilerVersion(
   _languages: readonly GraphLanguage[] | undefined,
   configuration: readonly string[],
 ): string {
-  const wanted = new Set(["rustc", "cargo"]);
+  const wanted = new Set<string>([
+    RUST_GRAPH_TOOLS.compiler.command,
+    RUST_GRAPH_TOOLS.cargo.command,
+  ]);
   return configuration
     .filter((row) => wanted.has(row.slice(0, Math.max(0, row.indexOf("=")))))
     .join("; ");
@@ -264,11 +327,17 @@ function rustCompilerVersionFor(
     toolVersion(
       root,
       env,
-      "rustc",
-      "SAMCHON_GRAPH_RUSTC",
+      RUST_GRAPH_TOOLS.compiler.command,
+      RUST_GRAPH_TOOLS.compiler.override,
       ["-vV"],
     ),
-    toolVersion(root, env, "cargo", "SAMCHON_GRAPH_CARGO", ["-V"]),
+    toolVersion(
+      root,
+      env,
+      RUST_GRAPH_TOOLS.cargo.command,
+      RUST_GRAPH_TOOLS.cargo.override,
+      ["-V"],
+    ),
   ].join("; ");
 }
 
@@ -338,9 +407,9 @@ const RUST_ENVIRONMENT_KEYS: readonly string[] = [
   "RUSTFLAGS",
   "RUSTUP_HOME",
   "RUSTUP_TOOLCHAIN",
-  "SAMCHON_GRAPH_CARGO",
-  "SAMCHON_GRAPH_RUST_ANALYZER",
-  "SAMCHON_GRAPH_RUSTC",
-  "SAMCHON_GRAPH_SCIP",
+  RUST_GRAPH_TOOLS.cargo.override,
+  RUST_GRAPH_TOOLS.analyzer.override,
+  RUST_GRAPH_TOOLS.compiler.override,
+  RUST_GRAPH_TOOLS.decoder.override,
 ];
 const RUST_ENVIRONMENT_KEY_SET = new Set<string>(RUST_ENVIRONMENT_KEYS);

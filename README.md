@@ -6,7 +6,7 @@
 
 `@samchon/graph` is an MCP server that gives AI agents a code graph instead of source files.
 
-It indexes a codebase in 16 languages into a graph of declarations and their relationships, and answers an agent's code questions from that index through a single tool. A compiler-owned provider supplies semantic edges where one is available, then the language server, and finally the separately packaged `@samchon/graph-sitter` best-effort fallback.
+It indexes a codebase in 16 languages into a graph of declarations and the relationships each selected provider can defend, then answers an agent's code questions from that index through a single tool. Registered strict providers have compiler, analyzer, or semantic-index authority and may decline a build; the ordinary language server and separately packaged `@samchon/graph-sitter` remain explicit lower-authority fallbacks.
 
 Coding agents normally answer a code question by grepping the repository and reading file after file into context, and that reading is most of the token bill. The graph removes the need for it, and its own answers stay small in turn: they carry names, signatures, relationships, and source spans, never file bodies.
 
@@ -41,7 +41,7 @@ A language server improves the graph with semantically resolved edges. Install t
 
 | Language | Server | Install |
 |---|---|---|
-| TypeScript | `ttscgraph` / `ttscserver` | `npm i -D ttsc@^0.20.1 typescript` |
+| TypeScript | `ttscserver` | `npm i -D ttsc@^0.23.0 typescript` |
 | Python | `pyright-langserver` | `npm i -D pyright` |
 | Go | `gopls` | `go install golang.org/x/tools/gopls@latest` |
 | Rust | `rust-analyzer` | `rustup component add rust-analyzer` |
@@ -58,6 +58,114 @@ A language server improves the graph with semantically resolved edges. Install t
 | Dart | `dart` | ships with the Dart SDK |
 
 Each server must be on `PATH`. If none is present for a file's language, that language falls back to the static indexer automatically.
+
+<!-- provider-support:start -->
+### Strict provider support
+
+_Generated from [`docs/provider-support.json`](https://github.com/samchon/compiler-graph/blob/master/docs/provider-support.json); do not edit this block by hand._
+
+Strict selection is per registered provider and may decline for missing tools, incompatible options, or incomplete build metadata. Authority grades differ. A provider's `facts` list means it can defend those edge families; it is not a universal-completeness claim. Strict dumps carry provider/tool provenance plus universe, input-manifest, and content digests. The MCP result reports operation coverage and uncertainty, but does not promise #63's future complete producer-owned per-generation coverage contract. Generic language-server and static fallbacks remain valid lower-authority results and are identified as such.
+
+#### Capability
+
+| Provider | Languages | Authority | Defensible facts | Evidence |
+| --- | --- | --- | --- | --- |
+| `ttscgraph` | `typescript` | `compiler` | `exports`, `calls`, `accesses`, `instantiates`, `type_ref`, `extends`, `implements`, `overrides`, `renders` | [upstream](https://github.com/samchon/ttsc) / [route #63](https://github.com/samchon/compiler-graph/issues/63) |
+| `samchon-graph-go` | `go` | `compiler` | `contains`, `exports`, `imports`, `calls`, `accesses`, `instantiates`, `type_ref`, `implements`, `dispatches`, `tests`, `references` | [upstream](https://github.com/scip-code/scip-go) / [route #63](https://github.com/samchon/compiler-graph/issues/63) |
+| `samchon-graph-lua` | `lua` | `analyzer` | `references` | [upstream](https://github.com/LuaLS/lua-language-server) / [route #83](https://github.com/samchon/compiler-graph/issues/83) |
+| `rust-analyzer-scip` | `rust` | `semantic-index` | `contains`, `references` | [upstream](https://github.com/rust-lang/rust-analyzer) / [route #72](https://github.com/samchon/compiler-graph/issues/72) |
+| `scip-clang` | `c`, `cpp` | `semantic-index` | **none** | [upstream](https://github.com/sourcegraph/scip-clang) / [route #73](https://github.com/samchon/compiler-graph/issues/73) |
+| `scip-java` | `java`, `kotlin` | `semantic-index` | `contains`, `references` | [upstream](https://github.com/scip-code/scip-java) / [route #74](https://github.com/samchon/compiler-graph/issues/74) / [route #76](https://github.com/samchon/compiler-graph/issues/76) |
+| `scip-dotnet` | `csharp` | `semantic-index` | **none** | [upstream](https://github.com/sourcegraph/scip-dotnet) / [route #75](https://github.com/samchon/compiler-graph/issues/75) |
+| `scip-python` | `python` | `semantic-index` | `references` | [upstream](https://github.com/sourcegraph/scip-python) / [route #80](https://github.com/samchon/compiler-graph/issues/80) |
+| `scip-ruby` | `ruby` | `semantic-index` | **none** | [upstream](https://github.com/sourcegraph/scip-ruby) / [route #81](https://github.com/samchon/compiler-graph/issues/81) |
+| `scip-dart` | `dart` | `semantic-index` | **none** | [upstream](https://pub.dev/packages/scip_dart) / [route #84](https://github.com/samchon/compiler-graph/issues/84) |
+| `scip-php` | `php` | `semantic-index` | **none** | [upstream](https://github.com/davidrjenni/scip-php) / [route #82](https://github.com/samchon/compiler-graph/issues/82) |
+
+#### Lifecycle
+
+These are current implementation modes, not future route claims. Preparation and native/export/resident phases are stated separately because the [experiment catalog](https://github.com/samchon/compiler-graph/blob/master/tests/experiment/src/catalog.mjs) and [cold measurement artifact](https://github.com/samchon/compiler-graph/blob/master/tests/benchmark/results/graph.json) prove different boundaries; the artifact reports whole end-to-end cells, not isolated phase timings.
+
+| Provider | Mode | Preparation | Native analysis | Export and merge | Reuse or resident state |
+| --- | --- | --- | --- | --- | --- |
+| `ttscgraph` | `resident-no-op-reuse; full-rebuild-on-change` | A matching ttsc/TypeScript project and tsconfig/jsconfig/package inputs. | The target project's ttsc checker owns one resident compiler process. | Each changed response serializes and validates one complete compiler dump before publication. | An identical producer generation reuses the exact dump; changed work is not yet proportional to the invalidated closure. |
+| `samchon-graph-go` | `unchanged-snapshot-reuse; full-rebuild-on-change` | Go workspace/module inputs, selected GOOS/GOARCH/cgo environment, embedded files and vendored inputs. | The shipped exporter runs one compiler-owned go/packages batch against the selected build universe. | A changed-input batch emits and validates one whole-workspace graph before snapshot publication. | Unchanged inputs reuse the validated snapshot; no resident go/packages checker survives changed builds. |
+| `samchon-graph-lua` | `unchanged-snapshot-reuse; full-rebuild-on-change` | LuaLS workspace configuration and the shipped readable exporter. | LuaLS analyzes the workspace and the shipped exporter asks its semantic VM for declaration references. | A changed-input run publishes one references-only whole-workspace graph. | Unchanged inputs reuse the validated snapshot; the current exporter is not a resident incremental session. |
+| `rust-analyzer-scip` | `unchanged-snapshot-reuse; full-rebuild-on-change` | Cargo metadata/config, lock/toolchain inputs, target/features/cfg and build-script/proc-macro universe. | Stock rust-analyzer produces one batch SCIP artifact for the selected Cargo universe. | The decoder maps the complete artifact to a contains/references graph before atomic snapshot publication. | Unchanged inputs reuse the validated snapshot; no rust-analyzer semantic session remains resident. |
+| `scip-clang` | `unchanged-snapshot-reuse; full-rebuild-on-change` | A valid compilation database and every named compiler/working directory/generated build input. | scip-clang runs one batch over the exact compilation database and its per-unit compiler commands. | The complete decoded artifact publishes declarations but no currently defensible edge family; producer scheduling can move header selection. | Unchanged inputs reuse the validated snapshot; every changed build reruns the batch producer. |
+| `scip-java` | `unchanged-snapshot-reuse; full-rebuild-on-change` | Maven or Gradle project metadata, dependency/classpath state and Java/Kotlin compiler inputs. | scip-java drives the selected Maven or Gradle build and its Java/Kotlin producers as one batch. | The complete decoded artifact is merged as a contains/references graph before atomic publication. | Unchanged inputs reuse the validated snapshot; no javac, kotlinc or build session remains resident. |
+| `scip-dotnet` | `unchanged-snapshot-reuse; full-rebuild-on-change` | Solution/project/TFM/NuGet/MSBuild inputs and a resolvable SDK. | scip-dotnet loads and analyzes the selected solution through one batch producer run. | The complete decoded artifact publishes declarations but no currently defensible edge family. | Unchanged inputs reuse the validated snapshot; no Roslyn workspace remains resident. |
+| `scip-python` | `unchanged-snapshot-reuse; full-rebuild-on-change` | Python project/config/environment/import/stub inputs. | scip-python runs its bundled Pyright-based analysis once for the selected project environment. | The complete decoded artifact publishes a references-only project graph. | Unchanged inputs reuse the validated snapshot; no Pyright analysis session remains resident. |
+| `scip-ruby` | `unchanged-snapshot-reuse; full-rebuild-on-change` | Gem/Bundler/Sorbet/RBI configuration inputs. | scip-ruby performs one full-project batch using the selected Ruby, Bundler and Sorbet inputs. | The complete decoded artifact publishes declarations but no currently defensible edge family. | Unchanged inputs reuse the validated snapshot; no Ruby or Sorbet index remains resident. |
+| `scip-dart` | `unchanged-snapshot-reuse; full-rebuild-on-change` | pubspec/lock, analysis options and resolved package configuration. | scip_dart performs one full-project batch using the resolved Dart package universe. | The complete decoded artifact publishes declarations but no currently defensible edge family. | Unchanged inputs reuse the validated snapshot; this is not resident Analysis Server state. |
+| `scip-php` | `unchanged-snapshot-reuse; full-rebuild-on-change` | Composer manifest/lock/autoload and PHP/PHPStan configuration inputs. | The project-local scip-php producer performs one full-project batch through Composer/PHP inputs. | The complete decoded artifact publishes declarations but no currently defensible edge family. | Unchanged inputs reuse the validated snapshot; no PHPStan or Composer analysis session remains resident. |
+
+#### Installation and selection
+
+The troubleshooting table names the ordinary language-server/static fallback for each row. Resolution metadata is shared with the shipped registry and checked in CI.
+
+| Provider | Install | Commands | Overrides | Resolution order | Project preparation | Platforms |
+| --- | --- | --- | --- | --- | --- | --- |
+| `ttscgraph` | `npm i -D ttsc@^0.23.0 typescript` | `ttscgraph`, `ttscserver` | `TTSC_GRAPH_BINARY` | Absolute `TTSC_GRAPH_BINARY`, target-project `ttsc` package/binary, target-project `.bin`, then PATH/global compatibility fallback. | A matching ttsc/TypeScript project and tsconfig/jsconfig/package inputs. | `linux`, `macos`, `windows` |
+| `samchon-graph-go` | Go 1.25+; the package ships the Go exporter source. Install corroboration with `go install github.com/scip-code/scip-go/cmd/scip-go@v0.2.7`. | `samchon-graph-go`, `go`, `scip-go` | `SAMCHON_GRAPH_GO`, `SAMCHON_GRAPH_GO_TOOLCHAIN`, `SAMCHON_GRAPH_SCIP_GO` | Project/PATH `samchon-graph-go`, then the shipped source runner through Go; absolute environment overrides take precedence. | Go workspace/module inputs, selected GOOS/GOARCH/cgo environment, embedded files and vendored inputs. | `linux`, `macos`, `windows` |
+| `samchon-graph-lua` | Install `lua-language-server`; the package ships `sidecars/lua/export.lua`. | `lua-language-server` | `SAMCHON_GRAPH_LUA`, `SAMCHON_GRAPH_LUA_EXPORTER` | Absolute `SAMCHON_GRAPH_LUA`, then project/PATH LuaLS; the shipped exporter may be replaced by `SAMCHON_GRAPH_LUA_EXPORTER`. | LuaLS workspace configuration and the shipped readable exporter. | `linux`, `macos`, `windows` |
+| `rust-analyzer-scip` | `rustup component add rust-analyzer`; install the `scip` decoder and provide matching rustc/Cargo. | `rust-analyzer`, `scip`, `rustc`, `cargo` | `SAMCHON_GRAPH_RUST_ANALYZER`, `SAMCHON_GRAPH_SCIP`, `SAMCHON_GRAPH_RUSTC`, `SAMCHON_GRAPH_CARGO` | Project-local tools precede PATH; each absolute environment override replaces only its named tool. | Cargo metadata/config, lock/toolchain inputs, target/features/cfg and build-script/proc-macro universe. | `linux`, `macos`, `windows` |
+| `scip-clang` | Install `scip-clang` 0.4.0 and the `scip` decoder; provide a generated `compile_commands.json`. | `scip-clang`, `scip`, `cc` | `SAMCHON_GRAPH_SCIP_CLANG`, `SAMCHON_GRAPH_SCIP` | Project-local producer/decoder precede PATH; `SAMCHON_GRAPH_SCIP_CLANG` and `SAMCHON_GRAPH_SCIP` select absolute tools. Compilers come from the compilation database. | A valid compilation database and every named compiler/working directory/generated build input. | `linux`, `macos`, `windows-when-installed` |
+| `scip-java` | Install `scip-java` 0.13.1, the `scip` decoder and a compatible JDK; Kotlin experiments pin a compatible source build. | `scip-java`, `scip`, `java` | `SAMCHON_GRAPH_SCIP_JAVA`, `SAMCHON_GRAPH_SCIP`, `SAMCHON_GRAPH_JAVA_TOOLCHAIN` | Project-local producer/decoder/JDK precede PATH; absolute environment overrides select each tool. | Maven or Gradle project metadata, dependency/classpath state and Java/Kotlin compiler inputs. | `linux`, `macos`, `windows` |
+| `scip-dotnet` | `dotnet tool install --global scip-dotnet`; install the `scip` decoder and matching .NET SDK. | `scip-dotnet`, `scip`, `dotnet` | `SAMCHON_GRAPH_SCIP_DOTNET`, `SAMCHON_GRAPH_SCIP`, `SAMCHON_GRAPH_DOTNET_TOOLCHAIN` | Project-local producer/decoder/toolchain precede PATH; absolute environment overrides select each tool. | Solution/project/TFM/NuGet/MSBuild inputs and a resolvable SDK. | `linux`, `macos`, `windows` |
+| `scip-python` | `npm install -g @sourcegraph/scip-python@0.6.6`; install the `scip` decoder and select Python. | `scip-python`, `scip`, `python3`, `python`, `py` | `SAMCHON_GRAPH_SCIP_PYTHON`, `SAMCHON_GRAPH_SCIP`, `SAMCHON_GRAPH_PYTHON_TOOLCHAIN` | Project-local producer/decoder/interpreter precede PATH; Python aliases are tried in order and absolute overrides select each tool. | Python project/config/environment/import/stub inputs. | `linux`, `macos`, `windows` |
+| `scip-ruby` | Install the pinned `scip-ruby` 0.4.7 release binary, the `scip` decoder and matching Ruby/Bundler. | `scip-ruby`, `scip`, `ruby` | `SAMCHON_GRAPH_SCIP_RUBY`, `SAMCHON_GRAPH_SCIP`, `SAMCHON_GRAPH_RUBY_TOOLCHAIN` | Project-local producer/decoder/Ruby precede PATH; absolute environment overrides select each tool. | Gem/Bundler/Sorbet/RBI configuration inputs. | `linux`, `macos`, `windows-when-installed` |
+| `scip-dart` | `dart pub global activate scip_dart 1.6.2`; install the `scip` decoder and Dart SDK. | `scip_dart`, `scip`, `dart` | `SAMCHON_GRAPH_SCIP_DART`, `SAMCHON_GRAPH_SCIP`, `SAMCHON_GRAPH_DART_TOOLCHAIN` | Project-local producer/decoder/Dart precede PATH; absolute environment overrides select each tool. | pubspec/lock, analysis options and resolved package configuration. | `linux`, `macos`, `windows` |
+| `scip-php` | Install the project-local scip-php dependency with Composer, expose `vendor/bin/scip-php`, and install the `scip` decoder. | `scip-php`, `scip`, `php` | `SAMCHON_GRAPH_SCIP_PHP`, `SAMCHON_GRAPH_SCIP`, `SAMCHON_GRAPH_PHP_TOOLCHAIN` | Project `vendor/bin` precedes PATH; absolute producer/decoder/PHP overrides select each tool. | Composer manifest/lock/autoload and PHP/PHPStan configuration inputs. | `linux`, `macos`, `windows` |
+
+#### Verified cold index cells
+
+These are exact same-run cold end-to-end strict/strict-disabled pairs from [`tests/benchmark/results/graph.json`](https://github.com/samchon/compiler-graph/blob/master/tests/benchmark/results/graph.json), produced by [the pinned workflow run](https://github.com/samchon/compiler-graph/actions/runs/30448033020). They do not prove warm or semantic-incremental behavior. A zero-fact strict provider is not called semantically complete. Ruby and Dart report only that both whole cells exceeded the 1,800-second guard; that limit is not an isolated producer duration.
+
+| Project | Strict provider | Strict cell | Strict-disabled cell |
+| --- | --- | --- | --- |
+| `excalidraw` | `ttscgraph` | 5,340.296 ms | 2,977.720 ms |
+| `gin` | `samchon-graph-go` | 38,097.048 ms | 687.107 ms |
+| `lualine` | `samchon-graph-lua` | 18,889.245 ms | 27,848.007 ms |
+| `tokio` | `rust-analyzer-scip` | 55,238.180 ms | 229,860.996 ms |
+| `redis` | `scip-clang` | 22,794.688 ms | 262,905.796 ms |
+| `leveldb` | `scip-clang` | 8,352.928 ms | 26,451.952 ms |
+| `gson` | `scip-java` | 88,653.499 ms | 231,398.489 ms |
+| `koin` | `scip-java` | 211,263.800 ms | 967,711.761 ms |
+| `serilog` | `scip-dotnet` | 20,498.324 ms | 25,085.071 ms |
+| `flask` | `scip-python` | 10,628.897 ms | 748.454 ms |
+| `sinatra` | `scip-ruby` | did not finish before 1,800 s | did not finish before 1,800 s |
+| `darthttp` | `scip-dart` | did not finish before 1,800 s | did not finish before 1,800 s |
+| `slim` | `scip-php` | 3,771.828 ms | 9,611.108 ms |
+
+#### Troubleshooting
+
+A strict result's provenance name must equal the provider below. If it is absent, use the commands and overrides in the installation table, then follow the explicit decline reason; the fallback is still usable but does not inherit strict authority.
+
+| Languages | Expected provenance | Common boundary | Decline and fallback |
+| --- | --- | --- | --- |
+| `typescript` | `ttscgraph` | The current producer does not yet make changed-response work proportional to the compiler invalidated closure. | `ttscserver`, then `@samchon/graph-sitter`; capped or incompatible requests decline explicitly. |
+| `go` | `samchon-graph-go` | Current changed-input export is a full rebuild and does not retain a resident `go/packages` checker session. | `gopls`, then `@samchon/graph-sitter`; unavailable toolchain or corroborator declines explicitly. |
+| `lua` | `samchon-graph-lua` | The current exporter calls `vm.getRefs` per declaration and proves references only; #83 replaces it with an occurrence-oriented resident traversal. | Generic LuaLS, then `@samchon/graph-sitter`; capped requests or a missing exporter decline explicitly. |
+| `rust` | `rust-analyzer-scip` | Stock rust-analyzer SCIP has empty relationships/diagnostics and is navigation evidence, not the final HIR graph. | Generic rust-analyzer, then `@samchon/graph-sitter`; any missing analyzer/decoder/rustc/Cargo component declines. |
+| `c`, `cpp` | `scip-clang` | The current artifact proves declarations but no graph edge family because enclosing attribution and type-definition relationships are absent. | `clangd`, then `@samchon/graph-sitter`; missing/invalid compilation metadata declines explicitly. |
+| `java`, `kotlin` | `scip-java` | The released Gradle path disables configuration cache and runs `clean scipCompileAll`; it is navigation fallback for #74/#76, not compiler-owned calls or accesses. | `jdtls` or `kotlin-language-server`, then `@samchon/graph-sitter`. |
+| `csharp` | `scip-dotnet` | The artifact proves declarations but no graph edge family and can log MSBuildWorkspace failures after publishing. | `csharp-ls`, then `@samchon/graph-sitter`. |
+| `python` | `scip-python` | The bundled historical Pyright core proves references only and can recover from malformed pyproject configuration with defaults. | `pyright-langserver`, then `@samchon/graph-sitter`. |
+| `ruby` | `scip-ruby` | The current artifact proves no graph edge family; it does not expose structural coverage, Sorbet sigils or typed unresolved sites. | `ruby-lsp`, then `@samchon/graph-sitter`. |
+| `dart` | `scip-dart` | The current artifact proves no graph edge family and is not resident Analysis Server state. | Dart Analysis Server, then `@samchon/graph-sitter`. |
+| `php` | `scip-php` | The current raw parser/Composer artifact proves no graph edge family and has no diagnostic or role grounding. | `intelephense`, then `@samchon/graph-sitter`. |
+
+#### Ordinary-only strict status
+
+These languages are indexed through their ordinary server and static fallback today. They have no registered strict provider or strict timing claim.
+
+| Language | Ordinary server | Why no strict provider | Route |
+| --- | --- | --- | --- |
+| `scala` | `metals` | No registered strict provider; scip-java no longer supports Scala. | [tracked route](https://github.com/samchon/compiler-graph/issues/77) |
+| `swift` | `sourcekit-lsp` | No packaged IndexStoreDB/SourceKit-LSP snapshot producer is registered. | [tracked route](https://github.com/samchon/compiler-graph/issues/78) |
+| `zig` | `zls` | No analyzer or compiler Sema snapshot producer is registered. | [tracked route](https://github.com/samchon/compiler-graph/issues/79) |
+<!-- provider-support:end -->
 
 ### Repository topology
 
@@ -76,11 +184,7 @@ Every topology result carries provider/tool provenance, per-relation `complete`/
 
 Before the generic lane runs, indexing asks a registry of strict providers which languages they own. A provider states what its facts are grounded in — a compiler, a whole-project analyzer, or a precomputed semantic index — and which edge families it can prove; a snapshot that publishes outside those is rejected rather than merged. Whatever no provider claims falls through to the language server, and then to the static indexer. Every decline is one sentence naming the provider and the authority the build gave up, so a fallback is never mistaken for the strict result it replaced.
 
-The dump carries one `provenance` row per contributing provider: its authority, the fact families it proves, the producing tool and versions, a fingerprint of the inputs that decided the file set, and digests over the manifest and the published facts. Absent when no strict provider served the build. What a provider *did* to compute a generation is deliberately not recorded there — that belongs to one refresh rather than to the facts, and writing it down would make two dumps of the same unedited checkout differ.
-
-TypeScript's provider is the compiler-owned `ttscgraph` snapshot. The binary is resolved from the target project's `ttsc` installation; `TTSC_GRAPH_BINARY` can point to an exact absolute binary for development or release verification. If the binary is unavailable, its schema/provenance cannot be trusted, or the requested build is deliberately capped, indexing states the reason and falls back to `ttscserver`, then to the static indexer when no server is available. `ttscgraph` schema 6 is the complete portable contract: paths are relative to the producer's project (including `../` siblings), virtual libraries use `bundled:///`, and declarations may carry compiler-bounded signatures. Older producers are refused and indexing falls back honestly to `ttscserver`.
-
-Go's compiler-owned provider is shipped with this package and runs through Go 1.25 or newer. Its navigation corroboration is pinned to `scip-go` 0.2.7; install that exact producer with `go install github.com/scip-code/scip-go/cmd/scip-go@v0.2.7`. A project-local or `PATH` `samchon-graph-go` binary takes precedence over the bundled source runner, `SAMCHON_GRAPH_GO` can select an absolute development build, and `SAMCHON_GRAPH_SCIP_GO` can select an absolute `scip-go` binary. Without the required Go toolchain or pinned indexer, indexing reports the strict-provider decline and retains the generic `gopls` fallback.
+The dump carries one `provenance` row per contributing provider: its authority, the fact families it proves, the producing tool and versions, a fingerprint of the inputs that decided the file set, and digests over the manifest and the published facts. It is absent when no strict provider served the build. What a provider *did* to compute a generation is deliberately not recorded there because that belongs to one refresh rather than to the facts.
 
 JavaScript is intentionally not indexed. In an arbitrary repository, `.js`/`.jsx`/`.mjs`/`.cjs` files are as often build output or vendored bundles as handwritten source, and the graph cannot tell which without project-specific provenance.
 
@@ -134,27 +238,7 @@ checkout-grounding rule used by the reference harness.
 
 ### Indexing time
 
-| Project | Language | First index |
-|---|---|---|
-| [slim](https://github.com/slimphp/Slim) | PHP | 5s |
-| [excalidraw](https://github.com/excalidraw/excalidraw) | TypeScript | 5s |
-| [gin](https://github.com/gin-gonic/gin) | Go | 15s |
-| [leveldb](https://github.com/google/leveldb) | C++ | 16s |
-| [darthttp](https://github.com/dart-lang/http) | Dart | 23s |
-| [lualine](https://github.com/nvim-lualine/lualine.nvim) | Lua | 25s |
-| [flask](https://github.com/pallets/flask) | Python | 55s |
-| [gson](https://github.com/google/gson) | Java | 2m22s |
-| [sinatra](https://github.com/sinatra/sinatra) | Ruby | 2m35s |
-| [redis](https://github.com/redis/redis) | C | 2m50s |
-| [tokio](https://github.com/tokio-rs/tokio) | Rust | 3m |
-| [koin](https://github.com/InsertKoinIO/koin) | Kotlin | 19m25s |
-| [serilog](https://github.com/serilog/serilog) | C# | not recorded |
-
-One-time cost per repository. The server re-scans only changed files after that (see [How it works](#how-it-works)); later calls are free.
-
-kotlin-language-server, jdtls, and csharp-ls are particularly slow: each resolves the whole project before answering anything.
-
-TypeScript and Go already close that gap through compiler-owned snapshots. The remaining languages use their listed language servers until their compiler-owned bulk providers land.
+The exact current same-run cold strict/strict-disabled measurements are generated from the pinned result artifact in [Verified cold index cells](#verified-cold-index-cells). They make no warm, resident, or semantic-completeness claim; lifecycle modes are listed separately from measured cold time.
 
 ### Reproduction
 

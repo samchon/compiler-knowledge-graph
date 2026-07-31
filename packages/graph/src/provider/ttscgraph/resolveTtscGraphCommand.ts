@@ -5,6 +5,13 @@ import path from "node:path";
 
 import { isSpawnableFile } from "../../utils/isSpawnableFile";
 import { spawnableCommand } from "../../utils/spawnableCommand";
+import { ttscGraphResolution } from "./ttscGraphResolution";
+
+const [TTSC_GRAPH_COMMAND, TTSC_SERVER_COMMAND] =
+  ttscGraphResolution.commands;
+const [TTSC_GRAPH_OVERRIDE] =
+  ttscGraphResolution.environmentOverrides;
+
 interface ITtscGraphCommand {
   command: string;
   args: string[];
@@ -15,7 +22,7 @@ export function resolveTtscGraphCommand(
   root: string,
   env: NodeJS.ProcessEnv = process.env,
 ): ITtscGraphCommand | undefined {
-  const override = env.TTSC_GRAPH_BINARY;
+  const override = env[TTSC_GRAPH_OVERRIDE];
   if (
     override !== undefined &&
     path.isAbsolute(override) &&
@@ -36,7 +43,12 @@ export function resolveTtscGraphCommand(
   // A package-manager shim can still reveal the project installation when its
   // package metadata is not directly resolvable (for example, an unusual
   // linked layout). Search only the target project's .bin at this stage.
-  const projectServer = resolveExecutable("ttscserver", root, env, false);
+  const projectServer = resolveExecutable(
+    TTSC_SERVER_COMMAND,
+    root,
+    env,
+    false,
+  );
   if (projectServer !== undefined) {
     const beside = graphBesideServer(projectServer);
     if (beside !== undefined) return beside;
@@ -44,10 +56,15 @@ export function resolveTtscGraphCommand(
 
   // Only after project-owned candidates fail may PATH/global installations be
   // used as a compatibility fallback.
-  const onPath = resolveExecutable("ttscgraph", root, env, true);
+  const onPath = resolveExecutable(TTSC_GRAPH_COMMAND, root, env, true);
   if (onPath !== undefined) return spawnable(onPath);
 
-  const globalServer = resolveExecutable("ttscserver", root, env, true);
+  const globalServer = resolveExecutable(
+    TTSC_SERVER_COMMAND,
+    root,
+    env,
+    true,
+  );
   if (globalServer !== undefined && globalServer !== projectServer) {
     return graphBesideServer(globalServer);
   }

@@ -10,6 +10,30 @@ import { resolveProviderCommand } from "../resolveProviderCommand";
 import { toolchainVersion } from "../toolchainVersion";
 import { sidecarProvider } from "../sidecar";
 
+const GO_GRAPH_TOOLS = Object.freeze({
+  exporter: Object.freeze({
+    command: "samchon-graph-go",
+    override: "SAMCHON_GRAPH_GO",
+  }),
+  toolchain: Object.freeze({
+    command: "go",
+    override: "SAMCHON_GRAPH_GO_TOOLCHAIN",
+  }),
+  corroborator: Object.freeze({
+    command: "scip-go",
+    override: "SAMCHON_GRAPH_SCIP_GO",
+  }),
+});
+
+const GO_GRAPH_RESOLUTION = Object.freeze({
+  commands: Object.freeze(
+    Object.values(GO_GRAPH_TOOLS).map((tool) => tool.command),
+  ),
+  environmentOverrides: Object.freeze(
+    Object.values(GO_GRAPH_TOOLS).map((tool) => tool.override),
+  ),
+}) satisfies IGraphProvider.IResolution;
+
 function goIndexArgs(artifact: string): string[] {
   return [`--output=${artifact}`];
 }
@@ -47,6 +71,7 @@ export const goGraphProvider = Object.assign(
       "tests",
       "references",
     ] satisfies readonly GraphEdgeKind[],
+    resolution: GO_GRAPH_RESOLUTION,
     buildInputs: goBuildInputs,
     resolve: resolveGoGraphCommand,
     indexArgs: goIndexArgs,
@@ -82,8 +107,7 @@ function resolveGoGraphCommand(
   env: NodeJS.ProcessEnv,
 ): IGraphProvider.ICommand | undefined {
   const installed = resolveProviderCommand(root, env, {
-    command: "samchon-graph-go",
-    override: "SAMCHON_GRAPH_GO",
+    ...GO_GRAPH_TOOLS.exporter,
   });
   if (installed !== undefined) {
     return spawnableCommand.append(
@@ -94,8 +118,7 @@ function resolveGoGraphCommand(
   const source = path.resolve(__dirname, "..", "..", "..", "sidecars", "go");
   if (!fs.existsSync(path.join(source, "go.mod"))) return undefined;
   const go = resolveProviderCommand(root, env, {
-    command: "go",
-    override: "SAMCHON_GRAPH_GO_TOOLCHAIN",
+    ...GO_GRAPH_TOOLS.toolchain,
   });
   return go === undefined
     ? undefined
@@ -237,16 +260,15 @@ function goConfigurationDerivation(
     toolchainVersion.observe({
       root,
       env,
-      command: "go",
-      override: "SAMCHON_GRAPH_GO_TOOLCHAIN",
+      ...GO_GRAPH_TOOLS.toolchain,
       args: ["env", "-json", ...GO_PROBED_ENVIRONMENT_KEYS],
       label: "go-env",
     }),
     toolObservation(
       root,
       env,
-      "scip-go",
-      "SAMCHON_GRAPH_SCIP_GO",
+      GO_GRAPH_TOOLS.corroborator.command,
+      GO_GRAPH_TOOLS.corroborator.override,
       ["--version"],
     ),
   ]);
@@ -334,8 +356,8 @@ const GO_ENVIRONMENT_KEYS: readonly string[] = [
   "GOTOOLCHAIN",
   "GOWORK",
   "PATH",
-  "SAMCHON_GRAPH_SCIP_GO",
-  "SAMCHON_GRAPH_GO_TOOLCHAIN",
+  GO_GRAPH_TOOLS.corroborator.override,
+  GO_GRAPH_TOOLS.toolchain.override,
   "PKG_CONFIG",
 ];
 

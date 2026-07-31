@@ -456,6 +456,11 @@ export namespace RepositoryContextProtocol {
           `repository context protocol: unknown node authority ${node.id}`,
         );
       }
+      if (node.authority === "inferred") {
+        throw new Error(
+          `repository context protocol: version 1 refuses inferred node authority ${node.id}`,
+        );
+      }
       if (node.root !== undefined) {
         assertText(node.root, "node root");
         if (
@@ -478,6 +483,11 @@ export namespace RepositoryContextProtocol {
       if (!AUTHORITIES.includes(edge.authority)) {
         throw new Error(
           `repository context protocol: unknown edge authority ${edge.kind}`,
+        );
+      }
+      if (edge.authority === "inferred") {
+        throw new Error(
+          `repository context protocol: version 1 refuses inferred edge authority ${edge.kind}`,
         );
       }
       if (!hello.supportedFamilies.includes(edge.kind)) {

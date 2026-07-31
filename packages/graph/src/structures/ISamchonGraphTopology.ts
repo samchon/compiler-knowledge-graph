@@ -29,7 +29,7 @@ export interface ISamchonGraphTopology {
   /** Whether this result may join its file identities to the code generation. */
   join: ISamchonGraphTopology.IJoin;
 
-  /** Whether more matching nodes existed beyond the requested limit. */
+  /** Whether a requested node, relation or file-join bound omitted facts. */
   truncated: boolean;
 }
 

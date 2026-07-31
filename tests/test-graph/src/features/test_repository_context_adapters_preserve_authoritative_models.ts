@@ -1324,6 +1324,38 @@ function exerciseCmakeRefusals(root: string): void {
         },
       }),
   );
+
+  const renamedInput = path.join(
+    root,
+    "cmake-renamed-input",
+    "cmake",
+    "options.cmake",
+  );
+  write(renamedInput, "set(FIXTURE_OPTION ON)\n");
+  const renamedInputReply = cmakeScenario(root, "renamed-input", {
+    configurations: [
+      { name: "", projects: [], directories: [], targets: [] },
+    ],
+    inputs: [
+      { path: "CMakeLists.txt" },
+      { path: "cmake/options.cmake" },
+    ],
+  });
+  fs.renameSync(
+    renamedInput,
+    path.join(path.dirname(renamedInput), "renamed-options.cmake"),
+  );
+  TestValidator.error(
+    "CMake refuses a File API model whose owning input was renamed or deleted",
+    () =>
+      cmakeRepositoryContextProvider.collect({
+        root,
+        env: {
+          ...process.env,
+          SAMCHON_GRAPH_CMAKE_REPLY: renamedInputReply,
+        },
+      }),
+  );
 }
 
 function cmakeScenario(

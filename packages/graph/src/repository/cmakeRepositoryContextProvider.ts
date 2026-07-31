@@ -518,7 +518,12 @@ function assertCmakeReplyFresh(
   const replyTime = fs.statSync(indexFile).mtimeMs;
   for (const source of sources) {
     const file = path.resolve(root, source.file);
-    if (fs.existsSync(file) && fs.statSync(file).mtimeMs > replyTime) {
+    if (!fs.existsSync(file)) {
+      throw new Error(
+        `CMake File API input ${source.file} is missing; reconfigure the project before repository-context indexing.`,
+      );
+    }
+    if (fs.statSync(file).mtimeMs > replyTime) {
       throw new Error(
         `CMake File API reply predates ${source.file}; reconfigure the project before repository-context indexing.`,
       );

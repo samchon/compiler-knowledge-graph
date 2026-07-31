@@ -109,6 +109,11 @@ export const test_repository_context_protocol_commits_atomic_shards =
       }),
       mutate(transaction(3, unchanged, changedShard()), (frames) => {
         const upsert = frames[2] as RepositoryContextProtocol.IUpsertShard;
+        upsert.shard.nodes[0]!.authority = "inferred";
+        refresh(frames);
+      }),
+      mutate(transaction(3, unchanged, changedShard()), (frames) => {
+        const upsert = frames[2] as RepositoryContextProtocol.IUpsertShard;
         (upsert.shard.coverage[0] as { state: string }).state = "unknown";
         refresh(frames);
       }),
@@ -215,6 +220,11 @@ export const test_repository_context_protocol_commits_atomic_shards =
         const upsert = changedUpsert(frames);
         (upsert.shard.edges[0] as { authority: string }).authority =
           "guessed";
+        refresh(frames);
+      }),
+      mutate(transaction(3, unchanged, changedShard()), (frames) => {
+        const upsert = changedUpsert(frames);
+        upsert.shard.edges[0]!.authority = "inferred";
         refresh(frames);
       }),
       mutate(transaction(3, unchanged, changedShard()), (frames) => {

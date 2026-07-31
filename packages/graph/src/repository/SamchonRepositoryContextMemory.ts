@@ -45,7 +45,8 @@ export class SamchonRepositoryContextMemory {
               node.name.toLowerCase().includes(query) ||
               node.coordinate.toLowerCase().includes(query),
           );
-    const selected = new Set(seeds.slice(0, limit).map((node) => node.id));
+    const boundedSeeds = seeds.slice(0, limit);
+    const selected = new Set(boundedSeeds.map((node) => node.id));
     const matchingEdges = availableEdges.filter(
       (edge) =>
         (families === undefined || families.has(edge.kind)) &&
@@ -65,9 +66,13 @@ export class SamchonRepositoryContextMemory {
       if (this.nodesById.has(edge.from)) selected.add(edge.from);
       if (this.nodesById.has(edge.to)) selected.add(edge.to);
     }
-    const nodes = this.dump.nodes
-      .filter((node) => selected.has(node.id))
-      .slice(0, limit);
+    const seedIds = new Set(boundedSeeds.map((node) => node.id));
+    const nodes = [
+      ...boundedSeeds,
+      ...this.dump.nodes.filter(
+        (node) => selected.has(node.id) && !seedIds.has(node.id),
+      ),
+    ].slice(0, limit);
     const retained = new Set(nodes.map((node) => node.id));
     const retainedEdges = edges.filter(
       (edge) =>

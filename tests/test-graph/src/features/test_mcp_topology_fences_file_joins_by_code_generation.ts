@@ -86,12 +86,12 @@ export const test_mcp_topology_fences_file_joins_by_code_generation =
       );
 
       const endpointBounded = await application.inspect_code_graph({
-        question: "show the fixture workspace relation",
+        question: "show the source relation",
         draft: { reason: "repository orientation", type: "topology" },
         review: "topology is the typed repository plane",
         request: {
           type: "topology",
-          query: "fixture",
+          query: "source",
           relations: ["contains"],
           limit: 1,
         },
@@ -101,11 +101,12 @@ export const test_mcp_topology_fences_file_joins_by_code_generation =
         endpointBounded.result.type === "topology"
           ? [
               endpointBounded.result.nodes.length,
+              endpointBounded.result.nodes[0]?.name,
               endpointBounded.result.edges.length,
               endpointBounded.result.truncated,
             ]
           : [],
-        [1, 0, true],
+        [1, "source", 0, true],
       );
 
       const legacy = SamchonGraphMemory.from({

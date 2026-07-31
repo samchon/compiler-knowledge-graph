@@ -17,6 +17,13 @@ const manifestFile = path.resolve(
   manifestArgument?.slice("--manifest=".length) ??
     "docs/provider-support.json",
 );
+const readmeArgument = process.argv
+  .slice(2)
+  .find((argument) => argument.startsWith("--readme="));
+const readmeFile = path.resolve(
+  root,
+  readmeArgument?.slice("--readme=".length) ?? "README.md",
+);
 const write = args.has("--write");
 const validateOnly = args.has("--validate-only");
 const supportedPlatforms = new Set([
@@ -52,13 +59,11 @@ validateManifest(
 );
 
 if (!validateOnly) {
-  const readmeFile = path.join(root, "README.md");
   const readme = fs.readFileSync(readmeFile, "utf8");
-  const generated = [
-    startMarker,
-    renderSupport(manifest),
-    endMarker,
-  ].join("\n");
+  const newline = readme.includes("\r\n") ? "\r\n" : "\n";
+  const generated = [startMarker, renderSupport(manifest), endMarker]
+    .join("\n")
+    .replaceAll("\n", newline);
   const next = replaceGeneratedBlock(readme, generated);
   if (write) {
     fs.writeFileSync(readmeFile, next);

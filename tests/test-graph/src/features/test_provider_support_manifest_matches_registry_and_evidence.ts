@@ -22,6 +22,29 @@ export const test_provider_support_manifest_matches_registry_and_evidence =
         { status: 0, stderr: "" },
       );
 
+      const sourceReadme = fs.readFileSync(
+        path.join(GraphPaths.repositoryRoot, "README.md"),
+        "utf8",
+      );
+      const lfReadme = path.join(root, "README-lf.md");
+      fs.writeFileSync(lfReadme, sourceReadme.replace(/\r\n/g, "\n"));
+      TestValidator.equals(
+        "the generated support block preserves an LF checkout",
+        checkReadme(canonical, lfReadme, root),
+        { status: 0, stderr: "" },
+      );
+
+      const crlfReadme = path.join(root, "README-crlf.md");
+      fs.writeFileSync(
+        crlfReadme,
+        sourceReadme.replace(/\r?\n/g, "\r\n"),
+      );
+      TestValidator.equals(
+        "the generated support block preserves a CRLF checkout",
+        checkReadme(canonical, crlfReadme, root),
+        { status: 0, stderr: "" },
+      );
+
       const parsed = JSON.parse(fs.readFileSync(canonical, "utf8")) as {
         providers: Array<
           Record<string, unknown> & {
@@ -260,6 +283,38 @@ function validate(
   const result = spawnSync(
     process.execPath,
     [script, "--validate-only", `--manifest=${manifest}`],
+    {
+      cwd: GraphPaths.repositoryRoot,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        NODE_V8_COVERAGE: path.join(coverageRoot, "child-coverage"),
+      },
+      windowsHide: true,
+    },
+  );
+  return {
+    status: result.status,
+    stderr: result.stderr,
+  };
+}
+
+function checkReadme(
+  manifest: string,
+  readme: string,
+  coverageRoot: string,
+): {
+  status: number | null;
+  stderr: string;
+} {
+  const script = path.join(
+    GraphPaths.graphPackageRoot,
+    "build",
+    "provider-support.mjs",
+  );
+  const result = spawnSync(
+    process.execPath,
+    [script, "--check", `--manifest=${manifest}`, `--readme=${readme}`],
     {
       cwd: GraphPaths.repositoryRoot,
       encoding: "utf8",

@@ -42,8 +42,8 @@ export class SamchonRepositoryContextMemory {
         : this.dump.nodes.filter(
             (node) =>
               node.id.toLowerCase() === query ||
-              node.name.toLowerCase().includes(query) ||
-              node.coordinate.toLowerCase().includes(query),
+              node.name.toLowerCase() === query ||
+              node.coordinate.toLowerCase() === query,
           );
     const boundedSeeds = seeds.slice(0, limit);
     const selected = new Set(boundedSeeds.map((node) => node.id));

@@ -225,6 +225,11 @@ export const test_mcp_topology_fences_file_joins_by_code_generation =
 
 function topologyDump(project: string): ISamchonRepositoryContextDump {
   const workspace = repositoryContextId("fixture", "workspace", ".");
+  const sourceHelper = repositoryContextId(
+    "fixture",
+    "source-root",
+    "source-helper",
+  );
   const source = repositoryContextId("fixture", "source-root", "src");
   const nodes: ISamchonRepositoryContextDump.INode[] = [
     {
@@ -234,6 +239,16 @@ function topologyDump(project: string): ISamchonRepositoryContextDump {
       name: "fixture",
       ecosystem: "fixture",
       coordinate: ".",
+      configuration: "default",
+      external: false,
+    },
+    {
+      id: sourceHelper,
+      authority: "declared",
+      kind: "source-root",
+      name: "source-helper",
+      ecosystem: "fixture",
+      coordinate: "source-helper",
       configuration: "default",
       external: false,
     },

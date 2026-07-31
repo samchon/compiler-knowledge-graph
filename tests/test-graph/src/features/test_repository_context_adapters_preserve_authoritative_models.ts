@@ -1134,6 +1134,48 @@ function exerciseCmakeRefusals(root: string): void {
       }),
   );
 
+  const wrongReplyVersions = cmakeScenario(root, "wrong-reply-versions", {
+    index: {
+      reply: {
+        "codemodel-v20": { jsonFile: "codemodel.json" },
+        "cmakeFiles-v10": { jsonFile: "cmakeFiles.json" },
+      },
+    },
+    configurations: [{ name: "", projects: [], directories: [], targets: [] }],
+  });
+  TestValidator.error(
+    "CMake stateless reply keys must match the requested major versions exactly",
+    () =>
+      cmakeRepositoryContextProvider.collect({
+        root,
+        env: {
+          ...process.env,
+          SAMCHON_GRAPH_CMAKE_REPLY: wrongReplyVersions,
+        },
+      }),
+  );
+
+  const failedReply = cmakeScenario(root, "failed-latest-reply", {
+    configurations: [{ name: "", projects: [], directories: [], targets: [] }],
+  });
+  writeJson(path.join(failedReply, "error-1.json"), {
+    error: "fixture same-generation failure",
+  });
+  writeJson(path.join(failedReply, "error-9999.json"), {
+    error: "fixture configure failed",
+  });
+  TestValidator.error(
+    "CMake refuses an error reply newer than the last successful index",
+    () =>
+      cmakeRepositoryContextProvider.collect({
+        root,
+        env: {
+          ...process.env,
+          SAMCHON_GRAPH_CMAKE_REPLY: failedReply,
+        },
+      }),
+  );
+
   const emptyConfigurations = cmakeScenario(root, "empty-configurations", {
     configurations: [],
   });

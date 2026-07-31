@@ -190,16 +190,15 @@ function objectReference(
   index: ICmakeIndex,
   kind: string,
   major: number,
-  replyPrefix: string,
+  replyKey: string,
 ): string | undefined {
   return (
     index.objects?.find(
       (entry) =>
         entry.kind === kind && entry.version?.major === major,
     )?.jsonFile ??
-    Object.entries(index.reply ?? {}).find(([key]) =>
-      key.startsWith(replyPrefix),
-    )?.[1].jsonFile
+    Object.entries(index.reply ?? {}).find(([key]) => key === replyKey)?.[1]
+      .jsonFile
   );
 }
 
@@ -569,11 +568,30 @@ function locateReply(
 function latestIndex(reply: string): string {
   const files = fs
     .readdirSync(reply)
-    .filter((file) => /^index-.*\.json$/.test(file))
-    .sort(compareRepositoryText);
+    .filter((file) => /^(?:index|error)-.*\.json$/.test(file))
+    .map((file) => ({
+      file,
+      generation: file.slice(file.indexOf("-") + 1),
+    }))
+    .sort((left, right) => {
+      const generation = compareRepositoryText(
+        left.generation,
+        right.generation,
+      );
+      return generation !== 0
+        ? generation
+        : Number(left.file.startsWith("error-")) -
+            Number(right.file.startsWith("error-"));
+    })
+    .map((entry) => entry.file);
   const latest = files.at(-1);
   if (latest === undefined) {
     throw new Error("CMake File API reply directory has no index");
+  }
+  if (latest.startsWith("error-")) {
+    throw new Error(
+      `CMake File API latest reply reports a configuration error: ${latest}`,
+    );
   }
   return path.join(reply, latest);
 }

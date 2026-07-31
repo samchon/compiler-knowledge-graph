@@ -79,6 +79,8 @@ export namespace GraphSnapshotProtocol {
     type: "hello";
     protocolVersion: 1;
     schemaVersion: 1;
+    /** Schema version of the producer payload normalized into this protocol. */
+    producerSchemaVersion: number;
     provider: string;
     producer: string;
     producerVersion: string;
@@ -147,6 +149,15 @@ export namespace GraphSnapshotProtocol {
   /** SHA-256 over the canonical content of one shard. */
   export function shardDigest(shard: IShard): string {
     return digest(shard);
+  }
+
+  /** SHA-256 over one ordered source/configuration/dependency manifest. */
+  export function manifestDigest(sources: readonly ISource[]): string {
+    return digest(
+      [...sources]
+        .sort((left, right) => compareText(left.file, right.file))
+        .map((source) => ({ ...source })),
+    );
   }
 
   /**
@@ -248,7 +259,11 @@ export namespace GraphSnapshotProtocol {
 
     public apply(
       frames: readonly Frame[],
-      options: { signal?: AbortSignal } = {},
+      options: {
+        signal?: AbortSignal;
+        warnings?: readonly string[];
+        validate?: (snapshot: IBulkGraphSession.ISnapshot) => void;
+      } = {},
     ): IBulkGraphSession.ISnapshot {
       throwIfAborted(options.signal);
       if (frames.length < 3) {
@@ -381,7 +396,14 @@ export namespace GraphSnapshotProtocol {
       if (!equalManifest(commit.shards, expectedManifest)) {
         throw new Error("graph snapshot protocol: commit shard manifest mismatch");
       }
-      const assembled = assemble(hello, begin, commit, expectedManifest, next);
+      const assembled = assemble(
+        hello,
+        begin,
+        commit,
+        expectedManifest,
+        next,
+        options.warnings ?? [],
+      );
       assertAssembledFacts(assembled, hello);
       if (factDigest(assembled) !== commit.factDigest) {
         throw new Error("graph snapshot protocol: commit fact digest mismatch");
@@ -394,6 +416,8 @@ export namespace GraphSnapshotProtocol {
       );
       throwIfAborted(options.signal);
       freezeDeep(assembled, "the graph snapshot protocol generation");
+      options.validate?.(assembled);
+      throwIfAborted(options.signal);
       this.committed = next;
       this.identity = clone(hello);
       this.snapshot = assembled;
@@ -412,6 +436,7 @@ export namespace GraphSnapshotProtocol {
     commit: ICommit,
     manifest: IBulkGraphSession.IShard[],
     shards: ReadonlyMap<string, ICommittedShard>,
+    warnings: readonly string[],
   ): IBulkGraphSession.ISnapshot {
     const nodes: ISamchonGraphNode[] = [];
     const edges: ISamchonGraphEdge[] = [];
@@ -454,7 +479,7 @@ export namespace GraphSnapshotProtocol {
         provider: hello.provider,
         authority: hello.authority,
         facts: [...hello.supportedFacts],
-        schemaVersion: hello.schemaVersion,
+        schemaVersion: hello.producerSchemaVersion,
         tool: hello.producer,
         toolVersion: hello.producerVersion,
         compilerVersion: hello.compilerVersion,
@@ -479,7 +504,7 @@ export namespace GraphSnapshotProtocol {
         shards: manifest.map((entry) => ({ ...entry })),
         factDigest: commit.factDigest,
       },
-      warnings: [],
+      warnings: [...warnings],
     };
   }
 
@@ -492,6 +517,14 @@ export namespace GraphSnapshotProtocol {
     if (hello.schemaVersion !== SCHEMA_VERSION) {
       throw new Error(
         `graph snapshot protocol: unsupported schema version ${String(hello.schemaVersion)}`,
+      );
+    }
+    if (
+      !Number.isSafeInteger(hello.producerSchemaVersion) ||
+      hello.producerSchemaVersion < 1
+    ) {
+      throw new Error(
+        "graph snapshot protocol: invalid producer schema version",
       );
     }
     assertString(hello.provider, "hello.provider");

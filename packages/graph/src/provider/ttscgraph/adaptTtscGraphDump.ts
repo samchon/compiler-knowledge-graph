@@ -27,6 +27,7 @@ import { ITtscGraphSnapshot } from "./ITtscGraphSnapshot";
  * version of the frame that carried it.
  */
 interface IAdaptedDump {
+  target: string;
   nodes: ISamchonGraphNode[];
   edges: ISamchonGraphEdge[];
   diagnostics: ISamchonGraphDiagnostic[];
@@ -82,6 +83,8 @@ export function adaptTtscGraphDump(
       `ttscgraph: response project ${project} does not match ${expectedRoot}`,
     );
   }
+  const target = stringOf(dump.tsconfig, "dump.tsconfig");
+  validateGraphFile(target, "dump.tsconfig");
   const rawNodes = arrayOf(dump.nodes, "dump.nodes");
   const rawEdges = arrayOf(dump.edges, "dump.edges");
   const moduleIds = new Map<string, string>();
@@ -267,6 +270,7 @@ export function adaptTtscGraphDump(
     : refuseDiagnostics(dump.diagnostics, warnings);
 
   return {
+    target,
     nodes,
     edges,
     diagnostics,
@@ -449,7 +453,7 @@ function provenanceOf(
       "dump.provenance.producer.typescript",
     ),
     universe: universeOf(provenance.universe),
-    capabilities,
+    capabilities: [...new Set(capabilities)].sort(compareOrdinal),
   };
 }
 

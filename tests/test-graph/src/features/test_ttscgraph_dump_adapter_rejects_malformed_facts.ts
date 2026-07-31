@@ -48,6 +48,7 @@ export const test_ttscgraph_dump_adapter_rejects_malformed_facts = async () => {
 
   const good = () => ({
     project,
+    tsconfig: "tsconfig.json",
     provenance: provenance(),
     diagnostics: [] as unknown[],
     nodes: [
@@ -606,6 +607,7 @@ export const test_ttscgraph_dump_adapter_rejects_malformed_facts = async () => {
   const rich = adaptTtscGraphDump(
     {
       project,
+      tsconfig: "tsconfig.json",
       provenance: provenance(["src/a.ts", "vendor/dep.ts"]),
       diagnostics: [],
       nodes: [

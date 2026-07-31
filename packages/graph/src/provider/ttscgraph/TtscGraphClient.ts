@@ -1,11 +1,12 @@
 import { ChildProcessWithoutNullStreams, spawn } from "node:child_process";
+import { compareOrdinal } from "@samchon/graph-sitter";
 
-import { freezeDeep } from "../../utils/freezeDeep";
-import { sealedMap } from "../../utils/sealedMap";
 import { ownedProcess } from "../../utils/ownedProcess";
 import { spawnableCommand } from "../../utils/spawnableCommand";
+import { GraphSnapshotProtocol } from "../GraphSnapshotProtocol";
 import { IBulkGraphSession } from "../IBulkGraphSession";
 import { adaptTtscGraphDump } from "./adaptTtscGraphDump";
+import { createTtscGraphProtocolTransaction } from "./createTtscGraphProtocolTransaction";
 import { ITtscGraphSnapshot } from "./ITtscGraphSnapshot";
 import { parseTtscGraphSnapshot } from "./parseTtscGraphSnapshot";
 
@@ -49,6 +50,7 @@ export class TtscGraphClient implements IBulkGraphSession {
   private readonly validate: (
     snapshot: IBulkGraphSession.ISnapshot,
   ) => void;
+  private readonly protocol: GraphSnapshotProtocol.Store;
   private child: NativeChild | undefined;
   private readonly ownedChildren = new Set<NativeChild>();
   private readonly pending = new Map<number, Pending>();
@@ -102,6 +104,7 @@ export class TtscGraphClient implements IBulkGraphSession {
     this.requestTimeoutMs = requestTimeoutMs;
     this.maxResponseBytes = maxResponseBytes;
     this.validate = options.validate ?? (() => undefined);
+    this.protocol = new GraphSnapshotProtocol.Store(this.root);
   }
 
   public get generation(): number {
@@ -159,18 +162,16 @@ export class TtscGraphClient implements IBulkGraphSession {
             "ttscgraph: incremental snapshot reports a build universe that moved since the last generation, so its program cannot have been reused",
           );
         }
-        const next: IBulkGraphSession.ISnapshot = {
-          languages: ["typescript"],
-          nodes: adapted.nodes,
-          edges: adapted.edges,
-          diagnostics: adapted.diagnostics,
-          sources: adapted.sources,
-          provenance,
+        const frames = createTtscGraphProtocolTransaction(adapted, {
+          root: this.root,
+          sequence: this.version + 1,
+          previous: this.snapshot,
+        });
+        const next = this.protocol.apply(frames, {
+          signal: options.signal,
           warnings: adapted.warnings,
-        };
-        next.sources = sealedMap(next.sources, "the ttscgraph snapshot");
-        freezeDeep(next, "the ttscgraph snapshot");
-        this.validate(next);
+          validate: this.validate,
+        });
         this.snapshot = next;
         this.childHasSnapshot = true;
         this.version += 1;
@@ -638,10 +639,8 @@ function assertCapabilitiesMatch(
   envelope: readonly string[],
   dump: readonly string[],
 ): void {
-  const compare = (left: string, right: string): number =>
-    left < right ? -1 : left > right ? 1 : 0;
-  const left = JSON.stringify([...envelope].sort(compare));
-  const right = JSON.stringify([...dump].sort(compare));
+  const left = JSON.stringify([...new Set(envelope)].sort(compareOrdinal));
+  const right = JSON.stringify([...new Set(dump)].sort(compareOrdinal));
   if (left !== right) {
     throw new Error(
       "ttscgraph: response capabilities disagree with the snapshot provenance",

@@ -9,6 +9,7 @@ import { TtscGraphClient } from "../../../../packages/graph/src/provider/ttscgra
 import { resolveTtscGraphCommand } from "../../../../packages/graph/src/provider/ttscgraph/resolveTtscGraphCommand";
 import { ttscGraphProvider } from "../../../../packages/graph/src/provider/ttscgraph/ttscGraphProvider";
 import { ISamchonGraphDump } from "../../../../packages/graph/src/structures";
+import { GRAPH_EDGE_KINDS } from "../../../../packages/graph/src/typings/GRAPH_EDGE_KINDS";
 import { GraphPaths } from "../internal/GraphPaths";
 
 export const test_ttscgraph_bulk_provider_reuses_and_atomically_replaces_snapshots =
@@ -109,6 +110,34 @@ export const test_ttscgraph_bulk_provider_reuses_and_atomically_replaces_snapsho
       6,
     );
     TestValidator.equals(
+      "the reference provider publishes one exhaustive protocol coverage matrix",
+      [
+        initial.snapshot.protocol?.sequence,
+        initial.snapshot.protocol?.targets,
+        initial.snapshot.coverage?.length,
+        initial.snapshot.coverage?.filter((row) => row.state === "complete")
+          .length,
+        initial.snapshot.coverage?.filter(
+          (row) => row.state === "unsupported",
+        ).length,
+        initial.snapshot.unresolved,
+      ],
+      [
+        1,
+        ["tsconfig.json"],
+        GRAPH_EDGE_KINDS.length,
+        ttscGraphProvider.facts.length,
+        GRAPH_EDGE_KINDS.length - ttscGraphProvider.facts.length,
+        [],
+      ],
+    );
+    const initialShards = new Map(
+      initial.snapshot.protocol?.shards.map((shard) => [
+        shard.key,
+        shard.digest,
+      ]),
+    );
+    TestValidator.equals(
       "the first snapshot reports the compiler's own mode, not an inferred one",
       initial.mode,
       "initial",
@@ -153,6 +182,27 @@ export const test_ttscgraph_bulk_provider_reuses_and_atomically_replaces_snapsho
       "a reused program is reported as incremental because the compiler said so",
       changed.mode,
       "incremental",
+    );
+    const changedShards = new Map(
+      changed.snapshot.protocol?.shards.map((shard) => [
+        shard.key,
+        shard.digest,
+      ]),
+    );
+    TestValidator.equals(
+      "the incremental generation is based on the prior commit and reuses unaffected file shards",
+      [
+        changed.snapshot.protocol?.baseSequence,
+        changed.snapshot.protocol?.baseGeneration,
+        [...changedShards].filter(
+          ([key, digest]) => initialShards.get(key) === digest,
+        ).length,
+        [...changedShards].filter(
+          ([key, digest]) =>
+            initialShards.has(key) && initialShards.get(key) !== digest,
+        ).length,
+      ],
+      [1, initial.snapshot.protocol?.generation, 4, 2],
     );
     await rejects(client.refresh(), "serve errors are surfaced");
     TestValidator.predicate(

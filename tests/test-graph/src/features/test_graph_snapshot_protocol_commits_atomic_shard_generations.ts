@@ -29,7 +29,13 @@ export const test_graph_snapshot_protocol_commits_atomic_shard_generations =
     const initialFrames = transaction("generation-1");
     const ndjson = initialFrames.map(JSON.stringify).join("\n");
     const parsed = GraphSnapshotProtocol.parse(ndjson);
-    const initial = store.apply(parsed);
+    let validations = 0;
+    const initial = store.apply(parsed, {
+      warnings: ["fixture host warning"],
+      validate: () => {
+        validations += 1;
+      },
+    });
     const provider = {
       name: "fixture-compiler",
       authority: "compiler" as const,
@@ -52,6 +58,8 @@ export const test_graph_snapshot_protocol_commits_atomic_shard_generations =
         initial.nodes.map((node) => node.name),
         initial.coverage?.length,
         initial.unresolved?.map((site) => site.reason),
+        initial.warnings,
+        validations,
       ],
       [
         1,
@@ -61,6 +69,8 @@ export const test_graph_snapshot_protocol_commits_atomic_shard_generations =
         ["run"],
         GRAPH_EDGE_KINDS.length,
         ["dynamic", "reflection"],
+        ["fixture host warning"],
+        1,
       ],
     );
     TestValidator.equals(
@@ -185,6 +195,29 @@ export const test_graph_snapshot_protocol_commits_atomic_shard_generations =
       store,
       transaction("generation-3", { sequence: 3 }),
       "a non-advancing generation sequence",
+    );
+    let validationError = "";
+    try {
+      store.apply(
+        transaction("validator-rejected-4", {
+          baseGeneration: "generation-3",
+          baseSequence: 3,
+          coverageState: "complete",
+        }),
+        {
+          validate: () => {
+            throw new Error("fixture publication refusal");
+          },
+        },
+      );
+    } catch (error) {
+      validationError =
+        error instanceof Error ? error.message : String(error);
+    }
+    TestValidator.predicate(
+      "a host publication refusal keeps the prior committed generation",
+      validationError.includes("fixture publication refusal") &&
+        store.current === deleted,
     );
     await rejectedWithoutMovement(
       store,
@@ -630,6 +663,7 @@ function validHello(): GraphSnapshotProtocol.IHello {
     type: "hello",
     protocolVersion: 1,
     schemaVersion: GraphSnapshotProtocol.SCHEMA_VERSION,
+    producerSchemaVersion: 1,
     provider: "fixture-compiler",
     producer: "fixture-exporter",
     producerVersion: "1.0.0",
@@ -740,6 +774,12 @@ function malformedTransactions(): Array<
       "an unknown schema version",
       mutate(valid, (frames) => {
         record(frames[0]!).schemaVersion = 2;
+      }),
+    ],
+    [
+      "an invalid producer schema version",
+      mutate(valid, (frames) => {
+        record(frames[0]!).producerSchemaVersion = 0;
       }),
     ],
     [

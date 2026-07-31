@@ -23,7 +23,12 @@ export const test_provider_support_manifest_matches_registry_and_evidence =
       );
 
       const parsed = JSON.parse(fs.readFileSync(canonical, "utf8")) as {
-        providers: Array<Record<string, unknown>>;
+        providers: Array<
+          Record<string, unknown> & {
+            installSources?: unknown;
+            platforms?: unknown;
+          }
+        >;
       };
       const missing = structuredClone(parsed);
       missing.providers.shift();
@@ -48,6 +53,42 @@ export const test_provider_support_manifest_matches_registry_and_evidence =
         "a documented absent provider fails closed",
         validate(absentFile, root).stderr.includes(
           "documented absent provider absent-provider",
+        ),
+      );
+
+      const misspelledPlatform = structuredClone(parsed);
+      misspelledPlatform.providers[0]!.platforms = ["linxu"];
+      const misspelledPlatformFile = path.join(
+        root,
+        "misspelled-platform.json",
+      );
+      fs.writeFileSync(
+        misspelledPlatformFile,
+        JSON.stringify(misspelledPlatform),
+      );
+      TestValidator.predicate(
+        "an unknown platform fails closed",
+        validate(misspelledPlatformFile, root).stderr.includes(
+          "ttscgraph names unknown platform linxu",
+        ),
+      );
+
+      const unsafeInstallSource = structuredClone(parsed);
+      unsafeInstallSource.providers[0]!.installSources = [
+        { label: "unsafe source", url: "http://example.com/package" },
+      ];
+      const unsafeInstallSourceFile = path.join(
+        root,
+        "unsafe-install-source.json",
+      );
+      fs.writeFileSync(
+        unsafeInstallSourceFile,
+        JSON.stringify(unsafeInstallSource),
+      );
+      TestValidator.predicate(
+        "a non-HTTPS install source fails closed",
+        validate(unsafeInstallSourceFile, root).stderr.includes(
+          "ttscgraph install source unsafe source must be an HTTPS URL",
         ),
       );
     } finally {

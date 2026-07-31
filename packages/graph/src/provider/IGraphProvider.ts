@@ -155,6 +155,12 @@ export namespace IGraphProvider {
   export interface IResolution {
     readonly commands: readonly string[];
     readonly environmentOverrides: readonly string[];
+    /**
+     * Project-owned files whose contents name additional executables. Those
+     * commands are dynamic resolver inputs and must not be represented by a
+     * made-up fixed executable in {@link commands}.
+     */
+    readonly projectCommandSources?: readonly string[];
   }
 
   export interface IConfigurationDerivation {

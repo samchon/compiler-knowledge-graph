@@ -31,7 +31,11 @@ const clangScipProvider = createScipProvider({
   // even though its compilation database was exactly what the indexer consumes.
   // What the index means is decided by the driver each translation unit was
   // actually compiled with, and the database records that per entry.
-  toolchain: { label: "cc", fromProject: compilationDatabaseCompilers },
+  toolchain: {
+    label: "cc",
+    fromProject: compilationDatabaseCompilers,
+    sources: ["compile_commands.json"],
+  },
   languages: ["c", "cpp"],
   command: "scip-clang",
   override: "SAMCHON_GRAPH_SCIP_CLANG",
@@ -473,6 +477,7 @@ type IToolchain =
         env: NodeJS.ProcessEnv,
       ) => readonly string[];
       override?: never;
+      sources: readonly string[];
 
       /** What the rows call this toolchain when the project names none. */
       label: string;
@@ -501,7 +506,7 @@ function createScipProvider(
     commands: Object.freeze([
       props.command,
       SCIP_DECODER.command,
-      ...(props.toolchain.aliases ?? [props.toolchain.label]),
+      ...(props.toolchain.aliases ?? []),
     ]),
     environmentOverrides: Object.freeze([
       props.override,
@@ -510,6 +515,13 @@ function createScipProvider(
         ? []
         : [props.toolchain.override]),
     ]),
+    ...(props.toolchain.fromProject === undefined
+      ? {}
+      : {
+          projectCommandSources: Object.freeze([
+            ...props.toolchain.sources,
+          ]),
+        }),
   }) satisfies IGraphProvider.IResolution;
   return Object.assign(
     scipProvider({

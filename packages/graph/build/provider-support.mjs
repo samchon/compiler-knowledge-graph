@@ -19,6 +19,12 @@ const manifestFile = path.resolve(
 );
 const write = args.has("--write");
 const validateOnly = args.has("--validate-only");
+const supportedPlatforms = new Set([
+  "linux",
+  "macos",
+  "windows",
+  "windows-when-installed",
+]);
 
 if (write && validateOnly) {
   throw new Error(
@@ -134,6 +140,7 @@ function validateManifest(
       "exportMerge",
       "reuseResident",
       "limitations",
+      "decline",
       "fallback",
     ]) {
       invariant(
@@ -151,6 +158,36 @@ function validateManifest(
         documented.platforms.length > 0,
       `${documented.provider} must name supported platforms`,
     );
+    unique(documented.platforms, `${documented.provider} platform`);
+    for (const platform of documented.platforms) {
+      invariant(
+        supportedPlatforms.has(platform),
+        `${documented.provider} names unknown platform ${platform}`,
+      );
+    }
+    invariant(
+      Array.isArray(documented.installSources) &&
+        documented.installSources.length > 0,
+      `${documented.provider} must name install sources`,
+    );
+    unique(
+      documented.installSources.map((source) => source.label),
+      `${documented.provider} install-source label`,
+    );
+    unique(
+      documented.installSources.map((source) => source.url),
+      `${documented.provider} install-source URL`,
+    );
+    for (const source of documented.installSources) {
+      invariant(
+        typeof source.label === "string" && source.label.trim() !== "",
+        `${documented.provider} install source must have a label`,
+      );
+      assertUrl(
+        source.url,
+        `${documented.provider} install source ${source.label}`,
+      );
+    }
     assertUrl(documented.upstream, `${documented.provider} upstream`);
     invariant(
       Array.isArray(documented.childIssues) &&
@@ -161,6 +198,17 @@ function validateManifest(
     for (const issue of documented.childIssues) {
       assertUrl(issue, `${documented.provider} child issue`);
     }
+    unique(documented.languages, `${documented.provider} language`);
+    unique(documented.facts, `${documented.provider} fact`);
+    unique(documented.commands, `${documented.provider} command`);
+    unique(
+      documented.projectCommandSources ?? [],
+      `${documented.provider} project command source`,
+    );
+    unique(
+      documented.environmentOverrides,
+      `${documented.provider} environment override`,
+    );
     invariant(
       equal(documented.languages, provider.languages),
       `${documented.provider} languages differ from GRAPH_PROVIDERS`,
@@ -176,6 +224,13 @@ function validateManifest(
     invariant(
       equal(documented.commands, provider.resolution?.commands),
       `${documented.provider} commands differ from its resolver descriptor`,
+    );
+    invariant(
+      equal(
+        documented.projectCommandSources ?? [],
+        provider.resolution?.projectCommandSources ?? [],
+      ),
+      `${documented.provider} project command sources differ from its resolver descriptor`,
     );
     invariant(
       equal(
@@ -377,7 +432,11 @@ function renderSupport(manifest) {
   const installRows = manifest.providers.map((provider) => [
     code(provider.provider),
     provider.install,
+    provider.installSources
+      .map((source) => `[${source.label}](${source.url})`)
+      .join(", "),
     provider.commands.map(code).join(", "),
+    provider.projectCommandSources?.map(code).join(", ") ?? "—",
     provider.environmentOverrides.map(code).join(", "),
     provider.resolution,
     provider.requirements,
@@ -387,6 +446,7 @@ function renderSupport(manifest) {
     provider.languages.map(code).join(", "),
     code(provider.provider),
     provider.limitations,
+    provider.decline,
     provider.fallback,
   ]);
   const benchmarkRows = manifest.providers.flatMap((provider) =>
@@ -436,7 +496,7 @@ function renderSupport(manifest) {
     "The troubleshooting table names the ordinary language-server/static fallback for each row. Resolution metadata is shared with the shipped registry and checked in CI.",
     "",
     table(
-      ["Provider", "Install", "Commands", "Overrides", "Resolution order", "Project preparation", "Platforms"],
+      ["Provider", "Install", "Install sources", "Fixed commands", "Project command sources", "Overrides", "Resolution order", "Project preparation", "Platforms"],
       installRows,
     ),
     "",
@@ -454,7 +514,7 @@ function renderSupport(manifest) {
     "A strict result's provenance name must equal the provider below. If it is absent, use the commands and overrides in the installation table, then follow the explicit decline reason; the fallback is still usable but does not inherit strict authority.",
     "",
     table(
-      ["Languages", "Expected provenance", "Common boundary", "Decline and fallback"],
+      ["Languages", "Expected provenance", "Common boundary", "Common decline", "Fallback"],
       troubleshootingRows,
     ),
     "",

@@ -31,7 +31,7 @@ export class SamchonRepositoryContextMemory {
       request.relations === undefined || request.relations.length === 0
         ? undefined
         : new Set<RepositoryContextRelationKind>(request.relations);
-    const query = request.query?.trim().toLowerCase();
+    const query = request.query?.trim();
     const availableEdges =
       join.state === "compatible"
         ? withCodeJoins(this.dump.edges, this.dump.nodes, codeFiles)
@@ -41,9 +41,9 @@ export class SamchonRepositoryContextMemory {
         ? this.dump.nodes
         : this.dump.nodes.filter(
             (node) =>
-              node.id.toLowerCase() === query ||
-              node.name.toLowerCase() === query ||
-              node.coordinate.toLowerCase() === query,
+              node.id === query ||
+              node.name === query ||
+              node.coordinate === query,
           );
     const boundedSeeds = seeds.slice(0, limit);
     const selected = new Set(boundedSeeds.map((node) => node.id));

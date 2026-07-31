@@ -230,6 +230,11 @@ function topologyDump(project: string): ISamchonRepositoryContextDump {
     "source-root",
     "source-helper",
   );
+  const upperSource = repositoryContextId(
+    "fixture",
+    "source-root",
+    "Source",
+  );
   const source = repositoryContextId("fixture", "source-root", "src");
   const nodes: ISamchonRepositoryContextDump.INode[] = [
     {
@@ -249,6 +254,16 @@ function topologyDump(project: string): ISamchonRepositoryContextDump {
       name: "source-helper",
       ecosystem: "fixture",
       coordinate: "source-helper",
+      configuration: "default",
+      external: false,
+    },
+    {
+      id: upperSource,
+      authority: "declared",
+      kind: "source-root",
+      name: "Source",
+      ecosystem: "fixture",
+      coordinate: "Source",
       configuration: "default",
       external: false,
     },

@@ -159,8 +159,22 @@ export namespace GraphSnapshotProtocol {
    * so `begin.manifest` is evidence rather than an unchecked producer label.
    */
   export function manifestDigest(sources: readonly ISource[]): string {
+    const unique = new Map<string, ISource>();
+    for (const source of sources) {
+      const prior = unique.get(source.file);
+      if (
+        prior !== undefined &&
+        (prior.checkerDigest !== source.checkerDigest ||
+          prior.diskDigest !== source.diskDigest)
+      ) {
+        throw new Error(
+          `graph snapshot protocol: input manifest disagrees about source ${source.file}`,
+        );
+      }
+      unique.set(source.file, source);
+    }
     return digest(
-      [...sources]
+      [...unique.values()]
         .sort((left, right) => compareText(left.file, right.file))
         .map((source) => ({ ...source })),
     );

@@ -95,6 +95,33 @@ export const test_graph_snapshot_protocol_commits_atomic_shard_generations =
       ],
       [GRAPH_EDGE_KINDS.length, 2, 64, 64],
     );
+    const sharedInput = {
+      file: path.resolve("src/main.ts"),
+      checkerDigest: digest("c"),
+      diskDigest: digest("c"),
+    };
+    TestValidator.equals(
+      "a shared configuration or dependency input has one manifest identity",
+      GraphSnapshotProtocol.manifestDigest([sharedInput, sharedInput]),
+      GraphSnapshotProtocol.manifestDigest([sharedInput]),
+    );
+    TestValidator.error(
+      "a shared input with conflicting digests is refused",
+      () =>
+        GraphSnapshotProtocol.manifestDigest([
+          sharedInput,
+          { ...sharedInput, diskDigest: digest("d") },
+        ]),
+    );
+    const sharedFrames = transaction("shared-input");
+    coverageShard(sharedFrames).shard.sources.push({ ...sharedInput });
+    refreshDigests(sharedFrames);
+    TestValidator.equals(
+      "two shards can share one byte-identical input",
+      new GraphSnapshotProtocol.Store(process.cwd()).apply(sharedFrames).sources
+        .size,
+      1,
+    );
     for (const [label, expected, mutateSnapshot] of invalidProtocolSnapshots()) {
       let message = "";
       try {
@@ -708,7 +735,10 @@ function mutate(
   return cloned;
 }
 
-function refreshDigests(frames: GraphSnapshotProtocol.Frame[]): void {
+function refreshDigests(
+  frames: GraphSnapshotProtocol.Frame[],
+  options: { manifest?: boolean } = {},
+): void {
   const hello = frames[0] as GraphSnapshotProtocol.IHello;
   const begin = frames[1] as GraphSnapshotProtocol.IBegin;
   const shards = frames
@@ -721,9 +751,11 @@ function refreshDigests(frames: GraphSnapshotProtocol.Frame[]): void {
       return frame.shard;
     });
   const last = commit(frames);
-  begin.manifest = GraphSnapshotProtocol.manifestDigest(
-    shards.flatMap((shard) => shard.sources),
-  );
+  if (options.manifest !== false) {
+    begin.manifest = GraphSnapshotProtocol.manifestDigest(
+      shards.flatMap((shard) => shard.sources),
+    );
+  }
   last.shards = shards
     .map((shard) => ({
       key: shard.key,
@@ -1100,7 +1132,7 @@ function malformedTransactions(): Array<
           checkerDigest: digest("d"),
           diskDigest: digest("d"),
         });
-        refreshDigests(frames);
+        refreshDigests(frames, { manifest: false });
       }),
     ],
     [
@@ -1111,7 +1143,7 @@ function malformedTransactions(): Array<
           checkerDigest: digest("c"),
           diskDigest: digest("d"),
         });
-        refreshDigests(frames);
+        refreshDigests(frames, { manifest: false });
       }),
     ],
     [

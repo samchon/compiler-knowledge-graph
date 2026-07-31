@@ -18,6 +18,10 @@ const SCIP_DECODER = Object.freeze({
   command: "scip",
   override: "SAMCHON_GRAPH_SCIP",
 });
+const COMPILATION_DATABASE_INPUTS: readonly string[] = Object.freeze([
+  "compile_commands.json",
+  "build/compile_commands.json",
+]);
 
 const clangScipProvider = createScipProvider({
   name: "scip-clang",
@@ -34,7 +38,7 @@ const clangScipProvider = createScipProvider({
   toolchain: {
     label: "cc",
     fromProject: compilationDatabaseCompilers,
-    sources: ["compile_commands.json"],
+    sources: COMPILATION_DATABASE_INPUTS,
   },
   languages: ["c", "cpp"],
   command: "scip-clang",
@@ -1724,11 +1728,6 @@ const WINDOWS_EXECUTABLE_SUFFIX = /\.(?:com|exe|cmd|bat)$/i;
 
 /** A separator no path can contain. */
 const SEPARATOR = String.fromCharCode(0);
-const COMPILATION_DATABASE_INPUTS: readonly string[] = [
-  "compile_commands.json",
-  "build/compile_commands.json",
-];
-
 const compilationDatabases =
   new BoundedMap<ICompilationDatabaseCommand[]>(64);
 

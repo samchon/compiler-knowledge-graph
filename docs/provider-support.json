@@ -127,7 +127,7 @@
       "authority": "semantic-index",
       "facts": [],
       "commands": ["scip-clang", "scip"],
-      "projectCommandSources": ["compile_commands.json"],
+      "projectCommandSources": ["compile_commands.json", "build/compile_commands.json"],
       "environmentOverrides": ["SAMCHON_GRAPH_SCIP_CLANG", "SAMCHON_GRAPH_SCIP"],
       "install": "Install `scip-clang` 0.4.0 and the `scip` decoder; provide a generated `compile_commands.json`.",
       "installSources": [

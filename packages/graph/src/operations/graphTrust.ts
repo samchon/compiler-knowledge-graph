@@ -16,7 +16,7 @@ export function graphTrust(
   graph: SamchonGraphMemory,
   type: Exclude<
     ISamchonGraphApplication.IProps["request"]["type"],
-    "escape"
+    "escape" | "topology"
   >,
 ): {
   provenance?: ISamchonGraphApplication.IOutput["provenance"];
@@ -62,7 +62,7 @@ export function graphTrust(
 function familiesOf(
   type: Exclude<
     ISamchonGraphApplication.IProps["request"]["type"],
-    "escape"
+    "escape" | "topology"
   >,
 ): GraphEdgeKind[] {
   switch (type) {

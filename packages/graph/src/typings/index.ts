@@ -3,3 +3,7 @@ export * from "./GRAPH_EDGE_KINDS";
 export * from "./GraphLanguage";
 export * from "./GraphNodeKind";
 export * from "./GraphProviderAuthority";
+export * from "./RepositoryContextAuthority";
+export * from "./RepositoryContextCoverageState";
+export * from "./RepositoryContextNodeKind";
+export * from "./RepositoryContextRelationKind";

@@ -56,6 +56,7 @@ const GRAPH_REQUEST_TYPES = [
   "details",
   "overview",
   "tour",
+  "topology",
   "escape",
 ];
 

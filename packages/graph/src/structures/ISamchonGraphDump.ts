@@ -41,6 +41,15 @@ export interface ISamchonGraphDump {
   /** Which indexing strategy produced the graph. */
   indexer: "lsp" | "static" | "hybrid";
 
+  /**
+   * Complete coordinator input generation used to fence code/topology joins.
+   *
+   * Absent only on dumps written before cross-plane generation fencing.
+   */
+  generation?: {
+    input: string;
+  };
+
   /** What each strict provider proved about the slice it contributed, one row per provider, ordered by provider name so an unchanged checkout stays byte-identical. Absent when no strict provider served the build, and absent from dumps written before this field existed. Computation mode is deliberately not here: it belongs to one refresh rather than to the facts, so recording it would make two dumps of the same unedited checkout differ. */
   provenance?: ISamchonGraphDump.IProvenance[];
 

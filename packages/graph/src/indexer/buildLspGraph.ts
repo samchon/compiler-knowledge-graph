@@ -89,6 +89,10 @@ export async function buildLspGraph(
         ? []
         : closeKeptSessions(result.sessions),
   );
+  committed.dump = {
+    ...committed.dump,
+    generation: { input: committed.inputGeneration! },
+  };
   if (options.keepAlive) {
     const { providerSourceDigests: _providerSourceDigests, ...result } =
       committed;

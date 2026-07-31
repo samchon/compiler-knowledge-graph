@@ -446,6 +446,64 @@ export namespace ContractParity {
       },
       {
         reason:
+          "#159 adds a typed repository-topology branch while keeping its fact plane separate from code-semantic structures.",
+        from: [
+          'import { ISamchonGraphTrace } from "./ISamchonGraphTrace";',
+          'import { ISamchonGraphUnresolvedSummary } from "./ISamchonGraphUnresolvedSummary";',
+        ].join("\n"),
+        to: [
+          'import { ISamchonGraphTrace } from "./ISamchonGraphTrace";',
+          'import { ISamchonGraphTopology } from "./ISamchonGraphTopology";',
+          'import { ISamchonGraphUnresolvedSummary } from "./ISamchonGraphUnresolvedSummary";',
+        ].join("\n"),
+      },
+      {
+        reason:
+          "#159 documents topology as the request for declared or owning-tool repository orientation, distinct from symbol semantics.",
+        layer: "prose",
+        from:
+          "- `overview`: project layers and folder structure. - `escape`: the answer is outside the graph",
+        to:
+          "- `overview`: project layers and folder structure. - `topology`: workspace, package, target, task, source-root, entrypoint, and project-dependency orientation from declared or owning-tool models. - `escape`: the answer is outside the graph",
+      },
+      {
+        reason:
+          "#159 lists the new typed branch in the public method's operation guide.",
+        layer: "prose",
+        from:
+          "- `overview`: the project's layers and folder structure Every fact",
+        to:
+          "- `overview`: the project's layers and folder structure - `topology`: repository workspaces, packages, roots, targets, tasks, and dependencies Every fact",
+      },
+      {
+        reason:
+          "The method guide keeps the unchanged tour meaning within the MCP schema generator's description limit.",
+        layer: "prose",
+        from:
+          "- `tour`: architecture, the runtime flow from the public API to the code that does the work, nearby paths, and the tests to read — a whole orientation in one call - `trace`:",
+        to:
+          "- `tour`: architecture, runtime flow, nearby paths, and tests - `trace`:",
+      },
+      {
+        reason:
+          "#159 adds the versioned repository-topology request to the existing single MCP tool.",
+        from: "| ISamchonGraphEscape.IRequest;",
+        to: [
+          "| ISamchonGraphTopology.IRequest",
+          "| ISamchonGraphEscape.IRequest;",
+        ].join("\n"),
+      },
+      {
+        reason:
+          "#159 returns the typed repository-topology result beside the existing code-semantic result branches.",
+        from: "| ISamchonGraphEscape;",
+        to: [
+          "| ISamchonGraphTopology",
+          "| ISamchonGraphEscape;",
+        ].join("\n"),
+      },
+      {
+        reason:
           "The compiler resolves a fact and verifies it; the index checks it. The same guarantee, named for the authority that gives it.",
         layer: "prose",
         from: "is compiler-resolved and verified for the snapshot",
@@ -503,7 +561,7 @@ export namespace ContractParity {
           "There is no compiler to own the index; the repository's own program index answers the question.",
         layer: "prose",
         from: "Answer a __LANG__ question from the compiler's own index of this repository.",
-        to: "Answer a __LANG__ question from this repository's own program index.",
+        to: "Answer a __LANG__ question from the repository's program index.",
       },
       {
         reason:
@@ -514,10 +572,10 @@ export namespace ContractParity {
       },
       {
         reason:
-          "No authority: the sentence is reworded with no change of meaning (a comma becomes `or`, `in` becomes `inside`).",
+          "No authority: the sentence is shortened without changing the boundary between graph facts and source text.",
         layer: "prose",
         from: "Read a file for what the graph does not carry: a body, the text in a span.",
-        to: "Read a file for what the graph does not carry: a body or the text inside a span.",
+        to: "Read source only for a body or span text.",
       },
       {
         reason:
@@ -547,7 +605,7 @@ export namespace ContractParity {
         from:
           "The graph holds every symbol, call, type, decorator and test, each with its file and line, resolved from the source on disk now. Submit exactly one request:",
         to:
-          "The graph returns proved indexed facts plus structured coverage and uncertainty. Submit exactly one request:",
+          "The graph returns proved facts with coverage and uncertainty. Submit one request:",
       },
       {
         reason:
@@ -659,6 +717,33 @@ export namespace ContractParity {
         to: [
           "languages: GraphLanguage[];",
           'indexer: "lsp" | "static" | "hybrid";',
+        ].join("\n"),
+      },
+      {
+        reason:
+          "#159 adds a deterministic code-input generation so an MCP request can fence a topology load between two code refreshes before admitting file joins.",
+        from: 'indexer: "lsp" | "static" | "hybrid";',
+        to: [
+          'indexer: "lsp" | "static" | "hybrid";',
+          "generation?: {",
+          "input: string;",
+          "};",
+        ].join("\n"),
+      },
+      {
+        reason:
+          "The generation shape above is structural; this prose rule records that it exists for cross-plane fencing and remains optional only for legacy dumps.",
+        layer: "prose",
+        from: [
+          "generation?: {",
+          "input: string;",
+          "};",
+        ].join("\n"),
+        to: [
+          "/** Complete coordinator input generation used to fence code/topology joins. Absent only on dumps written before cross-plane generation fencing. */",
+          "generation?: {",
+          "input: string;",
+          "};",
         ].join("\n"),
       },
       {

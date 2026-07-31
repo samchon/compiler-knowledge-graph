@@ -12,6 +12,7 @@ import { runOverview } from "./operations/runOverview";
 import { runTour } from "./operations/runTour";
 import { runTrace } from "./operations/runTrace";
 import { SamchonGraphMemory } from "./SamchonGraphMemory";
+import { SamchonRepositoryContextMemory } from "./repository";
 import { ISamchonGraphApplication, ISamchonGraphEscape } from "./structures";
 
 /**
@@ -34,9 +35,20 @@ export class SamchonGraphApplication implements ISamchonGraphApplication {
   private readonly graph: () =>
     | SamchonGraphMemory
     | Promise<SamchonGraphMemory>;
+  private readonly topology:
+    | (() =>
+        | SamchonRepositoryContextMemory
+        | Promise<SamchonRepositoryContextMemory>)
+    | undefined;
 
-  public constructor(source: AsyncSamchonGraphSource) {
+  public constructor(
+    source: AsyncSamchonGraphSource,
+    topology?: () =>
+      | SamchonRepositoryContextMemory
+      | Promise<SamchonRepositoryContextMemory>,
+  ) {
     this.graph = typeof source === "function" ? source : () => source;
+    this.topology = topology;
   }
 
   public async inspect_code_graph(
@@ -116,6 +128,54 @@ export class SamchonGraphApplication implements ISamchonGraphApplication {
           ...graphTrust(graph, props.request.type),
           next: r.next,
           result: r.result,
+        };
+      }
+      case "topology": {
+        if (this.topology === undefined) {
+          throw new Error(
+            "@samchon/graph: repository-context source is unavailable",
+          );
+        }
+        const topology = await this.topology();
+        const confirmed = await this.load();
+        const compatible =
+          graph.project === topology.dump.project &&
+          topology.dump.provenance.length !== 0 &&
+          graph.inputGeneration !== undefined &&
+          graph.inputGeneration === confirmed.inputGeneration;
+        const join = compatible
+          ? {
+              state: "compatible" as const,
+              topologyInputGeneration: topology.dump.inputGeneration,
+              codeInputGeneration: graph.inputGeneration!,
+            }
+          : {
+              state: "unavailable" as const,
+              topologyInputGeneration: topology.dump.inputGeneration,
+              ...(graph.inputGeneration !== undefined
+                ? { codeInputGeneration: graph.inputGeneration }
+                : {}),
+              reason:
+                topology.dump.provenance.length === 0
+                  ? "No repository-context provider produced a compatible current generation."
+                  : "The code generation moved while topology was loading, or the code dump predates cross-plane generation fencing.",
+            };
+        return {
+          audit:
+            "Repository topology is returned from declared or owning-tool models; file joins are included only when the code generation stayed stable across the topology load.",
+          next: resultNext(
+            "answer",
+            "The requested repository orientation is present in this topology result.",
+          ),
+          result: topology.inspect(
+            props.request,
+            join,
+            new Set(
+              graph.nodes
+                .filter((node) => node.kind === "file")
+                .map((node) => node.file),
+            ),
+          ),
         };
       }
       default:

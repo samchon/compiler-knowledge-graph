@@ -22,5 +22,13 @@ export async function buildGraphResult(
           buildStaticGraphResult(normalized),
         )
       : await buildLspGraph(normalized);
-  return { ...result, dump: parseGraphDump(result.dump) };
+  return {
+    ...result,
+    dump: parseGraphDump({
+      ...result.dump,
+      generation: {
+        input: result.inputGeneration!,
+      },
+    }),
+  };
 }

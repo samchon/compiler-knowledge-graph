@@ -8,6 +8,7 @@ import { ISamchonGraphCoverageSummary } from "./ISamchonGraphCoverageSummary";
 import { ISamchonGraphDump } from "./ISamchonGraphDump";
 import { ISamchonGraphTour } from "./ISamchonGraphTour";
 import { ISamchonGraphTrace } from "./ISamchonGraphTrace";
+import { ISamchonGraphTopology } from "./ISamchonGraphTopology";
 import { ISamchonGraphUnresolvedSummary } from "./ISamchonGraphUnresolvedSummary";
 
 /**
@@ -45,6 +46,8 @@ import { ISamchonGraphUnresolvedSummary } from "./ISamchonGraphUnresolvedSummary
  *   the classes that implement an interface, which is the one call that answers
  *   "what actually implements this".
  * - `overview`: project layers and folder structure.
+ * - `topology`: workspace, package, target, task, source-root, entrypoint, and
+ *   project-dependency orientation from declared or owning-tool models.
  * - `escape`: the answer is outside the graph (source body text, files outside
  *   the indexed languages, exact search).
  *
@@ -93,24 +96,24 @@ import { ISamchonGraphUnresolvedSummary } from "./ISamchonGraphUnresolvedSummary
  */
 export interface ISamchonGraphApplication {
   /**
-   * Answer a __LANG__ question from this repository's own program index.
+   * Answer a __LANG__ question from the repository's program index.
    *
-   * The graph returns proved indexed facts plus structured coverage and
-   * uncertainty. Submit exactly one request:
+   * The graph returns proved facts with coverage and uncertainty. Submit one
+   * request:
    *
-   * - `tour`: architecture, the runtime flow from the public API to the code that
-   *   does the work, nearby paths, and the tests to read — a whole orientation
-   *   in one call
+   * - `tour`: architecture, runtime flow, nearby paths, and tests
    * - `trace`: what a symbol calls, what calls it, or the path from A to B
    * - `details`: signatures, members, and what implements an interface
    * - `lookup`: where a named symbol is declared
    * - `entrypoints`: where execution starts, when the entry is unknown
    * - `overview`: the project's layers and folder structure
+   * - `topology`: repository workspaces, packages, roots, targets, tasks, and
+   *   dependencies
    *
    * Every fact in a result is checked against the index before return, so no
    * fact needs verifying; for the ranked operations (`lookup`, `entrypoints`,
-   * `tour`), judge whether the shortlist covers your question. Read a file for
-   * what the graph does not carry: a body or the text inside a span.
+   * `tour`), judge whether the shortlist covers your question. Read source only
+   * for a body or span text.
    *
    * @param props Reasoning plus one graph request
    * @returns Matching `result` union member
@@ -149,6 +152,7 @@ export namespace ISamchonGraphApplication {
       | ISamchonGraphDetails.IRequest
       | ISamchonGraphOverview.IRequest
       | ISamchonGraphTour.IRequest
+      | ISamchonGraphTopology.IRequest
       | ISamchonGraphEscape.IRequest;
   }
 
@@ -210,6 +214,7 @@ export namespace ISamchonGraphApplication {
       | ISamchonGraphDetails
       | ISamchonGraphOverview
       | ISamchonGraphTour
+      | ISamchonGraphTopology
       | ISamchonGraphEscape;
   }
 }

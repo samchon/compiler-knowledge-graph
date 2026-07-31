@@ -59,6 +59,21 @@ A language server improves the graph with semantically resolved edges. Install t
 
 Each server must be on `PATH`. If none is present for a file's language, that language falls back to the static indexer automatically.
 
+### Repository topology
+
+The same `inspect_code_graph` tool has a `topology` request for workspaces, packages, source roots, targets, tasks, entrypoints, project dependencies, and file joins. These facts use a sibling provider plane: repository nodes never masquerade as code symbols, and a file join is returned only when the topology model can be fenced against one stable code generation.
+
+The first adapter slice is deliberately read-only:
+
+| Ecosystem | Model and policy |
+|---|---|
+| pnpm | Runs `pnpm list -r --json --depth 0` and reads versioned package/workspace/lock manifests. Package scripts are listed as tasks, never executed. |
+| Cargo | Runs `cargo metadata --format-version 1 --locked --offline`; it neither updates the lockfile nor accesses the network. |
+| Gradle | Uses the Tooling API and may evaluate project configuration, but runs no task. It is disabled until `SAMCHON_GRAPH_ALLOW_GRADLE_MODEL=1`; provide `SAMCHON_GRAPH_GRADLE_TOOLING_CLASSPATH` or `GRADLE_HOME`. |
+| CMake | Reads existing File API codemodel-v2 and cmakeFiles-v1 replies. It never writes a query or configures the project; set `SAMCHON_GRAPH_CMAKE_REPLY` when the reply is outside a conventional build directory. |
+
+Every topology result carries provider/tool provenance, per-relation `complete`/`partial`/`unsupported` coverage, its resident generation, and explicit join compatibility. Gradle configuration failures and missing or stale CMake replies become unavailable coverage; they do not fall back to guessed build facts.
+
 Before the generic lane runs, indexing asks a registry of strict providers which languages they own. A provider states what its facts are grounded in — a compiler, a whole-project analyzer, or a precomputed semantic index — and which edge families it can prove; a snapshot that publishes outside those is rejected rather than merged. Whatever no provider claims falls through to the language server, and then to the static indexer. Every decline is one sentence naming the provider and the authority the build gave up, so a fallback is never mistaken for the strict result it replaced.
 
 The dump carries one `provenance` row per contributing provider: its authority, the fact families it proves, the producing tool and versions, a fingerprint of the inputs that decided the file set, and digests over the manifest and the published facts. Absent when no strict provider served the build. What a provider *did* to compute a generation is deliberately not recorded there — that belongs to one refresh rather than to the facts, and writing it down would make two dumps of the same unedited checkout differ.
@@ -199,6 +214,8 @@ pnpm --filter @samchon/graph-benchmark render:png  # reference SVG + exact 2x PN
  *   the classes that implement an interface, which is the one call that answers
  *   "what actually implements this".
  * - `overview`: project layers and folder structure.
+ * - `topology`: workspace, package, target, task, source-root, entrypoint, and
+ *   project-dependency orientation from declared or owning-tool models.
  * - `escape`: the answer is outside the graph (source body text, files outside
  *   the indexed languages, exact search).
  *
@@ -247,24 +264,24 @@ pnpm --filter @samchon/graph-benchmark render:png  # reference SVG + exact 2x PN
  */
 export interface ISamchonGraphApplication {
   /**
-   * Answer a __LANG__ question from this repository's own program index.
+   * Answer a __LANG__ question from the repository's program index.
    *
-   * The graph returns proved indexed facts plus structured coverage and
-   * uncertainty. Submit exactly one request:
+   * The graph returns proved facts with coverage and uncertainty. Submit one
+   * request:
    *
-   * - `tour`: architecture, the runtime flow from the public API to the code that
-   *   does the work, nearby paths, and the tests to read — a whole orientation
-   *   in one call
+   * - `tour`: architecture, runtime flow, nearby paths, and tests
    * - `trace`: what a symbol calls, what calls it, or the path from A to B
    * - `details`: signatures, members, and what implements an interface
    * - `lookup`: where a named symbol is declared
    * - `entrypoints`: where execution starts, when the entry is unknown
    * - `overview`: the project's layers and folder structure
+   * - `topology`: repository workspaces, packages, roots, targets, tasks, and
+   *   dependencies
    *
    * Every fact in a result is checked against the index before return, so no
    * fact needs verifying; for the ranked operations (`lookup`, `entrypoints`,
-   * `tour`), judge whether the shortlist covers your question. Read a file for
-   * what the graph does not carry: a body or the text inside a span.
+   * `tour`), judge whether the shortlist covers your question. Read source only
+   * for a body or span text.
    *
    * @param props Reasoning plus one graph request
    * @returns Matching `result` union member
@@ -303,6 +320,7 @@ export namespace ISamchonGraphApplication {
       | ISamchonGraphDetails.IRequest
       | ISamchonGraphOverview.IRequest
       | ISamchonGraphTour.IRequest
+      | ISamchonGraphTopology.IRequest
       | ISamchonGraphEscape.IRequest;
   }
 
@@ -364,6 +382,7 @@ export namespace ISamchonGraphApplication {
       | ISamchonGraphDetails
       | ISamchonGraphOverview
       | ISamchonGraphTour
+      | ISamchonGraphTopology
       | ISamchonGraphEscape;
   }
 }

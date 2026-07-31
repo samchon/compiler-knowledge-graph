@@ -7,6 +7,7 @@ import {
   SamchonGraphApplication,
 } from "../application";
 import { ISamchonGraphApplication } from "../structures";
+import { SamchonRepositoryContextMemory } from "../repository";
 import { GraphLanguage } from "../typings";
 import { languageDisplayNameOf } from "./languageDisplayNameOf";
 
@@ -32,6 +33,9 @@ export function createServer(
   graph: AsyncSamchonGraphSource,
   version: string,
   languages: readonly GraphLanguage[] = [],
+  topology?: () =>
+    | SamchonRepositoryContextMemory
+    | Promise<SamchonRepositoryContextMemory>,
 ): McpServer {
   const controller: ILlmController<ISamchonGraphApplication> = {
     protocol: "class",
@@ -40,7 +44,7 @@ export function createServer(
       typia.llm.application<ISamchonGraphApplication>(),
       languageDisplayNameOf(languages),
     ),
-    execute: new SamchonGraphApplication(graph),
+    execute: new SamchonGraphApplication(graph, topology),
   };
   return createMcpServer(controller, { version });
 }

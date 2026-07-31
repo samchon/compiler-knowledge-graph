@@ -444,6 +444,7 @@ export function createResidentGraphSource(
       project: current.dump.project,
       languages: current.dump.languages,
       indexer: current.dump.indexer,
+      generation: { input: inputGeneration },
       nodes: wireNodes(finalized.nodes),
       edges: wireEdges(finalized.edges, finalized.nodes),
       diagnostics,

@@ -5,10 +5,10 @@ import { fileURLToPath } from "node:url";
 /**
  * Copy the sidecar sources this package ships into the package itself.
  *
- * Two quite different things travel this way. The Go sidecar is source a user
- * compiles into `samchon-graph-go`; the Lua exporter is a script the provider
- * hands to lua-language-server at run time, so it has to be present in an
- * installed package rather than only in this repository.
+ * The Go sidecar is source a user compiles into `samchon-graph-go`; the Gradle
+ * Java source reads the opted-in Tooling API model; and the Lua exporter is a
+ * script the provider hands to lua-language-server at run time. All three must
+ * exist in an installed package rather than only in this repository.
  *
  * Named per file rather than copied wholesale. A directory copy would ship
  * whatever happened to be sitting there — a probe, a scratch file, a build
@@ -21,6 +21,7 @@ const packageRoot = path.resolve(
 const repositoryRoot = path.resolve(packageRoot, "..", "..");
 
 const SIDECARS = {
+  gradle: ["RepositoryContext.java"],
   go: [
     "analyze.go",
     "go.mod",

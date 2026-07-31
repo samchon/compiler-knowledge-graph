@@ -42,6 +42,8 @@ export class SamchonGraphMemory {
   public readonly languages: readonly string[];
   /** Which indexing strategy produced the graph. */
   public readonly indexer: ISamchonGraphDump["indexer"];
+  /** Complete coordinator input generation for cross-plane compatibility. */
+  public readonly inputGeneration: string | undefined;
   /** Every node, raw plus synthesized (file containers). */
   public readonly nodes: readonly ISamchonGraphNode[];
   /** Every edge, raw plus synthesized containment. */
@@ -68,6 +70,7 @@ export class SamchonGraphMemory {
     this.project = dump.project;
     this.languages = dump.languages;
     this.indexer = dump.indexer;
+    this.inputGeneration = dump.generation?.input;
     this.nodes = nodes;
     this.edges = edges;
     this.diagnostics = dump.diagnostics ?? [];

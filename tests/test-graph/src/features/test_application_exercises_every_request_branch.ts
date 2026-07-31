@@ -12,6 +12,7 @@ export const test_application_exercises_every_request_branch = async () => {
     { type: "details", handles: ["Root.Service.run"], neighbors: true },
     { type: "overview", aspect: "all" },
     { type: "tour", reinterpretations: ["Root.Service.run"] },
+    { type: "topology" },
     { type: "escape", reason: "outside graph", nextStep: "answer without graph" },
   ] as const;
 

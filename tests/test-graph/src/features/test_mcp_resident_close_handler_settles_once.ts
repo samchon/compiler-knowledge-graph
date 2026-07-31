@@ -3,6 +3,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { GraphPaths } from "../internal/GraphPaths";
+import { createCompositeResidentClose } from "../../../../packages/graph/src/mcp/createCompositeResidentClose";
 
 export const test_mcp_resident_close_handler_settles_once = async () => {
   const module = (await import(
@@ -46,5 +47,45 @@ export const test_mcp_resident_close_handler_settles_once = async () => {
     "the contained close failure is reported once",
     reports,
     [failure],
+  );
+
+  const calls: string[] = [];
+  await createCompositeResidentClose([
+    undefined,
+    { close: async () => void calls.push("code") },
+    { close: async () => void calls.push("topology") },
+  ]).close();
+  TestValidator.equals(
+    "the composite closes every opened resident plane in order",
+    calls,
+    ["code", "topology"],
+  );
+
+  const firstFailure = new Error("code close failed");
+  let topologyClosed = false;
+  await TestValidator.error(
+    "the composite retains the first failure while closing later planes",
+    () =>
+      createCompositeResidentClose([
+        { close: async () => Promise.reject(firstFailure) },
+        {
+          close: async () => {
+            topologyClosed = true;
+            throw "topology close failed";
+          },
+        },
+      ]).close(),
+  );
+  TestValidator.equals(
+    "a first close failure does not skip the topology plane",
+    topologyClosed,
+    true,
+  );
+  await TestValidator.error(
+    "a non-Error close failure is normalized",
+    () =>
+      createCompositeResidentClose([
+        { close: async () => Promise.reject("string close failure") },
+      ]).close(),
   );
 };

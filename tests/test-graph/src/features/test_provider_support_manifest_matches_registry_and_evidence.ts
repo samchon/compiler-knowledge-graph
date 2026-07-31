@@ -38,7 +38,8 @@ export const test_provider_support_manifest_matches_registry_and_evidence =
       fs.writeFileSync(missingFile, JSON.stringify(missing));
       TestValidator.predicate(
         "an undocumented registered provider fails closed",
-        validate(missingFile, root).stderr.includes(
+        failsValidation(
+          validate(missingFile, root),
           "undocumented registered provider ttscgraph",
         ),
       );
@@ -53,7 +54,8 @@ export const test_provider_support_manifest_matches_registry_and_evidence =
       fs.writeFileSync(absentFile, JSON.stringify(absent));
       TestValidator.predicate(
         "a documented absent provider fails closed",
-        validate(absentFile, root).stderr.includes(
+        failsValidation(
+          validate(absentFile, root),
           "documented absent provider absent-provider",
         ),
       );
@@ -70,7 +72,8 @@ export const test_provider_support_manifest_matches_registry_and_evidence =
       );
       TestValidator.predicate(
         "an unknown platform fails closed",
-        validate(misspelledPlatformFile, root).stderr.includes(
+        failsValidation(
+          validate(misspelledPlatformFile, root),
           "ttscgraph names unknown platform linxu",
         ),
       );
@@ -87,7 +90,8 @@ export const test_provider_support_manifest_matches_registry_and_evidence =
       );
       TestValidator.predicate(
         "a duplicate platform fails closed",
-        validate(duplicatePlatformFile, root).stderr.includes(
+        failsValidation(
+          validate(duplicatePlatformFile, root),
           "ttscgraph platform rows must be unique",
         ),
       );
@@ -101,7 +105,8 @@ export const test_provider_support_manifest_matches_registry_and_evidence =
       );
       TestValidator.predicate(
         "a duplicate fixed command fails closed",
-        validate(duplicateCommandFile, root).stderr.includes(
+        failsValidation(
+          validate(duplicateCommandFile, root),
           "ttscgraph command rows must be unique",
         ),
       );
@@ -123,8 +128,36 @@ export const test_provider_support_manifest_matches_registry_and_evidence =
       );
       TestValidator.predicate(
         "an omitted project-owned command source fails closed",
-        validate(incompleteProjectCommandsFile, root).stderr.includes(
+        failsValidation(
+          validate(incompleteProjectCommandsFile, root),
           "scip-clang project command sources differ from its resolver descriptor",
+        ),
+      );
+
+      const duplicateProjectCommands = structuredClone(parsed);
+      const duplicateClang = duplicateProjectCommands.providers.find(
+        (provider) => provider.provider === "scip-clang",
+      );
+      if (duplicateClang === undefined)
+        throw new Error("the canonical manifest must contain scip-clang");
+      duplicateClang.projectCommandSources = [
+        "compile_commands.json",
+        "build/compile_commands.json",
+        "build/compile_commands.json",
+      ];
+      const duplicateProjectCommandsFile = path.join(
+        root,
+        "duplicate-project-command-sources.json",
+      );
+      fs.writeFileSync(
+        duplicateProjectCommandsFile,
+        JSON.stringify(duplicateProjectCommands),
+      );
+      TestValidator.predicate(
+        "a duplicate project-owned command source fails closed",
+        failsValidation(
+          validate(duplicateProjectCommandsFile, root),
+          "scip-clang project command source rows must be unique",
         ),
       );
 
@@ -140,7 +173,8 @@ export const test_provider_support_manifest_matches_registry_and_evidence =
       );
       TestValidator.predicate(
         "a missing install source fails closed",
-        validate(missingInstallSourceFile, root).stderr.includes(
+        failsValidation(
+          validate(missingInstallSourceFile, root),
           "ttscgraph must name install sources",
         ),
       );
@@ -160,7 +194,8 @@ export const test_provider_support_manifest_matches_registry_and_evidence =
       );
       TestValidator.predicate(
         "a duplicate install-source label fails closed",
-        validate(duplicateInstallLabelFile, root).stderr.includes(
+        failsValidation(
+          validate(duplicateInstallLabelFile, root),
           "ttscgraph install-source label rows must be unique",
         ),
       );
@@ -180,7 +215,8 @@ export const test_provider_support_manifest_matches_registry_and_evidence =
       );
       TestValidator.predicate(
         "a duplicate install-source URL fails closed",
-        validate(duplicateInstallUrlFile, root).stderr.includes(
+        failsValidation(
+          validate(duplicateInstallUrlFile, root),
           "ttscgraph install-source URL rows must be unique",
         ),
       );
@@ -199,7 +235,8 @@ export const test_provider_support_manifest_matches_registry_and_evidence =
       );
       TestValidator.predicate(
         "a non-HTTPS install source fails closed",
-        validate(unsafeInstallSourceFile, root).stderr.includes(
+        failsValidation(
+          validate(unsafeInstallSourceFile, root),
           "ttscgraph install source unsafe source must be an HTTPS URL",
         ),
       );
@@ -237,4 +274,15 @@ function validate(
     status: result.status,
     stderr: result.stderr,
   };
+}
+
+function failsValidation(
+  result: ReturnType<typeof validate>,
+  diagnostic: string,
+): boolean {
+  return (
+    result.status !== null &&
+    result.status !== 0 &&
+    result.stderr.includes(diagnostic)
+  );
 }

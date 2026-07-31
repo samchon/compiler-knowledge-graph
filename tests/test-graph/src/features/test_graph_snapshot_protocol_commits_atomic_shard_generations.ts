@@ -64,7 +64,13 @@ export const test_graph_snapshot_protocol_commits_atomic_shard_generations =
       [
         1,
         "generation-1",
-        digest("b"),
+        GraphSnapshotProtocol.manifestDigest([
+          {
+            file: path.resolve("src/main.ts"),
+            checkerDigest: digest("c"),
+            diskDigest: digest("c"),
+          },
+        ]),
         ["coverage", "source"],
         ["run"],
         GRAPH_EDGE_KINDS.length,
@@ -356,16 +362,12 @@ export const test_graph_snapshot_protocol_commits_atomic_shard_generations =
 
     const manifestStore = new GraphSnapshotProtocol.Store(process.cwd());
     manifestStore.apply(transaction("manifest-generation-1"));
-    const manifestEdit = mutate(
-      transaction("manifest-generation-2", {
-        baseGeneration: "manifest-generation-1",
-        baseSequence: 1,
-        nodeName: "manifest-edited",
-      }),
-      (frames) => {
-        (frames[1] as GraphSnapshotProtocol.IBegin).manifest = digest("d");
-      },
-    );
+    const manifestEdit = transaction("manifest-generation-2", {
+      baseGeneration: "manifest-generation-1",
+      baseSequence: 1,
+      nodeName: "manifest-edited",
+      sourceDigest: "d",
+    });
     TestValidator.equals(
       "manifest movement commits when a shard delta carries the affected facts",
       manifestStore.apply(manifestEdit).nodes.map((node) => node.name),
@@ -376,6 +378,7 @@ export const test_graph_snapshot_protocol_commits_atomic_shard_generations =
         baseGeneration: "manifest-generation-2",
         baseSequence: 2,
         nodeName: "manifest-edited",
+        sourceDigest: "d",
       }),
       (frames) => {
         (frames[1] as GraphSnapshotProtocol.IBegin).manifest = digest("e");
@@ -391,6 +394,7 @@ export const test_graph_snapshot_protocol_commits_atomic_shard_generations =
         baseGeneration: "manifest-generation-2",
         baseSequence: 2,
         nodeName: "manifest-edited",
+        sourceDigest: "d",
       }),
       (frames) => {
         (frames[1] as GraphSnapshotProtocol.IBegin).universe = digest("d");
@@ -491,6 +495,7 @@ interface ITransactionOptions {
   baseGeneration?: string;
   coverageState?: "complete" | "partial";
   nodeName?: string;
+  sourceDigest?: string;
   deleteSource?: boolean;
 }
 
@@ -511,7 +516,7 @@ function transaction(
         }
       : {}),
     universe: digest("a"),
-    manifest: digest("b"),
+    manifest: digest("pending manifest"),
     targets: ["app"],
   };
   const coverage: GraphSnapshotProtocol.IShard = {
@@ -581,8 +586,8 @@ function transaction(
     sources: [
       {
         file: path.resolve("src/main.ts"),
-        checkerDigest: digest("c"),
-        diskDigest: digest("c"),
+        checkerDigest: digest(options.sourceDigest ?? "c"),
+        diskDigest: digest(options.sourceDigest ?? "c"),
       },
     ],
   };
@@ -607,6 +612,9 @@ function transaction(
       key,
       digest: GraphSnapshotProtocol.shardDigest(shard),
     }));
+  begin.manifest = GraphSnapshotProtocol.manifestDigest(
+    [...retained.values()].flatMap((shard) => shard.sources),
+  );
   const snapshot = snapshotOf(hello, begin, [...retained.values()]);
   return [
     hello,
@@ -647,7 +655,7 @@ function snapshotOf(
       provider: hello.provider,
       authority: hello.authority,
       facts: [...hello.supportedFacts],
-      schemaVersion: hello.schemaVersion,
+      schemaVersion: hello.producerSchemaVersion,
       tool: hello.producer,
       toolVersion: hello.producerVersion,
       compilerVersion: hello.compilerVersion,
@@ -713,6 +721,9 @@ function refreshDigests(frames: GraphSnapshotProtocol.Frame[]): void {
       return frame.shard;
     });
   const last = commit(frames);
+  begin.manifest = GraphSnapshotProtocol.manifestDigest(
+    shards.flatMap((shard) => shard.sources),
+  );
   last.shards = shards
     .map((shard) => ({
       key: shard.key,
@@ -780,6 +791,12 @@ function malformedTransactions(): Array<
       "an invalid producer schema version",
       mutate(valid, (frames) => {
         record(frames[0]!).producerSchemaVersion = 0;
+      }),
+    ],
+    [
+      "an input manifest digest mismatch",
+      mutate(valid, (frames) => {
+        record(frames[1]!).manifest = digest("f");
       }),
     ],
     [

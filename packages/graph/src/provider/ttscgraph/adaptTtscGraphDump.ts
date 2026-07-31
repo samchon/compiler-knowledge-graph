@@ -279,6 +279,7 @@ export function adaptTtscGraphDump(
       dump.provenance,
       schemaVersion as number,
       capabilities,
+      target,
     ),
     warnings,
   };
@@ -356,7 +357,7 @@ function manifestOf(
  * would fingerprint identically, and a universe change that reshuffled exactly
  * that way would look like no change at all.
  */
-function universeOf(value: unknown): string {
+function universeOf(value: unknown, target: string): string {
   const universe = objectOf(value, "dump.provenance.universe");
   const hash = createHash("sha256");
   const push = (text: string): void => {
@@ -392,6 +393,11 @@ function universeOf(value: unknown): string {
       ),
     );
   }
+  if (!configFiles.has(target)) {
+    throw new Error(
+      `ttscgraph: dump.tsconfig names an unknown build-universe config: ${target}`,
+    );
+  }
   const roots = arrayOf(universe.roots, "dump.provenance.universe.roots");
   push("roots");
   const rootsByConfig = new Map<string, Set<string>>();
@@ -425,6 +431,7 @@ function provenanceOf(
   value: unknown,
   schemaVersion: number,
   capabilities: string[],
+  target: string,
 ): Omit<IBulkGraphSession.IProvenance, "protocolVersion"> {
   const provenance = objectOf(value, "dump.provenance");
   // Read the universe even though only the fingerprint is kept: skipping the
@@ -452,7 +459,7 @@ function provenanceOf(
       producer.typescript,
       "dump.provenance.producer.typescript",
     ),
-    universe: universeOf(provenance.universe),
+    universe: universeOf(provenance.universe, target),
     capabilities: [...new Set(capabilities)].sort(compareOrdinal),
   };
 }

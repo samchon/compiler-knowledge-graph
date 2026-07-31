@@ -117,18 +117,25 @@ export const test_ttscgraph_bulk_provider_reuses_and_atomically_replaces_snapsho
         initial.snapshot.coverage?.length,
         initial.snapshot.coverage?.filter((row) => row.state === "complete")
           .length,
+        initial.snapshot.coverage?.filter((row) => row.state === "partial")
+          .length,
         initial.snapshot.coverage?.filter(
           (row) => row.state === "unsupported",
         ).length,
-        initial.snapshot.unresolved,
+        initial.snapshot.unresolved?.length,
+        initial.snapshot.unresolved?.every(
+          (site) => site.reason === "provider-gap",
+        ),
       ],
       [
         1,
         ["tsconfig.json"],
         GRAPH_EDGE_KINDS.length,
+        0,
         ttscGraphProvider.facts.length,
         GRAPH_EDGE_KINDS.length - ttscGraphProvider.facts.length,
-        [],
+        ttscGraphProvider.facts.length,
+        true,
       ],
     );
     const initialShards = new Map(

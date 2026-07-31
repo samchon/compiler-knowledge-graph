@@ -150,7 +150,7 @@ function shardTtscGraph(
     edges: [],
     diagnostics: [],
     coverage: coverageOf(input),
-    unresolved: [],
+    unresolved: unresolvedOf(input),
     sources: [],
   };
   for (const diagnostic of input.diagnostics) {
@@ -174,7 +174,25 @@ function coverageOf(
     language: "typescript",
     target: input.target,
     family,
-    state: supported.has(family) ? "complete" : "unsupported",
+    state: supported.has(family) ? "partial" : "unsupported",
+  }));
+}
+
+function unresolvedOf(
+  input: IAdaptedTtscGraphDump,
+): GraphSnapshotProtocol.IShard["unresolved"] {
+  return input.provenance.facts.map((family) => ({
+    provider: input.provenance.provider,
+    language: "typescript",
+    target: input.target,
+    universe: input.provenance.universe,
+    family,
+    evidence: {
+      file: input.target,
+      startLine: 1,
+      startCol: 1,
+    },
+    reason: "provider-gap",
   }));
 }
 

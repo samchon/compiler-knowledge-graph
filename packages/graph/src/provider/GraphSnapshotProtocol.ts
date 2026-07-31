@@ -151,7 +151,13 @@ export namespace GraphSnapshotProtocol {
     return digest(shard);
   }
 
-  /** SHA-256 over one ordered source/configuration/dependency manifest. */
+  /**
+   * SHA-256 over the ordered input-file manifest carried by the shards.
+   *
+   * Producers include source, configuration, generated and dependency inputs
+   * here. The store recomputes this digest from the reconstructed generation,
+   * so `begin.manifest` is evidence rather than an unchecked producer label.
+   */
   export function manifestDigest(sources: readonly ISource[]): string {
     return digest(
       [...sources]
@@ -405,6 +411,19 @@ export namespace GraphSnapshotProtocol {
         options.warnings ?? [],
       );
       assertAssembledFacts(assembled, hello);
+      if (
+        manifestDigest(
+          [...assembled.sources].map(([file, source]) => ({
+            file,
+            checkerDigest: source.checkerDigest,
+            diskDigest: source.diskDigest,
+          })),
+        ) !== begin.manifest
+      ) {
+        throw new Error(
+          "graph snapshot protocol: input manifest digest mismatch",
+        );
+      }
       if (factDigest(assembled) !== commit.factDigest) {
         throw new Error("graph snapshot protocol: commit fact digest mismatch");
       }

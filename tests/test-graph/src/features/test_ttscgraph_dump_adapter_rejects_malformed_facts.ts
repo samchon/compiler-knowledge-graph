@@ -109,6 +109,17 @@ export const test_ttscgraph_dump_adapter_rejects_malformed_facts = async () => {
     () =>
       adaptTtscGraphDump(
         mutate((d) => {
+          d.tsconfig = "tsconfig.missing.json";
+        }),
+        project,
+      ),
+    "a dump target absent from its build universe",
+    "dump.tsconfig names an unknown build-universe config",
+  );
+  rejectsWithMessage(
+    () =>
+      adaptTtscGraphDump(
+        mutate((d) => {
           d.provenance.schemaVersion = 3;
         }),
         project,

@@ -99,6 +99,14 @@ export const test_repository_context_adapters_preserve_authoritative_models =
         },
       );
       TestValidator.equals(
+        "pnpm distinguishes tool-resolved workspace facts from declared manifest facts",
+        authoritySummary(pnpm),
+        {
+          nodes: { declared: 8, "tool-resolved": 1 },
+          edges: { declared: 13, "tool-resolved": 3 },
+        },
+      );
+      TestValidator.equals(
         "Cargo preserves packages, targets, dependencies, tests and source joins",
         summarize(cargo),
         {
@@ -1185,8 +1193,16 @@ function exerciseCmakeRefusals(root: string): void {
   const objectReply = cmakeScenario(root, "object-references", {
     index: {
       objects: [
-        { kind: "codemodel", jsonFile: "codemodel.json" },
-        { kind: "cmakeFiles", jsonFile: "cmakeFiles.json" },
+        {
+          kind: "codemodel",
+          version: { major: 2, minor: 8 },
+          jsonFile: "codemodel.json",
+        },
+        {
+          kind: "cmakeFiles",
+          version: { major: 1, minor: 1 },
+          jsonFile: "cmakeFiles.json",
+        },
       ],
     },
     configurations: [
@@ -1244,6 +1260,70 @@ function exerciseCmakeRefusals(root: string): void {
     ],
     ["", "default", true],
   );
+
+  const wrongObjectVersions = cmakeScenario(
+    root,
+    "wrong-object-versions",
+    {
+      index: {
+        objects: [
+          {
+            kind: "codemodel",
+            version: { major: 1, minor: 0 },
+            jsonFile: "codemodel.json",
+          },
+          {
+            kind: "cmakeFiles",
+            jsonFile: "cmakeFiles.json",
+          },
+        ],
+      },
+      configurations: [
+        { name: "", projects: [], directories: [], targets: [] },
+      ],
+    },
+  );
+  TestValidator.error(
+    "CMake object references must declare the requested reply major versions",
+    () =>
+      cmakeRepositoryContextProvider.collect({
+        root,
+        env: {
+          ...process.env,
+          SAMCHON_GRAPH_CMAKE_REPLY: wrongObjectVersions,
+        },
+      }),
+  );
+
+  const includedInputReply = cmakeScenario(root, "included-input", {
+    configurations: [
+      { name: "", projects: [], directories: [], targets: [] },
+    ],
+    inputs: [
+      { path: "CMakeLists.txt" },
+      { path: "cmake/options.cmake" },
+    ],
+  });
+  const includedInput = path.join(
+    root,
+    "cmake-included-input",
+    "cmake",
+    "options.cmake",
+  );
+  write(includedInput, "set(FIXTURE_OPTION ON)\n");
+  const future = new Date(Date.now() + 2_000);
+  fs.utimesSync(includedInput, future, future);
+  TestValidator.error(
+    "CMake refuses a File API model older than any owning cmakeFiles input",
+    () =>
+      cmakeRepositoryContextProvider.collect({
+        root,
+        env: {
+          ...process.env,
+          SAMCHON_GRAPH_CMAKE_REPLY: includedInputReply,
+        },
+      }),
+  );
 }
 
 function cmakeScenario(
@@ -1253,6 +1333,7 @@ function cmakeScenario(
     index?: Record<string, unknown>;
     configurations: Array<Record<string, unknown>>;
     targets?: Record<string, Record<string, unknown>>;
+    inputs?: Array<{ path: string }>;
   },
 ): string {
   const source = path.join(root, `cmake-${name}`);
@@ -1261,7 +1342,7 @@ function cmakeScenario(
   write(path.join(source, "CMakeLists.txt"), `project(${name})\n`);
   writeJson(path.join(reply, "cmakeFiles.json"), {
     paths: { source, build },
-    inputs: [{ path: "CMakeLists.txt" }],
+    inputs: options.inputs ?? [{ path: "CMakeLists.txt" }],
   });
   writeJson(path.join(reply, "codemodel.json"), {
     paths: { source, build },
@@ -1315,4 +1396,27 @@ function write(file: string, content: string): void {
 
 function writeJson(file: string, value: unknown): void {
   write(file, JSON.stringify(value));
+}
+
+function authoritySummary(
+  collection: ReturnType<typeof pnpmRepositoryContextProvider.collect>,
+): {
+  nodes: Record<string, number>;
+  edges: Record<string, number>;
+} {
+  const count = (
+    rows: readonly { authority: string }[],
+  ): Record<string, number> =>
+    Object.fromEntries(
+      [...rows]
+        .reduce((output, row) => {
+          output.set(row.authority, (output.get(row.authority) ?? 0) + 1);
+          return output;
+        }, new Map<string, number>())
+        .entries(),
+    );
+  return {
+    nodes: count(collection.shards.flatMap((shard) => shard.nodes)),
+    edges: count(collection.shards.flatMap((shard) => shard.edges)),
+  };
 }

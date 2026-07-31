@@ -97,6 +97,7 @@ function collectCargoRepositoryContext(
   const nodes: ISamchonRepositoryContextDump.INode[] = [
     {
       id: workspaceId,
+      authority: "tool-resolved",
       kind: "workspace",
       name: path.basename(metadata.workspace_root),
       ecosystem: ECOSYSTEM,
@@ -137,6 +138,7 @@ function collectCargoRepositoryContext(
     sources.push(repositoryContextSource(props.root, pkg.manifest_path));
     nodes.push({
       id: packageId,
+      authority: "tool-resolved",
       kind: "package",
       name: pkg.name,
       ecosystem: ECOSYSTEM,
@@ -145,7 +147,14 @@ function collectCargoRepositoryContext(
       external: !member,
       evidence: repositoryContextEvidence(props.root, pkg.manifest_path),
     });
-    if (member) edges.push({ kind: "contains", from: workspaceId, to: packageId });
+    if (member) {
+      edges.push({
+        authority: "tool-resolved",
+        kind: "contains",
+        from: workspaceId,
+        to: packageId,
+      });
+    }
     appendCargoTargets(
       props.root,
       pkg,
@@ -164,7 +173,14 @@ function collectCargoRepositoryContext(
       compareRepositoryText,
     )) {
       const to = packageIds.get(dependency);
-      if (to !== undefined) edges.push({ kind: "depends-on", from, to });
+      if (to !== undefined) {
+        edges.push({
+          authority: "tool-resolved",
+          kind: "depends-on",
+          from,
+          to,
+        });
+      }
     }
   }
 
@@ -254,6 +270,7 @@ function appendCargoTargets(
     nodes.push(
       {
         id: targetId,
+        authority: "tool-resolved",
         kind: "build-target",
         name: target.name,
         ecosystem: ECOSYSTEM,
@@ -265,6 +282,7 @@ function appendCargoTargets(
       },
       {
         id: sourceSetId,
+        authority: "tool-resolved",
         kind: "source-set",
         name: target.kind.join("+"),
         ecosystem: ECOSYSTEM,
@@ -276,10 +294,26 @@ function appendCargoTargets(
       },
     );
     edges.push(
-      { kind: "contains", from: packageId, to: targetId },
-      { kind: "contains", from: targetId, to: sourceSetId },
-      { kind: "source-of", from: sourceSetId, to: packageId },
       {
+        authority: "tool-resolved",
+        kind: "contains",
+        from: packageId,
+        to: targetId,
+      },
+      {
+        authority: "tool-resolved",
+        kind: "contains",
+        from: targetId,
+        to: sourceSetId,
+      },
+      {
+        authority: "tool-resolved",
+        kind: "source-of",
+        from: sourceSetId,
+        to: packageId,
+      },
+      {
+        authority: "tool-resolved",
         kind: "joins-file",
         from: sourceSetId,
         to: file,
@@ -287,7 +321,12 @@ function appendCargoTargets(
     );
     files.add(file);
     if (target.kind.includes("test") || target.kind.includes("bench")) {
-      edges.push({ kind: "test-of", from: sourceSetId, to: packageId });
+      edges.push({
+        authority: "tool-resolved",
+        kind: "test-of",
+        from: sourceSetId,
+        to: packageId,
+      });
     }
     if (
       target.kind.some((kind) =>
@@ -302,6 +341,7 @@ function appendCargoTargets(
       );
       nodes.push({
         id: entrypointId,
+        authority: "tool-resolved",
         kind: "entrypoint",
         name: target.name,
         ecosystem: ECOSYSTEM,
@@ -312,9 +352,20 @@ function appendCargoTargets(
         evidence,
       });
       edges.push(
-        { kind: "contains", from: targetId, to: entrypointId },
-        { kind: "entrypoint-of", from: entrypointId, to: targetId },
         {
+          authority: "tool-resolved",
+          kind: "contains",
+          from: targetId,
+          to: entrypointId,
+        },
+        {
+          authority: "tool-resolved",
+          kind: "entrypoint-of",
+          from: entrypointId,
+          to: targetId,
+        },
+        {
+          authority: "tool-resolved",
           kind: "joins-file",
           from: entrypointId,
           to: file,

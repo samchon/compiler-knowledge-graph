@@ -85,6 +85,29 @@ export const test_mcp_topology_fences_file_joins_by_code_generation =
         [1, false],
       );
 
+      const endpointBounded = await application.inspect_code_graph({
+        question: "show the fixture workspace relation",
+        draft: { reason: "repository orientation", type: "topology" },
+        review: "topology is the typed repository plane",
+        request: {
+          type: "topology",
+          query: "fixture",
+          relations: ["contains"],
+          limit: 1,
+        },
+      });
+      TestValidator.equals(
+        "dropping a relation endpoint at the node bound reports truncation",
+        endpointBounded.result.type === "topology"
+          ? [
+              endpointBounded.result.nodes.length,
+              endpointBounded.result.edges.length,
+              endpointBounded.result.truncated,
+            ]
+          : [],
+        [1, 0, true],
+      );
+
       const legacy = SamchonGraphMemory.from({
         ...fixture.dump,
         generation: undefined,
@@ -166,16 +189,22 @@ export const test_mcp_topology_fences_file_joins_by_code_generation =
       });
       TestValidator.equals(
         "an unavailable provider generation cannot claim join compatibility",
-        providerUnavailable.result.type === "topology"
-          ? providerUnavailable.result.join
-          : undefined,
-        {
-          state: "unavailable",
-          topologyInputGeneration: emptyTopology.dump.inputGeneration,
-          codeInputGeneration: input,
-          reason:
-            "No repository-context provider produced a compatible current generation.",
-        },
+        [
+          providerUnavailable.result.type === "topology"
+            ? providerUnavailable.result.join
+            : undefined,
+          providerUnavailable.next.reason,
+        ],
+        [
+          {
+            state: "unavailable",
+            topologyInputGeneration: emptyTopology.dump.inputGeneration,
+            codeInputGeneration: input,
+            reason:
+              "No repository-context provider produced a compatible current generation.",
+          },
+          "No repository topology node matched the requested query or available provider facts.",
+        ],
       );
 
       await TestValidator.error(
@@ -199,6 +228,7 @@ function topologyDump(project: string): ISamchonRepositoryContextDump {
   const nodes: ISamchonRepositoryContextDump.INode[] = [
     {
       id: workspace,
+      authority: "declared",
       kind: "workspace",
       name: "fixture",
       ecosystem: "fixture",
@@ -208,6 +238,7 @@ function topologyDump(project: string): ISamchonRepositoryContextDump {
     },
     {
       id: source,
+      authority: "declared",
       kind: "source-root",
       name: "source",
       ecosystem: "fixture",
@@ -217,9 +248,24 @@ function topologyDump(project: string): ISamchonRepositoryContextDump {
     },
   ];
   const edges: ISamchonRepositoryContextDump.IEdge[] = [
-    { kind: "contains", from: workspace, to: source },
-    { kind: "joins-file", from: source, to: "src/contract.ts" },
-    { kind: "joins-file", from: source, to: "src/not-indexed.ts" },
+    {
+      authority: "declared",
+      kind: "contains",
+      from: workspace,
+      to: source,
+    },
+    {
+      authority: "declared",
+      kind: "joins-file",
+      from: source,
+      to: "src/contract.ts",
+    },
+    {
+      authority: "declared",
+      kind: "joins-file",
+      from: source,
+      to: "src/not-indexed.ts",
+    },
   ];
   const coverage = repositoryContextCoverage(
     "fixture-context",

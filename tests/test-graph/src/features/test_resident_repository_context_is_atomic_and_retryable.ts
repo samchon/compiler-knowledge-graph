@@ -252,6 +252,74 @@ export const test_resident_repository_context_is_atomic_and_retryable =
       );
       await disagreeingResident.close();
 
+      const midRefreshAbort = new AbortController();
+      const leftInitial = retargetSnapshot(
+        canonicalSnapshot,
+        "left-initial",
+        "left initial",
+        "1",
+        1,
+      );
+      const leftAdvanced = retargetSnapshot(
+        canonicalSnapshot,
+        "left-advanced",
+        "left advanced",
+        "2",
+        2,
+      );
+      const rightInitial = retargetSnapshot(
+        canonicalSnapshot,
+        "right-initial",
+        "right initial",
+        "3",
+        1,
+      );
+      const rightAdvanced = retargetSnapshot(
+        canonicalSnapshot,
+        "right-advanced",
+        "right advanced",
+        "4",
+        2,
+      );
+      const interruptedResident = createResidentRepositoryContextSource(
+        root,
+        process.env,
+        [
+          advancingSnapshotProvider(
+            "advancing-left",
+            leftInitial,
+            leftAdvanced,
+          ),
+          advancingSnapshotProvider(
+            "advancing-right",
+            rightInitial,
+            rightAdvanced,
+            midRefreshAbort,
+          ),
+        ],
+      );
+      const beforeInterruption = await interruptedResident.load();
+      await TestValidator.error(
+        "a cancellation after one provider advances rejects the composite generation",
+        () =>
+          interruptedResident.load({ signal: midRefreshAbort.signal }),
+      );
+      const afterInterruption = await interruptedResident.load();
+      TestValidator.equals(
+        "a retry publishes provider states committed before the cancelled composite refresh",
+        [
+          sourceNames(beforeInterruption),
+          sourceNames(afterInterruption),
+          afterInterruption.generation.sequence,
+        ],
+        [
+          ["left initial", "right initial"],
+          ["left advanced", "right advanced"],
+          2,
+        ],
+      );
+      await interruptedResident.close();
+
       const closeFailure = createResidentRepositoryContextSource(
         root,
         process.env,
@@ -343,6 +411,7 @@ export const test_resident_repository_context_is_atomic_and_retryable =
               nodes: [
                 {
                   id: repositoryContextId("fixture", "project", "secondary"),
+                  authority: "declared",
                   kind: "project",
                   name: "secondary",
                   ecosystem: "fixture",
@@ -467,6 +536,102 @@ function snapshotProvider(
   };
 }
 
+function advancingSnapshotProvider(
+  name: string,
+  initial: RepositoryContextProtocol.ISnapshot,
+  advanced: RepositoryContextProtocol.ISnapshot,
+  abort?: AbortController,
+): IRepositoryContextProvider {
+  return {
+    name,
+    ecosystem: "fixture",
+    authority: "declared",
+    families: ["contains", "joins-file"],
+    buildInputs: [],
+    detect: () => true,
+    open: ({ root }) => {
+      let calls = 0;
+      let current = initial;
+      return {
+        kind: "repository-context",
+        provider: name,
+        ecosystem: "fixture",
+        root,
+        get generation() {
+          return current.generation.sequence;
+        },
+        get current() {
+          return current;
+        },
+        refresh: async () => {
+          calls += 1;
+          if (calls === 1) {
+            return refreshResult(initial, true);
+          }
+          if (calls === 2) {
+            current = advanced;
+            if (abort !== undefined) {
+              abort.abort();
+              throw new Error("fixture cancelled after provider commit");
+            }
+            return refreshResult(advanced, true);
+          }
+          return refreshResult(current, false);
+        },
+        close: async () => {},
+      };
+    },
+  };
+}
+
+function refreshResult(
+  snapshot: RepositoryContextProtocol.ISnapshot,
+  changed: boolean,
+) {
+  return {
+    changed,
+    generation: snapshot.generation.sequence,
+    mode: "full" as const,
+    snapshot,
+    warnings: [],
+  };
+}
+
+function retargetSnapshot(
+  input: RepositoryContextProtocol.ISnapshot,
+  key: string,
+  sourceName: string,
+  digestCharacter: string,
+  sequence: number,
+): RepositoryContextProtocol.ISnapshot {
+  const snapshot = structuredClone(input);
+  const identities = new Map(
+    snapshot.nodes.map((node) => [node.id, `${node.id}:${key}`]),
+  );
+  for (const node of snapshot.nodes) {
+    node.id = identities.get(node.id)!;
+    if (node.kind === "source-root") node.name = sourceName;
+  }
+  for (const edge of snapshot.edges) {
+    edge.from = identities.get(edge.from) ?? edge.from;
+    edge.to = identities.get(edge.to) ?? edge.to;
+  }
+  snapshot.sources = [
+    {
+      file: `${key}.json`,
+      digest: digestCharacter.repeat(64),
+    },
+  ];
+  snapshot.hello.provider = key;
+  snapshot.begin.sequence = sequence;
+  snapshot.begin.inputGeneration = digestCharacter.repeat(64);
+  snapshot.begin.manifest = digestCharacter.repeat(64);
+  snapshot.generation.sequence = sequence;
+  snapshot.generation.token = digestCharacter.repeat(64);
+  snapshot.generation.contentDigest = digestCharacter.repeat(64);
+  return snapshot;
+}
+
 function collection(
   root: string,
   model: { name: string; file: string },
@@ -479,6 +644,7 @@ function collection(
     nodes: [
       {
         id: workspace,
+        authority: "declared",
         kind: "workspace" as const,
         name: "fixture",
         ecosystem: "fixture",
@@ -488,6 +654,7 @@ function collection(
       },
       {
         id: source,
+        authority: "declared",
         kind: "source-root" as const,
         name: model.name,
         ecosystem: "fixture",
@@ -497,8 +664,18 @@ function collection(
       },
     ],
     edges: [
-      { kind: "contains" as const, from: workspace, to: source },
-      { kind: "joins-file" as const, from: source, to: model.file },
+      {
+        authority: "declared" as const,
+        kind: "contains" as const,
+        from: workspace,
+        to: source,
+      },
+      {
+        authority: "declared" as const,
+        kind: "joins-file" as const,
+        from: source,
+        to: model.file,
+      },
     ],
     coverage: repositoryContextCoverage(
       "fixture-context",
@@ -533,4 +710,13 @@ function sourceName(snapshot: {
   nodes: readonly { kind: string; name: string }[];
 }): string | undefined {
   return snapshot.nodes.find((node) => node.kind === "source-root")?.name;
+}
+
+function sourceNames(snapshot: {
+  nodes: readonly { kind: string; name: string }[];
+}): string[] {
+  return snapshot.nodes
+    .filter((node) => node.kind === "source-root")
+    .map((node) => node.name)
+    .sort();
 }

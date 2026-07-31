@@ -22,7 +22,11 @@ const ECOSYSTEM = "cmake";
 interface ICmakeIndex {
   cmake?: { version?: { string?: string } };
   reply?: Record<string, { jsonFile?: string }>;
-  objects?: Array<{ kind?: string; jsonFile?: string }>;
+  objects?: Array<{
+    kind?: string;
+    version?: { major?: number; minor?: number };
+    jsonFile?: string;
+  }>;
 }
 
 interface ICmakeCodemodel {
@@ -108,10 +112,16 @@ function collectCmakeRepositoryContext(
   }
   const indexFile = latestIndex(reply);
   const index = readJson<ICmakeIndex>(indexFile);
-  const codemodelRef = objectReference(index, "codemodel", "codemodel-v2");
+  const codemodelRef = objectReference(
+    index,
+    "codemodel",
+    2,
+    "codemodel-v2",
+  );
   const cmakeFilesRef = objectReference(
     index,
     "cmakeFiles",
+    1,
     "cmakeFiles-v1",
   );
   if (codemodelRef === undefined || cmakeFilesRef === undefined) {
@@ -179,10 +189,14 @@ function collectCmakeRepositoryContext(
 function objectReference(
   index: ICmakeIndex,
   kind: string,
+  major: number,
   replyPrefix: string,
 ): string | undefined {
   return (
-    index.objects?.find((entry) => entry.kind === kind)?.jsonFile ??
+    index.objects?.find(
+      (entry) =>
+        entry.kind === kind && entry.version?.major === major,
+    )?.jsonFile ??
     Object.entries(index.reply ?? {}).find(([key]) =>
       key.startsWith(replyPrefix),
     )?.[1].jsonFile
@@ -210,6 +224,7 @@ function cmakeConfigurationShard(
   const nodes: ISamchonRepositoryContextDump.INode[] = [
     {
       id: workspaceId,
+      authority: "tool-resolved",
       kind: "workspace",
       name: path.basename(codemodel.paths.source),
       ecosystem: ECOSYSTEM,
@@ -233,7 +248,10 @@ function cmakeConfigurationShard(
       ),
     ),
   ];
-  assertCmakeReplyFresh(indexFile, sources, root);
+  // cmakeFiles-v1 is the owning tool's complete configuration-input list.
+  // Check every one of those inputs, including included `.cmake` modules,
+  // instead of guessing freshness from CMakeLists.txt names.
+  assertCmakeReplyFresh(indexFile, modelInputs.slice(1), root);
   const projectIds = new Map<number, string>();
   const targetIds = new Map<string, string>();
 
@@ -247,6 +265,7 @@ function cmakeConfigurationShard(
     projectIds.set(index, projectId);
     nodes.push({
       id: projectId,
+      authority: "tool-resolved",
       kind: "project",
       name: project.name,
       ecosystem: ECOSYSTEM,
@@ -255,7 +274,12 @@ function cmakeConfigurationShard(
       external: false,
       evidence,
     });
-    edges.push({ kind: "contains", from: workspaceId, to: projectId });
+    edges.push({
+      authority: "tool-resolved",
+      kind: "contains",
+      from: workspaceId,
+      to: projectId,
+    });
   });
 
   const details = new Map<string, ICmakeTarget>();
@@ -274,6 +298,7 @@ function cmakeConfigurationShard(
     targetIds.set(summary.id, targetId);
     nodes.push({
       id: targetId,
+      authority: "tool-resolved",
       kind: "build-target",
       name: summary.name,
       ecosystem: ECOSYSTEM,
@@ -282,7 +307,12 @@ function cmakeConfigurationShard(
       external: false,
       evidence,
     });
-    edges.push({ kind: "contains", from: projectId, to: targetId });
+    edges.push({
+      authority: "tool-resolved",
+      kind: "contains",
+      from: projectId,
+      to: targetId,
+    });
     appendCmakeSources(
       root,
       target,
@@ -302,6 +332,7 @@ function cmakeConfigurationShard(
       );
       nodes.push({
         id: entrypointId,
+        authority: "tool-resolved",
         kind: "entrypoint",
         name: detail.name,
         ecosystem: ECOSYSTEM,
@@ -311,8 +342,18 @@ function cmakeConfigurationShard(
         evidence,
       });
       edges.push(
-        { kind: "contains", from: targetId, to: entrypointId },
-        { kind: "entrypoint-of", from: entrypointId, to: targetId },
+        {
+          authority: "tool-resolved",
+          kind: "contains",
+          from: targetId,
+          to: entrypointId,
+        },
+        {
+          authority: "tool-resolved",
+          kind: "entrypoint-of",
+          from: entrypointId,
+          to: targetId,
+        },
       );
     }
     for (const artifact of detail.artifacts ?? []) {
@@ -329,6 +370,7 @@ function cmakeConfigurationShard(
       );
       nodes.push({
         id: generatedId,
+        authority: "tool-resolved",
         kind: "generated-root",
         name: path.basename(path.dirname(artifactPath)),
         ecosystem: ECOSYSTEM,
@@ -338,8 +380,18 @@ function cmakeConfigurationShard(
         evidence,
       });
       edges.push(
-        { kind: "contains", from: targetId, to: generatedId },
-        { kind: "produces", from: targetId, to: generatedId },
+        {
+          authority: "tool-resolved",
+          kind: "contains",
+          from: targetId,
+          to: generatedId,
+        },
+        {
+          authority: "tool-resolved",
+          kind: "produces",
+          from: targetId,
+          to: generatedId,
+        },
       );
     }
   }
@@ -347,7 +399,14 @@ function cmakeConfigurationShard(
     const from = targetIds.get(id)!;
     for (const dependency of detail.dependencies ?? []) {
       const to = targetIds.get(dependency.id);
-      if (to !== undefined) edges.push({ kind: "depends-on", from, to });
+      if (to !== undefined) {
+        edges.push({
+          authority: "tool-resolved",
+          kind: "depends-on",
+          from,
+          to,
+        });
+      }
     }
   }
   return {
@@ -412,6 +471,7 @@ function appendCmakeSources(
     );
     nodes.push({
       id: sourceId,
+      authority: "tool-resolved",
       kind: row.generated ? "generated-root" : "source-root",
       name: path.basename(directory),
       ecosystem: ECOSYSTEM,
@@ -424,13 +484,28 @@ function appendCmakeSources(
       ),
     });
     edges.push(
-      { kind: "contains", from: targetId, to: sourceId },
-      { kind: "source-of", from: sourceId, to: projectId },
+      {
+        authority: "tool-resolved",
+        kind: "contains",
+        from: targetId,
+        to: sourceId,
+      },
+      {
+        authority: "tool-resolved",
+        kind: "source-of",
+        from: sourceId,
+        to: projectId,
+      },
     );
     for (const file of row.files) {
       const joined = repositoryContextFile(root, file);
       files.add(joined);
-      edges.push({ kind: "joins-file", from: sourceId, to: joined });
+      edges.push({
+        authority: "tool-resolved",
+        kind: "joins-file",
+        from: sourceId,
+        to: joined,
+      });
     }
   }
 }
@@ -442,7 +517,6 @@ function assertCmakeReplyFresh(
 ): void {
   const replyTime = fs.statSync(indexFile).mtimeMs;
   for (const source of sources) {
-    if (!source.file.endsWith("CMakeLists.txt")) continue;
     const file = path.resolve(root, source.file);
     if (fs.existsSync(file) && fs.statSync(file).mtimeMs > replyTime) {
       throw new Error(

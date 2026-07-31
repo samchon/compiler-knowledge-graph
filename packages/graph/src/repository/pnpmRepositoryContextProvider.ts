@@ -97,6 +97,7 @@ function collectPnpmRepositoryContext(
   const nodes: ISamchonRepositoryContextDump.INode[] = [
     {
       id: workspace,
+      authority: "tool-resolved",
       kind: "workspace",
       name: path.basename(props.root),
       ecosystem: ECOSYSTEM,
@@ -131,6 +132,8 @@ function collectPnpmRepositoryContext(
     sources.push(repositoryContextSource(props.root, manifestFile));
     nodes.push({
       id: packageId,
+      authority:
+        manifest.name === undefined ? "tool-resolved" : "declared",
       kind: "package",
       name: manifest.name ?? entry.name ?? path.basename(absolute),
       ecosystem: ECOSYSTEM,
@@ -139,7 +142,12 @@ function collectPnpmRepositoryContext(
       external: false,
       evidence: repositoryContextEvidence(props.root, manifestFile),
     });
-    edges.push({ kind: "contains", from: workspace, to: packageId });
+    edges.push({
+      authority: "tool-resolved",
+      kind: "contains",
+      from: workspace,
+      to: packageId,
+    });
     appendManifestFacts(
       props.root,
       absolute,
@@ -165,7 +173,12 @@ function collectPnpmRepositoryContext(
       if (dependency.path === undefined) continue;
       const target = packageIds.get(path.resolve(dependency.path));
       if (target !== undefined) {
-        edges.push({ kind: "depends-on", from, to: target });
+        edges.push({
+          authority: "tool-resolved",
+          kind: "depends-on",
+          from,
+          to: target,
+        });
       }
     }
   }
@@ -232,6 +245,7 @@ function appendManifestFacts(
     );
     nodes.push({
       id,
+      authority: "declared",
       kind: generated ? "generated-root" : "source-root",
       name: rootName,
       ecosystem: ECOSYSTEM,
@@ -241,8 +255,10 @@ function appendManifestFacts(
       root: repositoryContextFile(root, path.resolve(packageRoot, rootName)),
       evidence,
     });
-    edges.push({ kind: "contains", from: packageId, to: id });
-    edges.push({ kind: "source-of", from: id, to: packageId });
+    edges.push(
+      { authority: "declared", kind: "contains", from: packageId, to: id },
+      { authority: "declared", kind: "source-of", from: id, to: packageId },
+    );
   }
   for (const [name, target] of entrypoints(manifest)) {
     const coordinate = `${repositoryContextFile(root, packageRoot)}:${name}`;
@@ -255,6 +271,7 @@ function appendManifestFacts(
     files.add(file);
     nodes.push({
       id,
+      authority: "declared",
       kind: "entrypoint",
       name,
       ecosystem: ECOSYSTEM,
@@ -264,9 +281,16 @@ function appendManifestFacts(
       file,
       evidence,
     });
-    edges.push({ kind: "contains", from: packageId, to: id });
-    edges.push({ kind: "entrypoint-of", from: id, to: packageId });
-    edges.push({ kind: "joins-file", from: id, to: file });
+    edges.push(
+      { authority: "declared", kind: "contains", from: packageId, to: id },
+      {
+        authority: "declared",
+        kind: "entrypoint-of",
+        from: id,
+        to: packageId,
+      },
+      { authority: "declared", kind: "joins-file", from: id, to: file },
+    );
   }
   for (const name of Object.keys(manifest.scripts ?? {}).sort(
     compareRepositoryText,
@@ -275,6 +299,7 @@ function appendManifestFacts(
     const id = repositoryContextId(ECOSYSTEM, "task", coordinate);
     nodes.push({
       id,
+      authority: "declared",
       kind: "task",
       name,
       ecosystem: ECOSYSTEM,
@@ -283,7 +308,12 @@ function appendManifestFacts(
       external: false,
       evidence,
     });
-    edges.push({ kind: "contains", from: packageId, to: id });
+    edges.push({
+      authority: "declared",
+      kind: "contains",
+      from: packageId,
+      to: id,
+    });
   }
 }
 

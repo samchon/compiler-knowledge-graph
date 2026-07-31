@@ -451,6 +451,11 @@ export namespace RepositoryContextProtocol {
           `repository context protocol: unknown node kind ${node.kind}`,
         );
       }
+      if (!AUTHORITIES.includes(node.authority)) {
+        throw new Error(
+          `repository context protocol: unknown node authority ${node.id}`,
+        );
+      }
       if (node.root !== undefined) {
         assertText(node.root, "node root");
         if (
@@ -470,6 +475,11 @@ export namespace RepositoryContextProtocol {
     }
     const edgeKeys = new Set<string>();
     for (const edge of shard.edges) {
+      if (!AUTHORITIES.includes(edge.authority)) {
+        throw new Error(
+          `repository context protocol: unknown edge authority ${edge.kind}`,
+        );
+      }
       if (!hello.supportedFamilies.includes(edge.kind)) {
         throw new Error(
           `repository context protocol: unadvertised edge family ${edge.kind}`,

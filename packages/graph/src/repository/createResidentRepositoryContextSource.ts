@@ -28,7 +28,7 @@ export function createResidentRepositoryContextSource(
   let sequence = 0;
   let queue = Promise.resolve();
   let closed = false;
-  let priorFailures: string[] = [];
+  let priorStates: string[] = [];
 
   return {
     load(options = {}) {
@@ -40,11 +40,9 @@ export function createResidentRepositoryContextSource(
           warnings: string[];
         }> = [];
         const failures: IProviderFailure[] = [];
-        let changed = current === undefined;
         for (const row of sessions) {
           try {
             const refresh = await row.session.refresh(options);
-            changed ||= refresh.changed;
             snapshots.push({
               provider: row.provider,
               snapshot: refresh.snapshot,
@@ -65,19 +63,19 @@ export function createResidentRepositoryContextSource(
             });
           }
         }
+        const states = [
+          ...snapshots.map(snapshotIdentity),
+          ...failures.map(failureIdentity),
+        ].sort(compareRepositoryText);
         if (
-          !changed &&
-          sameStrings(
-            failures.map(failureIdentity),
-            priorFailures,
-          ) &&
+          sameStrings(states, priorStates) &&
           current !== undefined
         ) {
           return current;
         }
         const next = assemble(project, sequence + 1, snapshots, failures);
         sequence = next.generation.sequence;
-        priorFailures = failures.map(failureIdentity);
+        priorStates = states;
         current = next;
         return next;
       });
@@ -142,6 +140,20 @@ function failureIdentity(failure: IProviderFailure): string {
     failure.inputGeneration,
     failure.message,
   ].join("\0");
+}
+
+function snapshotIdentity(snapshot: {
+  provider: IRepositoryContextProvider;
+  snapshot: RepositoryContextProtocol.ISnapshot;
+  warnings: readonly string[];
+}): string {
+  return RepositoryContextProtocol.digest({
+    provider: snapshot.provider.name,
+    inputGeneration: snapshot.snapshot.begin.inputGeneration,
+    generation: snapshot.snapshot.generation.token,
+    content: snapshot.snapshot.generation.contentDigest,
+    warnings: [...snapshot.warnings].sort(compareRepositoryText),
+  });
 }
 
 function assemble(

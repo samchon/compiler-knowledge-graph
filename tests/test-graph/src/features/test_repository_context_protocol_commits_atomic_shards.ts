@@ -103,6 +103,12 @@ export const test_repository_context_protocol_commits_atomic_shards =
       }),
       mutate(transaction(3, unchanged, changedShard()), (frames) => {
         const upsert = frames[2] as RepositoryContextProtocol.IUpsertShard;
+        (upsert.shard.nodes[0] as { authority: string }).authority =
+          "guessed";
+        refresh(frames);
+      }),
+      mutate(transaction(3, unchanged, changedShard()), (frames) => {
+        const upsert = frames[2] as RepositoryContextProtocol.IUpsertShard;
         (upsert.shard.coverage[0] as { state: string }).state = "unknown";
         refresh(frames);
       }),
@@ -204,6 +210,12 @@ export const test_repository_context_protocol_commits_atomic_shards =
       mutate(transaction(3, unchanged, changedShard()), (frames) => {
         const upsert = changedUpsert(frames);
         (upsert.shard.edges[0] as { kind: string }).kind = "invokes";
+      }),
+      mutate(transaction(3, unchanged, changedShard()), (frames) => {
+        const upsert = changedUpsert(frames);
+        (upsert.shard.edges[0] as { authority: string }).authority =
+          "guessed";
+        refresh(frames);
       }),
       mutate(transaction(3, unchanged, changedShard()), (frames) => {
         const upsert = changedUpsert(frames);
@@ -435,6 +447,7 @@ function validShard(): RepositoryContextProtocol.IShard {
     nodes: [
       {
         id: workspace,
+        authority: "declared",
         kind: "workspace",
         name: "fixture",
         ecosystem: "fixture",
@@ -444,6 +457,7 @@ function validShard(): RepositoryContextProtocol.IShard {
       },
       {
         id: source,
+        authority: "declared",
         kind: "source-root",
         name: "src",
         ecosystem: "fixture",
@@ -453,8 +467,18 @@ function validShard(): RepositoryContextProtocol.IShard {
       },
     ],
     edges: [
-      { kind: "contains", from: workspace, to: source },
-      { kind: "joins-file", from: source, to: "src/main.ts" },
+      {
+        authority: "declared",
+        kind: "contains",
+        from: workspace,
+        to: source,
+      },
+      {
+        authority: "declared",
+        kind: "joins-file",
+        from: source,
+        to: "src/main.ts",
+      },
     ],
     coverage: repositoryContextCoverage(
       "fixture-context",
@@ -481,6 +505,7 @@ function secondaryShard(): RepositoryContextProtocol.IShard {
     nodes: [
       {
         id: project,
+        authority: "declared",
         kind: "project",
         name: "secondary",
         ecosystem: "fixture",

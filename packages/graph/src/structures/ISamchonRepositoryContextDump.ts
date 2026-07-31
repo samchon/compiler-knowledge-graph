@@ -80,6 +80,8 @@ export namespace ISamchonRepositoryContextDump {
 
   export interface INode {
     id: string;
+    /** Authority that establishes this exact node fact. */
+    authority: RepositoryContextAuthority;
     kind: RepositoryContextNodeKind;
     name: string;
     ecosystem: string;
@@ -94,6 +96,8 @@ export namespace ISamchonRepositoryContextDump {
   }
 
   export interface IEdge {
+    /** Authority that establishes this exact relation fact. */
+    authority: RepositoryContextAuthority;
     kind: RepositoryContextRelationKind;
     from: string;
     to: string;

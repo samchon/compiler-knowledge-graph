@@ -69,15 +69,16 @@ export class SamchonRepositoryContextMemory {
       .filter((node) => selected.has(node.id))
       .slice(0, limit);
     const retained = new Set(nodes.map((node) => node.id));
+    const retainedEdges = edges.filter(
+      (edge) =>
+        retained.has(edge.from) &&
+        (edge.kind === "joins-file" || retained.has(edge.to)),
+    );
     return {
       type: "topology",
       schemaVersion: 1,
       nodes,
-      edges: edges.filter(
-        (edge) =>
-          retained.has(edge.from) &&
-          (edge.kind === "joins-file" || retained.has(edge.to)),
-      ),
+      edges: retainedEdges,
       provenance: this.dump.provenance.map((row) => ({ ...row })),
       coverage: this.dump.coverage
         .filter((row) => families === undefined || families.has(row.family))
@@ -88,7 +89,9 @@ export class SamchonRepositoryContextMemory {
       },
       join,
       truncated:
-        seeds.length > limit || matchingJoins.length > joinLimit,
+        seeds.length > limit ||
+        matchingJoins.length > joinLimit ||
+        retainedEdges.length < edges.length,
     };
   }
 }
@@ -106,12 +109,14 @@ function withCodeJoins(
   );
   for (const node of nodes) {
     if (node.file !== undefined && codeFiles.has(node.file)) {
-      add(node.id, node.file);
+      add(node.id, node.file, node.authority);
     }
     if (node.root !== undefined) {
       const prefix = node.root === "." ? "" : `${node.root.replace(/\/$/, "")}/`;
       for (const file of codeFiles) {
-        if (prefix === "" || file.startsWith(prefix)) add(node.id, file);
+        if (prefix === "" || file.startsWith(prefix)) {
+          add(node.id, file, node.authority);
+        }
       }
     }
   }
@@ -122,8 +127,12 @@ function withCodeJoins(
       compare(left.to, right.to),
   );
 
-  function add(from: string, to: string): void {
-    const edge = { kind: "joins-file" as const, from, to };
+  function add(
+    from: string,
+    to: string,
+    authority: ISamchonRepositoryContextDump.IEdge["authority"],
+  ): void {
+    const edge = { authority, kind: "joins-file" as const, from, to };
     rows.set(`${edge.kind}\0${edge.from}\0${edge.to}`, edge);
   }
 }

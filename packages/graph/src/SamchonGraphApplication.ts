@@ -160,22 +160,27 @@ export class SamchonGraphApplication implements ISamchonGraphApplication {
                   ? "No repository-context provider produced a compatible current generation."
                   : "The code generation moved while topology was loading, or the code dump predates cross-plane generation fencing.",
             };
+        const result = topology.inspect(
+          props.request,
+          join,
+          new Set(
+            graph.nodes
+              .filter((node) => node.kind === "file")
+              .map((node) => node.file),
+          ),
+        );
         return {
           audit:
             "Repository topology is returned from declared or owning-tool models; file joins are included only when the code generation stayed stable across the topology load.",
           next: resultNext(
             "answer",
-            "The requested repository orientation is present in this topology result.",
+            result.nodes.length === 0
+              ? "No repository topology node matched the requested query or available provider facts."
+              : result.truncated
+                ? "The requested repository orientation is present, and the result states that its configured bounds truncated additional facts."
+                : "The requested repository orientation is present in this topology result.",
           ),
-          result: topology.inspect(
-            props.request,
-            join,
-            new Set(
-              graph.nodes
-                .filter((node) => node.kind === "file")
-                .map((node) => node.file),
-            ),
-          ),
+          result,
         };
       }
       default:

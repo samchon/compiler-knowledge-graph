@@ -77,6 +77,7 @@ function collectGradleRepositoryContext(
   const nodes: ISamchonRepositoryContextDump.INode[] = [
     {
       id: workspaceId,
+      authority: "tool-resolved",
       kind: "workspace",
       name: path.basename(props.root),
       ecosystem: ECOSYSTEM,
@@ -118,6 +119,7 @@ function collectGradleRepositoryContext(
     nodes.push(
       {
         id: projectId,
+        authority: "tool-resolved",
         kind: "project",
         name: module.name,
         ecosystem: ECOSYSTEM,
@@ -128,6 +130,7 @@ function collectGradleRepositoryContext(
       },
       {
         id: buildTargetId,
+        authority: "tool-resolved",
         kind: "build-target",
         name: module.path,
         ecosystem: ECOSYSTEM,
@@ -138,8 +141,18 @@ function collectGradleRepositoryContext(
       },
     );
     edges.push(
-      { kind: "contains", from: workspaceId, to: projectId },
-      { kind: "contains", from: projectId, to: buildTargetId },
+      {
+        authority: "tool-resolved",
+        kind: "contains",
+        from: workspaceId,
+        to: projectId,
+      },
+      {
+        authority: "tool-resolved",
+        kind: "contains",
+        from: projectId,
+        to: buildTargetId,
+      },
     );
     for (const source of module.sources) {
       const coordinate = `${module.path}:${repositoryContextFile(
@@ -153,6 +166,7 @@ function collectGradleRepositoryContext(
       );
       nodes.push({
         id: sourceId,
+        authority: "tool-resolved",
         kind: source.generated ? "generated-root" : "source-root",
         name: path.basename(source.directory),
         ecosystem: ECOSYSTEM,
@@ -163,11 +177,26 @@ function collectGradleRepositoryContext(
         evidence,
       });
       edges.push(
-        { kind: "contains", from: buildTargetId, to: sourceId },
-        { kind: "source-of", from: sourceId, to: projectId },
+        {
+          authority: "tool-resolved",
+          kind: "contains",
+          from: buildTargetId,
+          to: sourceId,
+        },
+        {
+          authority: "tool-resolved",
+          kind: "source-of",
+          from: sourceId,
+          to: projectId,
+        },
       );
       if (source.kind.startsWith("test")) {
-        edges.push({ kind: "test-of", from: sourceId, to: projectId });
+        edges.push({
+          authority: "tool-resolved",
+          kind: "test-of",
+          from: sourceId,
+          to: projectId,
+        });
       }
     }
     for (const task of module.tasks) {
@@ -178,6 +207,7 @@ function collectGradleRepositoryContext(
       );
       nodes.push({
         id: taskId,
+        authority: "tool-resolved",
         kind: "task",
         name: task.name,
         ecosystem: ECOSYSTEM,
@@ -186,7 +216,12 @@ function collectGradleRepositoryContext(
         external: false,
         evidence,
       });
-      edges.push({ kind: "contains", from: projectId, to: taskId });
+      edges.push({
+        authority: "tool-resolved",
+        kind: "contains",
+        from: projectId,
+        to: taskId,
+      });
     }
   }
 
@@ -198,7 +233,14 @@ function collectGradleRepositoryContext(
       const to =
         projectIds.get(dependency) ??
         (candidates.length === 1 ? candidates[0] : undefined);
-      if (to !== undefined) edges.push({ kind: "depends-on", from, to });
+      if (to !== undefined) {
+        edges.push({
+          authority: "tool-resolved",
+          kind: "depends-on",
+          from,
+          to,
+        });
+      }
       else unresolvedDependencies += 1;
     }
   }

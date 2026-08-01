@@ -63,6 +63,7 @@ export const GraphPaths = {
   createTempDirectory,
   fakeCmake: path.join(repositoryRoot, "tests", "test-graph", "src", "internal", "fake-cmake.cjs"),
   fakeLspServer: path.join(repositoryRoot, "tests", "test-graph", "src", "internal", "fake-lsp-server.cjs"),
+  fakeRustGraphServer: path.join(repositoryRoot, "tests", "test-graph", "src", "internal", "fake-rust-graph-server.cjs"),
   fakeTtscGraphServer: path.join(repositoryRoot, "tests", "test-graph", "src", "internal", "fake-ttscgraph-server.cjs"),
   fakePub: path.join(repositoryRoot, "tests", "test-graph", "src", "internal", "fake-pub.cjs"),
   fakeScipIndexer: path.join(repositoryRoot, "tests", "test-graph", "src", "internal", "fake-scip-indexer.cjs"),

@@ -36,8 +36,72 @@ export const test_provider_registry_selects_one_owner_per_language =
     await assertSnapshotContract();
     await assertCrossProviderCollisions();
     await assertDigestsAndProvenance();
+    await assertRuntimeFallback();
     await assertStrictBuildCanonicalizesMultiProviderState();
   };
+
+async function assertRuntimeFallback(): Promise<void> {
+  const root = GraphPaths.createTempDirectory("samchon-graph-provider-fallback-");
+  fs.writeFileSync(path.join(root, "index.ts"), "export const value = 1;\n");
+  let primaryCloses = 0;
+  let fallbackCloses = 0;
+  const fallback = ProviderFixtures.provider({
+    name: "fixture-semantic-fallback",
+    open: (props) =>
+      ProviderFixtures.session({
+        root: props.root,
+        languages: [...props.languages],
+        snapshots: [
+          ProviderFixtures.snapshot({
+            root: props.root,
+            languages: [...props.languages],
+            provider: "fixture-semantic-fallback",
+            authority: "compiler",
+          }),
+        ],
+        onClose: () => {
+          fallbackCloses += 1;
+        },
+      }),
+  });
+  const primary: IGraphProvider = {
+    ...ProviderFixtures.provider({
+      name: "fixture-failing-primary",
+      open: (props) =>
+        ProviderFixtures.session({
+          root: props.root,
+          languages: [...props.languages],
+          onRefresh: () => {
+            throw new Error("primary fixture exploded");
+          },
+          onClose: () => {
+            primaryCloses += 1;
+          },
+        }),
+    }),
+    fallbacks: [fallback],
+  };
+
+  const result = await buildLspGraph(
+    { cwd: root, languages: ["typescript"] },
+    { providers: [primary] },
+  );
+  TestValidator.equals(
+    "a failed strict route closes and steps down to its strict fallback",
+    [
+      result.dump.provenance?.map((row) => row.provider),
+      result.dump.warnings.some(
+        (warning) =>
+          warning.includes("fixture-failing-primary") &&
+          warning.includes("fixture-semantic-fallback") &&
+          warning.includes("primary fixture exploded"),
+      ),
+      primaryCloses,
+      fallbackCloses,
+    ],
+    [["fixture-semantic-fallback"], true, 1, 1],
+  );
+}
 
 async function assertStrictBuildCanonicalizesMultiProviderState(): Promise<void> {
   const root = GraphPaths.createTempDirectory("samchon-graph-provider-order-");
@@ -254,6 +318,51 @@ async function assertSelection(): Promise<void> {
     prepared,
   ], [1, 1]);
 
+  const compatibleFallback = ProviderFixtures.provider({
+    name: "fake-ts-fallback",
+  });
+  const primaryWithFallback: IGraphProvider = {
+    ...ProviderFixtures.provider({ name: "fake-ts-primary" }),
+    fallbacks: [compatibleFallback],
+  };
+  const routed = selectGraphProviders(
+    "/root",
+    ["typescript"],
+    {},
+    {},
+    [primaryWithFallback],
+  );
+  TestValidator.equals(
+    "a resolved primary retains its already-resolved fallback route",
+    [
+      routed.candidates[0]?.provider.name,
+      routed.candidates[0]?.fallbacks.map((route) => route.provider.name),
+    ],
+    ["fake-ts-primary", ["fake-ts-fallback"]],
+  );
+
+  const missingPrimary = selectGraphProviders(
+    "/root",
+    ["typescript"],
+    {},
+    {},
+    [
+      {
+        ...primaryWithFallback,
+        resolve: () => undefined,
+      },
+    ],
+  );
+  TestValidator.equals(
+    "a missing primary promotes the compatible fallback to the selected route",
+    [
+      missingPrimary.candidates[0]?.provider.name,
+      missingPrimary.candidates[0]?.fallbacks,
+      missingPrimary.warnings.length,
+    ],
+    ["fake-ts-fallback", [], 1],
+  );
+
   // --- registry defects are static, not machine-dependent -----------------
   TestValidator.error("two providers cannot own one language", () =>
     selectGraphProviders(
@@ -321,6 +430,44 @@ async function assertSelection(): Promise<void> {
           name: "repeated-fact",
           facts: ["calls", "calls"],
         }),
+      ],
+    ),
+  );
+  TestValidator.error("a fallback cannot own a different atomic language set", () =>
+    selectGraphProviders(
+      "/root",
+      ["typescript"],
+      {},
+      {},
+      [
+        {
+          ...primaryWithFallback,
+          fallbacks: [
+            ProviderFixtures.provider({
+              name: "wrong-language-fallback",
+              languages: ["go"],
+            }),
+          ],
+        },
+      ],
+    ),
+  );
+  TestValidator.error("a fallback cannot introduce another fallback tier", () =>
+    selectGraphProviders(
+      "/root",
+      ["typescript"],
+      {},
+      {},
+      [
+        {
+          ...primaryWithFallback,
+          fallbacks: [
+            {
+              ...compatibleFallback,
+              fallbacks: [ProviderFixtures.provider({ name: "third-tier" })],
+            },
+          ],
+        },
       ],
     ),
   );

@@ -317,6 +317,14 @@ function validateManifest(
         documented.benchmarks.length > 0,
       `${documented.provider} must name benchmark evidence`,
     );
+    if (documented.benchmarkProvider !== undefined) {
+      invariant(
+        typeof documented.benchmarkProvider === "string" &&
+          documented.benchmarkProvider.trim() !== "" &&
+          documented.benchmarkProvider !== documented.provider,
+        `${documented.provider} benchmark provider must name a different non-empty producer`,
+      );
+    }
     for (const row of documented.benchmarks) {
       invariant(
         typeof row.project === "string" && row.project !== "",
@@ -328,6 +336,7 @@ function validateManifest(
       );
       benchmarkRows.set(row.project, {
         provider: documented.provider,
+        benchmarkProvider: documented.benchmarkProvider,
         row,
       });
     }
@@ -395,8 +404,10 @@ function validateManifest(
       `${project} benchmark cells must come from one paired measurement`,
     );
     invariant(
-      strict[0].servedBy.includes(documented.provider),
-      `${project} strict cell does not name ${documented.provider}`,
+      strict[0].servedBy.includes(
+        documented.benchmarkProvider ?? documented.provider,
+      ),
+      `${project} strict cell does not name ${documented.benchmarkProvider ?? documented.provider}`,
     );
     if (
       Object.hasOwn(documented.row, "strictTimedOutMs") ||
@@ -466,7 +477,9 @@ function renderSupport(manifest) {
   const benchmarkRows = manifest.providers.flatMap((provider) =>
     provider.benchmarks.map((benchmark) => [
       code(benchmark.project),
-      code(provider.provider),
+      provider.benchmarkProvider === undefined
+        ? code(provider.provider)
+        : `${code(provider.benchmarkProvider)} (prior fallback evidence; ${code(provider.provider)} not yet measured)`,
       Object.hasOwn(benchmark, "strictTimedOutMs")
         ? `did not finish before ${seconds(benchmark.strictTimedOutMs)} s`
         : milliseconds(benchmark.strictMs),

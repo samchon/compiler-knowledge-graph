@@ -83,11 +83,34 @@ export const LANGUAGE_EXPERIMENTS = [
     language: "rust",
     repository: "https://github.com/tokio-rs/mini-redis.git",
     commit: "3d93b42bc363220f85af4fc9e1bebd35b588a4a3",
-    strictProvider: "rust-analyzer-scip",
-    strictAuthority: "semantic-index",
-    strictTool: "rust-analyzer",
-    requiredCapabilities: ["universe", "diskDigests"],
-    semanticEdges: ["contains", "references"],
+    strictProvider: "samchon-rust-analyzer-hir",
+    strictAuthority: "analyzer",
+    strictTool: "samchon-rust-analyzer",
+    requiredCapabilities: [
+      "coverage",
+      "diagnostics",
+      "incremental",
+      "sourceDigests",
+      "universe",
+      "unresolved",
+      "validatedConsumerCheckpoint",
+    ],
+    semanticEdges: [
+      "contains",
+      "exports",
+      "imports",
+      "calls",
+      "accesses",
+      "instantiates",
+      "type_ref",
+      "extends",
+      "implements",
+      "overrides",
+      "dispatches",
+      "decorates",
+      "tests",
+      "references",
+    ],
     crossFileEdge: "references",
     lifecycle: {
       sourceFile: "src/lib.rs",
@@ -98,9 +121,9 @@ export const LANGUAGE_EXPERIMENTS = [
         'const samchonGraphExperiment: &str = "strict-lifecycle";\n\nfn main() { println!("{samchonGraphExperiment}"); }\n',
       createdSymbol: "samchonGraphExperiment",
       buildFile: "Cargo.toml",
-      // Stock rust-analyzer's SCIP command recovers from malformed Rust and
-      // emits no diagnostics. A malformed Cargo manifest is the real strict
-      // failure boundary that the semantic-index authority can prove.
+      // A malformed Cargo manifest invalidates the producer's build universe,
+      // so the HIR snapshot must reject rather than mix an old database with
+      // new workspace inputs.
       failureFile: "Cargo.toml",
       failureSuffix: "\n[malformed",
       failurePolicy: "reject",

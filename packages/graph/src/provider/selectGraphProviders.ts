@@ -44,33 +44,36 @@ export function selectGraphProviders(
       requested.has(language),
     );
     if (owned.length === 0) continue;
+    const routes: selectGraphProviders.IRouteCandidate[] = [];
+    for (const route of [provider, ...(provider.fallbacks ?? [])]) {
+      const refusal = route.refuse(options);
+      if (refusal !== undefined) {
+        warnings.push(refusal);
+        continue;
+      }
 
-    const refusal = provider.refuse(options);
-    if (refusal !== undefined) {
-      warnings.push(refusal);
-      continue;
-    }
-
-    const command = provider.resolve(root, env);
-    if (command === undefined) {
-      warnings.push(
-        `${owned.join(", ")}: the ${provider.name} ${provider.authority} provider was not found for this project; falling back to the generic language-server lane.`,
-      );
-      continue;
-    }
-
-    if (prepare && provider.prepare !== undefined) {
-      try {
-        provider.prepare(root, options);
-      } catch (error) {
+      const command = route.resolve(root, env);
+      if (command === undefined) {
         warnings.push(
-          `${owned.join(", ")}: the ${provider.name} ${provider.authority} provider could not prepare this project, so it cannot answer for it: ${(error as Error).message}`,
+          `${owned.join(", ")}: the ${route.name} ${route.authority} provider was not found for this project; trying the next strict route if one is available.`,
         );
         continue;
       }
-    }
 
-    candidates.push({ provider, languages: owned, command });
+      if (prepare && route.prepare !== undefined) {
+        try {
+          route.prepare(root, options);
+        } catch (error) {
+          warnings.push(
+            `${owned.join(", ")}: the ${route.name} ${route.authority} provider could not prepare this project, so it cannot answer for it: ${(error as Error).message}`,
+          );
+          continue;
+        }
+      }
+      routes.push({ provider: route, languages: owned, command });
+    }
+    const [selected, ...fallbacks] = routes;
+    if (selected !== undefined) candidates.push({ ...selected, fallbacks });
   }
 
   return { candidates, warnings };
@@ -91,7 +94,12 @@ export namespace selectGraphProviders {
     languages: GraphLanguage[];
 
     command: IGraphProvider.ICommand;
+
+    /** Already-resolved strict routes attempted if this route fails. */
+    fallbacks: IRouteCandidate[];
   }
+
+  export type IRouteCandidate = Omit<ICandidate, "fallbacks">;
 
   export interface IResult {
     /** Providers that can serve this build, in registry order. */
@@ -127,21 +135,35 @@ function assertOneOwnerPerLanguage(
   const owners = new Map<GraphLanguage, IGraphProvider>();
   const names = new Set<string>();
   for (const provider of registry) {
-    if (names.has(provider.name)) {
-      throw new Error(
-        `@samchon/graph: provider "${provider.name}" is registered more than once; provenance needs one stable provider identity`,
-      );
-    }
-    names.add(provider.name);
-    if (provider.languages.length === 0) {
-      throw new Error(
-        `@samchon/graph: provider "${provider.name}" owns no language, so nothing can select it`,
-      );
-    }
-    if (new Set(provider.facts).size !== provider.facts.length) {
-      throw new Error(
-        `@samchon/graph: provider "${provider.name}" declares one fact family more than once`,
-      );
+    for (const route of [provider, ...(provider.fallbacks ?? [])]) {
+      if (names.has(route.name)) {
+        throw new Error(
+          `@samchon/graph: provider "${route.name}" is registered more than once; provenance needs one stable provider identity`,
+        );
+      }
+      names.add(route.name);
+      if (route.languages.length === 0) {
+        throw new Error(
+          `@samchon/graph: provider "${route.name}" owns no language, so nothing can select it`,
+        );
+      }
+      if (new Set(route.facts).size !== route.facts.length) {
+        throw new Error(
+          `@samchon/graph: provider "${route.name}" declares one fact family more than once`,
+        );
+      }
+      if (route !== provider) {
+        if (route.fallbacks !== undefined) {
+          throw new Error(
+            `@samchon/graph: fallback provider "${route.name}" cannot declare another fallback tier`,
+          );
+        }
+        if (!sameLanguages(route.languages, provider.languages)) {
+          throw new Error(
+            `@samchon/graph: fallback provider "${route.name}" does not own the same atomic languages as "${provider.name}"`,
+          );
+        }
+      }
     }
     for (const language of provider.languages) {
       const existing = owners.get(language);
@@ -153,4 +175,16 @@ function assertOneOwnerPerLanguage(
       owners.set(language, provider);
     }
   }
+}
+
+function sameLanguages(
+  left: readonly GraphLanguage[],
+  right: readonly GraphLanguage[],
+): boolean {
+  const uniqueLeft = new Set(left);
+  const uniqueRight = new Set(right);
+  return (
+    uniqueLeft.size === uniqueRight.size &&
+    [...uniqueLeft].every((language) => uniqueRight.has(language))
+  );
 }

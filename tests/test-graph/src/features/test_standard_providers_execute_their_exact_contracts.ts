@@ -5,9 +5,10 @@ import {
   type GraphEdgeKind,
   type IBulkGraphSession,
   type IGraphProvider,
+  RUST_GRAPH_PRODUCER_COMMIT,
   goGraphProvider,
   luaGraphProvider,
-  rustScipProvider,
+  rustGraphProvider,
   standardScipProviders,
   standardSidecarProviders,
 } from "@samchon/graph";
@@ -923,7 +924,7 @@ function assertFixtureRegistryCoverage(): void {
     ttscGraphProvider,
     goGraphProvider,
     luaGraphProvider,
-    rustScipProvider,
+    rustGraphProvider,
     ...standardScipProviders,
     ...standardSidecarProviders,
   ]
@@ -1011,6 +1012,7 @@ async function assertHeuristicTwinFails(
   provider: IGraphProvider,
   command: IGraphProvider.ICommand,
   root: string,
+  relationship: GraphEdgeKind = "references",
 ): Promise<void> {
   const prior = process.env.SAMCHON_GRAPH_FIXTURE_MODE;
   process.env.SAMCHON_GRAPH_FIXTURE_MODE = "heuristic";
@@ -1025,7 +1027,7 @@ async function assertHeuristicTwinFails(
     const refreshed = await session.refresh();
     const failures = Conformance.check(
       refreshed.snapshot,
-      expectationsForProvider(root, provider),
+      expectationsForProvider(root, provider, relationship),
     ).failures;
     TestValidator.predicate(
       `${provider.name} rejects only the common comment-only semantic negative twin`,
@@ -1113,8 +1115,9 @@ function expectationsOf(
 function expectationsForProvider(
   root: string,
   provider: IGraphProvider,
+  relationship: GraphEdgeKind = "references",
 ): readonly Conformance.IExpectation[] {
-  return expectationsOf(root, provider.languages).filter(
+  return expectationsOf(root, provider.languages, relationship).filter(
     (expectation) =>
       !("edge" in expectation) ||
       provider.facts.includes(expectation.edge.kind),
@@ -1238,23 +1241,26 @@ async function assertRemainingRegisteredFixtures(root: string): Promise<void> {
   };
   await assertRegisteredFixture(luaGraphProvider, luaCommand, root);
 
-  // The arguments `resolveRustScipCommand` puts in front of the session's own,
-  // not an invocation that skips them. A synthetic command without them opens
-  // the same session against a producer that was never asked the way the
-  // provider asks it, which is how a wrong subcommand would go unnoticed here
-  // and be found only by a real lane.
+  // The HIR fixture speaks the same resident snapshot protocol as the pinned
+  // fork and carries the shared positive/negative semantic corpus.
   const rustCommand: IGraphProvider.ICommand = {
     command: process.execPath,
     args: [
-      GraphPaths.fakeStandardProvider,
-      "--producer=rust-analyzer",
-      "scip",
-      ".",
-      "--exclude-vendored-libraries",
+      GraphPaths.fakeRustGraphServer,
+      `--commit=${RUST_GRAPH_PRODUCER_COMMIT}`,
+      "--conformance",
     ],
   };
-  await assertRegisteredFixture(rustScipProvider, rustCommand, root);
-  await assertHeuristicTwinFails(rustScipProvider, rustCommand, root);
+  await assertRegisteredFixture(rustGraphProvider, rustCommand, root, "calls");
+  await assertHeuristicTwinFails(
+    rustGraphProvider,
+    {
+      ...rustCommand,
+      args: [...rustCommand.args, "--conformance-heuristic"],
+    },
+    root,
+    "calls",
+  );
 }
 
 async function assertRegisteredFixture(

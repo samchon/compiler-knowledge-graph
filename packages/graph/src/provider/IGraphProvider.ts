@@ -79,6 +79,15 @@ export interface IGraphProvider {
   readonly resolution?: IGraphProvider.IResolution;
 
   /**
+   * Ordered compatibility routes for the same atomic language slice.
+   *
+   * These are not additional language owners. The registry still has one
+   * owner, while selection and the runtime coordinator may step down through
+   * these routes when a more authoritative producer is absent or fails.
+   */
+  readonly fallbacks?: readonly IGraphProvider[];
+
+  /**
    * Why this provider cannot serve a build with these options, or `undefined`
    * when it can.
    *

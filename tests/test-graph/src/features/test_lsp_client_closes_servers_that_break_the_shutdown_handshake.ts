@@ -19,7 +19,18 @@ interface ILspClient {
 }
 
 interface ILspClientInternals {
-  pending: Map<number, unknown>;
+  pending: Map<
+    number,
+    {
+      resolve(value: unknown): void;
+      reject(error: Error): void;
+      timer: NodeJS.Timeout | undefined;
+      signal?: AbortSignal;
+      abort?: () => void;
+    }
+  >;
+  handleMessage(message: unknown): void;
+  write(payload: unknown): void;
   process: {
     stdin: {
       destroy(error?: Error): void;
@@ -77,6 +88,7 @@ type LspClientConstructor = new (
   maxMessageBytes?: number,
   windowsVerbatimArguments?: boolean,
   requestObserver?: (event: LspRequestTrace) => void,
+  serverRequestHandler?: (method: string, params: unknown) => unknown,
 ) => ILspClient;
 
 /** `LspClient` is internal transport, reached through the shipped artifact. */
@@ -158,6 +170,7 @@ export const test_lsp_client_closes_servers_that_break_the_shutdown_handshake =
     await assertOversizedHeadersTerminateTransport(LspClient);
     await assertRequestTracing(LspClient);
     await assertRequestTraceFormatting();
+    await assertServerRequestFailureAndBareResponse(LspClient);
 
     // An already-cancelled request never enters the wire or waits for the
     // otherwise-unlimited default deadline. The client still owns its child and
@@ -179,6 +192,82 @@ export const test_lsp_client_closes_servers_that_break_the_shutdown_handshake =
     );
     await cancelled.close();
   };
+
+const assertServerRequestFailureAndBareResponse = async (
+  LspClient: LspClientConstructor,
+): Promise<void> => {
+  const client = new LspClient(
+    process.execPath,
+    [GraphPaths.fakeLspServer],
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    (method) => {
+      if (method === "fixture/failure") {
+        throw "fixture server-request failure";
+      }
+      return undefined;
+    },
+  );
+  const internals = client as unknown as ILspClientInternals;
+  const written: unknown[] = [];
+  const originalWrite = internals.write.bind(client);
+  try {
+    internals.write = (payload) => void written.push(payload);
+    internals.handleMessage({
+      jsonrpc: "2.0",
+      id: 7001,
+      method: "fixture/failure",
+      params: {},
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    TestValidator.equals(
+      "a rejected server-request handler returns a normalized JSON-RPC error",
+      written,
+      [
+        {
+          jsonrpc: "2.0",
+          id: 7001,
+          error: {
+            code: -32603,
+            message: "fixture server-request failure",
+          },
+        },
+      ],
+    );
+
+    internals.handleMessage({
+      jsonrpc: "2.0",
+      id: 7002,
+      method: "fixture/undefined",
+      params: {},
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    TestValidator.equals(
+      "an undefined server-request handler result remains valid JSON-RPC",
+      written[1],
+      { jsonrpc: "2.0", id: 7002, result: null },
+    );
+
+    let bare: Error & { code?: number } | undefined;
+    internals.pending.set(7003, {
+      resolve: () => undefined,
+      reject: (error) => void (bare = error as Error & { code?: number }),
+      timer: undefined,
+    });
+    internals.handleMessage({ jsonrpc: "2.0", id: 7003, error: {} });
+    TestValidator.equals(
+      "a bare LSP response error receives the protocol defaults",
+      [bare?.name, bare?.code, bare?.message],
+      ["LspResponseError", -32603, "LSP request failed."],
+    );
+  } finally {
+    internals.write = originalWrite;
+    await client.close();
+  }
+};
 
 const assertRequestTracing = async (
   LspClient: LspClientConstructor,

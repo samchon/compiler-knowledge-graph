@@ -2,6 +2,7 @@ import { ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
 
 import { ownedProcess } from "../utils/ownedProcess";
+import { LspResponseError } from "./LspResponseError";
 
 const SHUTDOWN_GRACE_MS = 1_000;
 const DEFAULT_MAX_MESSAGE_BYTES = 256 * 1024 * 1024;
@@ -36,6 +37,7 @@ export class LspClient {
     maxMessageBytes = DEFAULT_MAX_MESSAGE_BYTES,
     windowsVerbatimArguments?: boolean,
     private readonly requestObserver?: LspClient.IRequestObserver,
+    private readonly serverRequestHandler?: LspClient.IServerRequestHandler,
   ) {
     if (!Number.isSafeInteger(maxMessageBytes) || maxMessageBytes < 1) {
       throw new TypeError(
@@ -291,7 +293,7 @@ export class LspClient {
           method?: string;
           params?: unknown;
           result?: unknown;
-          error?: { message?: string };
+          error?: { code?: number; message?: string; data?: unknown };
         };
       } catch {
         continue;
@@ -305,14 +307,29 @@ export class LspClient {
     method?: string;
     params?: unknown;
     result?: unknown;
-    error?: { message?: string };
+    error?: { code?: number; message?: string; data?: unknown };
   }): void {
     // A server-initiated request carries both an id and a method. It must be
     // answered or some servers block: gopls, for instance, withholds
     // documentSymbol until its `window/workDoneProgress/create` request is
     // acknowledged. A null result satisfies the acknowledgements we advertise.
     if (message.id !== undefined && message.method !== undefined) {
-      this.write({ jsonrpc: "2.0", id: message.id, result: null });
+      if (this.serverRequestHandler === undefined) {
+        this.write({ jsonrpc: "2.0", id: message.id, result: null });
+        return;
+      }
+      void Promise.resolve()
+        .then(() => this.serverRequestHandler!(message.method!, message.params))
+        .then((result) =>
+          this.write({ jsonrpc: "2.0", id: message.id, result: result ?? null }),
+        )
+        .catch((error: unknown) =>
+          this.write({
+            jsonrpc: "2.0",
+            id: message.id,
+            error: { code: -32603, message: asError(error).message },
+          }),
+        );
       return;
     }
     if (message.id !== undefined) {
@@ -321,7 +338,11 @@ export class LspClient {
       this.deletePending(message.id, pending);
       if (message.error !== undefined) {
         pending.reject(
-          new Error(message.error.message ?? "LSP request failed."),
+          new LspResponseError(
+            message.error.code ?? -32603,
+            message.error.message ?? "LSP request failed.",
+            message.error.data,
+          ),
         );
       } else {
         pending.resolve(message.result);
@@ -388,6 +409,10 @@ export class LspClient {
 
 export namespace LspClient {
   export type IRequestObserver = (event: IRequestTrace) => void;
+  export type IServerRequestHandler = (
+    method: string,
+    params: unknown,
+  ) => unknown;
 
   export type IRequestTrace =
     | {

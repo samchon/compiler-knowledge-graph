@@ -152,12 +152,15 @@ function projectDirectory(props: RustGraphCache.IProps): string {
 function defaultCacheRoot(): string {
   const configured = process.env.SAMCHON_GRAPH_CACHE_DIR;
   if (configured !== undefined && path.isAbsolute(configured)) return configured;
+  /* c8 ignore start -- this branch is executable only on Windows; the Windows
+   * CI lane exercises it while POSIX coverage cannot change process.platform. */
   if (process.platform === "win32") {
     const local = process.env.LOCALAPPDATA;
     if (local !== undefined && path.isAbsolute(local)) {
       return path.join(local, "samchon-graph");
     }
   }
+  /* c8 ignore stop */
   const xdg = process.env.XDG_CACHE_HOME;
   if (xdg !== undefined && path.isAbsolute(xdg)) {
     return path.join(xdg, "samchon-graph");

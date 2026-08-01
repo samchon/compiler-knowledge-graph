@@ -547,23 +547,96 @@ switch (experiment.language) {
     });
     break;
   }
-  case "rust":
+  case "rust": {
     // The installer script comes through the same hardened seam as every
     // other fetch. Piping curl into `sh` would be the one shape curl's own
     // manual tells us not to retry: a retried mid-body transfer is not
     // rewound in a pipe, so `sh` could read the partial prefix twice.
     await downloadFile("https://sh.rustup.rs", path.join(toolsRoot, "rustup-init.sh"));
-    shell(`sh "${path.join(toolsRoot, "rustup-init.sh")}" -y --profile minimal`);
-    appendGithubPath(path.join(os.homedir(), ".cargo", "bin"));
-    shell(`${path.join(os.homedir(), ".cargo", "bin", "rustup")} component add rust-analyzer`);
+    shell(
+      `sh "${path.join(toolsRoot, "rustup-init.sh")}" -y --profile minimal --default-toolchain 1.95.0`,
+    );
+    const cargoBin = path.join(os.homedir(), ".cargo", "bin");
+    appendGithubPath(cargoBin);
+    run(
+      path.join(
+        cargoBin,
+        process.platform === "win32" ? "rustup.exe" : "rustup",
+      ),
+      [
+        "component",
+        "add",
+        "rust-src",
+        "--toolchain",
+        "1.95.0",
+      ],
+    );
+    record({
+      tool: "rust-toolchain",
+      version: "1.95.0",
+      source: "rustup profile minimal with rust-src",
+      digest: "rustup:1.95.0",
+    });
+    const producerRoot = path.join(toolsRoot, "samchon-rust-analyzer-source");
+    fs.rmSync(producerRoot, { force: true, recursive: true });
+    ensureDir(producerRoot);
+    run("git", ["init"], { cwd: producerRoot });
+    run("git", ["remote", "add", "origin", experiment.producerRepository], {
+      cwd: producerRoot,
+    });
+    run(
+      "git",
+      ["fetch", "--depth=1", "origin", experiment.producerCommit],
+      { cwd: producerRoot },
+    );
+    run("git", ["checkout", "--detach", "FETCH_HEAD"], {
+      cwd: producerRoot,
+    });
+    const producerHead = String(
+      run("git", ["rev-parse", "HEAD"], {
+        cwd: producerRoot,
+        stdio: "pipe",
+      }).stdout,
+    ).trim();
+    if (producerHead !== experiment.producerCommit) {
+      throw new Error(
+        `rust producer checkout is ${producerHead}, not ${experiment.producerCommit}`,
+      );
+    }
+    run(
+      path.join(cargoBin, process.platform === "win32" ? "cargo.exe" : "cargo"),
+      ["build", "--locked", "--release", "-p", "rust-analyzer"],
+      { cwd: producerRoot },
+    );
+    const producerBinary = path.join(
+      producerRoot,
+      "target",
+      "release",
+      process.platform === "win32" ? "rust-analyzer.exe" : "rust-analyzer",
+    );
+    for (const command of ["samchon-rust-analyzer", "rust-analyzer"]) {
+      const link = path.join(
+        binRoot,
+        `${command}${process.platform === "win32" ? ".exe" : ""}`,
+      );
+      fs.rmSync(link, { force: true });
+      fs.linkSync(producerBinary, link);
+    }
+    record({
+      tool: "samchon-rust-analyzer",
+      version: experiment.producerCommit,
+      source: `${experiment.producerRepository}@${experiment.producerCommit}`,
+      digest: `git:${experiment.producerCommit}`,
+    });
     record({
       tool: "rust-analyzer",
-      version: "unpinned",
-      source: "rustup component add rust-analyzer",
-      digest: "unpinned",
+      version: experiment.producerCommit,
+      source: "alias of samchon-rust-analyzer",
+      digest: `git:${experiment.producerCommit}`,
     });
     await installScip();
     break;
+  }
   case "cpp":
   case "c":
     // `bear` alongside clangd because scip-clang declines without a compilation

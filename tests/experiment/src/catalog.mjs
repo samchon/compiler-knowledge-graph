@@ -86,9 +86,12 @@ export const LANGUAGE_EXPERIMENTS = [
     strictProvider: "samchon-rust-analyzer-hir",
     strictAuthority: "analyzer",
     strictTool: "samchon-rust-analyzer",
+    producerRepository: "https://github.com/samchon/rust-analyzer.git",
+    producerCommit: "2850ecba80311bebd4cdaa9fedc5321533b5b1e7",
     requiredCapabilities: [
       "coverage",
       "diagnostics",
+      "diskDigests",
       "incremental",
       "sourceDigests",
       "universe",
@@ -106,7 +109,6 @@ export const LANGUAGE_EXPERIMENTS = [
       "extends",
       "implements",
       "overrides",
-      "dispatches",
       "decorates",
       "tests",
       "references",
@@ -118,8 +120,13 @@ export const LANGUAGE_EXPERIMENTS = [
       createFile: "examples/samchon_graph_experiment.rs",
       renamedFile: "examples/samchon_graph_experiment_renamed.rs",
       createText:
-        'const samchonGraphExperiment: &str = "strict-lifecycle";\n\nfn main() { println!("{samchonGraphExperiment}"); }\n',
+        'const samchonGraphExperiment: &str = "strict-lifecycle";\n\ntrait SamchonGraphParent {}\ntrait SamchonGraphChild: SamchonGraphParent {}\n\nfn main() { println!("{samchonGraphExperiment}"); }\n',
       createdSymbol: "samchonGraphExperiment",
+      createdEdge: {
+        kind: "extends",
+        from: "SamchonGraphChild",
+        to: "SamchonGraphParent",
+      },
       buildFile: "Cargo.toml",
       // A malformed Cargo manifest invalidates the producer's build universe,
       // so the HIR snapshot must reject rather than mix an old database with

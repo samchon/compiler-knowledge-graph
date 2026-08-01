@@ -3,6 +3,7 @@
 
 const crypto = require("node:crypto");
 const fs = require("node:fs");
+const path = require("node:path");
 
 const args = process.argv.slice(2);
 const valueOf = (prefix) => args.find((arg) => arg.startsWith(prefix))?.slice(prefix.length);
@@ -184,7 +185,10 @@ const edges = conformance
 const shard = {
   key: "app\u0000src/lib.rs",
   source: "src/lib.rs",
-  checkerDigest: sha256(conformanceHeuristic ? "fixture-heuristic" : "fixture-source"),
+  checkerDigest: crypto
+    .createHash("sha256")
+    .update(fs.readFileSync(path.join(process.cwd(), "src/lib.rs")))
+    .digest("hex"),
   interfaceFingerprint: sha256(
     conformanceHeuristic ? "fixture-heuristic-interface" : "fixture-interface",
   ),

@@ -62,6 +62,7 @@ const UNRESOLVED_REASONS = new Set<ISamchonGraphUnresolved["reason"]>([
 const CAPABILITIES = [
   "coverage",
   "diagnostics",
+  "diskDigests",
   "incremental",
   "sourceDigests",
   "universe",
@@ -75,6 +76,7 @@ export class RustGraphSnapshotAdapter {
   private graphShards = new Map<string, GraphSnapshotProtocol.IShard>();
   private rawGeneration: string | undefined;
   private checkpoint: IRustGraphCheckpoint | undefined;
+  private restoringCheckpoint = false;
 
   public constructor(
     private readonly root: string,
@@ -101,6 +103,7 @@ export class RustGraphSnapshotAdapter {
     this.graphShards.clear();
     this.rawGeneration = undefined;
     this.checkpoint = undefined;
+    this.restoringCheckpoint = false;
     this.store = new GraphSnapshotProtocol.Store(this.root);
   }
 
@@ -150,6 +153,7 @@ export class RustGraphSnapshotAdapter {
       throw new Error("rust HIR graph: producer generation digest mismatch");
     }
     if (
+      !this.restoringCheckpoint &&
       prior !== undefined &&
       raw.generation === priorRawGeneration &&
       raw.baseGeneration === priorRawGeneration &&
@@ -167,11 +171,14 @@ export class RustGraphSnapshotAdapter {
     const hello = helloOf(raw);
     const nodeIds = nodeIdsOf(raw, nextRaw);
     const nextGraph =
-      raw.baseGeneration === null
+      raw.baseGeneration === null || this.restoringCheckpoint
         ? new Map<string, GraphSnapshotProtocol.IShard>()
         : new Map(this.graphShards);
     for (const key of raw.deletes) nextGraph.delete(graphKey(key));
-    for (const shard of raw.upserts) {
+    const graphUpserts = this.restoringCheckpoint
+      ? [...nextRaw.values()]
+      : raw.upserts;
+    for (const shard of graphUpserts) {
       const adapted = adaptShard(this.root, raw, shard, nodeIds);
       nextGraph.set(adapted.key, adapted);
     }
@@ -259,6 +266,7 @@ export class RustGraphSnapshotAdapter {
         this.graphShards = nextGraph;
         this.rawGeneration = raw.generation;
         this.checkpoint = checkpoint;
+        this.restoringCheckpoint = false;
         return snapshot;
       },
     };
@@ -301,26 +309,29 @@ export class RustGraphSnapshotAdapter {
     ) {
       throw new Error("rust HIR graph: persisted producer checkpoint is corrupt");
     }
-    const snapshot = this.store.apply(cached.frames);
+    const snapshot = new GraphSnapshotProtocol.Store(this.root).apply(
+      cached.frames,
+    );
     if (
       snapshot.protocol?.generation !== cached.checkpoint.generation ||
-      snapshot.provenance.universe !== cached.checkpoint.universe
+      snapshot.provenance.universe !== cached.checkpoint.universe ||
+      snapshot.provenance.provider !== RUST_HIR_PROVIDER ||
+      snapshot.provenance.tool !== cached.checkpoint.producer.name ||
+      snapshot.provenance.toolVersion !==
+        `${cached.checkpoint.producer.version} (${cached.checkpoint.producer.commit})`
     ) {
       throw new Error("rust HIR graph: persisted checkpoint generation mismatch");
     }
     this.rawShards = new Map(
       cached.rawShards.map((shard) => [shard.key, structuredClone(shard)]),
     );
-    this.graphShards = new Map(
-      cached.frames
-        .filter(
-          (frame): frame is GraphSnapshotProtocol.IUpsertShard =>
-            frame.type === "upsertShard",
-        )
-        .map((frame) => [frame.shard.key, structuredClone(frame.shard)]),
-    );
     this.rawGeneration = cached.checkpoint.generation;
     this.checkpoint = structuredClone(cached.checkpoint);
+    // Normalized frames are a local cache artifact, not producer evidence.
+    // Keep only the raw checkpoint until the restarted producer validates it;
+    // the next response then reconstructs every public shard from those raw
+    // HIR facts before anything becomes resident again.
+    this.restoringCheckpoint = true;
   }
 }
 
@@ -401,7 +412,7 @@ function adaptShard(
       {
         file: source,
         checkerDigest: shard.checkerDigest,
-        diskDigest: "",
+        diskDigest: shard.checkerDigest,
       },
     ],
   };
@@ -922,9 +933,17 @@ function assertString(value: unknown, label: string): asserts value is string {
 }
 
 function assertNativeNodeId(value: unknown, label: string): asserts value is string {
-  assertString(value, label);
-  if (!value.startsWith("rust-hir-v1|")) {
-    throw new Error(`rust HIR graph: invalid ${label}`);
+  if (
+    typeof value !== "string" ||
+    value === "" ||
+    value.includes("\0") ||
+    (!value.startsWith("rust-hir-v1|") &&
+      !value.startsWith("rust-file-v1|") &&
+      !value.startsWith("rust-export-v1|"))
+  ) {
+    throw new Error(
+      `rust HIR graph: invalid ${label}: ${JSON.stringify(value)}`,
+    );
   }
 }
 

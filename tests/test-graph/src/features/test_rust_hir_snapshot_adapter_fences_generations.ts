@@ -1,6 +1,7 @@
 import { TestValidator } from "@nestia/e2e";
 import {
   GRAPH_EDGE_KINDS,
+  GraphSnapshotProtocol,
   RUST_GRAPH_PRODUCER_COMMIT,
   RustGraphCache,
   RustGraphSnapshotAdapter,
@@ -40,6 +41,8 @@ export const test_rust_hir_snapshot_adapter_fences_generations = () => {
       initialSnapshot.unresolved?.length,
       initialSnapshot.provenance.provider,
       initialSnapshot.provenance.compilerVersion.startsWith("rustc 1.95.0"),
+      initialSnapshot.provenance.capabilities.includes("diskDigests"),
+      initialSnapshot.sources.get(path.join(root, "src/lib.rs"))?.diskDigest,
       initialSnapshot.nodes.every((node) => node.id.startsWith("@v2/rust/")),
       initialSnapshot.edges.every(
         (edge) =>
@@ -61,6 +64,8 @@ export const test_rust_hir_snapshot_adapter_fences_generations = () => {
       GRAPH_EDGE_KINDS.length - 1,
       "samchon-rust-analyzer-hir",
       true,
+      true,
+      sourceDigest("pub fn answer() -> u8 { 42 }\n"),
       true,
       true,
     ],
@@ -86,6 +91,17 @@ export const test_rust_hir_snapshot_adapter_fences_generations = () => {
   });
   const incremental = adapter.prepare(incrementalRaw);
   if (!incremental.changed) throw new Error("incremental Rust generation did not change");
+  TestValidator.error(
+    "producer delta frames cannot validate against an empty store",
+    () => new GraphSnapshotProtocol.Store(root).apply(incremental.frames),
+  );
+  TestValidator.equals(
+    "a producer delta carries a complete reconstruction for isolated validation",
+    new GraphSnapshotProtocol.Store(root).apply(incremental.state.frames).nodes.some(
+      (node) => node.name === "edited_answer",
+    ),
+    true,
+  );
   const incrementalSnapshot = adapter.store.apply(incremental.frames);
   incremental.commit(incrementalSnapshot);
   TestValidator.equals(
@@ -114,13 +130,30 @@ export const test_rust_hir_snapshot_adapter_fences_generations = () => {
 
   const restored = new RustGraphSnapshotAdapter(root, COMMIT, reloaded.state);
   TestValidator.equals(
-    "a validated consumer checkpoint restores raw and graph state",
+    "a consumer checkpoint remains unpublished until the producer validates its raw state",
     [
       restored.store.current?.protocol?.generation,
       restored.persistedCheckpoint?.generation,
-      restored.store.current?.nodes.map((node) => node.name),
+      restored.hasPersistedSnapshot,
     ],
-    [reloadedRaw.generation, reloadedRaw.generation, ["dependency", "reloaded"]],
+    [undefined, reloadedRaw.generation, false],
+  );
+  const restoredRaw = snapshot({
+    base: reloadedRaw,
+    upserts: [],
+    sequence: 6,
+  });
+  const restoredPrepared = restored.prepare(restoredRaw);
+  if (!restoredPrepared.changed) {
+    throw new Error("validated Rust checkpoint did not reconstruct its graph");
+  }
+  const restoredSnapshot = restoredPrepared.commit(
+    restored.store.apply(restoredPrepared.frames),
+  );
+  TestValidator.equals(
+    "producer validation reconstructs public facts without trusting cached frames",
+    [restoredPrepared.mode, restoredSnapshot.nodes.map((node) => node.name)],
+    ["initial", ["dependency", "reloaded"]],
   );
   restored.discardPersistedSnapshot();
   restored.discardPersistedSnapshot();
@@ -132,9 +165,67 @@ export const test_rust_hir_snapshot_adapter_fences_generations = () => {
 
   assertAdapterRefusals(root, initialRaw, reloaded.state);
   assertDeltaDeletionAndCrossShardRefusals(root);
+  assertNativeSyntheticIdentities(root);
   assertOptionalProducerFields(root);
   assertCacheFallback(root, reloaded.state);
 };
+
+function assertNativeSyntheticIdentities(root: string): void {
+  const raw = snapshot({ nodeName: "with_file" });
+  const source = raw.upserts[0]!.source;
+  const fileId = `rust-file-v1|${source.length}:${source}`;
+  const exportId = "rust-export-v1|fixture-alias";
+  raw.upserts[0]!.nodes.push({
+    id: fileId,
+    kind: "file",
+    name: "lib.rs",
+    qualifiedName: null,
+    file: source,
+    external: false,
+    exported: false,
+    signature: null,
+    evidence: null,
+  });
+  raw.upserts[0]!.nodes.push({
+    id: exportId,
+    kind: "function",
+    name: "exported_answer",
+    qualifiedName: "fixture::exported_answer",
+    file: source,
+    external: false,
+    exported: true,
+    signature: "fn() -> u8",
+    evidence: null,
+  });
+  raw.upserts[0]!.edges.push({
+    from: fileId,
+    to: "rust-hir-v1|answer",
+    kind: "contains",
+    evidence: null,
+  });
+  raw.upserts[0]!.edges.push({
+    from: exportId,
+    to: "rust-hir-v1|answer",
+    kind: "references",
+    evidence: null,
+  });
+  refresh(raw);
+
+  const adapter = new RustGraphSnapshotAdapter(root, COMMIT);
+  const prepared = adapter.prepare(raw);
+  if (!prepared.changed) throw new Error("native Rust file fixture did not change");
+  const adapted = adapter.store.apply(prepared.frames);
+  TestValidator.equals(
+    "producer-owned file identities survive native validation and adaptation",
+    [
+      adapted.nodes.some((node) => node.kind === "file" && node.name === "lib.rs"),
+      adapted.nodes.some((node) => node.name === "exported_answer"),
+      adapted.edges.some((edge) => edge.kind === "contains"),
+      adapted.edges.some((edge) => edge.kind === "references"),
+    ],
+    [true, true, true, true],
+  );
+}
 
 function assertOptionalProducerFields(root: string): void {
   const optional = snapshot({ nodeName: "optional" });
@@ -363,6 +454,13 @@ function assertAdapterRefusals(
       },
     ],
     ["persisted producer checkpoint", (value) => value.checkpoint.manifest.pop()],
+    [
+      "persisted normalized producer attribution",
+      (value) => {
+        const hello = value.frames[0];
+        if (hello?.type === "hello") hello.producer = "forged-producer";
+      },
+    ],
     [
       "persisted graph checkpoint",
       (value) => ((value.frames[1]! as { type: string }).type = "hello"),
@@ -657,7 +755,10 @@ function rawShard(
   const shard: IRustGraphShard = {
     key: `app\0${source}`,
     source,
-    checkerDigest: digest(`checker-${source}-${nodeName}`),
+    checkerDigest:
+      source === "src/lib.rs"
+        ? sourceDigest("pub fn answer() -> u8 { 42 }\n")
+        : sourceDigest(`fixture source: ${source}\n`),
     interfaceFingerprint: digest(`interface-${nodeName}`),
     digest: "",
     nodes: [
@@ -743,6 +844,10 @@ function rawShardDigest(shard: IRustGraphShard): string {
 
 function digest(value: unknown): string {
   return createHash("sha256").update(canonical(value)).digest("hex");
+}
+
+function sourceDigest(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
 }
 
 function canonical(value: unknown): string {

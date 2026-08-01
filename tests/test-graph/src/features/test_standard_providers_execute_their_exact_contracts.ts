@@ -13,6 +13,7 @@ import {
   standardSidecarProviders,
 } from "@samchon/graph";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -1284,6 +1285,14 @@ async function assertRegisteredFixture(
         "the Rust fixture publishes only its fixed compiler and Cargo oracles",
         refreshed.snapshot.provenance.compilerVersion,
         "rustc=rustc v1.0.0; cargo=cargo v1.0.0",
+      );
+    }
+    if (provider.name === "samchon-rust-analyzer-hir") {
+      const source = path.join(root, "src/lib.rs");
+      TestValidator.equals(
+        "the Rust HIR source digest binds analyzer facts to the coordinator's disk generation",
+        refreshed.snapshot.sources.get(source)?.diskDigest,
+        createHash("sha256").update(fs.readFileSync(source)).digest("hex"),
       );
     }
     // Compared rather than reduced to a predicate: a conformance report names

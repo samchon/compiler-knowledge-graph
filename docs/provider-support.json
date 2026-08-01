@@ -101,7 +101,7 @@
       "facts": ["contains", "exports", "imports", "calls", "accesses", "instantiates", "type_ref", "extends", "implements", "overrides", "dispatches", "decorates", "tests", "references"],
       "commands": ["samchon-rust-analyzer", "rust-analyzer"],
       "environmentOverrides": ["SAMCHON_GRAPH_RUST_ANALYZER_HIR"],
-      "install": "Build the `samchon/rust-analyzer` graph-snapshot fork at commit `3e8db3829e471b6af9acd1f14052e641fb81c4fd`; point `SAMCHON_GRAPH_RUST_ANALYZER_HIR` at that binary or install it as `samchon-rust-analyzer`.",
+      "install": "Build the `samchon/rust-analyzer` graph-snapshot fork at commit `2850ecba80311bebd4cdaa9fedc5321533b5b1e7`; point `SAMCHON_GRAPH_RUST_ANALYZER_HIR` at that binary or install it as `samchon-rust-analyzer`.",
       "installSources": [
         {"label": "native HIR graph producer PR", "url": "https://github.com/samchon/rust-analyzer/pull/1"},
         {"label": "rust-analyzer build instructions", "url": "https://rust-analyzer.github.io/book/contributing.html"}
@@ -118,7 +118,7 @@
       "fallback": "Stock `rust-analyzer-scip`, then generic rust-analyzer, then `@samchon/graph-sitter`.",
       "experimentLanguages": ["rust"],
       "experimentTool": "samchon-rust-analyzer",
-      "experimentCapabilities": ["coverage", "diagnostics", "incremental", "sourceDigests", "universe", "unresolved", "validatedConsumerCheckpoint"],
+      "experimentCapabilities": ["coverage", "diagnostics", "diskDigests", "incremental", "sourceDigests", "universe", "unresolved", "validatedConsumerCheckpoint"],
       "benchmarkProvider": "rust-analyzer-scip",
       "benchmarks": [{"project": "tokio", "strictMs": 55238.18003, "fallbackMs": 229860.9964}],
       "upstream": "https://github.com/samchon/rust-analyzer",

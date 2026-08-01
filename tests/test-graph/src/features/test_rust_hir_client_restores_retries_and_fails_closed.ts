@@ -2,6 +2,7 @@ import { TestValidator } from "@nestia/e2e";
 import {
   RUST_GRAPH_PRODUCER_COMMIT,
   RustGraphClient,
+  buildLspGraph,
   rustGraphProvider,
 } from "@samchon/graph";
 import fs from "node:fs";
@@ -21,6 +22,7 @@ export const test_rust_hir_client_restores_retries_and_fails_closed = async () =
   await assertCancellationBoundaries(root);
   await assertPersistenceAndValidationBoundaries(root);
   await assertClientOptionBoundaries(root);
+  await assertPublicCommitFence(root);
   await assertPinnedResolution(root);
 };
 
@@ -80,8 +82,8 @@ async function assertResidentLifecycle(root: string, cacheRoot: string): Promise
     restoredValidations += 1;
   });
   TestValidator.predicate(
-    "a validated immutable checkpoint is resident before the restarted producer initializes",
-    restored.current !== undefined && restored.generation === 1 && restoredValidations === 1,
+    "a persisted checkpoint stays unpublished before the restarted producer validates it",
+    restored.current === undefined && restored.generation === 0 && restoredValidations === 0,
   );
   const reuse = await restored.refresh();
   const params = readRequests(restoredLog)[0]!;
@@ -94,7 +96,7 @@ async function assertResidentLifecycle(root: string, cacheRoot: string): Promise
       params.knownGeneration,
       params.checkpoint?.generation,
     ],
-    [false, "unchanged", 1, params.checkpoint?.generation, params.checkpoint?.generation],
+    [true, "initial", 1, params.checkpoint?.generation, params.checkpoint?.generation],
   );
   await restored.close();
 }
@@ -322,6 +324,45 @@ async function assertClientOptionBoundaries(root: string): Promise<void> {
   );
   await closing.close();
   await racedRejection;
+}
+
+async function assertPublicCommitFence(root: string): Promise<void> {
+  const cacheRoot = isolatedCache();
+  const priorCacheRoot = process.env.SAMCHON_GRAPH_CACHE_DIR;
+  process.env.SAMCHON_GRAPH_CACHE_DIR = cacheRoot;
+  try {
+    const result = await buildLspGraph(
+      { cwd: root, languages: ["rust"] },
+      {
+        providers: [
+          {
+            ...rustGraphProvider,
+            resolve: () => ({
+              command: process.execPath,
+              args: [
+                GraphPaths.fakeRustGraphServer,
+                `--commit=${RUST_GRAPH_PRODUCER_COMMIT}`,
+              ],
+            }),
+          },
+        ],
+      },
+    );
+    TestValidator.equals(
+      "a disk-bound Rust HIR generation crosses the public commit fence",
+      [
+        result.dump.provenance?.map((row) => row.provider),
+        result.dump.nodes.some((node) => node.name === "answer"),
+        result.dump.warnings.some((warning) =>
+          warning.includes("does not bind the provider snapshot"),
+        ),
+      ],
+      [["samchon-rust-analyzer-hir"], true, false],
+    );
+  } finally {
+    if (priorCacheRoot === undefined) delete process.env.SAMCHON_GRAPH_CACHE_DIR;
+    else process.env.SAMCHON_GRAPH_CACHE_DIR = priorCacheRoot;
+  }
 }
 
 async function assertPinnedResolution(root: string): Promise<void> {

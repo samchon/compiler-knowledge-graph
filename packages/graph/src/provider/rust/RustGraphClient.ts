@@ -56,9 +56,6 @@ export class RustGraphClient implements IBulkGraphSession {
         options.producerCommit,
         state,
       );
-      if (candidate.store.current !== undefined) {
-        this.validate(candidate.store.current);
-      }
       restored = candidate;
       return true;
     });
@@ -72,7 +69,7 @@ export class RustGraphClient implements IBulkGraphSession {
       this.adapter = restored;
     }
     this.checkpointPending = this.adapter.persistedCheckpoint !== undefined;
-    this.version = this.adapter.store.current?.protocol?.sequence ?? 0;
+    this.version = 0;
     this.initializationOptions = options.initializationOptions;
     this.requestTimeoutMs = options.requestTimeoutMs;
     this.readyTimeoutMs = options.readyTimeoutMs ?? DEFAULT_READY_TIMEOUT_MS;
@@ -120,7 +117,7 @@ export class RustGraphClient implements IBulkGraphSession {
           snapshot: prepared.snapshot,
         };
       }
-      new GraphSnapshotProtocol.Store(this.root).apply(prepared.frames, {
+      new GraphSnapshotProtocol.Store(this.root).apply(prepared.state.frames, {
         signal,
         validate: this.validate,
       });

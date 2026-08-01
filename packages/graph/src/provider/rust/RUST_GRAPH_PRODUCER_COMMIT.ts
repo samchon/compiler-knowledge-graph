@@ -1,2 +1,2 @@
 export const RUST_GRAPH_PRODUCER_COMMIT =
-  "3e8db3829e471b6af9acd1f14052e641fb81c4fd";
+  "2850ecba80311bebd4cdaa9fedc5321533b5b1e7";

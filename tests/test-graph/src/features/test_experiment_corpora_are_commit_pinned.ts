@@ -1,5 +1,5 @@
 import { TestValidator } from "@nestia/e2e";
-import { LANGUAGE_SPECS } from "@samchon/graph";
+import { LANGUAGE_SPECS, RUST_GRAPH_PRODUCER_COMMIT } from "@samchon/graph";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -34,6 +34,7 @@ export const test_experiment_corpora_are_commit_pinned = () => {
   const java = region(catalog, 'language: "java"', 'language: "csharp"');
   const csharp = region(catalog, 'language: "csharp"', 'language: "kotlin"');
   const kotlin = region(catalog, 'language: "kotlin"', 'language: "swift"');
+  const rust = region(catalog, 'language: "rust"', 'language: "cpp"');
   const swift = region(catalog, 'language: "swift"', 'language: "scala"');
   const scala = region(catalog, 'language: "scala"', 'language: "zig"');
   const zig = region(catalog, 'language: "zig"', 'language: "python"');
@@ -45,10 +46,23 @@ export const test_experiment_corpora_are_commit_pinned = () => {
   const dart = region(catalog, 'language: "dart"', "\n];");
   const javaSetup = region(setup, 'case "java"', 'case "csharp"');
   const kotlinSetup = region(setup, 'case "kotlin"', 'case "swift"');
+  const rustSetup = region(setup, 'case "rust"', 'case "cpp"');
   TestValidator.equals(
     "every registered strict-provider language has a lifecycle row",
     [...catalog.matchAll(/strictProvider:\s*"[^"]+"/g)].length,
     13,
+  );
+  TestValidator.predicate(
+    "Rust builds and records the exact native HIR producer declared by the catalog",
+    rust.includes('producerRepository: "https://github.com/samchon/rust-analyzer.git"') &&
+      rust.includes(`producerCommit: "${RUST_GRAPH_PRODUCER_COMMIT}"`) &&
+      rustSetup.includes("--default-toolchain 1.95.0") &&
+      rustSetup.includes('"rust-src"') &&
+      rustSetup.includes('["fetch", "--depth=1", "origin", experiment.producerCommit]') &&
+      rustSetup.includes('["build", "--locked", "--release", "-p", "rust-analyzer"]') &&
+      rustSetup.includes('for (const command of ["samchon-rust-analyzer", "rust-analyzer"])') &&
+      rustSetup.includes("fs.linkSync(producerBinary, link)") &&
+      !rustSetup.includes("rustup component add rust-analyzer"),
   );
   TestValidator.predicate(
     "the remaining SCIP providers use isolated upstream lifecycle projects",

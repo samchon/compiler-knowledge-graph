@@ -28,7 +28,7 @@ export const test_experiment_corpora_are_commit_pinned = () => {
   const typescript = region(
     catalog,
     'language: "typescript"',
-    'language: "rust"',
+    'language: "go"',
   );
   const python = region(catalog, 'language: "python"', 'language: "ruby"');
   const java = region(catalog, 'language: "java"', 'language: "csharp"');

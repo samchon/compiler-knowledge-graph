@@ -7,9 +7,9 @@ import { GraphPaths } from "../internal/GraphPaths";
 
 /**
  * A compact atomic manifest is generation-wide, but semantic fact parsing is
- * not: one source replacement must never touch retained raw node arrays.
+ * bounded to one changed source and the retained targets its edges require.
  */
-export const test_ttscgraph_native_delta_revalidates_only_changed_raw_facts =
+export const test_ttscgraph_native_delta_bounds_raw_facts_to_dependencies =
   () => {
     const root = GraphPaths.createTempDirectory(
       "samchon-graph-native-delta-cost-",
@@ -26,6 +26,7 @@ export const test_ttscgraph_native_delta_revalidates_only_changed_raw_facts =
       "1:source:replacement",
       digest("replacement checker text"),
       changedCounter,
+      `${fixture.files[1]}#${fixture.files[1]}:function`,
     );
     const changedDigest = digestJson(changedShard);
     const manifest = [
@@ -64,9 +65,13 @@ export const test_ttscgraph_native_delta_revalidates_only_changed_raw_facts =
     });
 
     TestValidator.equals(
-      "a one-source delta never reparses retained raw facts",
-      fixture.counters.slice(1).reduce((sum, row) => sum + row.reads, 0),
+      "a one-source delta never scans unrelated retained raw facts",
+      fixture.counters.slice(2).reduce((sum, row) => sum + row.reads, 0),
       0,
+    );
+    TestValidator.predicate(
+      "a changed cross-shard edge reparses its retained target dependency",
+      fixture.counters[1]!.reads > 0,
     );
     TestValidator.predicate(
       "the replacement source is still parsed and validated",
@@ -110,6 +115,7 @@ function initialTransaction(root: string, size: number): {
       sourceKeys[index]!,
       digest(`checker:${file}`),
       counters[index]!,
+      index === 0 ? `${files[1]}#${files[1]}:function` : undefined,
     ),
   );
   shards.push({
@@ -174,14 +180,15 @@ function sourceShard(
   key: string,
   checkerDigest: string,
   counter: { reads: number },
+  target?: string,
 ) {
-  const id = `${file}#${file}:module`;
+  const id = `${file}#${file}:function`;
   const node = {
     get id(): string {
       counter.reads += 1;
       return id;
     },
-    kind: "module",
+    kind: "function",
     name: file,
     file,
     external: false,
@@ -194,7 +201,22 @@ function sourceShard(
       diskDigest: digest(`disk:${file}`),
     },
     nodes: [node],
-    edges: [],
+    edges:
+      target === undefined
+        ? []
+        : [
+            {
+              from: id,
+              to: target,
+              kind: "calls",
+              evidence: {
+                startLine: 1,
+                startCol: 1,
+                endLine: 1,
+                endCol: 2,
+              },
+            },
+          ],
     diagnostics: [],
   };
 }

@@ -12,6 +12,9 @@ import { GraphPaths } from "../internal/GraphPaths";
 const sha256 = (text: string): string =>
   createHash("sha256").update(text).digest("hex");
 
+const compareUtf8 = (left: string, right: string): number =>
+  Buffer.compare(Buffer.from(left, "utf8"), Buffer.from(right, "utf8"));
+
 /**
  * The TypeScript reference adapter keeps dependency churn inside the protocol:
  * a dependency that leaves the compiler manifest becomes an explicit shard
@@ -100,6 +103,14 @@ async function assertNativeProducerDeltas(): Promise<void> {
     const coldCoordinates = JSON.parse(
       coldSource.shard.key.slice("1:source:".length),
     ) as unknown[];
+    const normalizedUniverse = normalizeProducerUniverse(
+      coldTransaction!.universe,
+    );
+    TestValidator.equals(
+      "the fake producer publishes ttsc's normalized universe order",
+      coldTransaction!.universe,
+      normalizedUniverse,
+    );
     TestValidator.equals(
       "the fake producer uses ttsc's exact native shard identity coordinates",
       coldCoordinates.slice(0, 6),
@@ -109,7 +120,7 @@ async function assertNativeProducerDeltas(): Promise<void> {
         coldTransaction!.producer.version,
         coldTransaction!.producer.typescript,
         coldTransaction!.tsconfig,
-        sha256(goJson(coldTransaction!.universe)),
+        sha256(goJson(normalizedUniverse)),
       ],
     );
     const oldSourceKey = coldTransaction!.manifest.find((entry) =>
@@ -193,6 +204,23 @@ function goJson(value: unknown): string {
     if (character === "&") return "\\u0026";
     return character === "\u2028" ? "\\u2028" : "\\u2029";
   });
+}
+
+function normalizeProducerUniverse(
+  universe: Record<string, unknown>,
+): Record<string, unknown> {
+  const configs = universe.configs as { file: string; digest: string }[];
+  const roots = universe.roots as { config: string; file: string }[];
+  return {
+    configs: [...configs].sort((left, right) =>
+      compareUtf8(left.file, right.file),
+    ),
+    roots: [...roots].sort(
+      (left, right) =>
+        compareUtf8(left.config, right.config) ||
+        compareUtf8(left.file, right.file),
+    ),
+  };
 }
 
 function nativeTransactions(file: string): INativeLogTransaction[] {

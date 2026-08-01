@@ -498,10 +498,12 @@ function prepareNativeGenerationFacts(
   transaction: INativeTransaction,
   previous: INativeValidation,
 ): INativeValidation {
-  // Raw node, edge, and diagnostic arrays are revisited solely for changed
-  // shards. The compact indexes and common protocol reconstruction still make
-  // one O(N) pass over the generation to bind an atomic commit; only raw-fact
-  // parsing, not total normalization work, is delta-sized.
+  // Raw node, edge, and diagnostic arrays are revisited for changed shards and
+  // the retained target nodes their cross-shard edges depend on, never by an
+  // unrelated retained-shard scan. The compact indexes and common protocol
+  // reconstruction still make one O(N) pass over the generation to bind an
+  // atomic commit; only dependency-bounded raw-fact parsing, not total
+  // normalization work, is delta-sized.
   const next: INativeValidation = {
     summaries: new Map(previous.summaries),
     nodeById: new Map(previous.nodeById),

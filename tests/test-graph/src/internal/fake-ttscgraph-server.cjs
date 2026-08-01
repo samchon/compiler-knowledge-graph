@@ -260,21 +260,22 @@ function nativeSnapshot(dump) {
   const shards = new Map();
   const nodeFiles = new Map(dump.nodes.map((node) => [node.id, node.file]));
   const sourceOccurrences = new Map();
+  const nativeProvenance = normalizeNativeProvenance(dump.provenance);
   // ttsc binds shard identities to SHA-256(Go JSON(normalized Universe)).
   // This is deliberately not the graph protocol's length-prefixed universe
   // fingerprint, which is a separate downstream identity.
-  const producerUniverse = digestOf(goJSON(dump.provenance.universe));
+  const producerUniverse = digestOf(goJSON(nativeProvenance.universe));
   const coordinates = (...values) =>
     JSON.stringify([
       1,
-      dump.provenance.producer.tool,
-      dump.provenance.producer.version,
-      dump.provenance.producer.typescript,
+      nativeProvenance.producer.tool,
+      nativeProvenance.producer.version,
+      nativeProvenance.producer.typescript,
       dump.tsconfig,
       producerUniverse,
       ...values,
     ]);
-  for (const source of dump.provenance.sources) {
+  for (const source of nativeProvenance.sources) {
     const occurrence = sourceOccurrences.get(source.file) ?? 0;
     sourceOccurrences.set(source.file, occurrence + 1);
     const prefix = source.file.startsWith("bundled:///") ? "2" : "1";
@@ -299,7 +300,7 @@ function nativeSnapshot(dump) {
       ),
     });
   }
-  for (const config of dump.provenance.universe.configs) {
+  for (const config of nativeProvenance.universe.configs) {
     const key = `3:config:${coordinates(config.file, config.digest)}`;
     shards.set(key, {
       key,
@@ -320,8 +321,8 @@ function nativeSnapshot(dump) {
   });
   const metadataKey = `0:metadata:${coordinates("metadata")}`;
   const inputFiles = new Set([
-    ...dump.provenance.sources.map((source) => source.file),
-    ...dump.provenance.universe.configs.map((config) => config.file),
+    ...nativeProvenance.sources.map((source) => source.file),
+    ...nativeProvenance.universe.configs.map((config) => config.file),
   ]);
   shards.set(metadataKey, {
     key: metadataKey,
@@ -344,19 +345,19 @@ function nativeSnapshot(dump) {
   const sequence = (nativeState?.sequence ?? 0) + 1;
   const transaction = {
     protocolVersion: 1,
-    schemaVersion: dump.provenance.schemaVersion,
+    schemaVersion: nativeProvenance.schemaVersion,
     project: dump.project,
     tsconfig: dump.tsconfig,
-    producer: dump.provenance.producer,
-    capabilities: dump.provenance.capabilities,
-    universe: dump.provenance.universe,
+    producer: nativeProvenance.producer,
+    capabilities: nativeProvenance.capabilities,
+    universe: nativeProvenance.universe,
     sequence,
     generation: digestOf(
       goJSON({
         tsconfig: dump.tsconfig,
-        producer: dump.provenance.producer,
-        capabilities: dump.provenance.capabilities,
-        universe: dump.provenance.universe,
+        producer: nativeProvenance.producer,
+        capabilities: nativeProvenance.capabilities,
+        universe: nativeProvenance.universe,
         manifest,
       }),
     ),
@@ -383,6 +384,26 @@ function nativeSnapshot(dump) {
     shards: committed,
   };
   return transaction;
+}
+
+function normalizeNativeProvenance(provenance) {
+  return {
+    ...provenance,
+    capabilities: [...provenance.capabilities],
+    universe: {
+      configs: [...provenance.universe.configs].sort((left, right) =>
+        compareUtf8(left.file, right.file),
+      ),
+      roots: [...provenance.universe.roots].sort(
+        (left, right) =>
+          compareUtf8(left.config, right.config) ||
+          compareUtf8(left.file, right.file),
+      ),
+    },
+    sources: [...provenance.sources].sort((left, right) =>
+      compareUtf8(left.file, right.file),
+    ),
+  };
 }
 
 function resignNativeGeneration(snapshot) {

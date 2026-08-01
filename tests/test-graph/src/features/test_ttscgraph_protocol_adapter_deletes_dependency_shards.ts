@@ -82,6 +82,7 @@ async function assertNativeProducerDeltas(): Promise<void> {
     "export function first() {}\n",
   );
   fs.writeFileSync(path.join(root, "src", "empty.ts"), "export {};\n");
+  fs.writeFileSync(path.join(root, "src", "a&b.ts"), "export {};\n");
 
   const bodyLog = path.join(root, "body-native.ndjson");
   const body = new TtscGraphClient({
@@ -89,6 +90,7 @@ async function assertNativeProducerDeltas(): Promise<void> {
     command: process.execPath,
     args: [
       GraphPaths.fakeTtscGraphServer,
+      "--native-coordinate-escape",
       `--native-log=${bodyLog}`,
     ],
   });
@@ -122,6 +124,18 @@ async function assertNativeProducerDeltas(): Promise<void> {
         coldTransaction!.tsconfig,
         sha256(goJson(normalizedUniverse)),
       ],
+    );
+    const escapedSource = coldTransaction!.upserts.find(
+      (entry) => entry.shard.source?.file === "src/a&b.ts",
+    )!;
+    const escapedCoordinates = escapedSource.shard.key.slice(
+      "1:source:".length,
+    );
+    TestValidator.predicate(
+      "native shard coordinates use Go's HTML-sensitive JSON escaping",
+      escapedCoordinates.includes('"src/a\\u0026b.ts"') &&
+        !escapedCoordinates.includes("src/a&b.ts") &&
+        (JSON.parse(escapedCoordinates) as unknown[])[6] === "src/a&b.ts",
     );
     const oldSourceKey = coldTransaction!.manifest.find((entry) =>
       entry.key.includes('"src/core/order.ts"'),

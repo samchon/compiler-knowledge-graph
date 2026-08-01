@@ -84,6 +84,7 @@ const envelopeCapabilityMismatch = args.includes(
 const conformance = args.includes("--conformance");
 const conformanceHeuristic = args.includes("--conformance-heuristic");
 const phaseTrace = args.includes("--phase-trace");
+const coordinateEscape = args.includes("--native-coordinate-escape");
 let requests = 0;
 let nativeState;
 let nativeBase;
@@ -99,7 +100,12 @@ if (duplicateCapability) CAPABILITIES.push(CAPABILITIES[0]);
 
 // Every workspace and bundled file the fake program loaded. The manifest must
 // cover every file the nodes below name, because that is what the client checks.
-const WORKSPACE_FILES = ["src/index.ts", "src/core/order.ts", "src/empty.ts"];
+const WORKSPACE_FILES = [
+  "src/index.ts",
+  "src/core/order.ts",
+  "src/empty.ts",
+  ...(coordinateEscape ? ["src/a&b.ts"] : []),
+];
 const BUNDLED_FILES = ["bundled:///libs/lib.es2015.collection.d.ts"];
 
 const digestOf = (text) =>
@@ -233,6 +239,17 @@ const graph = (name, options = {}) => ({
       file: "src/empty.ts",
       external: false,
     },
+    ...(coordinateEscape
+      ? [
+          {
+            id: "src/a&b.ts#src/a&b.ts:module",
+            kind: "module",
+            name: "src/a&b.ts",
+            file: "src/a&b.ts",
+            external: false,
+          },
+        ]
+      : []),
     {
       id: "bundled:///libs/lib.es2015.collection.d.ts#Map:interface",
       kind: "interface",
@@ -266,7 +283,7 @@ function nativeSnapshot(dump) {
   // fingerprint, which is a separate downstream identity.
   const producerUniverse = digestOf(goJSON(nativeProvenance.universe));
   const coordinates = (...values) =>
-    JSON.stringify([
+    goJSON([
       1,
       nativeProvenance.producer.tool,
       nativeProvenance.producer.version,

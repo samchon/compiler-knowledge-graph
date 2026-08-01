@@ -412,7 +412,9 @@ function adaptShard(
       {
         file: source,
         checkerDigest: shard.checkerDigest,
-        diskDigest: shard.checkerDigest,
+        diskDigest: source.startsWith("bundled:///")
+          ? ""
+          : shard.checkerDigest,
       },
     ],
   };

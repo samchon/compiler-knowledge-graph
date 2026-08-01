@@ -264,9 +264,14 @@ function assertOptionalProducerFields(root: string): void {
   const bundledAdapter = new RustGraphSnapshotAdapter(root, COMMIT);
   const bundled = bundledAdapter.prepare(bundledRaw);
   if (!bundled.changed) throw new Error("bundled Rust fixture did not change");
-  TestValidator.predicate(
-    "bundled producer sources retain their URI identity",
-    bundledAdapter.store.apply(bundled.frames).sources.has("bundled:///rust/source"),
+  const bundledSource = bundledAdapter
+    .store
+    .apply(bundled.frames)
+    .sources.get("bundled:///rust/source");
+  TestValidator.equals(
+    "bundled producer sources retain their URI but never claim a host disk identity",
+    [bundledSource !== undefined, bundledSource?.diskDigest],
+    [true, ""],
   );
 
   TestValidator.error("a snapshot without shards cannot establish coverage", () =>

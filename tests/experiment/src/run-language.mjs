@@ -133,7 +133,13 @@ if (strict) {
     mode: "lsp",
     languages: [experiment.language],
     maxFiles: experiment.maxFiles,
-    lspReferenceLimit: experiment.referenceLimit ?? 250,
+    // A published-release boundary must launch the registered provider once
+    // so the experiment proves its exact incompatibility before observing the
+    // ordinary fallback. The default cap deliberately disables whole-project
+    // providers and would turn that proof into a selection refusal.
+    ...(releaseBoundary === undefined
+      ? { lspReferenceLimit: experiment.referenceLimit ?? 250 }
+      : {}),
     lspTimeoutMs: experiment.timeoutMs ?? 60_000,
     lspReadyTimeoutMs: experiment.readyTimeoutMs ?? 180_000,
     lspWarmupTimeoutMs: experiment.warmupTimeoutMs ?? 180_000,

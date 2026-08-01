@@ -25,6 +25,11 @@ export const test_experiment_corpora_are_commit_pinned = () => {
     [...catalog.matchAll(/strictProvider:\s*"[^"]+"/g)].length,
     [...catalog.matchAll(/lifecycle:\s*\{/g)].length,
   );
+  const typescript = region(
+    catalog,
+    'language: "typescript"',
+    'language: "rust"',
+  );
   const python = region(catalog, 'language: "python"', 'language: "ruby"');
   const java = region(catalog, 'language: "java"', 'language: "csharp"');
   const csharp = region(catalog, 'language: "csharp"', 'language: "kotlin"');
@@ -344,6 +349,30 @@ export const test_experiment_corpora_are_commit_pinned = () => {
       runner.includes("a strict row must state its expected") &&
       !runner.includes('experiment.strictAuthority ?? "compiler"') &&
       !runner.includes("experiment.strictTool ?? experiment.strictProvider"),
+  );
+  TestValidator.predicate(
+    "the TypeScript published-release boundary launches before fallback selection",
+    typescript.includes("strictReleaseBoundary: {") &&
+      typescript.includes('version: "0.23.0"') &&
+      typescript.includes('warning: "legacy full dump"') &&
+      typescript.includes("reason:") &&
+      runner.includes(
+        "const strictDeclared = experiment.strictProvider !== undefined",
+      ) &&
+      runner.includes(
+        "const releaseBoundary = experiment.strictReleaseBoundary",
+      ) &&
+      runner.includes(
+        "const strict = strictDeclared && releaseBoundary === undefined",
+      ) &&
+      runner.includes("...(releaseBoundary === undefined") &&
+      runner.includes(
+        "? { lspReferenceLimit: experiment.referenceLimit ?? 250 }",
+      ) &&
+      runner.includes("releaseBoundary !== undefined &&") &&
+      runner.includes("declaredProvenance !== undefined") &&
+      runner.includes("warning.includes(releaseBoundary.warning)") &&
+      setup.includes("experiment.strictReleaseBoundary?.version"),
   );
   TestValidator.predicate(
     "the runner proves declared families are present and undeclared ones absent",

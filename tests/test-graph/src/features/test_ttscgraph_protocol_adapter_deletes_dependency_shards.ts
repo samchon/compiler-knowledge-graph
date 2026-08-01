@@ -94,6 +94,24 @@ async function assertNativeProducerDeltas(): Promise<void> {
     await body.refresh();
     const changed = await body.refresh();
     const [coldTransaction, bodyTransaction] = nativeTransactions(bodyLog);
+    const coldSource = coldTransaction!.upserts.find((entry) =>
+      entry.shard.source?.file === "src/core/order.ts",
+    )!;
+    const coldCoordinates = JSON.parse(
+      coldSource.shard.key.slice("1:source:".length),
+    ) as unknown[];
+    TestValidator.equals(
+      "the fake producer uses ttsc's exact native shard identity coordinates",
+      coldCoordinates.slice(0, 6),
+      [
+        1,
+        coldTransaction!.producer.tool,
+        coldTransaction!.producer.version,
+        coldTransaction!.producer.typescript,
+        coldTransaction!.tsconfig,
+        sha256(goJson(coldTransaction!.universe)),
+      ],
+    );
     const oldSourceKey = coldTransaction!.manifest.find((entry) =>
       entry.key.includes('"src/core/order.ts"'),
     )!.key;
@@ -154,6 +172,9 @@ async function assertNativeProducerDeltas(): Promise<void> {
 }
 
 interface INativeLogTransaction {
+  tsconfig: string;
+  producer: { tool: string; version: string; typescript: string };
+  universe: Record<string, unknown>;
   manifest: { key: string; digest: string }[];
   upserts: {
     digest: string;
@@ -163,6 +184,15 @@ interface INativeLogTransaction {
     };
   }[];
   deletes: string[];
+}
+
+function goJson(value: unknown): string {
+  return JSON.stringify(value).replace(/[<>&\u2028\u2029]/gu, (character) => {
+    if (character === "<") return "\\u003c";
+    if (character === ">") return "\\u003e";
+    if (character === "&") return "\\u0026";
+    return character === "\u2028" ? "\\u2028" : "\\u2029";
+  });
 }
 
 function nativeTransactions(file: string): INativeLogTransaction[] {

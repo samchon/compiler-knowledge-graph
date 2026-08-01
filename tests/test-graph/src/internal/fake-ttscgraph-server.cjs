@@ -260,9 +260,10 @@ function nativeSnapshot(dump) {
   const shards = new Map();
   const nodeFiles = new Map(dump.nodes.map((node) => [node.id, node.file]));
   const sourceOccurrences = new Map();
-  const universeFingerprint = nativeUniverseFingerprint({
-    universe: dump.provenance.universe,
-  });
+  // ttsc binds shard identities to SHA-256(Go JSON(normalized Universe)).
+  // This is deliberately not the graph protocol's length-prefixed universe
+  // fingerprint, which is a separate downstream identity.
+  const producerUniverse = digestOf(goJSON(dump.provenance.universe));
   const coordinates = (...values) =>
     JSON.stringify([
       1,
@@ -270,7 +271,7 @@ function nativeSnapshot(dump) {
       dump.provenance.producer.version,
       dump.provenance.producer.typescript,
       dump.tsconfig,
-      universeFingerprint,
+      producerUniverse,
       ...values,
     ]);
   for (const source of dump.provenance.sources) {
@@ -409,7 +410,7 @@ function resignCompleteNativeSnapshot(snapshot) {
   resignNativeGeneration(snapshot);
 }
 
-function nativeUniverseFingerprint(snapshot) {
+function graphUniverseFingerprint(snapshot) {
   const hash = crypto.createHash("sha256");
   const push = (text) => hash.update(`${String(text.length)}:${text}`);
   push("configs");
@@ -510,7 +511,7 @@ function corruptNativeSnapshot(snapshot, mode) {
             snapshot.producer.typescript,
             "typescript",
             snapshot.tsconfig,
-            nativeUniverseFingerprint(snapshot),
+            graphUniverseFingerprint(snapshot),
           ])}`
         : "0:coverage:foreign-native-shard";
     resignCompleteNativeSnapshot(snapshot);

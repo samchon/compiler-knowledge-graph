@@ -13,6 +13,12 @@ export const LANGUAGE_EXPERIMENTS = [
     strictProvider: "ttscgraph",
     strictAuthority: "compiler",
     strictTool: "ttscgraph",
+    strictReleaseBoundary: {
+      version: "0.23.0",
+      warning: "legacy full dump",
+      reason:
+        "No published ttsc release implements graph snapshot protocol v1; 0.23.0 is provisioned to prove the explicit ttscserver fallback until the native producer ships.",
+    },
     // The pinned starter has no construction expression. The lifecycle below
     // creates one and checks the real ttscgraph generation that contains it.
     semanticEdges: ["calls", "type_ref"],
@@ -23,6 +29,8 @@ export const LANGUAGE_EXPERIMENTS = [
       "diskDigests",
       "diagnostics",
     ],
+    minNodes: 1,
+    minEdges: 1,
     prepare: "npm ci --ignore-scripts",
     lifecycle: {
       sourceFile: "src/app.service.ts",

@@ -44,6 +44,23 @@ interface ICommittedNativeShard {
   shard: INativeShard;
 }
 
+interface INativeShardSummary {
+  key: string;
+  sourceFile?: string;
+  configFile?: string;
+  configDigest?: string;
+  nodeIds: string[];
+  edgeTargets: string[];
+}
+
+interface INativeValidation {
+  summaries: Map<string, INativeShardSummary>;
+  nodeById: Map<string, unknown>;
+  sourceOwners: Map<string, string>;
+  configs: Map<string, string>;
+  edgeOwnersByTarget: Map<string, Set<string>>;
+}
+
 /** Validates native ttsc shards and maps only their deltas into common shards. */
 export class TtscGraphSnapshotStore {
   public static readonly VERSION = 1;
@@ -54,6 +71,8 @@ export class TtscGraphSnapshotStore {
   private tsconfig: string | undefined;
   private native = new Map<string, ICommittedNativeShard>();
   private normalized = new Map<string, GraphSnapshotProtocol.IShard>();
+  private validation = emptyNativeValidation();
+  private coverageKey: string | undefined;
 
   public constructor(private readonly root: string) {}
 
@@ -65,6 +84,8 @@ export class TtscGraphSnapshotStore {
     this.tsconfig = undefined;
     this.native = new Map();
     this.normalized = new Map();
+    this.validation = emptyNativeValidation();
+    this.coverageKey = undefined;
   }
 
   /**
@@ -114,20 +135,28 @@ export class TtscGraphSnapshotStore {
     }
     assertNativeManifest(transaction, nextNative);
     assertNativeGeneration(transaction);
-    const nodeById = assertNativeGenerationFacts(transaction, nextNative);
+    const nextValidation = prepareNativeGenerationFacts(
+      transaction,
+      transaction.baseGeneration === undefined
+        ? emptyNativeValidation()
+        : this.validation,
+    );
+    const nodeById = nextValidation.nodeById;
 
     const provenance = nativeProvenance(transaction, nextNative);
-    const metadata = adaptTtscGraphDump(
-      {
-        project: transaction.project,
-        tsconfig: transaction.tsconfig,
-        provenance,
-        diagnostics: [],
-        nodes: [],
-        edges: [],
-      },
+    const metadataInput = {
+      project: transaction.project,
+      tsconfig: transaction.tsconfig,
+      provenance,
+      diagnostics: [],
+      nodes: [],
+      edges: [],
+    };
+    const adapterContext = adaptTtscGraphDump.prepareContext(
+      metadataInput,
       this.root,
     );
+    const metadata = adapterContext.adapt(metadataInput);
     const nextNormalized =
       transaction.baseGeneration === undefined
         ? new Map<string, GraphSnapshotProtocol.IShard>()
@@ -139,7 +168,7 @@ export class TtscGraphSnapshotStore {
         adaptNativeShard(
           upsert.shard,
           transaction,
-          provenance,
+          adapterContext,
           nodeById,
           metadata,
           this.root,
@@ -149,15 +178,11 @@ export class TtscGraphSnapshotStore {
 
     const hello = helloOf(metadata, transaction.schemaVersion);
     const coverage = coverageShard(metadata, hello);
-    if (nextNative.has(coverage.key)) {
-      throw new Error(
-        `ttscgraph: native shard uses reserved normalized key ${coverage.key}`,
-      );
-    }
-    for (const key of nextNormalized.keys()) {
-      if (key.startsWith("0:coverage:") && key !== coverage.key) {
-        nextNormalized.delete(key);
-      }
+    if (
+      this.coverageKey !== undefined &&
+      this.coverageKey !== coverage.key
+    ) {
+      nextNormalized.delete(this.coverageKey);
     }
     nextNormalized.set(coverage.key, coverage);
 
@@ -222,6 +247,8 @@ export class TtscGraphSnapshotStore {
         this.tsconfig = transaction.tsconfig;
         this.native = nextNative;
         this.normalized = nextNormalized;
+        this.validation = nextValidation;
+        this.coverageKey = coverage.key;
       },
     };
   }
@@ -293,7 +320,7 @@ export namespace TtscGraphSnapshotStore {
 function adaptNativeShard(
   shard: INativeShard,
   transaction: INativeTransaction,
-  provenance: Record<string, unknown>,
+  adapterContext: ReturnType<typeof adaptTtscGraphDump.prepareContext>,
   nodeById: ReadonlyMap<string, unknown>,
   metadata: ReturnType<typeof adaptTtscGraphDump>,
   root: string,
@@ -316,17 +343,14 @@ function adaptNativeShard(
       includedIds.add(target);
     }
   }
-  const adapted = adaptTtscGraphDump(
-    {
-      project: transaction.project,
-      tsconfig: transaction.tsconfig,
-      provenance,
-      diagnostics: shard.diagnostics,
-      nodes,
-      edges: shard.edges,
-    },
-    root,
-  );
+  const adapted = adapterContext.adapt({
+    project: transaction.project,
+    tsconfig: transaction.tsconfig,
+    provenance: {},
+    diagnostics: shard.diagnostics,
+    nodes,
+    edges: shard.edges,
+  });
   const localModuleFiles = new Set<string>();
   for (const node of shard.nodes) {
     const raw = objectOf(node, `${shard.key}.node`);
@@ -470,101 +494,196 @@ function assembledSnapshot(
   };
 }
 
-function assertNativeGenerationFacts(
+function prepareNativeGenerationFacts(
   transaction: INativeTransaction,
-  shards: ReadonlyMap<string, ICommittedNativeShard>,
-): Map<string, unknown> {
-  const nodeById = new Map<string, unknown>();
-  const nodeOwners = new Map<string, string>();
-  const sourceFiles = new Set<string>();
-  const configs = new Map<string, string>();
-  for (const [key, { shard }] of shards) {
-    if (shard.source !== undefined && shard.config !== undefined) {
-      throw new Error(`ttscgraph: native shard ${key} owns two input kinds`);
+  previous: INativeValidation,
+): INativeValidation {
+  // Clone only the compact indexes. Raw node, edge, and diagnostic arrays are
+  // revisited solely for changed shards; the common protocol still walks its
+  // manifest once to bind the atomic commit, but validation is delta-sized.
+  const next: INativeValidation = {
+    summaries: new Map(previous.summaries),
+    nodeById: new Map(previous.nodeById),
+    sourceOwners: new Map(previous.sourceOwners),
+    configs: new Map(previous.configs),
+    edgeOwnersByTarget: new Map(previous.edgeOwnersByTarget),
+  };
+  const affectedTargets = new Set<string>();
+  const mutableEdgeOwners = (target: string): Set<string> => {
+    const current = next.edgeOwnersByTarget.get(target) ?? new Set<string>();
+    const copied = new Set(current);
+    next.edgeOwnersByTarget.set(target, copied);
+    return copied;
+  };
+  const remove = (key: string): void => {
+    const summary = next.summaries.get(key);
+    if (summary === undefined) return;
+    next.summaries.delete(key);
+    if (summary.sourceFile !== undefined) {
+      next.sourceOwners.delete(summary.sourceFile);
     }
-    const sourceFile =
-      shard.source === undefined
-        ? undefined
-        : stringOf(shard.source.file, `${key}.source.file`);
-    const configFile =
-      shard.config === undefined
-        ? undefined
-        : stringOf(shard.config.file, `${key}.config.file`);
-    if (sourceFile !== undefined) {
-      if (sourceFiles.has(sourceFile)) {
-        throw new Error(`ttscgraph: native source ${sourceFile} has two shards`);
-      }
-      sourceFiles.add(sourceFile);
+    if (summary.configFile !== undefined) {
+      next.configs.delete(summary.configFile);
     }
-    if (configFile !== undefined) {
-      const digest = stringOf(shard.config!.digest, `${key}.config.digest`);
-      if (configs.has(configFile)) {
-        throw new Error(`ttscgraph: native config ${configFile} has two shards`);
-      }
-      configs.set(configFile, digest);
-      if (shard.nodes.length !== 0 || shard.edges.length !== 0) {
-        throw new Error(`ttscgraph: native config shard ${key} owns facts`);
-      }
+    for (const id of summary.nodeIds) {
+      next.nodeById.delete(id);
+      affectedTargets.add(id);
     }
-    if (sourceFile === undefined && shard.edges.length !== 0) {
-      throw new Error(`ttscgraph: native non-source shard ${key} owns edges`);
+    for (const target of summary.edgeTargets) {
+      const owners = mutableEdgeOwners(target);
+      owners.delete(key);
+      if (owners.size === 0) next.edgeOwnersByTarget.delete(target);
     }
-    for (let index = 0; index < shard.nodes.length; index++) {
-      const node = objectOf(shard.nodes[index], `${key}.nodes[${String(index)}]`);
-      const id = stringOf(node.id, `${key}.nodes[${String(index)}].id`);
-      const file = stringOf(node.file, `${key}.nodes[${String(index)}].file`);
-      const external = booleanOf(
-        node.external,
-        `${key}.nodes[${String(index)}].external`,
-      );
-      if (
-        (sourceFile !== undefined && (external || file !== sourceFile)) ||
-        (sourceFile === undefined && !external)
-      ) {
-        throw new Error(`ttscgraph: native shard ${key} misowns node ${id}`);
+  };
+
+  for (const key of transaction.deletes) remove(key);
+  // An identity-stable external or metadata shard is replaced by an upsert,
+  // so remove all old ownership before installing any new ownership. This also
+  // permits an atomic node move between two simultaneously changed shards.
+  for (const upsert of transaction.upserts) remove(upsert.shard.key);
+
+  for (const upsert of transaction.upserts) {
+    const summary = summarizeNativeShard(upsert.shard);
+    if (summary.sourceFile !== undefined) {
+      if (next.sourceOwners.has(summary.sourceFile)) {
+        throw new Error(
+          `ttscgraph: native source ${summary.sourceFile} has two shards`,
+        );
       }
-      if (nodeById.has(id)) {
+      next.sourceOwners.set(summary.sourceFile, summary.key);
+    }
+    if (
+      summary.configFile !== undefined &&
+      summary.configDigest !== undefined
+    ) {
+      if (next.configs.has(summary.configFile)) {
+        throw new Error(
+          `ttscgraph: native config ${summary.configFile} has two shards`,
+        );
+      }
+      next.configs.set(summary.configFile, summary.configDigest);
+    }
+    for (let index = 0; index < summary.nodeIds.length; index++) {
+      const id = summary.nodeIds[index]!;
+      if (next.nodeById.has(id)) {
         throw new Error(`ttscgraph: native node ${id} has two owners`);
       }
-      nodeById.set(id, shard.nodes[index]);
-      nodeOwners.set(id, key);
+      next.nodeById.set(id, upsert.shard.nodes[index]);
+      affectedTargets.add(id);
     }
-    for (let index = 0; index < shard.diagnostics.length; index++) {
-      const diagnostic = objectOf(
-        shard.diagnostics[index],
-        `${key}.diagnostics[${String(index)}]`,
-      );
-      const file = stringOf(
-        diagnostic.file,
-        `${key}.diagnostics[${String(index)}].file`,
-      );
-      if (
-        (sourceFile !== undefined && file !== sourceFile) ||
-        (configFile !== undefined && file !== configFile) ||
-        (sourceFile === undefined && configFile === undefined && file !== "")
-      ) {
-        throw new Error(`ttscgraph: native shard ${key} misowns diagnostic`);
-      }
+    for (const target of summary.edgeTargets) {
+      mutableEdgeOwners(target).add(summary.key);
+      affectedTargets.add(target);
+    }
+    next.summaries.set(summary.key, summary);
+  }
+
+  for (const target of affectedTargets) {
+    if (
+      next.edgeOwnersByTarget.has(target) &&
+      !next.nodeById.has(target)
+    ) {
+      throw new Error(`ttscgraph: native edge target is absent: ${target}`);
     }
   }
-  for (const [key, { shard }] of shards) {
-    for (let index = 0; index < shard.edges.length; index++) {
-      const edge = objectOf(shard.edges[index], `${key}.edges[${String(index)}]`);
-      const from = stringOf(edge.from, `${key}.edges[${String(index)}].from`);
-      const to = stringOf(edge.to, `${key}.edges[${String(index)}].to`);
-      if (nodeOwners.get(from) !== key) {
-        throw new Error(`ttscgraph: native shard ${key} misowns edge ${from}`);
-      }
-      if (!nodeById.has(to)) {
-        throw new Error(`ttscgraph: native edge target is absent: ${to}`);
-      }
+  assertNativeUniverseConfigs(transaction, next.configs);
+  return next;
+}
+
+function summarizeNativeShard(shard: INativeShard): INativeShardSummary {
+  const key = shard.key;
+  if (shard.source !== undefined && shard.config !== undefined) {
+    throw new Error(`ttscgraph: native shard ${key} owns two input kinds`);
+  }
+  const sourceFile =
+    shard.source === undefined
+      ? undefined
+      : stringOf(shard.source.file, `${key}.source.file`);
+  const configFile =
+    shard.config === undefined
+      ? undefined
+      : stringOf(shard.config.file, `${key}.config.file`);
+  const configDigest =
+    shard.config === undefined
+      ? undefined
+      : stringOf(shard.config.digest, `${key}.config.digest`);
+  if (
+    configFile !== undefined &&
+    (shard.nodes.length !== 0 || shard.edges.length !== 0)
+  ) {
+    throw new Error(`ttscgraph: native config shard ${key} owns facts`);
+  }
+  if (sourceFile === undefined && shard.edges.length !== 0) {
+    throw new Error(`ttscgraph: native non-source shard ${key} owns edges`);
+  }
+  const nodeIds: string[] = [];
+  const localIds = new Set<string>();
+  for (let index = 0; index < shard.nodes.length; index++) {
+    const node = objectOf(shard.nodes[index], `${key}.nodes[${String(index)}]`);
+    const id = stringOf(node.id, `${key}.nodes[${String(index)}].id`);
+    const file = stringOf(node.file, `${key}.nodes[${String(index)}].file`);
+    const external = booleanOf(
+      node.external,
+      `${key}.nodes[${String(index)}].external`,
+    );
+    if (
+      (sourceFile !== undefined && (external || file !== sourceFile)) ||
+      (sourceFile === undefined && !external)
+    ) {
+      throw new Error(`ttscgraph: native shard ${key} misowns node ${id}`);
+    }
+    if (localIds.has(id)) {
+      throw new Error(`ttscgraph: native node ${id} has two owners`);
+    }
+    localIds.add(id);
+    nodeIds.push(id);
+  }
+  for (let index = 0; index < shard.diagnostics.length; index++) {
+    const diagnostic = objectOf(
+      shard.diagnostics[index],
+      `${key}.diagnostics[${String(index)}]`,
+    );
+    const file = stringOf(
+      diagnostic.file,
+      `${key}.diagnostics[${String(index)}].file`,
+    );
+    if (
+      (sourceFile !== undefined && file !== sourceFile) ||
+      (configFile !== undefined && file !== configFile) ||
+      (sourceFile === undefined && configFile === undefined && file !== "")
+    ) {
+      throw new Error(`ttscgraph: native shard ${key} misowns diagnostic`);
     }
   }
+  const edgeTargets = new Set<string>();
+  for (let index = 0; index < shard.edges.length; index++) {
+    const edge = objectOf(shard.edges[index], `${key}.edges[${String(index)}]`);
+    const from = stringOf(edge.from, `${key}.edges[${String(index)}].from`);
+    const to = stringOf(edge.to, `${key}.edges[${String(index)}].to`);
+    if (!localIds.has(from)) {
+      throw new Error(`ttscgraph: native shard ${key} misowns edge ${from}`);
+    }
+    edgeTargets.add(to);
+  }
+  return {
+    key,
+    ...(sourceFile === undefined ? {} : { sourceFile }),
+    ...(configFile === undefined ? {} : { configFile, configDigest }),
+    nodeIds,
+    edgeTargets: [...edgeTargets],
+  };
+}
+
+function assertNativeUniverseConfigs(
+  transaction: INativeTransaction,
+  configs: ReadonlyMap<string, string>,
+): void {
   const universe = objectOf(transaction.universe, "native universe");
   const universeConfigs = arrayOf(universe.configs, "native universe.configs");
   if (universeConfigs.length !== configs.size) {
     throw new Error("ttscgraph: native config shards do not cover the universe");
   }
+  const seen = new Set<string>();
   for (let index = 0; index < universeConfigs.length; index++) {
     const config = objectOf(
       universeConfigs[index],
@@ -572,11 +691,21 @@ function assertNativeGenerationFacts(
     );
     const file = stringOf(config.file, "native config.file");
     const digest = stringOf(config.digest, "native config.digest");
-    if (configs.get(file) !== digest || !configs.delete(file)) {
+    if (seen.has(file) || configs.get(file) !== digest) {
       throw new Error(`ttscgraph: native config shard disagrees at ${file}`);
     }
+    seen.add(file);
   }
-  return nodeById;
+}
+
+function emptyNativeValidation(): INativeValidation {
+  return {
+    summaries: new Map(),
+    nodeById: new Map(),
+    sourceOwners: new Map(),
+    configs: new Map(),
+    edgeOwnersByTarget: new Map(),
+  };
 }
 
 function assertNativeManifest(
@@ -721,6 +850,11 @@ function duplicateTouch(key: string): never {
 function assertShardKey(key: string): void {
   if (key === "" || key.includes("\0")) {
     throw new Error(`ttscgraph: native shard key is invalid: ${key}`);
+  }
+  if (key.startsWith("0:coverage:")) {
+    throw new Error(
+      `ttscgraph: native shard uses reserved normalized namespace: ${key}`,
+    );
   }
 }
 

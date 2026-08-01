@@ -37,6 +37,17 @@ interface IAdaptedDump {
   warnings: string[];
 }
 
+/** Metadata and source evidence validated once for one native generation. */
+interface ITtscGraphDumpContext {
+  target: string;
+  capabilities: string[];
+  manifest: ReadonlyMap<string, IBulkGraphSession.ISourceDigest>;
+  sources: Map<string, IBulkGraphSession.ISourceDigest>;
+  provenance: Omit<IBulkGraphSession.IProvenance, "protocolVersion">;
+  warnings: string[];
+  adapt: (input: unknown) => IAdaptedDump;
+}
+
 /**
  * Adapt a `ttscgraph serve` dump to one strict TypeScript language slice.
  *
@@ -58,34 +69,18 @@ export function adaptTtscGraphDump(
   input: unknown,
   expectedRoot: string,
 ): IAdaptedDump {
+  return prepareTtscGraphDumpContext(input, expectedRoot).adapt(input);
+}
+
+function adaptTtscGraphDumpWithContext(
+  input: unknown,
+  context: ITtscGraphDumpContext,
+): IAdaptedDump {
   const dump = objectOf(input, "dump");
-  const rawProvenance = objectOf(dump.provenance, "dump.provenance");
-  const schemaVersion = rawProvenance.schemaVersion;
-  if (
-    !Number.isSafeInteger(schemaVersion) ||
-    !ITtscGraphSnapshot.SUPPORTED_DUMP_SCHEMA_VERSIONS.includes(
-      schemaVersion as number,
-    )
-  ) {
-    throw new Error(
-      `ttscgraph: dump is schema ${
-        Number.isSafeInteger(schemaVersion)
-          ? `v${String(schemaVersion)}`
-          : "unknown"
-      }, this client reads ${ITtscGraphSnapshot.SUPPORTED_DUMP_SCHEMA_VERSIONS.map(
-        (version) => `v${String(version)}`,
-      ).join(" and ")}. Install a matching ttsc (the binary resolves from the target project, or from TTSC_GRAPH_BINARY).`,
-    );
-  }
-  const warnings: string[] = [];
-  const project = stringOf(dump.project, "dump.project");
-  if (!samePath(project, expectedRoot)) {
-    throw new Error(
-      `ttscgraph: response project ${project} does not match ${expectedRoot}`,
-    );
-  }
-  const target = stringOf(dump.tsconfig, "dump.tsconfig");
-  validateGraphFile(target, "dump.tsconfig");
+  const warnings = [...context.warnings];
+  const target = context.target;
+  const capabilities = context.capabilities;
+  const manifest = context.manifest;
   const rawNodes = arrayOf(dump.nodes, "dump.nodes");
   const rawEdges = arrayOf(dump.edges, "dump.edges");
   const moduleIds = new Map<string, string>();
@@ -240,28 +235,12 @@ export function adaptTtscGraphDump(
     edges.push(edge);
   }
 
-  const capabilities = stringArrayOf(
-    objectOf(dump.provenance, "dump.provenance").capabilities,
-    "dump.provenance.capabilities",
-  );
-  const manifest = manifestOf(dump.provenance);
-  mergeConfigurationSources(manifest, dump.provenance, capabilities);
   for (const file of [...factFiles].sort(compareOrdinal)) {
     if (!manifest.has(file)) {
       throw new Error(
         `ttscgraph: dump declares facts for ${file}, which its own source manifest never loaded`,
       );
     }
-  }
-  const sources = new Map<string, IBulkGraphSession.ISourceDigest>();
-  // Preserve the complete compiler-owned manifest. Relative identities become
-  // absolute keys for the bulk-session contract; identities that are already
-  // absolute stay canonical, and bundled virtual identities must never pass
-  // through `path.resolve`, which would turn them into unrelated disk paths.
-  for (const [file, digest] of [...manifest].sort(([left], [right]) =>
-    compareOrdinal(left, right),
-  )) {
-    sources.set(sourceManifestKey(expectedRoot, file), digest);
   }
 
   const diagnostics = capabilities.includes(
@@ -275,6 +254,65 @@ export function adaptTtscGraphDump(
     nodes,
     edges,
     diagnostics,
+    sources: context.sources,
+    provenance: context.provenance,
+    warnings,
+  };
+}
+
+/** Validate the generation-wide coordinates and source manifest once. */
+function prepareTtscGraphDumpContext(
+  input: unknown,
+  expectedRoot: string,
+): ITtscGraphDumpContext {
+  const dump = objectOf(input, "dump");
+  const rawProvenance = objectOf(dump.provenance, "dump.provenance");
+  const schemaVersion = rawProvenance.schemaVersion;
+  if (
+    !Number.isSafeInteger(schemaVersion) ||
+    !ITtscGraphSnapshot.SUPPORTED_DUMP_SCHEMA_VERSIONS.includes(
+      schemaVersion as number,
+    )
+  ) {
+    throw new Error(
+      `ttscgraph: dump is schema ${
+        Number.isSafeInteger(schemaVersion)
+          ? `v${String(schemaVersion)}`
+          : "unknown"
+      }, this client reads ${ITtscGraphSnapshot.SUPPORTED_DUMP_SCHEMA_VERSIONS.map(
+        (version) => `v${String(version)}`,
+      ).join(" and ")}. Install a matching ttsc (the binary resolves from the target project, or from TTSC_GRAPH_BINARY).`,
+    );
+  }
+  const project = stringOf(dump.project, "dump.project");
+  if (!samePath(project, expectedRoot)) {
+    throw new Error(
+      `ttscgraph: response project ${project} does not match ${expectedRoot}`,
+    );
+  }
+  const target = stringOf(dump.tsconfig, "dump.tsconfig");
+  validateGraphFile(target, "dump.tsconfig");
+  const capabilities = stringArrayOf(
+    rawProvenance.capabilities,
+    "dump.provenance.capabilities",
+  );
+  const manifest = manifestOf(dump.provenance);
+  mergeConfigurationSources(manifest, dump.provenance, capabilities);
+  const sources = new Map<string, IBulkGraphSession.ISourceDigest>();
+  // Preserve the complete compiler-owned manifest. Relative identities become
+  // absolute keys for the bulk-session contract; identities that are already
+  // absolute stay canonical, and bundled virtual identities must never pass
+  // through `path.resolve`, which would turn them into unrelated disk paths.
+  for (const [file, digest] of [...manifest].sort(([left], [right]) =>
+    compareOrdinal(left, right),
+  )) {
+    sources.set(sourceManifestKey(expectedRoot, file), digest);
+  }
+
+  const context: ITtscGraphDumpContext = {
+    target,
+    capabilities,
+    manifest,
     sources,
     provenance: provenanceOf(
       dump.provenance,
@@ -282,8 +320,10 @@ export function adaptTtscGraphDump(
       capabilities,
       target,
     ),
-    warnings,
+    warnings: [],
+    adapt: (facts) => adaptTtscGraphDumpWithContext(facts, context),
   };
+  return context;
 }
 
 /**
@@ -560,6 +600,9 @@ const NODE_KINDS = new Set<GraphNodeKind>([
  * cannot run: the function declaration above it is always evaluated first.
  * The constants inside run unconditionally, so nothing testable is hidden. */
 export namespace adaptTtscGraphDump {
+  /** Reuse generation-wide validation while adapting native shard deltas. */
+  export const prepareContext = prepareTtscGraphDumpContext;
+
   /** The registry identity every `ttscgraph` snapshot is published under. */
   export const PROVIDER = "ttscgraph";
 

@@ -295,6 +295,15 @@ function validateManifest(
         ),
         `${language} experiment capabilities differ from the support manifest`,
       );
+      if (experiment.strictReleaseBoundary !== undefined) {
+        for (const field of ["version", "warning", "reason"]) {
+          invariant(
+            typeof experiment.strictReleaseBoundary[field] === "string" &&
+              experiment.strictReleaseBoundary[field] !== "",
+            `${language} strict release boundary must state ${field}`,
+          );
+        }
+      }
       for (const fact of experiment.semanticEdges ?? []) {
         invariant(
           documented.facts.includes(fact),

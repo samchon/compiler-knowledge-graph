@@ -1,10 +1,12 @@
 import { TestValidator } from "@nestia/e2e";
 import { createHash } from "node:crypto";
+import fs from "node:fs";
 import path from "node:path";
 
 import { GraphSnapshotProtocol } from "../../../../packages/graph/src/provider/GraphSnapshotProtocol";
 import { adaptTtscGraphDump } from "../../../../packages/graph/src/provider/ttscgraph/adaptTtscGraphDump";
 import { createTtscGraphProtocolTransaction } from "../../../../packages/graph/src/provider/ttscgraph/createTtscGraphProtocolTransaction";
+import { TtscGraphClient } from "../../../../packages/graph/src/provider/ttscgraph/TtscGraphClient";
 import { GraphPaths } from "../internal/GraphPaths";
 
 const sha256 = (text: string): string =>
@@ -18,6 +20,7 @@ const sha256 = (text: string): string =>
  */
 export const test_ttscgraph_protocol_adapter_deletes_dependency_shards =
   async () => {
+    await assertNativeProducerDeltas();
     const root = GraphPaths.createTempDirectory(
       "samchon-graph-ttscgraph-protocol-",
     );
@@ -63,6 +66,112 @@ export const test_ttscgraph_protocol_adapter_deletes_dependency_shards =
       ],
     );
   };
+
+async function assertNativeProducerDeltas(): Promise<void> {
+  const root = GraphPaths.createTempDirectory(
+    "samchon-graph-ttscgraph-native-delta-",
+  );
+  fs.mkdirSync(path.join(root, "src", "core"), { recursive: true });
+  fs.writeFileSync(path.join(root, "tsconfig.json"), "{}\n");
+  fs.writeFileSync(path.join(root, "src", "index.ts"), "export {};\n");
+  fs.writeFileSync(
+    path.join(root, "src", "core", "order.ts"),
+    "export function first() {}\n",
+  );
+  fs.writeFileSync(path.join(root, "src", "empty.ts"), "export {};\n");
+
+  const bodyLog = path.join(root, "body-native.ndjson");
+  const body = new TtscGraphClient({
+    root,
+    command: process.execPath,
+    args: [
+      GraphPaths.fakeTtscGraphServer,
+      `--native-log=${bodyLog}`,
+    ],
+  });
+  try {
+    const initial = await body.refresh();
+    await body.refresh();
+    const changed = await body.refresh();
+    const [coldTransaction, bodyTransaction] = nativeTransactions(bodyLog);
+    const oldSourceKey = coldTransaction!.manifest.find((entry) =>
+      entry.key.includes('"src/core/order.ts"'),
+    )!.key;
+    const newSource = bodyTransaction!.upserts.find((entry) =>
+      entry.shard.source?.file === "src/core/order.ts",
+    );
+    TestValidator.predicate(
+      "a real-client body delta deletes the old content-addressed source key",
+      bodyTransaction!.deletes.includes(oldSourceKey) &&
+        newSource !== undefined &&
+        newSource.shard.key !== oldSourceKey &&
+        newSource.shard.key.startsWith("1:source:"),
+    );
+    TestValidator.predicate(
+      "the committed client generation contains only the replacement fact",
+      initial.snapshot.nodes.some((node) => node.name === "first") &&
+        changed.snapshot.nodes.some((node) => node.name === "second") &&
+        !changed.snapshot.nodes.some((node) => node.name === "first"),
+    );
+  } finally {
+    await body.close();
+  }
+
+  const reloadLog = path.join(root, "reload-native.ndjson");
+  const reload = new TtscGraphClient({
+    root,
+    command: process.execPath,
+    args: [
+      GraphPaths.fakeTtscGraphServer,
+      "--universe-reload",
+      `--native-log=${reloadLog}`,
+    ],
+  });
+  try {
+    await reload.refresh();
+    await reload.refresh();
+    await reload.refresh();
+    const [coldTransaction, reloadTransaction] =
+      nativeTransactions(reloadLog);
+    const oldKeys = new Set(
+      coldTransaction!.manifest.map((entry) => entry.key),
+    );
+    const newKeys = new Set(
+      reloadTransaction!.manifest.map((entry) => entry.key),
+    );
+    TestValidator.predicate(
+      "a universe reload replaces every producer identity and leaves no stale key",
+      reloadTransaction!.deletes.length === oldKeys.size &&
+        reloadTransaction!.upserts.length === newKeys.size &&
+        [...oldKeys].every(
+          (key) =>
+            reloadTransaction!.deletes.includes(key) && !newKeys.has(key),
+        ),
+    );
+  } finally {
+    await reload.close();
+  }
+}
+
+interface INativeLogTransaction {
+  manifest: { key: string; digest: string }[];
+  upserts: {
+    digest: string;
+    shard: {
+      key: string;
+      source?: { file: string };
+    };
+  }[];
+  deletes: string[];
+}
+
+function nativeTransactions(file: string): INativeLogTransaction[] {
+  return fs
+    .readFileSync(file, "utf8")
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line) as INativeLogTransaction);
+}
 
 function dump(
   root: string,

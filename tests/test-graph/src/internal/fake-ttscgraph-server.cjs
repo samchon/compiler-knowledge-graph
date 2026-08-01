@@ -26,6 +26,8 @@ const stdinClosedMarker = stdinClosedMarkerArg?.slice(
 );
 const requestLogArg = args.find((arg) => arg.startsWith("--request-log="));
 const requestLog = requestLogArg?.slice("--request-log=".length);
+const nativeLogArg = args.find((arg) => arg.startsWith("--native-log="));
+const nativeLog = nativeLogArg?.slice("--native-log=".length);
 // Stands in for a producer that speaks a protocol this client refuses, so the
 // pin can be proved without shipping a second fake.
 const protocolArg = args.find((arg) => arg.startsWith("--protocol="));
@@ -37,6 +39,7 @@ const dropped = dropArg?.slice("--drop-capability=".length);
 // Moves the build universe under an `incremental` label — a producer claiming it
 // reused a program whose own inputs say it could not have.
 const universeDrift = args.includes("--universe-drift");
+const universeReload = args.includes("--universe-reload");
 // Transport- and process-level fault injection. These stand in for the wire
 // conditions a well-formed producer never emits but a real one can: a process
 // that dies mid-serve, a stream chunked or blank-padded by the OS, a line that
@@ -83,6 +86,7 @@ const conformanceHeuristic = args.includes("--conformance-heuristic");
 const phaseTrace = args.includes("--phase-trace");
 let requests = 0;
 let nativeState;
+let nativeBase;
 
 const CAPABILITIES = [
   "universe",
@@ -129,19 +133,25 @@ const readProjectFile = (rel) => {
  * this fake needs the client to go looking on disk, and a file the client cannot
  * read still has a perfectly well-defined digest here.
  */
-const manifest = (drift) =>
+const manifest = (semantic) =>
   [...WORKSPACE_FILES, ...BUNDLED_FILES].map((file) => {
     if (BUNDLED_FILES.includes(file)) {
       return {
         file,
-        checkerDigest: digestOf(`${file}:checker${drift ?? ""}`),
+        checkerDigest: digestOf(`${file}:checker`),
         diskDigest: "",
       };
     }
     const text = readProjectFile(file);
     return {
       file,
-      checkerDigest: digestOf(text ?? `absent:${file}${drift ?? ""}`),
+      checkerDigest: digestOf(
+        `${text ?? `absent:${file}`}${
+          file === "src/core/order.ts" && semantic !== "first"
+            ? `:program:${semantic}`
+            : ""
+        }`,
+      ),
       diskDigest:
         dropped === "diskDigests" || text === undefined ? "" : digestOf(text),
     };
@@ -157,7 +167,7 @@ const universe = (drift) => ({
   roots: WORKSPACE_FILES.map((file) => ({ config: "tsconfig.json", file })),
 });
 
-const provenance = (drift) => ({
+const provenance = (semantic, drift) => ({
   schemaVersion: 6,
   capabilities: CAPABILITIES,
   producer: {
@@ -166,13 +176,13 @@ const provenance = (drift) => ({
     typescript: "5.9.0",
   },
   universe: universe(drift),
-  sources: manifest(drift),
+  sources: manifest(semantic),
 });
 
 const graph = (name, options = {}) => ({
   project,
   tsconfig: "tsconfig.json",
-  provenance: provenance(options.drift),
+  provenance: provenance(name, options.drift),
   diagnostics:
     dropped === "diagnostics"
       ? []
@@ -246,17 +256,34 @@ const graph = (name, options = {}) => ({
 
 /** Convert the fake compiler document into the same native shards as ttscgraph. */
 function nativeSnapshot(dump) {
+  nativeBase = nativeState;
   const shards = new Map();
   const nodeFiles = new Map(dump.nodes.map((node) => [node.id, node.file]));
   const sourceOccurrences = new Map();
+  const universeFingerprint = nativeUniverseFingerprint({
+    universe: dump.provenance.universe,
+  });
+  const coordinates = (...values) =>
+    JSON.stringify([
+      1,
+      dump.provenance.producer.tool,
+      dump.provenance.producer.version,
+      dump.provenance.producer.typescript,
+      dump.tsconfig,
+      universeFingerprint,
+      ...values,
+    ]);
   for (const source of dump.provenance.sources) {
     const occurrence = sourceOccurrences.get(source.file) ?? 0;
     sourceOccurrences.set(source.file, occurrence + 1);
-    const key = `1:source:${JSON.stringify([
+    const prefix = source.file.startsWith("bundled:///") ? "2" : "1";
+    const key = `${prefix}:source:${coordinates(
       source.file,
       source.checkerDigest,
+      source.diskDigest,
+      digestOf(`resolution:${source.file}`),
       ...(occurrence === 0 ? [] : [occurrence]),
-    ])}`;
+    )}`;
     shards.set(key, {
       key,
       source,
@@ -272,7 +299,7 @@ function nativeSnapshot(dump) {
     });
   }
   for (const config of dump.provenance.universe.configs) {
-    const key = `3:config:${JSON.stringify([config.file, config.digest])}`;
+    const key = `3:config:${coordinates(config.file, config.digest)}`;
     shards.set(key, {
       key,
       config,
@@ -283,14 +310,14 @@ function nativeSnapshot(dump) {
       ),
     });
   }
-  const externalKey = "0:external";
+  const externalKey = `0:external:${coordinates("external")}`;
   shards.set(externalKey, {
     key: externalKey,
     nodes: dump.nodes.filter((node) => node.external),
     edges: [],
     diagnostics: [],
   });
-  const metadataKey = "0:metadata";
+  const metadataKey = `0:metadata:${coordinates("metadata")}`;
   const inputFiles = new Set([
     ...dump.provenance.sources.map((source) => source.file),
     ...dump.provenance.universe.configs.map((config) => config.file),
@@ -404,9 +431,9 @@ function corruptNativeSnapshot(snapshot, mode) {
   const config = () =>
     snapshot.upserts.find((upsert) => upsert.shard.config !== undefined);
   const external = () =>
-    snapshot.upserts.find((upsert) => upsert.shard.key === "0:external");
+    snapshot.upserts.find((upsert) => upsert.shard.key.startsWith("0:external:"));
   const metadata = () =>
-    snapshot.upserts.find((upsert) => upsert.shard.key === "0:metadata");
+    snapshot.upserts.find((upsert) => upsert.shard.key.startsWith("0:metadata:"));
 
   if (mode === "--native-invalid-digest" || mode === "--native-invalid-digest-third") {
     snapshot.upserts[0].digest = "0".repeat(64);
@@ -446,22 +473,46 @@ function corruptNativeSnapshot(snapshot, mode) {
     snapshot.deletes.push(snapshot.manifest[0].key, snapshot.manifest[0].key);
   } else if (mode === "--native-invalid-upsert-duplicate-third") {
     snapshot.upserts.push(structuredClone(snapshot.upserts[0]));
+  } else if (mode === "--native-invalid-retained-edge-target-third") {
+    snapshot.upserts = snapshot.upserts.filter(
+      (upsert) =>
+        upsert.shard.source?.file !== "src/core/order.ts" &&
+        upsert.shard.source?.file !== "src/index.ts",
+    );
+    snapshot.manifest = [...nativeBase.shards]
+      .filter(
+        ([, value]) => value.shard.source?.file !== "src/core/order.ts",
+      )
+      .sort(([left], [right]) => compareUtf8(left, right))
+      .map(([key, value]) => ({ key, digest: value.digest }));
+    snapshot.deletes = [...nativeBase.shards]
+      .filter(
+        ([, value]) => value.shard.source?.file === "src/core/order.ts",
+      )
+      .map(([key]) => key);
+    resignNativeGeneration(snapshot);
   } else if (mode === "--native-invalid-key-empty") {
     snapshot.upserts[0].shard.key = "";
     resignCompleteNativeSnapshot(snapshot);
   } else if (mode === "--native-invalid-key-nul") {
     snapshot.upserts[0].shard.key = "bad\0key";
     resignCompleteNativeSnapshot(snapshot);
-  } else if (mode === "--native-invalid-reserved-coverage") {
-    snapshot.upserts[0].shard.key = `0:coverage:${JSON.stringify([
-      1,
-      "ttscgraph",
-      snapshot.producer.version,
-      snapshot.producer.typescript,
-      "typescript",
-      snapshot.tsconfig,
-      nativeUniverseFingerprint(snapshot),
-    ])}`;
+  } else if (
+    mode === "--native-invalid-reserved-coverage" ||
+    mode === "--native-invalid-reserved-coverage-alternate"
+  ) {
+    snapshot.upserts[0].shard.key =
+      mode === "--native-invalid-reserved-coverage"
+        ? `0:coverage:${JSON.stringify([
+            1,
+            "ttscgraph",
+            snapshot.producer.version,
+            snapshot.producer.typescript,
+            "typescript",
+            snapshot.tsconfig,
+            nativeUniverseFingerprint(snapshot),
+          ])}`
+        : "0:coverage:foreign-native-shard";
     resignCompleteNativeSnapshot(snapshot);
   } else if (mode === "--native-invalid-two-input-kinds") {
     source("src/empty.ts").shard.config = structuredClone(
@@ -469,7 +520,11 @@ function corruptNativeSnapshot(snapshot, mode) {
     );
     resignCompleteNativeSnapshot(snapshot);
   } else if (mode === "--native-invalid-duplicate-source") {
-    source("src/empty.ts").shard.source.file = "src/index.ts";
+    const duplicate = source("src/empty.ts");
+    duplicate.shard.source.file = "src/index.ts";
+    duplicate.shard.nodes.forEach((node) => {
+      node.file = "src/index.ts";
+    });
     resignCompleteNativeSnapshot(snapshot);
   } else if (mode === "--native-invalid-duplicate-config") {
     const duplicate = structuredClone(config());
@@ -493,6 +548,9 @@ function corruptNativeSnapshot(snapshot, mode) {
     resignCompleteNativeSnapshot(snapshot);
   } else if (mode === "--native-invalid-duplicate-node") {
     metadata().shard.nodes.push(structuredClone(external().shard.nodes[0]));
+    resignCompleteNativeSnapshot(snapshot);
+  } else if (mode === "--native-invalid-local-duplicate-node") {
+    external().shard.nodes.push(structuredClone(external().shard.nodes[0]));
     resignCompleteNativeSnapshot(snapshot);
   } else if (mode === "--native-invalid-source-diagnostic") {
     source("src/core/order.ts").shard.diagnostics[0].file = "src/index.ts";
@@ -783,9 +841,13 @@ input.on("line", (line) => {
       changed: true,
       mode: "incremental",
       snapshot: nativeSnapshot(
-        graph("second", universeDrift ? { drift: "moved" } : {}),
+        graph(
+          "second",
+          universeDrift || universeReload ? { drift: "moved" } : {},
+        ),
       ),
     });
+    if (universeReload) response.mode = "reload";
   } else {
     response = frame(request.id, {
       changed: false,
@@ -803,6 +865,9 @@ input.on("line", (line) => {
     } else if (nativeInvalidMode === "--native-invalid-snapshot-null") {
       response.snapshot = null;
     } else corruptNativeSnapshot(response.snapshot, nativeInvalidMode);
+  }
+  if (nativeLog !== undefined && response.snapshot !== undefined) {
+    fs.appendFileSync(nativeLog, `${JSON.stringify(response.snapshot)}\n`);
   }
   if (phaseTrace) {
     process.stderr.write(

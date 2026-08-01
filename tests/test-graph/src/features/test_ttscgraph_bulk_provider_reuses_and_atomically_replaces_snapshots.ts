@@ -228,7 +228,10 @@ export const test_ttscgraph_bulk_provider_reuses_and_atomically_replaces_snapsho
             initialShards.has(key) && initialShards.get(key) !== digest,
         ).length,
       ],
-      [1, initial.snapshot.protocol?.generation, 6, 2],
+      // The edited source itself has a new content-addressed producer key, so
+      // it appears as delete+upsert. The one same-key digest replacement is
+      // the unchanged importer whose outgoing export edge was invalidated.
+      [1, initial.snapshot.protocol?.generation, 6, 1],
     );
     await rejects(client.refresh(), "serve errors are surfaced");
     TestValidator.predicate(

@@ -467,7 +467,12 @@ switch (experiment.language) {
     // so the PATH fallback is the only route — and the binary lives inside the
     // platform package rather than in `@ttsc/graph`, whose npm `bin` publishes
     // `ttsc-graph` and not this.
-    const ttscVersion = "0.22.0";
+    const ttscVersion = experiment.strictReleaseBoundary?.version;
+    if (ttscVersion === undefined) {
+      throw new Error(
+        "typescript: the published ttsc setup must name its strict release boundary",
+      );
+    }
     shell(`npm install -g @ttsc/linux-x64@${ttscVersion}`);
     const globalRoot = shell("npm root -g", {
       stdio: ["ignore", "pipe", "inherit"],

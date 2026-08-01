@@ -36,7 +36,9 @@ export const test_ttscgraph_native_shard_transactions_fail_atomically =
       "--native-invalid-key-empty": "native shard key is invalid",
       "--native-invalid-key-nul": "native shard key is invalid",
       "--native-invalid-reserved-coverage":
-        "uses reserved normalized key",
+        "uses reserved normalized namespace",
+      "--native-invalid-reserved-coverage-alternate":
+        "uses reserved normalized namespace",
       "--native-invalid-two-input-kinds": "owns two input kinds",
       "--native-invalid-duplicate-source": "has two shards",
       "--native-invalid-duplicate-config": "has two shards",
@@ -46,6 +48,7 @@ export const test_ttscgraph_native_shard_transactions_fail_atomically =
       "--native-invalid-source-foreign-node": "misowns node",
       "--native-invalid-external-local-node": "misowns node",
       "--native-invalid-duplicate-node": "has two owners",
+      "--native-invalid-local-duplicate-node": "has two owners",
       "--native-invalid-source-diagnostic": "misowns diagnostic",
       "--native-invalid-config-diagnostic": "misowns diagnostic",
       "--native-invalid-metadata-diagnostic": "misowns diagnostic",
@@ -89,6 +92,8 @@ export const test_ttscgraph_native_shard_transactions_fail_atomically =
       "--native-invalid-delete-unknown-third": "deletes unknown shard",
       "--native-invalid-delete-duplicate-third": "touches shard",
       "--native-invalid-upsert-duplicate-third": "touches shard",
+      "--native-invalid-retained-edge-target-third":
+        "native edge target is absent",
     };
     for (const [mode, expected] of Object.entries(incrementalFailures)) {
       const client = create(fixture(), mode);

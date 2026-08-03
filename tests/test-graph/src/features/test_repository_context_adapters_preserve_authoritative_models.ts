@@ -17,10 +17,14 @@ import { parseGradleRepositoryContextModel } from "../../../../packages/graph/sr
  * Each adapter reads a different owning tool, and the tempting failure is the
  * same in all four: when the model is missing, stale, or refuses to answer,
  * reconstruct the topology from directory layout and publish it as though the
- * tool had said it. This pins the opposite behaviour per ecosystem — detection
- * keyed to the owning manifest rather than to any repository that happens to
- * contain a folder, declared versus tool-resolved authority kept distinct, and
- * an unavailable model becoming unsupported coverage instead of a guess.
+ * tool had said it. This pins the opposite behaviour per ecosystem. Detection
+ * is keyed to the owning manifest rather than to any repository that happens
+ * to contain a folder; `declared` and `tool-resolved` authority stay distinct
+ * per node and edge; an absent Tooling API classpath, a failed tool, malformed
+ * JSON, a stale CMake reply and a missing File API query each make the adapter
+ * throw rather than answer; and a Gradle module name that resolves ambiguously
+ * degrades `depends-on` to partial coverage with a warning instead of emitting
+ * the edge it cannot prove.
  */
 export const test_repository_context_adapters_preserve_authoritative_models =
   async () => {

@@ -14,11 +14,16 @@ import { GraphPaths } from "../internal/GraphPaths.js";
  * A resident producer answers before it is ready and restarts underneath a live
  * session, and neither condition is an error the caller may see as a fallback.
  * This pins the client's side of that: a cancelled or content-modified response
- * is retried until the ready deadline rather than published, a rejected restart
- * checkpoint discards the persisted generation instead of reusing it, an
+ * is retried until the ready deadline rather than published, a no-op returns
+ * the exact resident object rather than an equal copy, a rejected restart
+ * checkpoint discards the persisted generation instead of reusing it, and an
  * unpersistable checkpoint degrades to a warning while the validated snapshot
- * stays resident, and a refused commit leaves the previous good generation
- * exactly where it was.
+ * stays resident.
+ *
+ * The refusal cases assert the strictest available form of atomicity, which is
+ * why they run on fresh clients: a producer response the adapter rejects, and
+ * a generation the product validator refuses, must each leave `current`
+ * undefined. Nothing partially applied, not merely nothing published.
  */
 export const test_rust_hir_client_restores_retries_and_fails_closed = async () => {
   const root = GraphPaths.createTempDirectory("samchon-graph-rust-client-");

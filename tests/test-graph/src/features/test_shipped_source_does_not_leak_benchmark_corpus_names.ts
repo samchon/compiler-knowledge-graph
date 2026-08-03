@@ -22,13 +22,16 @@ const CORPUS_NAMES = [
 ] as const;
 
 /**
- * Every corpus repository below has, at some point, explained a real bug in a
- * source comment — a package that imports its own `testdata`, a package with
- * several `func init()`. That is exactly how a fixture name becomes product
- * behaviour: the next reader treats the named project as the specification and
- * special-cases it. This pins the prohibition mechanically over the shipped
- * source and sidecars, so a corpus name cannot reach a published artifact even
- * as prose.
+ * A corpus name in product source is how a fixture becomes a specification:
+ * the next reader treats the named project as the thing the code must satisfy
+ * and special-cases it. The Go sidecar carried exactly that shape until this
+ * campaign — two comments explaining real defects by naming the corpus that
+ * exhibited them — and both were rewritten to describe the condition instead.
+ *
+ * This is the mechanical guard for the class. Its reach is deliberate rather
+ * than total: it walks `src` and `sidecars` for the text extensions the
+ * product ships as code, so the README's benchmark tables — which name every
+ * corpus on purpose, as published measurement evidence — stay outside it.
  */
 export const test_shipped_source_does_not_leak_benchmark_corpus_names = () => {
   const roots = [

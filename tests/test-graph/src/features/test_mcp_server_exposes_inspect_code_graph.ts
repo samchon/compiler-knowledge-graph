@@ -75,10 +75,12 @@ const overview = async (args: string[]) => {
 /**
  * Everything else about the graph is tested through the TypeScript API, which
  * cannot see the one boundary an agent actually uses: a spawned process, one
- * registered tool, and a structured result over stdio. This drives that
- * boundary end to end, including the pre-built graph-file lane that must serve
- * without re-indexing and the cold `escape` request that must answer without
- * building a graph at all.
+ * registered tool, and a structured result arriving over stdio. This drives
+ * that boundary end to end. The second half is the reason it runs twice — a
+ * `--graph-file` server must answer from the dump the benchmark pre-warms it
+ * with, and it is held to the same node count as the lane that indexed the
+ * project itself, so serving a stale or partial graph is not a smaller answer
+ * but a failure.
  */
 export const test_mcp_server_exposes_inspect_code_graph = async () => {
   const root = GraphFixtures.createOrderFixture();

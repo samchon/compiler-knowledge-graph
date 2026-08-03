@@ -28,11 +28,14 @@ const MAINTAINED: Record<string, number> = {
 };
 
 /**
- * A deprecated `actions/*` major keeps working long after GitHub announces its
- * retirement, so the workflows stay green right up to the day every lane goes
- * red at once — and nothing in the product suite reads them. This pins the
- * pinned majors across every workflow file, and reads the directory itself so
- * a renamed or newly added workflow cannot opt out by not being listed.
+ * Nothing else in the suite reads a workflow, so every claim CI makes about
+ * itself is unchecked by default: a retired action major, a release lane that
+ * publishes before it audits, a producer pin that drifts, a hang boundary
+ * quietly moved off the matrix job, or a classifier that fails open and skips
+ * the matrix on the very heads it was meant to cover. Each of those stays
+ * green until the day it matters. This reads the workflow and release-script
+ * sources directly and holds them to {@link MAINTAINED} and to the ordering
+ * and scoping each lane depends on.
  */
 export const test_workflows_use_current_core_action_runtimes = () => {
   const directory = path.join(GraphPaths.repositoryRoot, ".github", "workflows");

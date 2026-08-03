@@ -800,10 +800,8 @@ function graphFile(root: string, source: string): string {
   }
   if (!path.isAbsolute(absolute)) return absolute.replaceAll("\\", "/");
   const relative = path.relative(root, absolute).replaceAll("\\", "/");
-  if (path.isAbsolute(relative)) {
-    /* c8 ignore next -- only Windows cross-volume or UNC sources reach this return. */
-    return externalGraphFile(absolute);
-  }
+  /* c8 ignore next -- only Windows cross-volume or UNC sources reach this guard. */
+  if (path.isAbsolute(relative)) return externalGraphFile(absolute);
   return relative;
 }
 

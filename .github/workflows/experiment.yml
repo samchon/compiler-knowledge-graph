@@ -147,6 +147,8 @@ jobs:
       - name: Run LSP experiment
         if: ${{ github.event_name != 'workflow_dispatch' || inputs.language == 'all' || inputs.language == matrix.language }}
         run: pnpm --filter @samchon/graph-experiment start -- --language ${{ matrix.language }}
+        env:
+          SAMCHON_GRAPH_RUST_ANALYZER_HIR: ${{ github.workspace }}/tests/experiment/.work/tools/bin/samchon-rust-analyzer
 
       - name: Upload result
         if: ${{ always() && (github.event_name != 'workflow_dispatch' || inputs.language == 'all' || inputs.language == matrix.language) }}

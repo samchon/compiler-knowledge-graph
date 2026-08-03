@@ -138,6 +138,12 @@ export const test_workflows_use_current_core_action_runtimes = () => {
     experimentTimeouts,
     ["timeout-minutes: 90"],
   );
+  TestValidator.predicate(
+    "the Rust experiment launches the exact binary provisioned by setup",
+    experimentJob.includes(
+      "SAMCHON_GRAPH_RUST_ANALYZER_HIR: ${{ github.workspace }}/tests/experiment/.work/tools/bin/samchon-rust-analyzer",
+    ),
+  );
   const indexTime = fs.readFileSync(
     path.join(directory, "index-time.yml"),
     "utf8",

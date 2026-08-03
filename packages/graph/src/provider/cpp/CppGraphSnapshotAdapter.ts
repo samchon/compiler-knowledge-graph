@@ -800,6 +800,7 @@ function graphFile(root: string, source: string): string {
   }
   if (!path.isAbsolute(absolute)) return absolute.replaceAll("\\", "/");
   const relative = path.relative(root, absolute).replaceAll("\\", "/");
+  /* c8 ignore next -- only Windows cross-volume or UNC sources make the relative path absolute. */
   return path.isAbsolute(relative)
     ? externalGraphFile(absolute)
     : relative;

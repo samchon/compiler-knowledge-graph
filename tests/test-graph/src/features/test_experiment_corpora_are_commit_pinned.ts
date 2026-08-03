@@ -224,6 +224,22 @@ export const test_experiment_corpora_are_commit_pinned = () => {
       setup.includes('tool: "samchon-clangd"') &&
       !cppSetup.includes('apt(["clangd"'),
   );
+  // A fixed parallelism here already cost two whole CI lanes: the build ran on
+  // half a four-vCPU runner and was killed at the job timeout with 694 of
+  // 3,125 steps left. The workflow refuses to widen that timeout for one
+  // language, so the size of this build is the thing that has to stay correct,
+  // and a literal is exactly how it silently stops being correct again. Pin
+  // both halves: sized by the machine, and bounded by its memory rather than
+  // by its core count alone, since the run that failed stopped before `clangd`
+  // was linked and therefore proved nothing about the memory peak.
+  TestValidator.predicate(
+    "the native Clang build is sized by the machine and bounded by its memory",
+    setup.includes("os.availableParallelism()") &&
+      setup.includes("os.totalmem()") &&
+      setup.includes('"--parallel",') &&
+      setup.includes("String(jobs),") &&
+      !/"--parallel",\s*\n\s*"\d+"/u.test(setup),
+  );
   // scip-python 0.6.6 recovers from a malformed `pyproject.toml`, falls back to
   // Pyright defaults and emits no SCIP diagnostics. On the pinned Click
   // fixture, the source and semantic fact planes stay unchanged. The aggregate

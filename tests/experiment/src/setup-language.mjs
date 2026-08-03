@@ -453,18 +453,33 @@ const installClangGraphProducer = () => {
     `-DLLVM_FORCE_VC_REVISION=${experiment.producerCommit}`,
     `-DLLVM_FORCE_VC_REPOSITORY=${experiment.producerRepository}`,
   ]);
-  // Build with the machine, not with a number. A fixed `2` left half of a
-  // four-core hosted runner idle and turned a ~55-minute build into a
-  // ~109-minute one, which is how the C and C++ lanes reached 78 percent of
-  // 3,125 steps and were killed at the job timeout. Nothing here needs the
-  // build serialized: the run carries no memory pressure — `clangd` is the one
-  // linked target and the log recorded no allocation failure — so the only
-  // thing the constant bought was a longer wall clock.
+  // Build with the machine, not with a number. What was measured: a fixed `2`
+  // on a four-vCPU hosted runner reached step 2,431 of 3,125 in 85 minutes and
+  // was then killed at the job timeout. How much of the remaining gap width
+  // recovers is not measured and should not be written down as though it were;
+  // what is certain is only that half the runner sat idle for all 85 of those
+  // minutes.
+  //
+  // Capped by memory as well as by cores, because those are different limits
+  // and only one of them is visible here. The cancelled run proves nothing
+  // about the second: it stopped before `clangd` was linked, which is exactly
+  // where an LLVM build peaks, so its silence about allocation failure is
+  // absence of evidence rather than evidence of headroom. Two GiB per job is
+  // LLVM's own rule of thumb for compiling, and it keeps a many-core, modest
+  // memory workstation — the local `setup` path the language-support skill
+  // documents — from turning this into an out-of-memory kill.
+  const jobs = Math.max(
+    1,
+    Math.min(
+      os.availableParallelism(),
+      Math.floor(os.totalmem() / (2 * 1024 * 1024 * 1024)),
+    ),
+  );
   run("cmake", [
     "--build",
     build,
     "--parallel",
-    String(os.availableParallelism()),
+    String(jobs),
     "--target",
     "clangd",
   ]);

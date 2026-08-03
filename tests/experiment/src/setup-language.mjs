@@ -453,11 +453,18 @@ const installClangGraphProducer = () => {
     `-DLLVM_FORCE_VC_REVISION=${experiment.producerCommit}`,
     `-DLLVM_FORCE_VC_REPOSITORY=${experiment.producerRepository}`,
   ]);
+  // Build with the machine, not with a number. A fixed `2` left half of a
+  // four-core hosted runner idle and turned a ~55-minute build into a
+  // ~109-minute one, which is how the C and C++ lanes reached 78 percent of
+  // 3,125 steps and were killed at the job timeout. Nothing here needs the
+  // build serialized: the run carries no memory pressure — `clangd` is the one
+  // linked target and the log recorded no allocation failure — so the only
+  // thing the constant bought was a longer wall clock.
   run("cmake", [
     "--build",
     build,
     "--parallel",
-    "2",
+    String(os.availableParallelism()),
     "--target",
     "clangd",
   ]);

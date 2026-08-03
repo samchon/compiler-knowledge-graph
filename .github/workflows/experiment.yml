@@ -74,7 +74,7 @@ jobs:
     if: ${{ needs.latest_update.outputs.run == 'true' }}
     name: ${{ matrix.language }} LSP
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:

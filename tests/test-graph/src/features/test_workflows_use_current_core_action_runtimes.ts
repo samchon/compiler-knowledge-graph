@@ -136,7 +136,7 @@ export const test_workflows_use_current_core_action_runtimes = () => {
   TestValidator.equals(
     "every real-tool language lane shares one hang boundary",
     experimentTimeouts,
-    ["timeout-minutes: 45"],
+    ["timeout-minutes: 90"],
   );
   const indexTime = fs.readFileSync(
     path.join(directory, "index-time.yml"),

@@ -755,6 +755,13 @@ switch (experiment.language) {
       fs.rmSync(link, { force: true });
       fs.linkSync(producerBinary, link);
     }
+    recordProvisionedEnvironment(
+      "SAMCHON_GRAPH_RUST_ANALYZER_HIR",
+      path.join(
+        binRoot,
+        `samchon-rust-analyzer${process.platform === "win32" ? ".exe" : ""}`,
+      ),
+    );
     record({
       tool: "samchon-rust-analyzer",
       version: experiment.producerCommit,

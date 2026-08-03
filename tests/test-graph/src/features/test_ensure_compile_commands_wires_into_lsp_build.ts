@@ -8,6 +8,7 @@ import { GraphPaths } from "../internal/GraphPaths";
 
 const fakeCmake = [process.execPath, GraphPaths.fakeCmake];
 
+/** Proves generated compilation databases live for exactly their LSP session. */
 export const test_ensure_compile_commands_wires_into_lsp_build = async () => {
   const root = GraphFixtures.createCmakeFixture();
   fs.mkdirSync(path.join(root, "src"));

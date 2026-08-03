@@ -805,17 +805,14 @@ function graphFile(root: string, source: string): string {
     : relative;
 }
 
-/* c8 ignore next -- only Windows cross-volume or UNC sources reach this helper. */
+/* c8 ignore start -- only Windows cross-volume or UNC sources reach this helper. */
 function externalGraphFile(source: string): string {
   const normalized = path.normalize(source);
-  /* c8 ignore next 3 -- only one platform's path-identity arm runs per host. */
-  const identity = process.platform === "win32"
-    ? normalized.toLowerCase()
-    : normalized;
-  /* c8 ignore next -- a producer source is a file, never a filesystem root. */
+  const identity = normalized.toLowerCase();
   const basename = encodeURIComponent(path.basename(normalized) || "source");
   return `bundled:///clang/filesystem/${sha256(identity)}/${basename}`;
 }
+/* c8 ignore stop */
 
 function sourceFile(root: string, source: string): string {
   assertSupportedSource(source);

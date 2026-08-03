@@ -215,7 +215,12 @@ export const test_experiment_corpora_are_commit_pinned = () => {
       setup.includes('"clangd",') &&
       setup.includes('for (const command of ["samchon-clangd", "clangd"])') &&
       setup.includes("fs.linkSync(binary, link)") &&
+      setup.includes('path.join(build, "lib", "clang")') &&
+      setup.includes("fs.cpSync(builtResources, installedResources") &&
+      setup.includes('"include",') &&
+      setup.includes('"stddef.h",') &&
       setup.includes("version.includes(experiment.producerCommit)") &&
+      setup.includes("installedVersion.includes(experiment.producerCommit)") &&
       setup.includes('tool: "samchon-clangd"') &&
       !cppSetup.includes('apt(["clangd"'),
   );

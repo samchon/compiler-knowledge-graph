@@ -611,13 +611,15 @@ function canonicalRoot(root) {
 }
 
 function compareKey(left, right) {
-  if (left.source !== right.source)
-    return left.source < right.source ? -1 : 1;
-  return left.configuration < right.configuration
-    ? -1
-    : left.configuration > right.configuration
-      ? 1
-      : 0;
+  const source = Buffer.compare(
+    Buffer.from(left.source, "utf8"),
+    Buffer.from(right.source, "utf8"),
+  );
+  if (source !== 0) return source;
+  return Buffer.compare(
+    Buffer.from(left.configuration, "utf8"),
+    Buffer.from(right.configuration, "utf8"),
+  );
 }
 
 function send(message) {

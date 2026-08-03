@@ -8,6 +8,7 @@ import {
 
 import { GraphFixtures } from "../internal/GraphFixtures";
 
+/** Proves registry order, extension ownership, and advertised defaults agree. */
 export const test_language_registry_lists_advertised_targets = () => {
   TestValidator.equals(
     "advertised language order",

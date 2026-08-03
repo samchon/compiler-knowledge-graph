@@ -12,6 +12,7 @@ import { GraphLanguage } from "../typings";
 import { projectRelative, readText } from "../utils/fs";
 import { IBuildGraphOptions } from "./IBuildGraphOptions";
 import { IStaticGraphParts } from "./IStaticGraphParts";
+import { languageOf } from "./languageOf";
 import { languagesOf } from "./languages";
 import { normalizeRequestedLanguages } from "./normalizeRequestedLanguages";
 import { selectGraphSources } from "./selectGraphSources";
@@ -28,28 +29,55 @@ export function staticGraphParts(
   const discovered = selectedFiles ?? selectGraphSources(root, options).files;
   const requested = normalizeRequestedLanguages(options.languages);
   const allowed = requested === undefined ? undefined : new Set(requested);
+  const contextualLanguages = new Set<GraphSitterLanguage>();
+  for (const absolutePath of discovered) {
+    const owners = staticOwners(absolutePath, allowed);
+    if (owners.length === 1) contextualLanguages.add(owners[0]!);
+  }
   const files: IGraphSitterFile[] = [];
   for (const absolutePath of discovered) {
-    // Source selection and extraction share the same multi-owner registry. A
-    // plain .h is therefore parsed for every selected C/C++ ownership view,
-    // while exact .H remains C++ as declared by the registry.
     const source = readText(absolutePath);
     /* c8 ignore next */
     if (source === undefined) continue;
-    for (const language of languagesOf(absolutePath)) {
-      if (allowed !== undefined && !allowed.has(language)) continue;
-      /* c8 ignore next */
-      if (!isGraphSitterLanguage(language)) continue;
-      files.push({
-        absolutePath,
-        relativePath: projectRelative(root, absolutePath),
-        language,
-        source,
-      });
-    }
+    const owners = staticOwners(absolutePath, allowed);
+    const language = staticOwner(absolutePath, owners, contextualLanguages);
+    /* c8 ignore next -- normal discovery cannot return a path outside its requested registry. */
+    if (language === undefined) continue;
+    files.push({
+      absolutePath,
+      relativePath: projectRelative(root, absolutePath),
+      language,
+      source,
+    });
   }
   const parts = graphSitterParts({ root, files });
   return parts;
+}
+
+/** Keep graph-sitter's file identity singular while honoring explicit filters. */
+function staticOwners(
+  absolutePath: string,
+  allowed: ReadonlySet<GraphLanguage> | undefined,
+): GraphSitterLanguage[] {
+  return languagesOf(absolutePath).filter(
+    (language): language is GraphSitterLanguage =>
+      (allowed === undefined || allowed.has(language)) &&
+      isGraphSitterLanguage(language),
+  );
+}
+
+/** Resolve a shared header from the unambiguous translation units around it. */
+function staticOwner(
+  absolutePath: string,
+  owners: readonly GraphSitterLanguage[],
+  contextualLanguages: ReadonlySet<GraphSitterLanguage>,
+): GraphSitterLanguage | undefined {
+  if (owners.length <= 1) return owners[0];
+  if (owners.includes("cpp") && contextualLanguages.has("cpp")) return "cpp";
+  if (owners.includes("c") && contextualLanguages.has("c")) return "c";
+  // Multiple supported owners currently means a shared .h with both owners
+  // still allowed, so the singular compatibility owner is one of this set.
+  return languageOf(absolutePath) as GraphSitterLanguage;
 }
 
 // The package boundary is intentionally structural and acyclic. These

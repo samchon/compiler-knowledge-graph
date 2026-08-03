@@ -6,6 +6,7 @@ import { buildGraphDump } from "@samchon/graph";
 
 import { GraphPaths } from "../internal/GraphPaths";
 
+/** Proves shared headers retain their C++ structure and out-of-line flows. */
 export const test_cpp_static_preserves_out_of_line_method_flows = async () => {
   const root = GraphPaths.createTempDirectory("samchon-cpp-methods-");
   fs.writeFileSync(
@@ -72,6 +73,39 @@ export const test_cpp_static_preserves_out_of_line_method_flows = async () => {
     mode: "static",
     languages: ["cpp"],
   });
+  const automatic = await buildGraphDump({ cwd: root, mode: "static" });
+  const edgeKeys = (edges: typeof graph.edges) =>
+    edges.map((edge) => JSON.stringify(edge)).sort();
+  TestValidator.equals(
+    "automatic ownership keeps every edge from the contextual C++ header view",
+    edgeKeys(automatic.edges),
+    edgeKeys(graph.edges),
+  );
+  const cRoot = GraphPaths.createTempDirectory("samchon-c-header-owner-");
+  fs.writeFileSync(path.join(cRoot, "record.h"), "struct Record { int value; };\n");
+  fs.writeFileSync(path.join(cRoot, "record.c"), "int read_record(void) { return 0; }\n");
+  const cGraph = await buildGraphDump({ cwd: cRoot, mode: "static" });
+  TestValidator.predicate(
+    "an automatic C translation unit keeps its shared header in the C view",
+    cGraph.nodes.some(
+      (node) => node.file.endsWith("record.h") && node.language === "c",
+    ) &&
+      cGraph.nodes.every(
+        (node) => !node.file.endsWith("record.h") || node.language !== "cpp",
+      ),
+  );
+  const headerRoot = GraphPaths.createTempDirectory("samchon-header-owner-");
+  fs.writeFileSync(
+    path.join(headerRoot, "standalone.h"),
+    "struct Standalone { int value; };\n",
+  );
+  const headerGraph = await buildGraphDump({ cwd: headerRoot, mode: "static" });
+  TestValidator.predicate(
+    "a header-only project retains the singular C compatibility owner",
+    headerGraph.nodes.some(
+      (node) => node.file.endsWith("standalone.h") && node.language === "c",
+    ),
+  );
   const sourceMethods = graph.nodes.filter(
     (node) => node.file.endsWith("engine.cpp") && node.kind === "method",
   );

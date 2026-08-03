@@ -319,7 +319,9 @@ function assertCrossVolumeIdentity(
 
 function assertUnicodeManifestOrdering(): void {
   const root = GraphPaths.createTempDirectory("samchon-graph-cpp-unicode-");
-  const commands = ["z.cpp", "é.cpp"].map((file) => {
+  const supplementary = "\u{10000}.cpp";
+  const privateUse = "\uE000.cpp";
+  const commands = [supplementary, privateUse].map((file) => {
     fs.writeFileSync(path.join(root, file), "void caller() {}\n");
     return {
       directory: root,
@@ -337,12 +339,12 @@ function assertUnicodeManifestOrdering(): void {
     () => undefined,
   ).snapshot;
   TestValidator.equals(
-    "native raw-path byte order remains valid when URI encoding would sort Unicode first",
+    "native manifest order compares raw UTF-8 bytes instead of UTF-16 code units",
     [
       raw.upserts.map((shard) => path.basename(shard.source)),
       snapshot.sources.size,
     ],
-    [["z.cpp", "é.cpp"], 2],
+    [[privateUse, supplementary], 2],
   );
 }
 

@@ -470,10 +470,52 @@ const installClangGraphProducer = () => {
       `${experiment.language}: native Clang version omits ${experiment.producerCommit}:\n${version}`,
     );
   }
+  const builtResources = path.join(build, "lib", "clang");
+  const resourceVersions = fs
+    .readdirSync(builtResources, { withFileTypes: true })
+    .filter(
+      (entry) =>
+        entry.isDirectory() &&
+        fs.statSync(
+          path.join(builtResources, entry.name, "include"),
+          { throwIfNoEntry: false },
+        )?.isDirectory(),
+    )
+    .map((entry) => entry.name);
+  if (resourceVersions.length !== 1) {
+    throw new Error(
+      `${experiment.language}: native Clang produced ${resourceVersions.length} resource-header trees`,
+    );
+  }
+  const installedResources = path.join(toolsRoot, "lib", "clang");
+  fs.rmSync(installedResources, { force: true, recursive: true });
+  ensureDir(path.dirname(installedResources));
+  fs.cpSync(builtResources, installedResources, { recursive: true });
+  const installedStddef = path.join(
+    installedResources,
+    resourceVersions[0],
+    "include",
+    "stddef.h",
+  );
+  if (!fs.statSync(installedStddef, { throwIfNoEntry: false })?.isFile()) {
+    throw new Error(
+      `${experiment.language}: native Clang resource headers were not installed at ${installedStddef}`,
+    );
+  }
   for (const command of ["samchon-clangd", "clangd"]) {
     const link = path.join(binRoot, command);
     fs.rmSync(link, { force: true });
     fs.linkSync(binary, link);
+  }
+  const installedVersion = String(
+    run(path.join(binRoot, "samchon-clangd"), ["--version"], {
+      stdio: "pipe",
+    }).stdout,
+  );
+  if (!installedVersion.includes(experiment.producerCommit)) {
+    throw new Error(
+      `${experiment.language}: installed native Clang omits ${experiment.producerCommit}:\n${installedVersion}`,
+    );
   }
   record({
     tool: "samchon-clangd",

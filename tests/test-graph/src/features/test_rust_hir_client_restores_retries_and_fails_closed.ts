@@ -367,24 +367,48 @@ async function assertPublicCommitFence(root: string): Promise<void> {
 
 async function assertPinnedResolution(root: string): Promise<void> {
   const pinned = nodeShim(root, "pinned-rust-analyzer", RUST_GRAPH_PRODUCER_COMMIT);
+  const shallowPinned = nodeShim(
+    root,
+    "shallow-pinned-rust-analyzer",
+    RUST_GRAPH_PRODUCER_COMMIT,
+    ["--version-commit-length=7"],
+  );
+  const tooShort = nodeShim(
+    root,
+    "too-short-rust-analyzer",
+    RUST_GRAPH_PRODUCER_COMMIT,
+    ["--version-commit-length=6"],
+  );
   const wrong = nodeShim(root, "wrong-rust-analyzer", "0000000000000000000000000000000000000000");
   const failing = nodeShim(root, "failing-rust-analyzer", RUST_GRAPH_PRODUCER_COMMIT, [
     "--fail-version",
   ]);
   const override = "SAMCHON_GRAPH_RUST_ANALYZER_HIR";
   const resolved = rustGraphProvider.resolve(root, { ...process.env, [override]: pinned });
+  const shallowResolved = rustGraphProvider.resolve(root, {
+    ...process.env,
+    [override]: shallowPinned,
+  });
+  const shortRejected = rustGraphProvider.resolve(root, {
+    ...process.env,
+    [override]: tooShort,
+  });
   const rejected = rustGraphProvider.resolve(root, { ...process.env, [override]: wrong });
   const failed = rustGraphProvider.resolve(root, { ...process.env, [override]: failing });
   TestValidator.equals(
     "the HIR provider resolves only the exact disclosed producer commit",
     [
       resolved !== undefined,
+      shallowResolved !== undefined,
+      shortRejected,
       rejected,
       failed,
       rustGraphProvider.configuration?.(root, { [override]: pinned }),
     ],
     [
       true,
+      true,
+      undefined,
       undefined,
       undefined,
       [

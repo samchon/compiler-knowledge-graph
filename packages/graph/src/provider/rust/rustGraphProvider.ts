@@ -96,6 +96,11 @@ function hasPinnedVersion(
     windowsVerbatimArguments: invocation.windowsVerbatimArguments,
   });
   if (result.status !== 0 || result.error !== undefined) return false;
-  const short = RUST_GRAPH_PRODUCER_COMMIT.slice(0, 9);
-  return new RegExp(`\\(${short}(?:\\s|\\))`, "u").test(result.stdout);
+  const reported = /\(([0-9a-f]{7,40})(?:\s|\))/u.exec(
+    result.stdout,
+  )?.[1];
+  return (
+    reported !== undefined &&
+    RUST_GRAPH_PRODUCER_COMMIT.startsWith(reported)
+  );
 }

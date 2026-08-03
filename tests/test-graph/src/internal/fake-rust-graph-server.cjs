@@ -23,12 +23,15 @@ const configurationWithoutItems = args.includes("--configuration-without-items")
 const expectInitializationOptions = args.includes("--expect-initialization-options");
 const initializeError = args.includes("--initialize-error");
 const failVersion = args.includes("--fail-version");
+const versionCommitLength = Number(valueOf("--version-commit-length=") ?? 9);
 const conformance = args.includes("--conformance");
 const conformanceHeuristic = args.includes("--conformance-heuristic");
 
 if (args.includes("--version")) {
   if (failVersion) process.exit(7);
-  process.stdout.write(`rust-analyzer 1.95.0 (${commit.slice(0, 9)} 2026-08-01)\n`);
+  process.stdout.write(
+    `rust-analyzer 1.95.0 (${commit.slice(0, versionCommitLength)} 2026-08-01)\n`,
+  );
   process.exit(0);
 }
 

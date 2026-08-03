@@ -1,4 +1,5 @@
 import { IGraphProvider } from "./IGraphProvider";
+import { cppGraphProvider } from "./cpp/cppGraphProvider";
 import { goGraphProvider } from "./go/goGraphProvider";
 import { luaGraphProvider } from "./lua/luaGraphProvider";
 import { rustGraphProvider } from "./rust/rustGraphProvider";
@@ -26,6 +27,9 @@ export const GRAPH_PROVIDERS: readonly IGraphProvider[] = [
   goGraphProvider,
   luaGraphProvider,
   rustGraphProvider,
-  ...standardScipProviders,
+  cppGraphProvider,
+  ...standardScipProviders.filter(
+    (provider) => provider.name !== "scip-clang",
+  ),
   ...standardSidecarProviders,
 ];

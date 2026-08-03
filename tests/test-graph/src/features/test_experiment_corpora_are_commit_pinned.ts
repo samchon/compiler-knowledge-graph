@@ -169,15 +169,23 @@ export const test_experiment_corpora_are_commit_pinned = () => {
   );
   TestValidator.predicate(
     "every producer with no grounded edge family states that limitation explicitly",
-    [csharp, cpp, c].every(
-      (row) =>
-        row.includes("semanticEdges: []") &&
-        !row.includes("crossFileEdge:") &&
-        declares(row, "semanticLimitation"),
-    ) &&
+    csharp.includes("semanticEdges: []") &&
+      !csharp.includes("crossFileEdge:") &&
+      declares(csharp, "semanticLimitation") &&
       runner.includes("experiment.semanticEdges.length === 0") &&
       runner.includes("crossFileEdge !== undefined") &&
       runner.includes("semanticLimitation.trim() ==="),
+  );
+  TestValidator.predicate(
+    "the native C and C++ producer grounds cross-file graph families",
+    [cpp, c].every(
+      (row) =>
+        row.includes('strictProvider: "clangd-snapshot"') &&
+        row.includes('crossFileEdge: "references"') &&
+        row.includes('"contains"') &&
+        row.includes('"references"') &&
+        !row.includes("semanticEdges: []"),
+    ),
   );
   // scip-python 0.6.6 recovers from a malformed `pyproject.toml`, falls back to
   // Pyright defaults and emits no SCIP diagnostics. On the pinned Click
@@ -216,37 +224,21 @@ export const test_experiment_corpora_are_commit_pinned = () => {
       lifecycle.includes("normalized dump fact planes are equal"),
   );
   TestValidator.predicate(
-    "a malformed compilation database proves strict decline and warned fallback",
-    [cpp, c].every(
-      (row) =>
-        row.includes('failurePolicy: "fallback"') &&
-        declares(row, "failureLimitation"),
-    ) &&
-      lifecycle.includes('fixture.failurePolicy === "fallback"') &&
-      lifecycle.includes('status: "fallback-with-limitation"') &&
-      lifecycle.includes("row.provider === experiment.strictProvider") &&
-      lifecycle.includes("warning.includes(experiment.strictProvider)") &&
-      !lifecycle.includes("JSON.stringify(fallback)") &&
-      lifecycle.includes('? ["initial", ...CHANGED_MODES]'),
+    "a malformed compilation database rejects the native generation",
+    [cpp, c].every((row) => row.includes('failurePolicy: "reject"')) &&
+      lifecycle.includes('fixture.failurePolicy === "reject"') &&
+      lifecycle.includes('status: "rejected"'),
   );
 
-  // Regenerating an unchanged project must reproduce it, and that assertion is
-  // the lifecycle's strongest. Exactly one registered producer cannot meet it:
-  // scip-clang 0.4.0 documents `--deterministic` as not scheduling work
-  // deterministically, and warns separately that non-determinism changes how
-  // many files each indexing job skips — which moves the source manifest as
-  // well as the facts, because the manifest lists the files it reported. The
-  // exemption is therefore a declared, explained property of those two rows
-  // rather than a relaxed default, and it covers one claim rather than two.
+  // Native C/C++ shards and manifests are canonical independently of
+  // background scheduling, so these rows keep the strongest reproduction
+  // assertion and carry no producer-specific exemption.
   TestValidator.predicate(
-    "an unreproducible producer is declared rather than serialized",
-    [cpp, c].every((row) => declares(row, "regenerationLimitation")) &&
-      // Counted over the whole catalog, not checked against a list of the rows
-      // that happen not to declare it. The exemption drops the lifecycle's
-      // strongest assertion for whichever row carries it, so a third one
-      // appearing has to be a reviewed edit here rather than eight words in a
-      // catalog nobody re-reads.
-      [...catalog.matchAll(/regenerationLimitation:/g)].length === 2 &&
+    "native C and C++ regeneration stays reproducible",
+    [cpp, c].every((row) => !declares(row, "regenerationLimitation")) &&
+      // Counted over the whole catalog so any future reproduction exemption
+      // requires a reviewed contract change here.
+      [...catalog.matchAll(/regenerationLimitation:/g)].length === 0 &&
       runner.includes("experiment.regenerationLimitation !== undefined") &&
       runner.includes("regenerationLimitation.trim() === \"\"") &&
       runner.includes(

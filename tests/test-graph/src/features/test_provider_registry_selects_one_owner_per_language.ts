@@ -151,7 +151,6 @@ async function assertSelection(): Promise<void> {
     Object.fromEntries(
       GRAPH_PROVIDERS.filter((provider) =>
         [
-          "scip-clang",
           "scip-java",
           "scip-dotnet",
           "scip-python",
@@ -162,7 +161,6 @@ async function assertSelection(): Promise<void> {
       ).map((provider) => [provider.name, provider.facts]),
     ),
     {
-      "scip-clang": [],
       "scip-java": ["contains", "references"],
       "scip-dotnet": [],
       "scip-python": ["references"],

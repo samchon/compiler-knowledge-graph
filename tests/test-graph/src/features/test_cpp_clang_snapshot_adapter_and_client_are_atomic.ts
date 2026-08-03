@@ -1,0 +1,967 @@
+import { TestValidator } from "@nestia/e2e";
+import {
+  CPP_CLANG_PROVIDER,
+  CPP_CLANG_PRODUCER_COMMIT,
+  CppGraphClient,
+  CppGraphSnapshotAdapter,
+  GRAPH_EDGE_KINDS,
+  cppGraphProvider,
+  type ICppGraphSnapshot,
+} from "@samchon/graph";
+import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
+
+import { GraphPaths } from "../internal/GraphPaths.js";
+
+const COMMIT = CPP_CLANG_PRODUCER_COMMIT;
+
+export const test_cpp_clang_snapshot_adapter_and_client_are_atomic = async () => {
+  const root = fixtureRoot();
+  const raw = nativeSnapshot(root);
+  const adapter = new CppGraphSnapshotAdapter(root, COMMIT);
+  const initial = adapter.apply(raw, () => undefined);
+  TestValidator.equals(
+    "the Clang adapter preserves both compilation configurations and semantic facts",
+    [
+      initial.mode,
+      initial.snapshot.languages,
+      new Set(initial.snapshot.protocol?.targets).size,
+      [...new Set(initial.snapshot.edges.map((edge) => edge.kind))].sort(),
+      initial.snapshot.coverage?.length,
+      initial.snapshot.unresolved?.every(
+        (site) => site.reason === "provider-gap" || site.reason === "dynamic",
+      ),
+      initial.snapshot.provenance.provider,
+      initial.snapshot.sources.size,
+      [...initial.snapshot.sources.keys()].every(
+        (file) => file.startsWith("bundled:///") || path.isAbsolute(file),
+      ),
+    ],
+    [
+      "initial",
+      ["c", "cpp"],
+      2,
+      [
+        "accesses",
+        "calls",
+        "contains",
+        "exports",
+        "extends",
+        "imports",
+        "instantiates",
+        "overrides",
+        "references",
+        "type_ref",
+      ],
+      GRAPH_EDGE_KINDS.length * 4,
+      true,
+      CPP_CLANG_PROVIDER,
+      2,
+      true,
+    ],
+  );
+  const nodes = new Map(initial.snapshot.nodes.map((node) => [node.id, node]));
+  TestValidator.predicate(
+    "Clang RelationBaseOf becomes derived-to-base inheritance",
+    initial.snapshot.edges.some(
+      (edge) =>
+        edge.kind === "extends" &&
+        nodes.get(edge.from)?.name === "Derived" &&
+        nodes.get(edge.to)?.name === "Base",
+    ),
+  );
+  const overlaid = new CppGraphSnapshotAdapter(root, COMMIT).apply(
+    nativeSnapshot(root, ["--checker-overlay"]),
+    () => undefined,
+  );
+  const overlaidSource = overlaid.snapshot.sources.get(
+    path.resolve(root, "main.cpp"),
+  );
+  TestValidator.predicate(
+    "checker overlays preserve a distinct native disk digest",
+    overlaidSource !== undefined &&
+      overlaidSource.checkerDigest !== overlaidSource.diskDigest &&
+      overlaidSource.diskDigest ===
+        sha256(fs.readFileSync(path.resolve(root, "main.cpp"), "utf8")),
+  );
+  const edgeCases = new CppGraphSnapshotAdapter(root, COMMIT).apply(
+    nativeSnapshot(root, ["--edge-cases"]),
+    () => undefined,
+  );
+  TestValidator.predicate(
+    "the adapter preserves valid empty locations, URI forms, and unknown native kinds",
+    edgeCases.snapshot.nodes.some(
+      (node) =>
+        node.name === "caller" && node.qualifiedName === "fixture::caller",
+    ) &&
+      edgeCases.snapshot.nodes.some(
+        (node) => node.name === "Derived" && node.kind === "external_symbol",
+      ) &&
+      edgeCases.snapshot.nodes.some(
+        (node) => node.name === "c:@F@external#" && node.external,
+      ) &&
+      edgeCases.snapshot.diagnostics.some(
+        (diagnostic) => diagnostic.line === 0 && diagnostic.column === 0,
+      ) &&
+      edgeCases.snapshot.edges.some(
+        (edge) => edge.kind === "overrides" && edge.evidence === undefined,
+      ) &&
+      edgeCases.snapshot.sources.has("bundled:///fixture/system.h") &&
+      edgeCases.snapshot.sources.has(path.resolve(root, "relative.cpp")),
+  );
+  TestValidator.error(
+    "a source URI that cannot canonicalize fails the common protocol closed",
+    () =>
+      new CppGraphSnapshotAdapter(root, COMMIT).apply(
+        nativeSnapshot(root, ["--invalid-source-uri"]),
+        () => undefined,
+      ),
+  );
+  TestValidator.error(
+    "an unsupported source URI cannot impersonate a project-local file",
+    () =>
+      new CppGraphSnapshotAdapter(root, COMMIT).apply(
+        nativeSnapshot(root, ["--unsupported-source-uri"]),
+        () => undefined,
+      ),
+  );
+  assertNativeRefusals(root, raw);
+  await assertProvider(root);
+  await assertClientLifecycle(root);
+  await assertClientInputShapes();
+  await assertClientPagination();
+  await assertClientFailures(fixtureRoot());
+};
+
+function fixtureRoot(): string {
+  const root = GraphPaths.createTempDirectory("samchon-graph-cpp-native-");
+  fs.mkdirSync(path.join(root, "include"));
+  fs.writeFileSync(path.join(root, "main.cpp"), "void caller() {}\n");
+  fs.writeFileSync(path.join(root, "absolute.cpp"), "void absolute() {}\n");
+  fs.writeFileSync(path.join(root, "include", "fixture.h"), "void callee();\n");
+  fs.writeFileSync(
+    path.join(root, "compile_commands.json"),
+    JSON.stringify([
+      {
+        directory: root,
+        file: "main.cpp",
+        arguments: ["clang", "-x", "c", "-c", "main.cpp"],
+      },
+      {
+        directory: root,
+        file: "main.cpp",
+        arguments: ["clang++", "-x", "c++", "-c", "main.cpp"],
+      },
+    ]),
+  );
+  return root;
+}
+
+async function assertProvider(root: string): Promise<void> {
+  const override = "SAMCHON_GRAPH_CLANGD_SNAPSHOT";
+  const command = nodeShim(root, "samchon-clangd", COMMIT);
+  const wrong = nodeShim(root, "wrong-clangd", "f".repeat(40));
+  const prefixCollision = nodeShim(
+    root,
+    "prefix-collision-clangd",
+    `${COMMIT.slice(0, 9)}${"f".repeat(31)}`,
+  );
+  const resolved = cppGraphProvider.resolve(root, {
+    ...process.env,
+    [override]: command,
+  });
+  TestValidator.equals(
+    "the C/C++ provider resolves only its pinned compiler producer",
+    [
+      resolved !== undefined,
+      cppGraphProvider.resolve(root, {
+        ...process.env,
+        [override]: wrong,
+      }),
+      cppGraphProvider.resolve(root, {
+        ...process.env,
+        [override]: prefixCollision,
+      }),
+      cppGraphProvider.fallbacks?.map((provider) => provider.name),
+      cppGraphProvider.configuration?.(root, { [override]: command }),
+      cppGraphProvider.configuration?.(root, {}),
+    ],
+    [
+      true,
+      undefined,
+      undefined,
+      ["scip-clang"],
+      [`producer-commit=${COMMIT}`, `${override}=${command}`],
+      [`producer-commit=${COMMIT}`, `${override}=unconfigured`],
+    ],
+  );
+  TestValidator.predicate(
+    "whole-database Clang generations refuse bounded and caller-owned modes",
+    cppGraphProvider.refuse({ maxFiles: 1 })?.includes("maxFiles") === true &&
+      cppGraphProvider.refuse({ server: "clangd" })?.includes("server") === true &&
+      cppGraphProvider
+        .refuse({ lspReferenceLimit: 1 })
+        ?.includes("lspReferenceLimit") === true &&
+      cppGraphProvider.refuse({}) === undefined,
+  );
+  const session = cppGraphProvider.open({
+    root,
+    command: resolved!,
+    languages: ["c", "cpp"],
+    options: {},
+  });
+  try {
+    TestValidator.equals(
+      "the registered C/C++ provider opens its pinned producer contract",
+      (await session.refresh()).snapshot.provenance.authority,
+      "compiler",
+    );
+  } finally {
+    await session.close();
+  }
+  const absent = GraphPaths.createTempDirectory("samchon-graph-cpp-no-cdb-");
+  fs.writeFileSync(path.join(absent, "compile_commands.json"), "[]");
+  fs.mkdirSync(path.join(absent, "build"));
+  fs.writeFileSync(path.join(absent, "build", "compile_commands.json"), "bad");
+  TestValidator.error(
+    "the C/C++ provider refuses a project without a compilation database",
+    () => cppGraphProvider.prepare?.(absent, {}),
+  );
+  fs.writeFileSync(path.join(absent, "compile_commands.json"), "bad");
+  fs.writeFileSync(
+    path.join(absent, "build", "compile_commands.json"),
+    JSON.stringify([{ directory: absent, file: "main.cpp" }]),
+  );
+  cppGraphProvider.prepare?.(absent, {});
+}
+
+function nativeSnapshot(
+  root: string,
+  args: readonly string[] = [],
+): ICppGraphSnapshot {
+  const result = spawnSync(
+    process.execPath,
+    [
+      GraphPaths.fakeCppGraphServer,
+      "--snapshot",
+      `--commit=${COMMIT}`,
+      ...args,
+    ],
+    { cwd: root, encoding: "utf8", shell: false },
+  );
+  if (result.status !== 0 || result.error !== undefined) {
+    throw result.error ?? new Error(result.stderr);
+  }
+  return JSON.parse(result.stdout) as ICppGraphSnapshot;
+}
+
+function assertNativeRefusals(
+  root: string,
+  valid: ICppGraphSnapshot,
+): void {
+  const rejects = (
+    label: string,
+    mutate: (value: ICppGraphSnapshot) => void,
+  ): void => {
+    TestValidator.error(label, () => {
+      const candidate = structuredClone(valid);
+      mutate(candidate);
+      new CppGraphSnapshotAdapter(root, COMMIT).apply(candidate, () => undefined);
+    });
+  };
+  rejects("a foreign Clang producer is refused", (value) => {
+    value.producer.commit = "wrong";
+  });
+  rejects("an unsupported native protocol is refused", (value) => {
+    value.protocolVersion = 2;
+  });
+  rejects("a malformed native envelope is refused", (value) => {
+    value.sequence = 0;
+  });
+  rejects("a malformed native base is refused", (value) => {
+    value.baseGeneration = "bad";
+  });
+  rejects("a malformed Clang universe is refused", (value) => {
+    value.universe.targets.reverse();
+    value.universe.targets.push("duplicate");
+  });
+  rejects("a malformed native phase is refused", (value) => {
+    value.phases.totalMillis = -1;
+  });
+  rejects("a malformed assembled native page is refused", (value) => {
+    value.page.offset = 1;
+  });
+  rejects("a malformed native delete set is refused", (value) => {
+    value.deletes = ["z", "a"];
+  });
+  rejects("a non-canonical native manifest is refused", (value) => {
+    value.manifest.push({ ...value.manifest[0]! });
+  });
+  rejects("a malformed native source is refused", (value) => {
+    value.upserts[0]!.graph.sources[0]!.digest = "wrong";
+  });
+  rejects("a malformed native disk digest is refused", (value) => {
+    value.upserts[0]!.graph.sources[0]!.diskDigest = "wrong";
+  });
+  rejects("a malformed native shard is refused", (value) => {
+    value.upserts[0]!.source = "";
+  });
+  rejects("a foreign compiler fingerprint is refused", (value) => {
+    value.upserts[0]!.graph.producerFingerprint = "0".repeat(64);
+  });
+  rejects("a malformed native symbol is refused", (value) => {
+    value.upserts[0]!.graph.symbols[0]!.name = "";
+  });
+  rejects("a malformed native occurrence is refused", (value) => {
+    value.upserts[0]!.graph.occurrences[0]!.usr = "";
+  });
+  rejects("a malformed native relation is refused", (value) => {
+    value.upserts[0]!.graph.relations[0]!.subjectId = "";
+  });
+  rejects("a malformed native macro is refused", (value) => {
+    value.upserts[0]!.graph.macros[0]!.name = "";
+  });
+  rejects("a malformed native include is refused", (value) => {
+    value.upserts[0]!.graph.includes[0]!.source = "";
+  });
+  rejects("a malformed native module is refused", (value) => {
+    value.upserts[0]!.graph.modules[0]!.name = "";
+  });
+  rejects("a malformed native diagnostic is refused", (value) => {
+    value.upserts[0]!.graph.diagnostics[0]!.message = "";
+  });
+  rejects("a reversed native range is refused", (value) => {
+    const range = value.upserts[0]!.graph.occurrences[0]!.spelling;
+    range.startColumn = range.endColumn + 1;
+  });
+  rejects("a negative native range is refused", (value) => {
+    value.upserts[0]!.graph.occurrences[0]!.spelling.startLine = -1;
+  });
+  rejects("a non-array native universe coordinate is refused", (value) => {
+    (value.universe as unknown as { targets: null }).targets = null;
+  });
+  rejects("a non-string native universe coordinate is refused", (value) => {
+    (value.universe.targets as unknown[])[0] = 1;
+  });
+  rejects("an empty required native universe coordinate is refused", (value) => {
+    value.universe.targets[0] = "";
+  });
+  rejects("an incomplete native coverage matrix is refused", (value) => {
+    value.upserts[0]!.coverage.pop();
+  });
+  rejects("an invalid native coverage row is refused", (value) => {
+    value.upserts[0]!.coverage[0]!.state = "wrong" as "complete";
+  });
+  rejects("a mismatched native main source is refused", (value) => {
+    value.upserts[0]!.source += ".other";
+  });
+  rejects("a mismatched native shard digest is refused", (value) => {
+    value.upserts[0]!.digest = "0".repeat(64);
+  });
+  rejects("a mismatched native generation is refused", (value) => {
+    value.generation = "0".repeat(64);
+  });
+  rejects("a shard-extraneous native universe is refused", (value) => {
+    value.universe.targets = ["other-target"];
+  });
+  rejects("a malformed native graph is refused", (value) => {
+    value.upserts[0]!.graph.targetTriple = "";
+  });
+  const stale = new CppGraphSnapshotAdapter(root, COMMIT);
+  stale.apply(structuredClone(valid), () => undefined);
+  const delta = structuredClone(valid);
+  delta.baseGeneration = "0".repeat(64);
+  TestValidator.error("a Clang delta must name the exact resident base", () =>
+    stale.apply(delta, () => undefined),
+  );
+  const invalidDelete = structuredClone(valid);
+  invalidDelete.baseGeneration = valid.generation;
+  invalidDelete.deletes = ["missing-shard"];
+  TestValidator.error("a Clang delta cannot delete an absent shard", () =>
+    stale.apply(invalidDelete, () => undefined),
+  );
+  const duplicateDelta = structuredClone(valid);
+  duplicateDelta.baseGeneration = valid.generation;
+  duplicateDelta.deletes = [duplicateDelta.upserts[0]!.key];
+  TestValidator.error("a Clang delta cannot delete and replace one shard", () =>
+    stale.apply(duplicateDelta, () => undefined),
+  );
+  const manifestMismatch = structuredClone(valid);
+  manifestMismatch.manifest[0]!.digest = "0".repeat(64);
+  TestValidator.error("native shards must exactly match their manifest", () =>
+    new CppGraphSnapshotAdapter(root, COMMIT).apply(
+      manifestMismatch,
+      () => undefined,
+    ),
+  );
+
+  const partial = structuredClone(valid);
+  partial.baseGeneration = valid.generation;
+  partial.sequence += 1;
+  const changed = partial.upserts[0]!;
+  changed.graph.diagnostics[0]!.message += " (changed)";
+  changed.digest = nativeShardDigest(changed);
+  partial.upserts = [changed];
+  partial.manifest = partial.manifest.map((entry) =>
+    entry.key === changed.key ? { key: entry.key, digest: changed.digest } : entry,
+  );
+  partial.generation = nativeGeneration(
+    partial.universe.digest,
+    partial.manifest,
+  );
+  partial.page = { offset: 0, count: 1, total: 1, nextCursor: null };
+  const partialAdapter = new CppGraphSnapshotAdapter(root, COMMIT);
+  partialAdapter.apply(structuredClone(valid), () => undefined);
+  TestValidator.equals(
+    "a same-universe native delta retains unchanged graph shards",
+    partialAdapter.apply(partial, () => undefined).mode,
+    "incremental",
+  );
+
+  const database = path.join(root, "compile_commands.json");
+  const commands = JSON.parse(fs.readFileSync(database, "utf8")) as unknown[];
+  fs.writeFileSync(database, JSON.stringify(commands.slice(1)));
+  const reloaded = stale.apply(nativeSnapshot(root), () => undefined);
+  TestValidator.equals(
+    "a full native generation with a changed language universe reloads atomically",
+    [reloaded.mode, reloaded.snapshot.languages],
+    ["reload", ["cpp"]],
+  );
+  fs.writeFileSync(database, JSON.stringify(commands));
+
+  const cppCommands = commands.map((row, index) => ({
+    ...(row as Record<string, unknown>),
+    arguments: [
+      "clang++",
+      "-x",
+      "c++",
+      `-DGRAPH_CONFIGURATION=${String(index)}`,
+      "-c",
+      "main.cpp",
+    ],
+  }));
+  fs.writeFileSync(database, JSON.stringify(cppCommands));
+  const sameLanguage = new CppGraphSnapshotAdapter(root, COMMIT);
+  const both = nativeSnapshot(root);
+  sameLanguage.apply(both, () => undefined);
+  fs.writeFileSync(database, JSON.stringify(cppCommands.slice(1)));
+  const one = nativeSnapshot(root);
+  const deletionDelta = structuredClone(one);
+  deletionDelta.baseGeneration = both.generation;
+  deletionDelta.deletes = both.manifest
+    .filter(
+      (entry) => !one.manifest.some((candidate) => candidate.key === entry.key),
+    )
+    .map((entry) => entry.key)
+    .sort();
+  deletionDelta.upserts = [];
+  deletionDelta.page = { offset: 0, count: 0, total: 0, nextCursor: null };
+  const universeReload = sameLanguage.apply(
+    deletionDelta,
+    () => undefined,
+  );
+  TestValidator.equals(
+    "a configuration-universe deletion reloads every surviving shard",
+    [universeReload.mode, universeReload.snapshot.languages],
+    ["reload", ["cpp"]],
+  );
+  fs.writeFileSync(database, JSON.stringify(commands));
+}
+
+async function assertClientLifecycle(root: string): Promise<void> {
+  const requestLog = path.join(root, "requests.ndjson");
+  const watchLog = path.join(root, "watches.ndjson");
+  const client = cppClient(root, [
+    `--request-log=${requestLog}`,
+    `--watch-log=${watchLog}`,
+  ]);
+  const initial = await client.refresh();
+  const unchanged = await client.refresh();
+  fs.writeFileSync(path.join(root, "main.cpp"), "void edited() {}\n");
+  const edited = await client.refresh();
+  const database = path.join(root, "compile_commands.json");
+  const commands = JSON.parse(fs.readFileSync(database, "utf8")) as unknown[];
+  fs.writeFileSync(database, JSON.stringify(commands.slice(1)));
+  const deleted = await client.refresh();
+  TestValidator.equals(
+    "the resident Clang client reuses no-ops and commits one edited delta",
+    [
+      [initial.changed, initial.mode, initial.generation],
+      [unchanged.changed, unchanged.mode, unchanged.generation],
+      [edited.changed, edited.mode, edited.generation],
+      [deleted.changed, deleted.mode, deleted.generation],
+      client.generation,
+      edited.snapshot.nodes.some((node) => node.name === "editedCaller"),
+      readLines(requestLog).map((row) => row.knownGeneration !== undefined),
+      readLines(watchLog).map((row) => row.changes[0]?.type),
+    ],
+    [
+      [true, "initial", 1],
+      [false, "unchanged", 1],
+      [true, "incremental", 2],
+      [true, "reload", 3],
+      3,
+      true,
+      [false, true, true, true],
+      [1, 2, 2],
+    ],
+  );
+  await client.close();
+  await client.close();
+  await rejected(
+    "a closed Clang graph session rejects refresh",
+    client.refresh(),
+    "session is closed",
+  );
+}
+
+async function assertClientPagination(): Promise<void> {
+  const root = GraphPaths.createTempDirectory("samchon-graph-cpp-pages-");
+  const commands: Array<Record<string, unknown>> = [];
+  for (let index = 0; index < 35; ++index) {
+    const file = `page-${String(index).padStart(2, "0")}.cpp`;
+    fs.writeFileSync(path.join(root, file), "void caller() {}\n");
+    commands.push({
+      directory: root,
+      file,
+      arguments: ["clang++", "-x", "c++", "-c", file],
+    });
+  }
+  fs.writeFileSync(
+    path.join(root, "compile_commands.json"),
+    JSON.stringify(commands),
+  );
+  const requestLog = path.join(root, "requests.ndjson");
+  const client = cppClient(root, [`--request-log=${requestLog}`]);
+  try {
+    const refreshed = await client.refresh();
+    const requests = readLines(requestLog);
+    TestValidator.equals(
+      "the resident client assembles bounded native pages before one atomic commit",
+      [
+        refreshed.snapshot.sources.size,
+        refreshed.snapshot.protocol?.shards.length,
+        requests.length,
+        requests.map((request) => request.maxShards),
+        requests.map((request) => typeof request.cursor),
+      ],
+      [35, 35, 2, [32, 32], ["undefined", "string"]],
+    );
+    for (const [corruption, message] of [
+      ["generation", "malformed paged generation"],
+      ["envelope", "malformed snapshot page envelope"],
+      ["telemetry", "malformed page telemetry"],
+      ["cache", "malformed page cache state"],
+      ["early", "paged generation ended early"],
+      ["cursor", "invalid continuation cursor"],
+      ["metadata", "continuation repeated generation metadata"],
+      ["cross-generation", "continuation crossed generations"],
+    ] as const) {
+      const broken = cppClient(root, [`--page-corruption=${corruption}`]);
+      await rejected(
+        `the client rejects ${corruption} pagination corruption`,
+        broken.refresh(),
+        message,
+      );
+      await broken.close();
+    }
+  } finally {
+    await client.close();
+  }
+  const defaultArgs = new CppGraphClient({
+    root,
+    languages: ["cpp"],
+    command: process.execPath,
+    producerCommit: COMMIT,
+    requestTimeoutMs: 10,
+  });
+  await defaultArgs.close();
+}
+
+async function assertClientInputShapes(): Promise<void> {
+  const root = GraphPaths.createTempDirectory("samchon-graph-cpp-inputs-");
+  const build = path.join(root, "build");
+  fs.mkdirSync(build);
+  fs.writeFileSync(path.join(root, "compile_commands.json"), "{}");
+  for (const file of ["fallback.cpp", "direct.cpp", "absolute.cpp"]) {
+    fs.writeFileSync(path.join(root, file), "void caller() {}\n");
+  }
+  fs.writeFileSync(path.join(build, "fallback.cpp"), "void caller() {}\n");
+  const absolute = path.join(root, "absolute.cpp");
+  fs.writeFileSync(
+    path.join(build, "compile_commands.json"),
+    JSON.stringify([
+      {},
+      { file: "" },
+      { file: "fallback.cpp" },
+      { directory: root, file: "direct.cpp" },
+      { directory: "", file: absolute },
+    ]),
+  );
+  const watchLog = path.join(root, "input-watches.ndjson");
+  const client = new CppGraphClient({
+    root,
+    languages: ["c", "cpp"],
+    command: process.execPath,
+    args: [
+      GraphPaths.fakeCppGraphServer,
+      `--commit=${COMMIT}`,
+      `--watch-log=${watchLog}`,
+    ],
+    producerCommit: COMMIT,
+    requestTimeoutMs: 5_000,
+    readyTimeoutMs: 10_000,
+  });
+  try {
+    await client.refresh();
+    fs.writeFileSync(path.join(root, ".clangd"), "Diagnostics: {}\n");
+    await client.refresh();
+    fs.unlinkSync(path.join(root, ".clangd"));
+    await client.refresh();
+    TestValidator.equals(
+      "CDB input discovery accepts fallback directories and tracks null-to-file transitions",
+      readLines(watchLog)
+        .flatMap((row) => row.changes)
+        .filter((change) => String(change.uri).endsWith("/.clangd"))
+        .map((change) => change.type),
+      [1, 3],
+    );
+  } finally {
+    await client.close();
+  }
+}
+
+async function assertClientFailures(root: string): Promise<void> {
+  const retry = cppClient(root, ["--retry=1", "--content-modified=1"]);
+  TestValidator.equals(
+    "retryable Clang readiness and movement errors are polled to success",
+    (await retry.refresh()).changed,
+    true,
+  );
+  await retry.close();
+
+  const movementRoot = fixtureRoot();
+  const movementWatchLog = path.join(movementRoot, "movement-watches.ndjson");
+  const movement = cppClient(movementRoot, [
+    "--content-modified=1",
+    "--move-input-on-content-modified",
+    `--watch-log=${movementWatchLog}`,
+  ]);
+  await movement.refresh();
+  await movement.close();
+  TestValidator.equals(
+    "input movement discovered during a snapshot retry is notified",
+    readLines(movementWatchLog).map((row) => row.changes[0]?.type),
+    [1, 2],
+  );
+
+  const postSnapshotRoot = fixtureRoot();
+  const postSnapshotWatchLog = path.join(
+    postSnapshotRoot,
+    "post-snapshot-watches.ndjson",
+  );
+  let moveAfterSnapshot = true;
+  const postSnapshot = cppClient(
+    postSnapshotRoot,
+    [`--watch-log=${postSnapshotWatchLog}`],
+    {
+      validate: () => {
+        if (!moveAfterSnapshot) return;
+        moveAfterSnapshot = false;
+        fs.writeFileSync(
+          path.join(postSnapshotRoot, "main.cpp"),
+          "void movedAfterSnapshot() {}\n",
+        );
+      },
+    },
+  );
+  await postSnapshot.refresh();
+  await postSnapshot.refresh();
+  await postSnapshot.close();
+  TestValidator.equals(
+    "input movement after a frozen snapshot remains visible to the next refresh",
+    readLines(postSnapshotWatchLog).map((row) => row.changes[0]?.type),
+    [1, 2],
+  );
+
+  const unknownDiskRoot = fixtureRoot();
+  const unknownDiskWatchLog = path.join(
+    unknownDiskRoot,
+    "unknown-disk-watches.ndjson",
+  );
+  const unknownDisk = cppClient(unknownDiskRoot, [
+    "--edge-cases",
+    "--empty-disk-digest",
+    `--watch-log=${unknownDiskWatchLog}`,
+  ]);
+  await unknownDisk.refresh();
+  await unknownDisk.refresh();
+  await unknownDisk.close();
+  TestValidator.equals(
+    "a source without a producer disk identity is conservatively re-notified",
+    readLines(unknownDiskWatchLog)
+      .flatMap((row) => row.changes)
+      .filter((change) => String(change.uri).endsWith("/main.cpp"))
+      .map((change) => change.type),
+    [1, 1],
+  );
+
+  const timedOut = cppClient(root, ["--content-modified=1"], {
+    readyTimeoutMs: 0,
+  });
+  await rejected(
+    "retryable movement still obeys the readiness deadline",
+    timedOut.refresh(),
+    "did not become ready",
+  );
+  await timedOut.close();
+
+  const configured = cppClient(
+    root,
+    [
+      "--request-configuration",
+      "--request-empty-configuration",
+      "--request-unknown",
+    ],
+    { initializationOptions: { graph: true } },
+  );
+  await configured.refresh({ signal: new AbortController().signal });
+  await configured.close();
+
+  const initializeError = cppClient(root, ["--initialize-error"]);
+  await rejected(
+    "initialization failures reject the resident session",
+    initializeError.refresh({ signal: new AbortController().signal }),
+    "fixture initialize failure",
+  );
+  await initializeError.close();
+
+  const initializing = cppClient(root, ["--hang-initialize"]);
+  const initializationAbort = new AbortController();
+  const initialization = initializing.refresh({ signal: initializationAbort.signal });
+  initializationAbort.abort("initialize cancellation");
+  await rejected(
+    "an initializing Clang session remains cancellable",
+    initialization,
+    "cancel",
+  );
+  await initializing.close();
+
+  const malformed = cppClient(root, ["--malformed"]);
+  await rejected(
+    "a malformed Clang response fails closed",
+    malformed.refresh(),
+    "identity/commit mismatch",
+  );
+  await malformed.close();
+
+  const internal = cppClient(root, ["--internal-error"]);
+  await rejected(
+    "a non-retryable Clang producer error is surfaced",
+    internal.refresh(),
+    "fixture internal failure",
+  );
+  await internal.close();
+
+  const hanging = cppClient(root, ["--hang"]);
+  const abort = new AbortController();
+  const refresh = hanging.refresh({ signal: abort.signal });
+  setTimeout(() => abort.abort("fixture cancellation"), 20).unref?.();
+  await rejected(
+    "an active Clang snapshot request remains cancellable",
+    refresh,
+    "abort|cancel",
+  );
+  await hanging.close();
+
+  const delaying = cppClient(root, ["--retry=100"]);
+  await (
+    delaying as unknown as {
+      initialize(signal: AbortSignal): Promise<void>;
+    }
+  ).initialize(new AbortController().signal);
+  const delayAbort = new AbortController();
+  const delayed = delaying.refresh({ signal: delayAbort.signal });
+  setTimeout(() => delayAbort.abort("delay cancellation"), 20).unref?.();
+  await rejected(
+    "retry delay remains cancellable",
+    delayed,
+    "cancel",
+  );
+  await delaying.close();
+
+  const queued = cppClient(root, ["--hang"]);
+  const activeAbort = new AbortController();
+  const active = queued.refresh({ signal: activeAbort.signal });
+  const queuedAbort = new AbortController();
+  const waiting = queued.refresh({ signal: queuedAbort.signal });
+  queuedAbort.abort("queued cancellation");
+  await rejected("a queued Clang refresh is cancellable", waiting, "cancel");
+  activeAbort.abort("active cancellation");
+  await rejected("the active refresh is also cancelled", active, "cancel");
+  await queued.close();
+
+  const alreadyAborted = cppClient(root, []);
+  const aborted = new AbortController();
+  aborted.abort("preflight cancellation");
+  await rejected(
+    "an already-cancelled refresh never enters the queue",
+    alreadyAborted.refresh({ signal: aborted.signal }),
+    "cancel",
+  );
+  await alreadyAborted.close();
+
+  const preinitializing = cppClient(root, []);
+  await (
+    preinitializing as unknown as {
+      initialize(signal: AbortSignal): Promise<void>;
+    }
+  ).initialize(new AbortController().signal);
+  const preinitializedAbort = new AbortController();
+  preinitializedAbort.abort("preinitialized cancellation");
+  await rejected(
+    "the initialization race rejects an already-aborted caller signal",
+    (
+      preinitializing as unknown as {
+        initialize(signal: AbortSignal): Promise<void>;
+      }
+    ).initialize(preinitializedAbort.signal),
+    "cancel",
+  );
+  await preinitializing.close();
+
+  const directCancellation = cppClient(root, []);
+  await rejected(
+    "the snapshot loop checks cancellation before requesting a page",
+    (
+      directCancellation as unknown as {
+        requestSnapshot(signal: AbortSignal): Promise<unknown>;
+      }
+    ).requestSnapshot({ aborted: true, reason: undefined } as AbortSignal),
+    "cancel",
+  );
+  await directCancellation.close();
+
+  const stringFailure = cppClient(root, [], {
+    validate: () => {
+      throw "fixture validation string";
+    },
+  });
+  await rejected(
+    "non-Error validation failures are normalized",
+    stringFailure.refresh(),
+    "fixture validation string",
+  );
+  await stringFailure.close();
+
+  const absent = GraphPaths.createTempDirectory("samchon-graph-cpp-empty-client-");
+  const noDatabase = cppClient(absent, []);
+  await rejected(
+    "an empty compilation database fails closed",
+    noDatabase.refresh(),
+    "universe|generation",
+  );
+  await noDatabase.close();
+}
+
+function cppClient(
+  root: string,
+  args: readonly string[],
+  options: {
+    initializationOptions?: unknown;
+    readyTimeoutMs?: number;
+    validate?: () => void;
+  } = {},
+): CppGraphClient {
+  return new CppGraphClient({
+    root,
+    languages: ["c", "cpp"],
+    command: process.execPath,
+    args: [GraphPaths.fakeCppGraphServer, `--commit=${COMMIT}`, ...args],
+    producerCommit: COMMIT,
+    initializationOptions: options.initializationOptions,
+    requestTimeoutMs: 5_000,
+    readyTimeoutMs: options.readyTimeoutMs ?? 10_000,
+    validate: options.validate,
+  });
+}
+
+function nodeShim(
+  root: string,
+  name: string,
+  commit: string,
+): string {
+  const directory = path.join(root, "shims");
+  fs.mkdirSync(directory, { recursive: true });
+  const file = path.join(
+    directory,
+    process.platform === "win32" ? `${name}.cmd` : name,
+  );
+  const invocation = [
+    `"${process.execPath}"`,
+    `"${GraphPaths.fakeCppGraphServer}"`,
+    `--commit=${commit}`,
+  ].join(" ");
+  fs.writeFileSync(
+    file,
+    process.platform === "win32"
+      ? `@echo off\r\n${invocation} %*\r\n`
+      : `#!/bin/sh\nexec ${invocation} "$@"\n`,
+  );
+  if (process.platform !== "win32") fs.chmodSync(file, 0o755);
+  return file;
+}
+
+function readLines(file: string): Array<Record<string, any>> {
+  return fs
+    .readFileSync(file, "utf8")
+    .trim()
+    .split(/\r?\n/u)
+    .filter((line) => line !== "")
+    .map((line) => JSON.parse(line) as Record<string, any>);
+}
+
+function nativeShardDigest(shard: ICppGraphSnapshot.IShard): string {
+  return sha256(
+    `${shard.key}\n${shard.checkerDigest}\n${shard.interfaceFingerprint}\n${JSON.stringify(shard.graph)}`,
+  );
+}
+
+function nativeGeneration(
+  universe: string,
+  manifest: readonly { key: string; digest: string }[],
+): string {
+  return sha256(
+    universe +
+      manifest
+        .map(
+          (entry) =>
+            `${Buffer.byteLength(entry.key, "utf8")}:${entry.key}${entry.digest}`,
+        )
+        .join(""),
+  );
+}
+
+function sha256(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+async function rejected(
+  label: string,
+  promise: Promise<unknown>,
+  message: string,
+): Promise<void> {
+  let error: Error | undefined;
+  try {
+    await promise;
+  } catch (caught) {
+    error = caught instanceof Error ? caught : new Error(String(caught));
+  }
+  TestValidator.predicate(
+    label,
+    error !== undefined &&
+      message.split("|").some((candidate) => error!.message.includes(candidate)),
+  );
+}

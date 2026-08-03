@@ -140,39 +140,47 @@ export const LANGUAGE_EXPERIMENTS = [
     language: "cpp",
     repository: "https://github.com/fmtlib/fmt.git",
     commit: "bcaa44d05579c75a83571821faee7acf6a9a0d55",
-    // Uncapped: scip-clang publishes a whole-workspace artifact and refuses a
-    // file cap, so a capped row is one it declines to serve.
+    // Uncapped: the native snapshot publishes a whole-compilation-database
+    // generation and refuses a file cap.
     //
-    // The compilation database is what scip-clang consumes and what a CMake
-    // project has to be configured to produce; nothing is compiled by this.
+    // The compilation database enumerates every native clangd graph view and
+    // is what a CMake project has to be configured to produce; preparation
+    // itself compiles nothing.
     prepare: "cmake -S . -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
-    strictProvider: "scip-clang",
-    strictAuthority: "semantic-index",
-    strictTool: "scip-clang",
-    requiredCapabilities: ["universe", "diskDigests"],
-    // Declarations only. scip-clang 0.4.0 writes range/symbol/roles on
-    // occurrences, no enclosing_range or enclosing_symbol, and no
-    // is_type_definition relationship. The common SCIP adapter therefore has
-    // no grounded origin or typed relationship for an edge.
-    semanticEdges: [],
+    strictProvider: "clangd-snapshot",
+    strictAuthority: "compiler",
+    strictTool: "samchon-clangd",
+    requiredCapabilities: [
+      "coverage",
+      "diagnostics",
+      "diskDigests",
+      "incremental",
+      "sourceDigests",
+      "universe",
+      "unresolved",
+    ],
+    // Native Clang occurrences and relations retain their enclosing symbols,
+    // exact ranges and TU/configuration identity in one compiler pass.
+    semanticEdges: [
+      "contains",
+      "exports",
+      "imports",
+      "calls",
+      "accesses",
+      "instantiates",
+      "type_ref",
+      "extends",
+      "implements",
+      "overrides",
+      "dispatches",
+      "references",
+    ],
+    crossFileEdge: "references",
     semanticLimitation:
-      "scip-clang 0.4.0 emits no occurrence enclosing_range, SymbolInformation.enclosing_symbol, or type-definition relationship, so its semantic declarations carry no provable graph edge family",
-    // scip-clang 0.4.0's own CLI states both halves of this: `--deterministic`
-    // is documented as "Does not support deterministic work scheduling yet",
-    // and `--print-statistics-path` warns that "non-determinism may affect the
-    // number of files skipped by individual indexing jobs". The driver gives
-    // each well-behaved header to one translation unit, and which one wins
-    // depends on the schedule — so the file set moves, and the manifest with it.
-    //
-    // Two ways of buying it back were tried and withdrawn. `--jobs=1` removed
-    // the variance by serializing the compiler and cost 39x on the redis
-    // corpus, which is not a trade a strict provider can make: the point of the
-    // lane is to be faster than the fallback. `--deterministic` alone then held
-    // this lane above forty-three minutes where it had run in under eleven, and
-    // its generations still did not reproduce. The limitation is declared
-    // instead.
-    regenerationLimitation:
-      "scip-clang 0.4.0 does not schedule its indexing jobs deterministically, so regenerating an unchanged project can skip a different set of headers; both the source manifest and the fact set can therefore move, because the manifest lists the files the producer reported",
+      "The native Clang lane retains exact TU/configuration facts, while calls, instantiation, exports, implements and dispatch stay explicitly partial and C/C++ have no decorates, renders or tests family.",
+    // Background jobs may finish in any order, but the native shard set,
+    // manifest and generation digest are canonical and publish only after all
+    // registered configurations agree on one complete source state.
     lifecycle: {
       sourceFile: "src/format.cc",
       editSuffix: "\n// samchon-graph lifecycle edit\n",
@@ -188,39 +196,56 @@ export const LANGUAGE_EXPERIMENTS = [
       compilationDatabase: "build/compile_commands.json",
       failureFile: "build/compile_commands.json",
       failureSuffix: "\n[ not json",
-      // A compilation database that will not parse makes scip-clang decline
-      // before publication. The resident records that reason and serves its
-      // documented fallback until the database is repaired.
-      failurePolicy: "fallback",
-      failureLimitation:
-        "a malformed compilation database makes scip-clang decline without provenance, so the resident publishes an explicitly warned generic/static fallback until the project input is repaired",
+      // A malformed compilation database invalidates the native universe, so
+      // the strict resident rejects publication until it is repaired.
+      failurePolicy: "reject",
     },
     minNodes: 1,
-    minEdges: 0,
+    minEdges: 1,
   },
   {
     language: "c",
     repository: "https://github.com/libuv/libuv.git",
     commit: "9d51562c10be60bc1126a3d71803b1038f4fbb7e",
-    // Uncapped: scip-clang publishes a whole-workspace artifact and refuses a
-    // file cap, so a capped row is one it declines to serve.
+    // Uncapped: the native snapshot publishes a whole-compilation-database
+    // generation and refuses a file cap.
     //
-    // The compilation database is what scip-clang consumes and what a CMake
-    // project has to be configured to produce; nothing is compiled by this.
+    // The compilation database enumerates every native clangd graph view and
+    // is what a CMake project has to be configured to produce; preparation
+    // itself compiles nothing.
     prepare: "cmake -S . -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
-    strictProvider: "scip-clang",
-    strictAuthority: "semantic-index",
-    strictTool: "scip-clang",
-    requiredCapabilities: ["universe", "diskDigests"],
-    // The same pinned producer contract as the C++ row: semantic declarations
-    // are real, but none of the common adapter's edge-grounding fields exists.
-    semanticEdges: [],
+    strictProvider: "clangd-snapshot",
+    strictAuthority: "compiler",
+    strictTool: "samchon-clangd",
+    requiredCapabilities: [
+      "coverage",
+      "diagnostics",
+      "diskDigests",
+      "incremental",
+      "sourceDigests",
+      "universe",
+      "unresolved",
+    ],
+    // The same pinned producer contract as the C++ row retains semantic
+    // enclosing symbols, exact ranges and TU/configuration identity.
+    semanticEdges: [
+      "contains",
+      "exports",
+      "imports",
+      "calls",
+      "accesses",
+      "instantiates",
+      "type_ref",
+      "extends",
+      "implements",
+      "overrides",
+      "dispatches",
+      "references",
+    ],
+    crossFileEdge: "references",
     semanticLimitation:
-      "scip-clang 0.4.0 emits no occurrence enclosing_range, SymbolInformation.enclosing_symbol, or type-definition relationship, so its semantic declarations carry no provable graph edge family",
-    // The C and C++ slices share one producer, so they share its scheduling
-    // boundary as well; see the C++ row for the upstream wording.
-    regenerationLimitation:
-      "scip-clang 0.4.0 does not schedule its indexing jobs deterministically, so regenerating an unchanged project can skip a different set of headers; both the source manifest and the fact set can therefore move, because the manifest lists the files the producer reported",
+      "The native Clang lane retains exact TU/configuration facts, while calls, instantiation, exports, implements and dispatch stay explicitly partial and C/C++ have no decorates, renders or tests family.",
+    // C and C++ share the same atomic, canonical generation boundary.
     lifecycle: {
       sourceFile: "src/uv-common.c",
       editSuffix: "\n// samchon-graph lifecycle edit\n",
@@ -236,13 +261,11 @@ export const LANGUAGE_EXPERIMENTS = [
       compilationDatabase: "build/compile_commands.json",
       failureFile: "build/compile_commands.json",
       failureSuffix: "\n[ not json",
-      // The C and C++ slices share the same strict selection boundary.
-      failurePolicy: "fallback",
-      failureLimitation:
-        "a malformed compilation database makes scip-clang decline without provenance, so the resident publishes an explicitly warned generic/static fallback until the project input is repaired",
+      // The C and C++ slices share the same strict rejection boundary.
+      failurePolicy: "reject",
     },
     minNodes: 1,
-    minEdges: 0,
+    minEdges: 1,
   },
   {
     language: "java",

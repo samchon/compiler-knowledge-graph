@@ -144,10 +144,10 @@ export const test_provider_support_manifest_matches_registry_and_evidence =
 
       const incompleteProjectCommands = structuredClone(parsed);
       const clang = incompleteProjectCommands.providers.find(
-        (provider) => provider.provider === "scip-clang",
+        (provider) => provider.provider === "clangd-snapshot",
       );
       if (clang === undefined)
-        throw new Error("the canonical manifest must contain scip-clang");
+        throw new Error("the canonical manifest must contain clangd-snapshot");
       clang.projectCommandSources = ["compile_commands.json"];
       const incompleteProjectCommandsFile = path.join(
         root,
@@ -161,16 +161,16 @@ export const test_provider_support_manifest_matches_registry_and_evidence =
         "an omitted project-owned command source fails closed",
         failsValidation(
           validate(incompleteProjectCommandsFile, root),
-          "scip-clang project command sources differ from its resolver descriptor",
+          "clangd-snapshot project command sources differ from its resolver descriptor",
         ),
       );
 
       const duplicateProjectCommands = structuredClone(parsed);
       const duplicateClang = duplicateProjectCommands.providers.find(
-        (provider) => provider.provider === "scip-clang",
+        (provider) => provider.provider === "clangd-snapshot",
       );
       if (duplicateClang === undefined)
-        throw new Error("the canonical manifest must contain scip-clang");
+        throw new Error("the canonical manifest must contain clangd-snapshot");
       duplicateClang.projectCommandSources = [
         "compile_commands.json",
         "build/compile_commands.json",
@@ -188,7 +188,7 @@ export const test_provider_support_manifest_matches_registry_and_evidence =
         "a duplicate project-owned command source fails closed",
         failsValidation(
           validate(duplicateProjectCommandsFile, root),
-          "scip-clang project command source rows must be unique",
+          "clangd-snapshot project command source rows must be unique",
         ),
       );
 

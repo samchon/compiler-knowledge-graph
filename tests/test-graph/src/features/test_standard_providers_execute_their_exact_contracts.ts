@@ -6,6 +6,8 @@ import {
   type IBulkGraphSession,
   type IGraphProvider,
   RUST_GRAPH_PRODUCER_COMMIT,
+  CPP_CLANG_PRODUCER_COMMIT,
+  cppGraphProvider,
   goGraphProvider,
   luaGraphProvider,
   rustGraphProvider,
@@ -926,7 +928,10 @@ function assertFixtureRegistryCoverage(): void {
     goGraphProvider,
     luaGraphProvider,
     rustGraphProvider,
-    ...standardScipProviders,
+    cppGraphProvider,
+    ...standardScipProviders.filter(
+      (provider) => provider.name !== "scip-clang",
+    ),
     ...standardSidecarProviders,
   ]
     .map((provider) => provider.name)
@@ -1228,6 +1233,15 @@ async function assertRemainingRegisteredFixtures(root: string): Promise<void> {
   };
   await assertRegisteredFixture(goGraphProvider, goCommand, root);
   await assertHeuristicTwinFails(goGraphProvider, goCommand, root);
+
+  const cppCommand: IGraphProvider.ICommand = {
+    command: process.execPath,
+    args: [
+      GraphPaths.fakeCppGraphServer,
+      `--commit=${CPP_CLANG_PRODUCER_COMMIT}`,
+    ],
+  };
+  await assertRegisteredFixture(cppGraphProvider, cppCommand, root, "calls");
 
   // Lua's producer is the language server itself, driven through its `--doc`
   // export with our exporter injected, so the fixture stands in for the server

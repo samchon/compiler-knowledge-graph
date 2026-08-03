@@ -21,6 +21,15 @@ const CORPUS_NAMES = [
   "darthttp",
 ] as const;
 
+/**
+ * Every corpus repository below has, at some point, explained a real bug in a
+ * source comment — a package that imports its own `testdata`, a package with
+ * several `func init()`. That is exactly how a fixture name becomes product
+ * behaviour: the next reader treats the named project as the specification and
+ * special-cases it. This pins the prohibition mechanically over the shipped
+ * source and sidecars, so a corpus name cannot reach a published artifact even
+ * as prose.
+ */
 export const test_shipped_source_does_not_leak_benchmark_corpus_names = () => {
   const roots = [
     path.join(GraphPaths.graphPackageRoot, "src"),

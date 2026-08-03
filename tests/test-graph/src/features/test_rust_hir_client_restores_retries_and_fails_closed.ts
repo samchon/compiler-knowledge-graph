@@ -10,6 +10,16 @@ import path from "node:path";
 
 import { GraphPaths } from "../internal/GraphPaths.js";
 
+/**
+ * A resident producer answers before it is ready and restarts underneath a live
+ * session, and neither condition is an error the caller may see as a fallback.
+ * This pins the client's side of that: a cancelled or content-modified response
+ * is retried until the ready deadline rather than published, a rejected restart
+ * checkpoint discards the persisted generation instead of reusing it, an
+ * unpersistable checkpoint degrades to a warning while the validated snapshot
+ * stays resident, and a refused commit leaves the previous good generation
+ * exactly where it was.
+ */
 export const test_rust_hir_client_restores_retries_and_fails_closed = async () => {
   const root = GraphPaths.createTempDirectory("samchon-graph-rust-client-");
   const cacheRoot = GraphPaths.createTempDirectory("samchon-graph-rust-checkpoints-");

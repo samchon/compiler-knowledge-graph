@@ -3,6 +3,14 @@ import { GRAPH_EDGE_KINDS, SamchonGraphMemory } from "@samchon/graph";
 
 import { GraphFixtures } from "../internal/GraphFixtures";
 
+/**
+ * The contract fixture is the shared corpus every operation test reasons from,
+ * so a node or edge kind it happens not to contain is a kind nothing tests —
+ * silently, and more so after each new family is added. This is the mechanical
+ * completeness gate for that: the fixture must realize the whole public node
+ * union and the whole edge union, in the same deterministic protocol order the
+ * coverage matrix iterates.
+ */
 export const test_contract_fixture_covers_every_graph_node_and_edge_kind = () => {
   const { dump } = GraphFixtures.createContractFixture();
   const graph = SamchonGraphMemory.from(dump);

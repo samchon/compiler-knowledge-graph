@@ -48,6 +48,16 @@ const valid = () => ({
   }>,
 });
 
+/**
+ * `parseGraphDump` is the only gate between an untrusted dump file and every
+ * consumer that treats its facts as checked — the MCP server, the viewer, and
+ * the resident source all skip revalidation because this ran. A rule it fails
+ * to enforce is therefore not a parse error but a false claim downstream. This
+ * walks each boundary it owns with a negative twin: identity and path shape,
+ * edge endpoint closure, provenance uniqueness, exhaustive coverage per
+ * published slice, and unresolved sites bound to a partial row in their
+ * provider's own universe.
+ */
 export const test_graph_dump_parser_closes_every_public_trust_boundary =
   async () => {
     const dump = valid();

@@ -19,6 +19,16 @@ const {
   repositoryContextSource,
 } = repositoryContextFacts;
 
+/**
+ * A repository model is expensive enough that the resident source is expected
+ * to reuse it, and that expectation is exactly what makes a failed provider
+ * dangerous: reusing the last good model after the build files moved would
+ * serve a topology no checkout has. This pins the input fence around that reuse
+ * — an unchanged input generation reuses the snapshot, a moved one recollects,
+ * a provider that throws contributes unsupported coverage and a warning instead
+ * of removing the plane, and a later success recovers without the failure
+ * leaving residue in the merged generation.
+ */
 export const test_resident_repository_context_is_atomic_and_retryable =
   async () => {
     const root = GraphPaths.createTempDirectory(

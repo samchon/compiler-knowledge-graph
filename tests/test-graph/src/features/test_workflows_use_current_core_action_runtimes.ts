@@ -27,6 +27,13 @@ const MAINTAINED: Record<string, number> = {
   "download-artifact": 8,
 };
 
+/**
+ * A deprecated `actions/*` major keeps working long after GitHub announces its
+ * retirement, so the workflows stay green right up to the day every lane goes
+ * red at once — and nothing in the product suite reads them. This pins the
+ * pinned majors across every workflow file, and reads the directory itself so
+ * a renamed or newly added workflow cannot opt out by not being listed.
+ */
 export const test_workflows_use_current_core_action_runtimes = () => {
   const directory = path.join(GraphPaths.repositoryRoot, ".github", "workflows");
   const files = fs

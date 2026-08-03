@@ -97,6 +97,15 @@ const importLib = <T>(relative: string): Promise<T> =>
     pathToFileURL(path.join(GraphPaths.graphPackageRoot, "lib", relative)).href
   ) as Promise<T>;
 
+/**
+ * A language server that misbehaves during teardown leaves nothing behind in
+ * the graph, so no result-shaped assertion can notice it; the only evidence is
+ * a process that outlives the session. This pins the client's escalation for
+ * each way that happens — a server that answers `shutdown` and ignores `exit`,
+ * and one that never answers at all — plus the server-initiated request path,
+ * where a request left unanswered deadlocks servers that withhold their own
+ * replies until it is acknowledged.
+ */
 export const test_lsp_client_closes_servers_that_break_the_shutdown_handshake =
   async () => {
     const { LspClient } = await importLib<{

@@ -13,6 +13,15 @@ import path from "node:path";
 import { GraphPaths } from "../internal/GraphPaths";
 import { parseGradleRepositoryContextModel } from "../../../../packages/graph/src/repository/parseGradleRepositoryContextModel";
 
+/**
+ * Each adapter reads a different owning tool, and the tempting failure is the
+ * same in all four: when the model is missing, stale, or refuses to answer,
+ * reconstruct the topology from directory layout and publish it as though the
+ * tool had said it. This pins the opposite behaviour per ecosystem — detection
+ * keyed to the owning manifest rather than to any repository that happens to
+ * contain a folder, declared versus tool-resolved authority kept distinct, and
+ * an unavailable model becoming unsupported coverage instead of a guess.
+ */
 export const test_repository_context_adapters_preserve_authoritative_models =
   async () => {
     const root = GraphPaths.createTempDirectory(

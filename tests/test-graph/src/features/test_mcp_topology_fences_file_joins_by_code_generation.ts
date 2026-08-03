@@ -14,6 +14,15 @@ import { GraphFixtures } from "../internal/GraphFixtures";
 const { repositoryContextCoverage, repositoryContextId } =
   repositoryContextFacts;
 
+/**
+ * A `joins-file` edge is the one place the two planes touch, and it is only
+ * true of one pair of generations. If the code generation moves while topology
+ * is loading, the join still looks well-formed — both endpoints exist — so
+ * nothing in either plane's own validation can reject it. This pins the fence
+ * that can: joins are admitted only when the code input generation is stable
+ * across the topology load, and are otherwise withheld with an explicit
+ * `unavailable` reason rather than returned as ordinary facts.
+ */
 export const test_mcp_topology_fences_file_joins_by_code_generation =
   async () => {
     const fixture = GraphFixtures.createContractFixture();

@@ -5,6 +5,14 @@ import { pathToFileURL } from "node:url";
 import { GraphPaths } from "../internal/GraphPaths";
 import { createCompositeResidentClose } from "../../../../packages/graph/src/mcp/createCompositeResidentClose";
 
+/**
+ * Shutdown arrives twice — the transport closing and stdin ending are separate
+ * events — and both reach the same handler. Closing twice would either kill a
+ * resident mid-teardown or double-report the same failure, and neither shows up
+ * in a single-path test. This pins one shared shutdown promise, one close, one
+ * contained report, and the composite that now fronts several resident planes
+ * closing each of them in order while retaining the first failure.
+ */
 export const test_mcp_resident_close_handler_settles_once = async () => {
   const module = (await import(
     pathToFileURL(

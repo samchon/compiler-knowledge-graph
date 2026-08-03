@@ -7,6 +7,16 @@ import {
 const { repositoryContextCoverage, repositoryContextId } =
   repositoryContextFacts;
 
+/**
+ * The repository plane is a second protocol with the same atomicity promise as
+ * the code one, and nothing in the code protocol's tests reaches it. This pins
+ * the boundary that keeps the two planes from drifting apart: a published
+ * topology generation is frozen, a delta must extend exactly the current
+ * generation, coverage stays exhaustive over every relation family, `joins-file`
+ * is the one relation whose target is a file rather than a node, and version 1
+ * refuses `inferred` authority outright rather than publishing a guessed build
+ * fact beside a tool-resolved one.
+ */
 export const test_repository_context_protocol_commits_atomic_shards =
   async () => {
     const store = new RepositoryContextProtocol.Store();

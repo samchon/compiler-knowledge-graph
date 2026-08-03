@@ -3,6 +3,14 @@ import { TestValidator } from "@nestia/e2e";
 import { ContractGraph } from "../internal/ContractGraph";
 import { GraphFixtures } from "../internal/GraphFixtures";
 
+/**
+ * The application's request switch is the one place where a new MCP member can
+ * be added to the union, compile, and never run: the type checker is satisfied
+ * by the union alone, and each arm's audit, trust envelope, and `next` decision
+ * are chosen independently of the others. This walks every discriminator,
+ * including the `topology` arm and the `escape` arm that must carry no trust
+ * envelope, so an unexercised branch fails here rather than at a caller.
+ */
 export const test_application_exercises_every_request_branch = async () => {
   const app = ContractGraph.createApplication();
   const requests = [

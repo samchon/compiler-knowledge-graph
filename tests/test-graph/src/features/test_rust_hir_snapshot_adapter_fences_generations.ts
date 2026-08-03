@@ -17,6 +17,16 @@ import { GraphPaths } from "../internal/GraphPaths.js";
 
 const COMMIT = RUST_GRAPH_PRODUCER_COMMIT;
 
+/**
+ * The adapter is the only place a producer-owned HIR generation becomes a
+ * public one, so every fence it applies is invisible from either side alone:
+ * the producer cannot see the prior committed generation, and the common store
+ * cannot see the raw shard digests the producer signed. This pins that seam —
+ * a delta on a stale base, an unchanged generation that lost its base, a raw
+ * manifest or generation digest the producer contradicts, and a restart
+ * checkpoint whose normalized frames are trusted only after the live producer
+ * revalidates its raw HIR facts.
+ */
 export const test_rust_hir_snapshot_adapter_fences_generations = () => {
   const root = GraphPaths.createTempDirectory("samchon-graph-rust-adapter-");
   fs.mkdirSync(path.join(root, "src"));

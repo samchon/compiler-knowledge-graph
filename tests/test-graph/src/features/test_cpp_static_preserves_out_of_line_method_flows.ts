@@ -9,7 +9,7 @@ import { GraphPaths } from "../internal/GraphPaths";
 export const test_cpp_static_preserves_out_of_line_method_flows = async () => {
   const root = GraphPaths.createTempDirectory("samchon-cpp-methods-");
   fs.writeFileSync(
-    path.join(root, "engine.hpp"),
+    path.join(root, "engine.h"),
     [
       "namespace storage {",
       "struct Status {};",
@@ -85,7 +85,7 @@ export const test_cpp_static_preserves_out_of_line_method_flows = async () => {
   const write = method("Write");
   const engine = graph.nodes.find(
     (node) =>
-      node.file.endsWith("engine.hpp") &&
+      node.file.endsWith("engine.h") &&
       node.kind === "class" &&
       (node.qualifiedName ?? node.name) === "storage.Engine",
   );
@@ -122,7 +122,7 @@ export const test_cpp_static_preserves_out_of_line_method_flows = async () => {
     ["Put", "Get", "Write"].every((name) =>
       graph.nodes.some(
         (node) =>
-          node.file.endsWith("engine.hpp") &&
+          node.file.endsWith("engine.h") &&
           node.kind === "method" &&
           node.name === name &&
           node.qualifiedName === `storage.Engine.${name}`,

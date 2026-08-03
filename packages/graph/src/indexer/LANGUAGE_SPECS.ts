@@ -32,6 +32,7 @@ export const LANGUAGE_SPECS: ILanguageSpec[] = [
       ".hxx",
       ".h++",
       ".H",
+      ".h",
       ".ipp",
       ".tpp",
       ".tcc",

@@ -399,6 +399,97 @@ const installScipClang = () =>
       "06fd18c576f979a726c651594644ec4a35db4f471f2160b3f72eb89fa6001784",
   });
 
+const installClangGraphProducer = () => {
+  if (
+    typeof experiment.producerRepository !== "string" ||
+    typeof experiment.producerCommit !== "string"
+  ) {
+    throw new Error(
+      `${experiment.language}: native Clang setup requires an exact producer repository and commit`,
+    );
+  }
+  const source = path.join(toolsRoot, "samchon-clangd-source");
+  const build = path.join(source, "build");
+  fs.rmSync(source, { force: true, recursive: true });
+  ensureDir(source);
+  run("git", ["init", "--quiet"], { cwd: source });
+  run("git", ["remote", "add", "origin", experiment.producerRepository], {
+    cwd: source,
+  });
+  run(
+    "git",
+    ["fetch", "--depth=1", "origin", experiment.producerCommit],
+    { cwd: source },
+  );
+  run("git", ["checkout", "--detach", "FETCH_HEAD"], { cwd: source });
+  const revision = String(
+    run("git", ["rev-parse", "HEAD"], {
+      cwd: source,
+      stdio: "pipe",
+    }).stdout,
+  ).trim();
+  if (revision !== experiment.producerCommit) {
+    throw new Error(
+      `${experiment.language}: checked out native Clang ${revision}, expected ${experiment.producerCommit}`,
+    );
+  }
+  run("cmake", [
+    "-S",
+    path.join(source, "llvm"),
+    "-B",
+    build,
+    "-G",
+    "Ninja",
+    "-DCMAKE_BUILD_TYPE=Release",
+    "-DCMAKE_C_COMPILER=clang",
+    "-DCMAKE_CXX_COMPILER=clang++",
+    "-DLLVM_ENABLE_PROJECTS=clang;clang-tools-extra",
+    "-DLLVM_TARGETS_TO_BUILD=Native",
+    "-DLLVM_ENABLE_ASSERTIONS=ON",
+    "-DLLVM_INCLUDE_TESTS=OFF",
+    "-DCLANG_INCLUDE_TESTS=OFF",
+    "-DLLVM_INCLUDE_BENCHMARKS=OFF",
+    "-DLLVM_INCLUDE_EXAMPLES=OFF",
+    `-DLLVM_FORCE_VC_REVISION=${experiment.producerCommit}`,
+    `-DLLVM_FORCE_VC_REPOSITORY=${experiment.producerRepository}`,
+  ]);
+  run("cmake", [
+    "--build",
+    build,
+    "--parallel",
+    "2",
+    "--target",
+    "clangd",
+  ]);
+  const binary = path.join(build, "bin", "clangd");
+  const version = String(
+    run(binary, ["--version"], { stdio: "pipe" }).stdout,
+  );
+  if (!version.includes(experiment.producerCommit)) {
+    throw new Error(
+      `${experiment.language}: native Clang version omits ${experiment.producerCommit}:\n${version}`,
+    );
+  }
+  for (const command of ["samchon-clangd", "clangd"]) {
+    const link = path.join(binRoot, command);
+    fs.rmSync(link, { force: true });
+    fs.linkSync(binary, link);
+  }
+  record({
+    tool: "samchon-clangd",
+    version: experiment.producerCommit,
+    source: `${experiment.producerRepository}@${experiment.producerCommit}`,
+    digest: `git:${experiment.producerCommit}`,
+  });
+  record({
+    tool: "clangd",
+    version: experiment.producerCommit,
+    source: "alias of samchon-clangd",
+    digest: `git:${experiment.producerCommit}`,
+  });
+  fs.rmSync(source, { force: true, recursive: true });
+};
+
 // The published tarball is a webpack bundle whose only runtime `require`s are
 // Node built-ins, so extracting the integrity-verified archive installs exactly
 // the bytes the digest covers. `npm install` would instead resolve the package's
@@ -643,13 +734,8 @@ switch (experiment.language) {
     // database, and a Makefile project has no way to emit one — bear records
     // the compiler invocations as the build runs. A CMake project needs nothing
     // extra, since configure writes the database on its own.
-    apt(["clangd", "bear"]);
-    record({
-      tool: "clangd",
-      version: "unpinned",
-      source: "apt clangd",
-      digest: "unpinned",
-    });
+    apt(["clang", "cmake", "ninja-build", "bear"]);
+    installClangGraphProducer();
     record({
       tool: "bear",
       version: "unpinned",

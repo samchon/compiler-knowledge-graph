@@ -1,5 +1,10 @@
 import { TestValidator } from "@nestia/e2e";
-import { LANGUAGE_SPECS, languageOf } from "@samchon/graph";
+import {
+  LANGUAGE_SPECS,
+  allExtensions,
+  languageOf,
+  languagesOf,
+} from "@samchon/graph";
 
 import { GraphFixtures } from "../internal/GraphFixtures";
 
@@ -47,6 +52,15 @@ export const test_language_registry_lists_advertised_targets = () => {
     "lowercase .h remains a C identity",
     languageOf("include/interface.h"),
     "c",
+  );
+  TestValidator.equals(
+    "lowercase .h reaches both contextual owners",
+    languagesOf("include/interface.h"),
+    ["cpp", "c"],
+  );
+  TestValidator.predicate(
+    "C++-only discovery includes shared .h inputs",
+    allExtensions(["cpp"]).has(".h"),
   );
   TestValidator.equals(
     "an unregistered uppercase suffix remains unknown after folded lookup",

@@ -58,6 +58,7 @@ const CAPABILITIES = [
 /** Converts one validated native clangd generation into the common protocol. */
 export class CppGraphSnapshotAdapter {
   public readonly store: GraphSnapshotProtocol.Store;
+  private readonly selectedLanguages: ReadonlySet<GraphLanguage>;
   private rawShards = new Map<string, ICppGraphSnapshot.IShard>();
   private graphShards = new Map<string, GraphSnapshotProtocol.IShard>();
   private rawGeneration: string | undefined;
@@ -65,8 +66,10 @@ export class CppGraphSnapshotAdapter {
   public constructor(
     private readonly root: string,
     private readonly producerCommit: string,
+    languages: readonly GraphLanguage[] = ["c", "cpp"],
   ) {
     this.store = new GraphSnapshotProtocol.Store(root);
+    this.selectedLanguages = new Set(languages);
   }
 
   public get generation(): string | undefined {
@@ -96,6 +99,11 @@ export class CppGraphSnapshotAdapter {
       raw.phases.cacheHit &&
       raw.universe.digest === prior.provenance.universe
     ) {
+      assertNativeGeneration(
+        raw,
+        nativeManifest(this.rawShards),
+        this.rawShards,
+      );
       return { changed: false, mode: "unchanged", snapshot: prior };
     }
     const nextRaw =
@@ -117,9 +125,7 @@ export class CppGraphSnapshotAdapter {
       touched.add(shard.key);
       nextRaw.set(shard.key, structuredClone(shard));
     }
-    const expectedManifest = [...nextRaw.values()]
-      .sort((left, right) => compareText(left.key, right.key))
-      .map((shard) => ({ key: shard.key, digest: shard.digest }));
+    const expectedManifest = nativeManifest(nextRaw);
     if (
       expectedManifest.length !== raw.manifest.length ||
       expectedManifest.some(
@@ -132,7 +138,7 @@ export class CppGraphSnapshotAdapter {
     }
     assertNativeGeneration(raw, expectedManifest, nextRaw);
 
-    const hello = helloOf(raw, nextRaw);
+    const hello = helloOf(raw, nextRaw, this.selectedLanguages);
     const languagesChanged =
       prior !== undefined &&
       JSON.stringify(prior.languages) !== JSON.stringify(hello.languages);
@@ -144,11 +150,18 @@ export class CppGraphSnapshotAdapter {
         ? new Map<string, GraphSnapshotProtocol.IShard>()
         : new Map(this.graphShards);
     const graphUpserts = requiresReload ? [...nextRaw.values()] : raw.upserts;
+    for (const key of raw.deletes) nextGraph.delete(graphKey(key));
     for (const shard of graphUpserts) {
-      nextGraph.set(
-        graphKey(shard.key),
-        adaptShard(this.root, raw, shard, hello.languages),
-      );
+      const key = graphKey(shard.key);
+      const language = shard.graph.language;
+      if (
+        (language !== "c" && language !== "cpp") ||
+        !this.selectedLanguages.has(language)
+      ) {
+        nextGraph.delete(key);
+        continue;
+      }
+      nextGraph.set(key, adaptShard(this.root, raw, shard, hello.languages));
     }
     const sequence = (prior?.protocol?.sequence ?? 0) + 1;
     const manifest = [...nextGraph]
@@ -787,7 +800,21 @@ function graphFile(root: string, source: string): string {
   }
   if (!path.isAbsolute(absolute)) return absolute.replaceAll("\\", "/");
   const relative = path.relative(root, absolute).replaceAll("\\", "/");
-  return relative;
+  return path.isAbsolute(relative)
+    ? externalGraphFile(absolute)
+    : relative;
+}
+
+/* c8 ignore next -- only Windows cross-volume or UNC sources reach this helper. */
+function externalGraphFile(source: string): string {
+  const normalized = path.normalize(source);
+  /* c8 ignore next 3 -- only one platform's path-identity arm runs per host. */
+  const identity = process.platform === "win32"
+    ? normalized.toLowerCase()
+    : normalized;
+  /* c8 ignore next -- a producer source is a file, never a filesystem root. */
+  const basename = encodeURIComponent(path.basename(normalized) || "source");
+  return `bundled:///clang/filesystem/${sha256(identity)}/${basename}`;
 }
 
 function sourceFile(root: string, source: string): string {
@@ -802,14 +829,35 @@ function sourceFile(root: string, source: string): string {
 }
 
 function assertSupportedSource(source: string): void {
-  if (
-    !source.startsWith("file:") &&
-    !source.startsWith("bundled:///") &&
-    !path.isAbsolute(source) &&
-    /^[A-Za-z][A-Za-z0-9+.-]*:/u.test(source)
-  ) {
+  /* c8 ignore next 3 -- assertGraph validates every native source before adaptation. */
+  if (!isSupportedSource(source)) {
     throw new Error(`unsupported C/C++ graph source URI: ${source}`);
   }
+}
+
+function isSupportedSource(source: string): boolean {
+  if (source.startsWith("bundled:///")) {
+    const relative = source.slice("bundled:///".length);
+    return (
+      relative !== "" &&
+      !relative.includes("\\") &&
+      path.posix.normalize(relative) === relative &&
+      relative
+        .split("/")
+        .every((part) => part !== "" && part !== "." && part !== "..")
+    );
+  }
+  if (source.startsWith("file:")) {
+    try {
+      return path.isAbsolute(fileURLToPath(source));
+    } catch {
+      return false;
+    }
+  }
+  return (
+    path.isAbsolute(source) ||
+    !/^[A-Za-z][A-Za-z0-9+.-]*:/u.test(source)
+  );
 }
 
 function graphKey(raw: string): string {
@@ -865,10 +913,14 @@ const NODE_KINDS: Record<number, GraphNodeKind> = {
 function helloOf(
   raw: ICppGraphSnapshot,
   shards: ReadonlyMap<string, ICppGraphSnapshot.IShard>,
+  selectedLanguages: ReadonlySet<GraphLanguage>,
 ): GraphSnapshotProtocol.IHello {
   const languages = new Set<GraphLanguage>();
   for (const shard of shards.values()) {
-    if (shard.graph.language === "c" || shard.graph.language === "cpp") {
+    if (
+      (shard.graph.language === "c" || shard.graph.language === "cpp") &&
+      selectedLanguages.has(shard.graph.language)
+    ) {
       languages.add(shard.graph.language);
     }
   }
@@ -982,19 +1034,19 @@ function assertSnapshot(raw: ICppGraphSnapshot, commit: string): void {
   ) {
     throw new Error("C/C++ clang graph: malformed assembled page");
   }
-  let lastManifest = "";
+  const manifestKeys = new Set<string>();
   for (const entry of raw.manifest) {
     if (
       !isRecord(entry) ||
       typeof entry.key !== "string" ||
       entry.key === "" ||
-      entry.key <= lastManifest ||
+      manifestKeys.has(entry.key) ||
       typeof entry.digest !== "string" ||
       !SHA256.test(entry.digest)
     ) {
       throw new Error("C/C++ clang graph: malformed native manifest");
     }
-    lastManifest = entry.key;
+    manifestKeys.add(entry.key);
   }
   if (
     !nonnegativeInteger(raw.phases.validationMillis) ||
@@ -1077,8 +1129,10 @@ function assertGraph(graph: ICppGraphSnapshot.ITU, key: string): void {
     !SHA256.test(graph.producerFingerprint) ||
     typeof graph.mainFileUri !== "string" ||
     graph.mainFileUri === "" ||
+    !isSupportedSource(graph.mainFileUri) ||
     typeof graph.mainFile !== "string" ||
     graph.mainFile === "" ||
+    !isSupportedSource(graph.mainFile) ||
     typeof graph.directory !== "string" ||
     !canonicalStrings(graph.commandLine, true, false) ||
     typeof graph.output !== "string" ||
@@ -1109,6 +1163,7 @@ function assertGraph(graph: ICppGraphSnapshot.ITU, key: string): void {
       !isRecord(source) ||
       typeof source.uri !== "string" ||
       source.uri === "" ||
+      !isSupportedSource(source.uri) ||
       sources.has(source.uri) ||
       typeof source.digest !== "string" ||
       !SHA256.test(source.digest) ||
@@ -1209,8 +1264,10 @@ function assertGraph(graph: ICppGraphSnapshot.ITU, key: string): void {
       !isRecord(include) ||
       typeof include.source !== "string" ||
       include.source === "" ||
+      !isSupportedSource(include.source) ||
       typeof include.target !== "string" ||
       include.target === "" ||
+      !isSupportedSource(include.target) ||
       typeof include.spelling !== "string" ||
       typeof include.angled !== "boolean" ||
       typeof include.moduleImported !== "boolean" ||
@@ -1243,6 +1300,24 @@ function assertGraph(graph: ICppGraphSnapshot.ITU, key: string): void {
       throw new Error(`C/C++ clang graph: malformed diagnostic ${key}`);
     }
   }
+}
+
+function nativeManifest(
+  shards: ReadonlyMap<string, ICppGraphSnapshot.IShard>,
+): Array<{ key: string; digest: string }> {
+  return [...shards.values()]
+    .sort((left, right) => {
+      const mainFile = Buffer.compare(
+        Buffer.from(left.graph.mainFile, "utf8"),
+        Buffer.from(right.graph.mainFile, "utf8"),
+      );
+      if (mainFile !== 0) return mainFile;
+      return Buffer.compare(
+        Buffer.from(left.configuration, "utf8"),
+        Buffer.from(right.configuration, "utf8"),
+      );
+    })
+    .map((shard) => ({ key: shard.key, digest: shard.digest }));
 }
 
 function assertNativeGeneration(
@@ -1332,9 +1407,10 @@ function validNativeRange(
     );
   }
   return (
-    value.endLine > value.startLine ||
-    (value.endLine === value.startLine &&
-      value.endColumn >= value.startColumn)
+    isSupportedSource(value.file) &&
+    (value.endLine > value.startLine ||
+      (value.endLine === value.startLine &&
+        value.endColumn >= value.startColumn))
   );
 }
 

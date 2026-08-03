@@ -31,6 +31,7 @@ import { IBuildGraphOptions } from "./IBuildGraphOptions";
 import { ILspSession } from "./ILspSession";
 import { IResidentGraphSource } from "./IResidentGraphSource";
 import { languageOf } from "./languageOf";
+import { languagesOf as sourceLanguagesOf } from "./languagesOf";
 import { mergeProviderSourceDigests } from "./mergeProviderSourceDigests";
 import { movedConsumedSource } from "./movedConsumedSource";
 import { movedProviderSource } from "./movedProviderSource";
@@ -974,10 +975,19 @@ function snapshotSources(
   options: IBuildGraphOptions,
   excludedLanguages: ReadonlySet<GraphLanguage> = new Set(),
 ): Map<string, string> {
-  const files = selectGraphSources(root, options).files;
+  const selected = selectGraphSources(root, options);
+  const activeLanguages = new Set(selected.languages);
   const snapshot = new Map<string, string>();
-  for (const abs of files) {
-    if (excludedLanguages.has(languageOf(abs))) continue;
+  for (const abs of selected.files) {
+    const owners = sourceLanguagesOf(abs).filter((language) =>
+      activeLanguages.has(language),
+    );
+    if (
+      owners.length > 0 &&
+      owners.every((language) => excludedLanguages.has(language))
+    ) {
+      continue;
+    }
     const text = readText(abs);
     // A file removed between the walk and the read is simply absent from the
     // snapshot, which itself is a difference the next comparison will catch.

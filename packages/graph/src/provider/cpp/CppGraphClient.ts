@@ -47,6 +47,7 @@ export class CppGraphClient implements IBulkGraphSession {
     this.adapter = new CppGraphSnapshotAdapter(
       options.root,
       options.producerCommit,
+      options.languages,
     );
     this.validate = options.validate ?? (() => undefined);
     this.initializationOptions = options.initializationOptions;
@@ -167,13 +168,15 @@ export class CppGraphClient implements IBulkGraphSession {
   }
 
   private commitSnapshotInputs(snapshot: IBulkGraphSession.ISnapshot): void {
+    const committed = inputDigests(this.root, snapshot);
     for (const [file, source] of snapshot.sources) {
       if (!path.isAbsolute(file)) continue;
-      this.watchedInputs.set(
+      committed.set(
         file,
         source.diskDigest === "" ? null : source.diskDigest,
       );
     }
+    this.watchedInputs = committed;
   }
 
   private async requestSnapshot(

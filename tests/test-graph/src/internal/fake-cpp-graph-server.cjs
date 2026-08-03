@@ -611,7 +611,13 @@ function canonicalRoot(root) {
 }
 
 function compareKey(left, right) {
-  return left.key < right.key ? -1 : left.key > right.key ? 1 : 0;
+  if (left.source !== right.source)
+    return left.source < right.source ? -1 : 1;
+  return left.configuration < right.configuration
+    ? -1
+    : left.configuration > right.configuration
+      ? 1
+      : 0;
 }
 
 function send(message) {

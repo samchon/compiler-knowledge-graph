@@ -1,5 +1,9 @@
 import { TestValidator } from "@nestia/e2e";
-import { LANGUAGE_SPECS, RUST_GRAPH_PRODUCER_COMMIT } from "@samchon/graph";
+import {
+  CPP_CLANG_PRODUCER_COMMIT,
+  LANGUAGE_SPECS,
+  RUST_GRAPH_PRODUCER_COMMIT,
+} from "@samchon/graph";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -47,6 +51,7 @@ export const test_experiment_corpora_are_commit_pinned = () => {
   const javaSetup = region(setup, 'case "java"', 'case "csharp"');
   const kotlinSetup = region(setup, 'case "kotlin"', 'case "swift"');
   const rustSetup = region(setup, 'case "rust"', 'case "cpp"');
+  const cppSetup = region(setup, 'case "cpp"', 'case "java"');
   TestValidator.equals(
     "every registered strict-provider language has a lifecycle row",
     [...catalog.matchAll(/strictProvider:\s*"[^"]+"/g)].length,
@@ -181,11 +186,38 @@ export const test_experiment_corpora_are_commit_pinned = () => {
     [cpp, c].every(
       (row) =>
         row.includes('strictProvider: "clangd-snapshot"') &&
+        row.includes(
+          'producerRepository: "https://github.com/samchon/llvm-project.git"',
+        ) &&
+        row.includes(`producerCommit: "${CPP_CLANG_PRODUCER_COMMIT}"`) &&
         row.includes('crossFileEdge: "references"') &&
         row.includes('"contains"') &&
         row.includes('"references"') &&
+        !row.includes('"implements"') &&
+        !row.includes('"dispatches"') &&
         !row.includes("semanticEdges: []"),
-    ),
+    ) &&
+      !c.includes('"instantiates"') &&
+      !c.includes('"extends"') &&
+      !c.includes('"overrides"'),
+  );
+  TestValidator.predicate(
+    "C and C++ build and record the exact campaign-owned native producer",
+    cppSetup.includes('apt(["clang", "cmake", "ninja-build", "bear"])') &&
+      cppSetup.includes("installClangGraphProducer()") &&
+      setup.includes(
+        '["fetch", "--depth=1", "origin", experiment.producerCommit]',
+      ) &&
+      setup.includes('["checkout", "--detach", "FETCH_HEAD"]') &&
+      setup.includes('["rev-parse", "HEAD"]') &&
+      setup.includes('"-DLLVM_ENABLE_PROJECTS=clang;clang-tools-extra"') &&
+      setup.includes('"--target",') &&
+      setup.includes('"clangd",') &&
+      setup.includes('for (const command of ["samchon-clangd", "clangd"])') &&
+      setup.includes("fs.linkSync(binary, link)") &&
+      setup.includes("version.includes(experiment.producerCommit)") &&
+      setup.includes('tool: "samchon-clangd"') &&
+      !cppSetup.includes('apt(["clangd"'),
   );
   // scip-python 0.6.6 recovers from a malformed `pyproject.toml`, falls back to
   // Pyright defaults and emits no SCIP diagnostics. On the pinned Click

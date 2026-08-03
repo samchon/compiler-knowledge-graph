@@ -12,7 +12,8 @@ import { GraphLanguage } from "../typings";
 import { projectRelative, readText } from "../utils/fs";
 import { IBuildGraphOptions } from "./IBuildGraphOptions";
 import { IStaticGraphParts } from "./IStaticGraphParts";
-import { languageOf } from "./languages";
+import { languagesOf } from "./languages";
+import { normalizeRequestedLanguages } from "./normalizeRequestedLanguages";
 import { selectGraphSources } from "./selectGraphSources";
 
 /**
@@ -25,27 +26,27 @@ export function staticGraphParts(
 ): IStaticGraphParts {
   const root = path.resolve(options.cwd ?? process.cwd());
   const discovered = selectedFiles ?? selectGraphSources(root, options).files;
+  const requested = normalizeRequestedLanguages(options.languages);
+  const allowed = requested === undefined ? undefined : new Set(requested);
   const files: IGraphSitterFile[] = [];
   for (const absolutePath of discovered) {
-    const language = languageOf(absolutePath);
-    // `discovered` comes from `walkSourceFiles(allExtensions(...))`, so every
-    // path's extension maps — through the same `LANGUAGE_SPECS` registry that
-    // `allExtensions` and `languageOf` share — to a real (non-`unknown`)
-    // language, and `GraphSitterLanguage` covers every non-`unknown`
-    // `GraphLanguage` (the LanguageContractParity assertion below). This
-    // narrowing guard therefore never continues at runtime; it only satisfies
-    // the compiler that `language` is a `GraphSitterLanguage`.
-    /* c8 ignore next */
-    if (!isGraphSitterLanguage(language)) continue;
+    // Source selection and extraction share the same multi-owner registry. A
+    // plain .h is therefore parsed for every selected C/C++ ownership view,
+    // while exact .H remains C++ as declared by the registry.
     const source = readText(absolutePath);
     /* c8 ignore next */
     if (source === undefined) continue;
-    files.push({
-      absolutePath,
-      relativePath: projectRelative(root, absolutePath),
-      language,
-      source,
-    });
+    for (const language of languagesOf(absolutePath)) {
+      if (allowed !== undefined && !allowed.has(language)) continue;
+      /* c8 ignore next */
+      if (!isGraphSitterLanguage(language)) continue;
+      files.push({
+        absolutePath,
+        relativePath: projectRelative(root, absolutePath),
+        language,
+        source,
+      });
+    }
   }
   const parts = graphSitterParts({ root, files });
   return parts;

@@ -12,11 +12,17 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 
 import { GraphPaths } from "../internal/GraphPaths.js";
 
 const COMMIT = CPP_CLANG_PRODUCER_COMMIT;
 
+/**
+ * Proves the pinned clangd snapshot's native trust boundary, C/C++ slice
+ * projection, source identities, resident lifecycle, pagination, and fallback
+ * registration as one atomic compiler-owned provider contract.
+ */
 export const test_cpp_clang_snapshot_adapter_and_client_are_atomic = async () => {
   const root = fixtureRoot();
   const raw = nativeSnapshot(root);
@@ -127,6 +133,8 @@ export const test_cpp_clang_snapshot_adapter_and_client_are_atomic = async () =>
         () => undefined,
       ),
   );
+  assertCrossVolumeIdentity(root, raw);
+  assertUnicodeManifestOrdering();
   assertNativeRefusals(root, raw);
   await assertProvider(root);
   await assertClientLifecycle(root);
@@ -221,6 +229,23 @@ async function assertProvider(root: string): Promise<void> {
   } finally {
     await session.close();
   }
+  const cppOnly = cppGraphProvider.open({
+    root,
+    command: resolved!,
+    languages: ["cpp"],
+    options: {},
+  });
+  try {
+    const selected = await cppOnly.refresh();
+    TestValidator.predicate(
+      "one requested language projects its slice from the producer's atomic mixed C/C++ universe",
+      selected.snapshot.languages.length === 1 &&
+        selected.snapshot.languages[0] === "cpp" &&
+        selected.snapshot.nodes.every((node) => node.language === "cpp"),
+    );
+  } finally {
+    await cppOnly.close();
+  }
   const absent = GraphPaths.createTempDirectory("samchon-graph-cpp-no-cdb-");
   fs.writeFileSync(path.join(absent, "compile_commands.json"), "[]");
   fs.mkdirSync(path.join(absent, "build"));
@@ -255,6 +280,70 @@ function nativeSnapshot(
     throw result.error ?? new Error(result.stderr);
   }
   return JSON.parse(result.stdout) as ICppGraphSnapshot;
+}
+
+function assertCrossVolumeIdentity(
+  root: string,
+  valid: ICppGraphSnapshot,
+): void {
+  if (process.platform !== "win32") return;
+  const rootDrive = path.parse(root).root.slice(0, 1).toUpperCase();
+  const foreignDrive = rootDrive === "C" ? "D" : "C";
+  const foreign = path.join(`${foreignDrive}:\\`, "sdk", "foreign.hpp");
+  const foreignUri = pathToFileURL(foreign).href;
+  const candidate = structuredClone(valid);
+  const graph = candidate.upserts[0]!.graph;
+  graph.sources.push({
+    uri: foreignUri,
+    digest: sha256("foreign checker source"),
+    diskDigest: sha256("foreign disk source"),
+    flags: 0,
+  });
+  graph.symbols[0]!.definition.file = foreignUri;
+  resealSnapshot(candidate);
+  const snapshot = new CppGraphSnapshotAdapter(root, COMMIT).apply(
+    candidate,
+    () => undefined,
+  ).snapshot;
+  TestValidator.predicate(
+    "a Windows source on another volume keeps a real manifest path and an opaque external graph identity",
+    snapshot.sources.has(path.normalize(foreign)) &&
+      snapshot.nodes.some(
+        (node) =>
+          node.name === "caller" &&
+          node.external &&
+          node.file.startsWith("bundled:///clang/filesystem/"),
+      ),
+  );
+}
+
+function assertUnicodeManifestOrdering(): void {
+  const root = GraphPaths.createTempDirectory("samchon-graph-cpp-unicode-");
+  const commands = ["z.cpp", "é.cpp"].map((file) => {
+    fs.writeFileSync(path.join(root, file), "void caller() {}\n");
+    return {
+      directory: root,
+      file,
+      arguments: ["clang++", "-x", "c++", "-c", file],
+    };
+  });
+  fs.writeFileSync(
+    path.join(root, "compile_commands.json"),
+    JSON.stringify(commands),
+  );
+  const raw = nativeSnapshot(root);
+  const snapshot = new CppGraphSnapshotAdapter(root, COMMIT).apply(
+    raw,
+    () => undefined,
+  ).snapshot;
+  TestValidator.equals(
+    "native raw-path byte order remains valid when URI encoding would sort Unicode first",
+    [
+      raw.upserts.map((shard) => path.basename(shard.source)),
+      snapshot.sources.size,
+    ],
+    [["z.cpp", "é.cpp"], 2],
+  );
 }
 
 function assertNativeRefusals(
@@ -314,6 +403,11 @@ function assertNativeRefusals(
   rejects("a malformed native symbol is refused", (value) => {
     value.upserts[0]!.graph.symbols[0]!.name = "";
   });
+  rejects("an unsupported URI cannot hide in an unselected native range", (value) => {
+    value.upserts[0]!.graph.symbols[0]!.declaration.file =
+      "repo:///hidden-declaration.cpp";
+    resealSnapshot(value);
+  });
   rejects("a malformed native occurrence is refused", (value) => {
     value.upserts[0]!.graph.occurrences[0]!.usr = "";
   });
@@ -371,6 +465,18 @@ function assertNativeRefusals(
   });
   const stale = new CppGraphSnapshotAdapter(root, COMMIT);
   stale.apply(structuredClone(valid), () => undefined);
+  const malformedNoop = structuredClone(valid);
+  malformedNoop.baseGeneration = valid.generation;
+  malformedNoop.upserts = [];
+  malformedNoop.deletes = [];
+  malformedNoop.manifest = [];
+  malformedNoop.page = { offset: 0, count: 0, total: 0, nextCursor: null };
+  malformedNoop.phases.cacheHit = true;
+  malformedNoop.universe.targets = ["foreign-target"];
+  TestValidator.error(
+    "an unchanged frame still proves that its universe describes the resident shards",
+    () => stale.apply(malformedNoop, () => undefined),
+  );
   const delta = structuredClone(valid);
   delta.baseGeneration = "0".repeat(64);
   TestValidator.error("a Clang delta must name the exact resident base", () =>
@@ -590,15 +696,16 @@ async function assertClientInputShapes(): Promise<void> {
   }
   fs.writeFileSync(path.join(build, "fallback.cpp"), "void caller() {}\n");
   const absolute = path.join(root, "absolute.cpp");
+  const buildCommands = [
+    {},
+    { file: "" },
+    { file: "fallback.cpp" },
+    { directory: root, file: "direct.cpp" },
+    { directory: "", file: absolute },
+  ];
   fs.writeFileSync(
     path.join(build, "compile_commands.json"),
-    JSON.stringify([
-      {},
-      { file: "" },
-      { file: "fallback.cpp" },
-      { directory: root, file: "direct.cpp" },
-      { directory: "", file: absolute },
-    ]),
+    JSON.stringify(buildCommands),
   );
   const watchLog = path.join(root, "input-watches.ndjson");
   const client = new CppGraphClient({
@@ -620,11 +727,48 @@ async function assertClientInputShapes(): Promise<void> {
     await client.refresh();
     fs.unlinkSync(path.join(root, ".clangd"));
     await client.refresh();
+    fs.writeFileSync(
+      path.join(build, "compile_commands.json"),
+      JSON.stringify(
+        buildCommands.filter(
+          (row) => !("file" in row) || row.file !== "direct.cpp",
+        ),
+      ),
+    );
+    await client.refresh();
+    await client.refresh();
+    fs.unlinkSync(absolute);
+    fs.writeFileSync(
+      path.join(build, "compile_commands.json"),
+      JSON.stringify(
+        buildCommands.filter(
+          (row) =>
+            !("file" in row) ||
+            (row.file !== "direct.cpp" && row.file !== absolute),
+        ),
+      ),
+    );
+    await client.refresh();
+    await client.refresh();
+    const watched = readLines(watchLog).flatMap((row) => row.changes);
     TestValidator.equals(
       "CDB input discovery accepts fallback directories and tracks null-to-file transitions",
-      readLines(watchLog)
-        .flatMap((row) => row.changes)
+      watched
         .filter((change) => String(change.uri).endsWith("/.clangd"))
+        .map((change) => change.type),
+      [1, 3],
+    );
+    TestValidator.equals(
+      "a file removed only from the compilation database is not falsely deleted on the following refresh",
+      watched
+        .filter((change) => String(change.uri).endsWith("/direct.cpp"))
+        .map((change) => change.type),
+      [1],
+    );
+    TestValidator.equals(
+      "a deleted source is notified once and never reborn from a stale null baseline",
+      watched
+        .filter((change) => String(change.uri).endsWith("/absolute.cpp"))
         .map((change) => change.type),
       [1, 3],
     );
@@ -926,6 +1070,21 @@ function readLines(file: string): Array<Record<string, any>> {
 function nativeShardDigest(shard: ICppGraphSnapshot.IShard): string {
   return sha256(
     `${shard.key}\n${shard.checkerDigest}\n${shard.interfaceFingerprint}\n${JSON.stringify(shard.graph)}`,
+  );
+}
+
+function resealSnapshot(snapshot: ICppGraphSnapshot): void {
+  for (const shard of snapshot.upserts) shard.digest = nativeShardDigest(shard);
+  const digests = new Map(
+    snapshot.upserts.map((shard) => [shard.key, shard.digest]),
+  );
+  snapshot.manifest = snapshot.manifest.map((entry) => ({
+    key: entry.key,
+    digest: digests.get(entry.key) ?? entry.digest,
+  }));
+  snapshot.generation = nativeGeneration(
+    snapshot.universe.digest,
+    snapshot.manifest,
   );
 }
 

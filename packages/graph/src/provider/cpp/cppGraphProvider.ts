@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 import { spawnableCommand } from "../../utils/spawnableCommand";
@@ -62,9 +63,36 @@ export const cppGraphProvider: IGraphProvider = {
     }
   },
   open: (props) => {
+    // Sized for the machine, like every other producer this repository
+    // launches. `--background-index` is what makes a whole-compilation-database
+    // snapshot possible at all, and clangd's `-j` bounds the workers it uses
+    // for it; left unset it takes the core count, and each worker holds a
+    // translation unit's AST while it runs.
+    //
+    // The bound is measured rather than assumed. A 16 GiB CI host indexing
+    // libuv and fmt at the default width ran out of memory — a trace of the
+    // host recorded free memory collapsing to 173 MiB and then 35 MiB, with
+    // the sawtooth of repeated kills before it — and took the runner agent
+    // with it. Eight GiB per worker is this repository's figure, chosen
+    // against that observation and not quoted from clangd: sixteen was not
+    // enough at four, so the rule has to land below two there rather than
+    // shave a worker off and call it sized.
+    //
+    // What this cannot do is bound what the producer retains for the whole
+    // database, which is a function of the project rather than of the worker
+    // count. That makes the narrow width a measurement as much as a fix: if
+    // one worker still exhausts the host, concurrency was never the term that
+    // mattered, and the answer lies in the producer rather than here.
+    const workers = Math.max(
+      1,
+      Math.min(
+        os.availableParallelism(),
+        Math.floor(os.totalmem() / (8 * 1024 * 1024 * 1024)),
+      ),
+    );
     const command = spawnableCommand.append(
       { ...props.command, args: [...props.command.args] },
-      ["--background-index"],
+      ["--background-index", `-j=${String(workers)}`],
     );
     return new CppGraphClient({
       root: props.root,

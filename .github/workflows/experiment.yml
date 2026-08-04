@@ -77,17 +77,17 @@ jobs:
     # Fourteen rows install a released producer and finish in minutes; the
     # ninety-minute bound is theirs and stays exactly where it is. C and C++
     # build a compiler from source, and that is a property of the row rather
-    # than a defect inside it. Measured on this runner: the build takes 56
-    # minutes from its first step to a linked `clangd`, after nine minutes of
-    # checkout, install, toolchain and configure, and the real-corpus lifecycle
-    # run follows that. Ninety did not fit; 150 leaves room without pretending
-    # to predict, and it is still a bound, so a lane that hangs is still
-    # caught. The wider bound is granted only to the two rows that build.
+    # than a defect inside it. Measured: three minutes of checkout, install and
+    # package build, then 56 minutes to a linked `clangd` on one runner and 107
+    # on another in the same workflow, then the real-corpus lifecycle run.
+    # Ninety did not fit. 150 covers the fast runner comfortably and the slow
+    # one barely, and it is still a bound, so a lane that hangs is caught. Only
+    # the two rows that build a compiler get it.
     #
-    # The restore below should keep an ordinary push far away from it, though
-    # that is an expectation rather than a property: Actions caches are
+    # The restore below is what should keep an ordinary push away from that
+    # cost, and it is an expectation rather than a property: Actions caches are
     # branch-scoped and evicted, so a first push on a fresh branch still pays
-    # the whole build.
+    # the whole build, on whichever runner it draws.
     timeout-minutes: ${{ (matrix.language == 'c' || matrix.language == 'cpp') && 150 || 90 }}
     strategy:
       fail-fast: false
@@ -168,7 +168,7 @@ jobs:
       # Restore and save are split so the save runs even when a later step
       # fails. A campaign iterating on these lanes is exactly the case where
       # the producer builds and the experiment does not, and `cache`'s combined
-      # form would discard a correct 110-minute build because a corpus
+      # form would discard an hour or more of correct build because a corpus
       # assertion afterwards went red.
       - name: Restore the pinned Clang producer
         id: clang_producer

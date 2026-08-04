@@ -151,9 +151,9 @@ export const test_workflows_use_current_core_action_runtimes = () => {
   // was a cause: the lane that wanted more than ninety minutes wanted it
   // because its provider had been serialized, so raising the budget preserved
   // that cause instead of bounding it. The serialization was real and was
-  // removed — the build went from unfinished at 85 minutes to complete in 56 —
-  // and ninety still does not fit, because nine minutes of setup and a
-  // real-corpus lifecycle run sit around it. C and C++ build a compiler from
+  // removed, and ninety still does not fit — the same build completed in 56
+  // minutes on one runner and 107 on another in one workflow, with setup and a
+  // real-corpus lifecycle run around it. C and C++ build a compiler from
   // source and the other fourteen rows install a released producer, so the
   // difference is a property of those two rows and not a defect inside them.
   //
@@ -223,14 +223,20 @@ export const test_workflows_use_current_core_action_runtimes = () => {
       // the same terminal state as saving under a key the restore cannot hit.
       // Saving after the corpus run instead loses a correct build to an
       // unrelated assertion.
-      [restore, "Install language server", save, "Run LSP experiment"].map(
-        (entry) =>
-          typeof entry === "string"
-            ? steps.findIndex((step) => step.name === entry)
-            : (entry?.index ?? -1),
+      //
+      // Relative, not absolute. The argument is about what comes before what,
+      // so pinning positions would make an unrelated step inserted anywhere
+      // above fail an assertion that has nothing to say about it.
+      isStrictlyOrdered(
+        [restore, "Install language server", save, "Run LSP experiment"].map(
+          (entry) =>
+            typeof entry === "string"
+              ? steps.findIndex((step) => step.name === entry)
+              : (entry?.index ?? -1),
+        ),
       ),
     ],
-    [true, true, true, true, true, true, true, [8, 9, 10, 11]],
+    [true, true, true, true, true, true, true, true],
   );
   TestValidator.predicate(
     "the Rust experiment launches the exact binary provisioned by setup",
@@ -305,6 +311,14 @@ export const test_workflows_use_current_core_action_runtimes = () => {
 
 function occurrences(text: string, needle: string): number {
   return text.split(needle).length - 1;
+}
+
+/** Whether every position was found and each one follows the last. */
+function isStrictlyOrdered(positions: readonly number[]): boolean {
+  return positions.every(
+    (position, index) =>
+      position >= 0 && (index === 0 || position > positions[index - 1]!),
+  );
 }
 
 /**

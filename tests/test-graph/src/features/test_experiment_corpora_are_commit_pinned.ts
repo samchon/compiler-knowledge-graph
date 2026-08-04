@@ -271,10 +271,12 @@ export const test_experiment_corpora_are_commit_pinned = () => {
   // Bounded to the predicate's own body. An unbounded `[\s\S]*?` would let a
   // deleted check pass by matching the identical text in the build path below
   // it, so the region is what makes a deletion visible.
-  const restoredProducer = region(
-    setup,
-    "const installedClangGraphProducer",
-    "const installClangGraphProducer",
+  const restoredProducer = withoutLineComments(
+    region(
+      setup,
+      "const installedClangGraphProducer",
+      "const installClangGraphProducer",
+    ),
   );
   TestValidator.equals(
     "a restored native Clang producer is re-proved against the pin before reuse",

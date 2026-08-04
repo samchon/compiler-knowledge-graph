@@ -517,17 +517,22 @@ const installClangGraphProducer = () => {
     `-DLLVM_FORCE_VC_REVISION=${experiment.producerCommit}`,
     `-DLLVM_FORCE_VC_REPOSITORY=${experiment.producerRepository}`,
   ]);
-  // Build with the machine, not with a number. At a fixed `2` this reached
-  // step 2,431 of 3,125 in 85 minutes and was killed unfinished; at the four
-  // the hosted runner advertises it completed, start to linked `clangd`, in
-  // 56. Roughly half, which is what four vCPUs against two ought to buy.
+  // Build with the machine, not with a number. Note what that is and is not
+  // claiming, because two earlier versions of this comment claimed more.
   //
-  // An interim reading of the same runs said otherwise — 2,431 steps took 85.1
-  // minutes at two jobs and 81.2 at four, so barely five percent — and that
-  // reading was wrong, because ninja steps are not equal work. The first
-  // three-quarters of an LLVM build are its heaviest translation units and its
-  // tail is mostly cheap; comparing a prefix compares the slow part to itself.
-  // Only the completed build measures the build.
+  // Every recorded build of this producer, all at the advertised job count
+  // except the first: 2,431 of 3,125 steps in 85 minutes and killed unfinished
+  // at a fixed `2`; 2,431 steps in 81.2 minutes; a complete build in 56.1; a
+  // complete build in 107. The last two are the same commit and the same job
+  // count, in one workflow, on two runners. Hosted-runner performance varies
+  // by roughly a factor of two, which swamps the difference this line makes
+  // and leaves no clean two-against-four comparison in the data at all.
+  //
+  // So the reason for sizing by the machine is the principle, not a measured
+  // speedup: a constant that leaves half a runner idle is wrong wherever it
+  // runs, and the effect size here is unmeasured. An earlier comment reported
+  // "roughly half" and another "barely five percent"; both read a difference
+  // out of numbers that could not support one.
   //
   // Also bounded by installed memory, which is a machine-class bound and not
   // an out-of-memory guard — worth being exact about, because the two are easy
@@ -537,7 +542,8 @@ const installClangGraphProducer = () => {
   // compile concurrency only; the `clangd` link is a single build edge that
   // runs whatever this number is, and LLVM's own controls for that
   // (`LLVM_PARALLEL_LINK_JOBS` and friends) are deliberately not set here
-  // because no run has yet reached the link to measure it. Two GiB per compile
+  // because the runs that reached the link reached it without trouble, so
+  // there is nothing yet to size them against. Two GiB per compile
   // job is this repository's figure, chosen as a conventional one; it is not
   // quoted from LLVM.
   //

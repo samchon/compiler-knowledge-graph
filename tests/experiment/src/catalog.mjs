@@ -154,14 +154,26 @@ export const LANGUAGE_EXPERIMENTS = [
     producerCommit: "dcc73b6579ebb8b71f6080302a9444f237b7abb8",
     // A whole-compilation-database producer is not ready when it starts; it
     // is ready when clangd has background-indexed every translation unit the
-    // database registers. The 180-second default expired on libuv with 62
-    // units still indexing, and the client did exactly what it should — it
-    // fell back, and the row lost the strict provenance it exists to prove.
-    // These bounds are sized for that work rather than for a per-file server:
-    // far above the few minutes observed, far below the job timeout, and
-    // still a bound, so a producer that never becomes ready still fails.
-    readyTimeoutMs: 1_200_000,
-    timeoutMs: 600_000,
+    // database registers. The 180-second default expired on libuv with 62 of
+    // them still indexing, the routing layer fell back as it should, and the
+    // row lost the strict provenance it exists to prove.
+    //
+    // How long readiness actually takes has never been observed: no C or C++
+    // row has ever reached it. The only datum is a lower bound — 180 seconds
+    // was not enough, with 62 units left — and the rate it implies puts the
+    // remainder near two more minutes. Ten is that with room, not a measured
+    // requirement.
+    //
+    // These are per-refresh ceilings, and the strict lifecycle issues nine
+    // refreshes, so they do not bound the row: nine cold waits would exceed
+    // the job timeout on their own and be killed by it without a diagnosis.
+    // What makes that remote rather than likely is that only the first
+    // refresh indexes from nothing; the rest are incremental against a warm
+    // database. The numbers are chosen so one cold index fits comfortably and
+    // a producer that never becomes ready still fails its row rather than
+    // hanging it — not so that every pathological path stays inside the job.
+    readyTimeoutMs: 600_000,
+    timeoutMs: 300_000,
     requiredCapabilities: [
       "coverage",
       "diagnostics",
@@ -228,14 +240,26 @@ export const LANGUAGE_EXPERIMENTS = [
     producerCommit: "dcc73b6579ebb8b71f6080302a9444f237b7abb8",
     // A whole-compilation-database producer is not ready when it starts; it
     // is ready when clangd has background-indexed every translation unit the
-    // database registers. The 180-second default expired on libuv with 62
-    // units still indexing, and the client did exactly what it should — it
-    // fell back, and the row lost the strict provenance it exists to prove.
-    // These bounds are sized for that work rather than for a per-file server:
-    // far above the few minutes observed, far below the job timeout, and
-    // still a bound, so a producer that never becomes ready still fails.
-    readyTimeoutMs: 1_200_000,
-    timeoutMs: 600_000,
+    // database registers. The 180-second default expired on libuv with 62 of
+    // them still indexing, the routing layer fell back as it should, and the
+    // row lost the strict provenance it exists to prove.
+    //
+    // How long readiness actually takes has never been observed: no C or C++
+    // row has ever reached it. The only datum is a lower bound — 180 seconds
+    // was not enough, with 62 units left — and the rate it implies puts the
+    // remainder near two more minutes. Ten is that with room, not a measured
+    // requirement.
+    //
+    // These are per-refresh ceilings, and the strict lifecycle issues nine
+    // refreshes, so they do not bound the row: nine cold waits would exceed
+    // the job timeout on their own and be killed by it without a diagnosis.
+    // What makes that remote rather than likely is that only the first
+    // refresh indexes from nothing; the rest are incremental against a warm
+    // database. The numbers are chosen so one cold index fits comfortably and
+    // a producer that never becomes ready still fails its row rather than
+    // hanging it — not so that every pathological path stays inside the job.
+    readyTimeoutMs: 600_000,
+    timeoutMs: 300_000,
     requiredCapabilities: [
       "coverage",
       "diagnostics",

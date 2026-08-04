@@ -17,6 +17,7 @@ const SERVER_CANCELLED = -32802;
 const CONTENT_MODIFIED = -32801;
 const DEFAULT_READY_TIMEOUT_MS = 300_000;
 const RETRY_DELAY_MS = 50;
+const MAX_RETRY_DELAY_MS = 5_000;
 const PAGE_SHARDS = 32;
 
 /** Resident LSP client for the pinned clangd graph-snapshot producer. */
@@ -183,6 +184,7 @@ export class CppGraphClient implements IBulkGraphSession {
     signal: AbortSignal,
   ): Promise<ICppGraphSnapshot> {
     const deadline = performance.now() + this.readyTimeoutMs;
+    let backoff = RETRY_DELAY_MS;
     for (;;) {
       throwIfAborted(signal);
       try {
@@ -200,7 +202,18 @@ export class CppGraphClient implements IBulkGraphSession {
             `C/C++ clang graph: producer did not become ready within ${String(this.readyTimeoutMs)} ms: ${error.message}`,
           );
         }
-        await delay(RETRY_DELAY_MS, signal);
+        await delay(backoff, signal);
+        // Backing off, because polling a producer that is busy becoming ready
+        // costs the producer more than it costs this loop. "Not ready" here
+        // means clangd is indexing the whole compilation database, and every
+        // retry asks that same busy process to assemble a paged snapshot
+        // again. At a flat 50 ms this issued roughly 5,400 requests over four
+        // and a half minutes and took the CI runner down with it, four times,
+        // always within seconds of the same offset — which is what a fixed
+        // interval looks like when the thing being polled is the thing under
+        // load. A short first wait keeps a producer that is ready-in-a-moment
+        // fast; the cap keeps a long index cheap.
+        backoff = Math.min(backoff * 2, MAX_RETRY_DELAY_MS);
       }
     }
   }

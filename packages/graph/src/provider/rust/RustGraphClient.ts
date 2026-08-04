@@ -15,6 +15,7 @@ const SERVER_CANCELLED = -32802;
 const CONTENT_MODIFIED = -32801;
 const DEFAULT_READY_TIMEOUT_MS = 300_000;
 const RETRY_DELAY_MS = 50;
+const MAX_RETRY_DELAY_MS = 5_000;
 
 /** Resident LSP client for the pinned HIR graphSnapshot producer. */
 export class RustGraphClient implements IBulkGraphSession {
@@ -194,6 +195,7 @@ export class RustGraphClient implements IBulkGraphSession {
       ? this.adapter.persistedCheckpoint
       : undefined;
     this.checkpointPending = false;
+    let backoff = RETRY_DELAY_MS;
     for (;;) {
       throwIfAborted(signal);
       const params: IRustGraphSnapshotParams = {
@@ -235,7 +237,15 @@ export class RustGraphClient implements IBulkGraphSession {
             `rust HIR graph: producer did not become ready within ${String(this.readyTimeoutMs)} ms: ${error.message}`,
           );
         }
-        await delay(RETRY_DELAY_MS, signal);
+        await delay(backoff, signal);
+        // Same backoff, same reason as the Clang client: a producer answering
+        // "not ready" is a producer doing the work that will make it ready,
+        // and a fixed short interval spends that producer's time on answering
+        // instead. This lane has never been the one to demonstrate it —
+        // rust-analyzer becomes ready quickly on the pinned corpus — but the
+        // loop is the same shape, so it should not be the one left to find out
+        // on a larger workspace.
+        backoff = Math.min(backoff * 2, MAX_RETRY_DELAY_MS);
       }
     }
   }

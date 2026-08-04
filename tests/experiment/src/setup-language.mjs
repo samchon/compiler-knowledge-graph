@@ -517,15 +517,17 @@ const installClangGraphProducer = () => {
     `-DLLVM_FORCE_VC_REVISION=${experiment.producerCommit}`,
     `-DLLVM_FORCE_VC_REPOSITORY=${experiment.producerRepository}`,
   ]);
-  // Build with the machine, not with a number — but do not expect that to be
-  // worth much here, because it was measured and it was not. The same 2,431 of
-  // 3,125 steps took 85.1 minutes at a fixed `2` and 81.2 minutes at the four
-  // the hosted runner advertises: a 4.8 percent gain for twice the job count.
-  // Four vCPUs are two physical cores behind SMT, and an LLVM compile
-  // saturates them well before the job count runs out. Sizing by the machine
-  // is still right — a constant that half-idles a wider machine is a defect
-  // wherever this runs — but on this runner it is not the constraint, and the
-  // build's roughly 110-minute floor is not something a job count moves.
+  // Build with the machine, not with a number. At a fixed `2` this reached
+  // step 2,431 of 3,125 in 85 minutes and was killed unfinished; at the four
+  // the hosted runner advertises it completed, start to linked `clangd`, in
+  // 56. Roughly half, which is what four vCPUs against two ought to buy.
+  //
+  // An interim reading of the same runs said otherwise — 2,431 steps took 85.1
+  // minutes at two jobs and 81.2 at four, so barely five percent — and that
+  // reading was wrong, because ninja steps are not equal work. The first
+  // three-quarters of an LLVM build are its heaviest translation units and its
+  // tail is mostly cheap; comparing a prefix compares the slow part to itself.
+  // Only the completed build measures the build.
   //
   // Also bounded by installed memory, which is a machine-class bound and not
   // an out-of-memory guard — worth being exact about, because the two are easy

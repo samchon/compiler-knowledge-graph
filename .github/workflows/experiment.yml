@@ -77,20 +77,17 @@ jobs:
     # Fourteen rows install a released producer and finish in minutes; the
     # ninety-minute bound is theirs and stays exactly where it is. C and C++
     # build a compiler from source, and that is a property of the row rather
-    # than a defect inside it. The bound was first raised from forty-five on
-    # the theory that the build was serialized, which was the wrong reason and
-    # is why raising it did not work; the measurement is that the same 2,431 of
-    # 3,125 steps take 85.1 minutes at two jobs and 81.2 at four, because four
-    # vCPUs are two physical cores. Roughly 110 minutes is the floor, no job
-    # count moves it, and a cold build plus its corpus run needs more than
-    # ninety. The wider bound is granted only to the two rows that build.
+    # than a defect inside it. Measured on this runner: the build takes 56
+    # minutes from its first step to a linked `clangd`, after nine minutes of
+    # checkout, install, toolchain and configure, and the real-corpus lifecycle
+    # run follows that. Ninety did not fit; 150 leaves room without pretending
+    # to predict, and it is still a bound, so a lane that hangs is still
+    # caught. The wider bound is granted only to the two rows that build.
     #
-    # It is a bound, not a prediction: 150 is the extrapolated ~110-minute
-    # build with room for the setup and corpus work around it, and neither of
-    # those has its own measurement yet. The restore below is what should keep
-    # an ordinary push far away from it, though that too is an expectation
-    # rather than a property — Actions caches are branch-scoped and evicted, so
-    # a first push on a fresh branch can still pay the full build.
+    # The restore below should keep an ordinary push far away from it, though
+    # that is an expectation rather than a property: Actions caches are
+    # branch-scoped and evicted, so a first push on a fresh branch still pays
+    # the whole build.
     timeout-minutes: ${{ (matrix.language == 'c' || matrix.language == 'cpp') && 150 || 90 }}
     strategy:
       fail-fast: false

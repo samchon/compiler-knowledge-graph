@@ -152,6 +152,16 @@ export const LANGUAGE_EXPERIMENTS = [
     strictTool: "samchon-clangd",
     producerRepository: "https://github.com/samchon/llvm-project.git",
     producerCommit: "dcc73b6579ebb8b71f6080302a9444f237b7abb8",
+    // A whole-compilation-database producer is not ready when it starts; it
+    // is ready when clangd has background-indexed every translation unit the
+    // database registers. The 180-second default expired on libuv with 62
+    // units still indexing, and the client did exactly what it should — it
+    // fell back, and the row lost the strict provenance it exists to prove.
+    // These bounds are sized for that work rather than for a per-file server:
+    // far above the few minutes observed, far below the job timeout, and
+    // still a bound, so a producer that never becomes ready still fails.
+    readyTimeoutMs: 1_200_000,
+    timeoutMs: 600_000,
     requiredCapabilities: [
       "coverage",
       "diagnostics",
@@ -216,6 +226,16 @@ export const LANGUAGE_EXPERIMENTS = [
     strictTool: "samchon-clangd",
     producerRepository: "https://github.com/samchon/llvm-project.git",
     producerCommit: "dcc73b6579ebb8b71f6080302a9444f237b7abb8",
+    // A whole-compilation-database producer is not ready when it starts; it
+    // is ready when clangd has background-indexed every translation unit the
+    // database registers. The 180-second default expired on libuv with 62
+    // units still indexing, and the client did exactly what it should — it
+    // fell back, and the row lost the strict provenance it exists to prove.
+    // These bounds are sized for that work rather than for a per-file server:
+    // far above the few minutes observed, far below the job timeout, and
+    // still a bound, so a producer that never becomes ready still fails.
+    readyTimeoutMs: 1_200_000,
+    timeoutMs: 600_000,
     requiredCapabilities: [
       "coverage",
       "diagnostics",

@@ -156,17 +156,25 @@ export class SamchonGraphApplication implements ISamchonGraphApplication {
                 ? { codeInputGeneration: graph.inputGeneration }
                 : {}),
               // One reason per condition, because a reason is a claim like any
-              // other. Collapsing these would report a generation that moved
-              // to a caller whose two planes describe different repositories
-              // and never had a generation in common — a sentence the evidence
-              // does not support, in the field a reader consults precisely
-              // when the joins they expected are missing.
+              // other, and this is the field a reader consults precisely when
+              // the joins they expected are missing. Four conditions withhold
+              // joins and the code can tell all four apart, so merging any two
+              // of them reports a cause that did not happen.
+              //
+              // The generation-absent case is the one a static server takes on
+              // every call: `startServer` strips the token from a `--graph-file`
+              // dump on purpose, because nothing revalidates it against the
+              // current checkout. Folding that into "the generation moved"
+              // would tell every such caller about a race that cannot occur
+              // there, for a token that was withheld deliberately.
               reason:
                 graph.project !== topology.dump.project
                   ? "The code graph and the repository-context model describe different projects, so their file identities are not comparable."
                   : topology.dump.provenance.length === 0
                     ? "No repository-context provider produced a compatible current generation."
-                    : "The code generation moved while topology was loading, or the code dump predates cross-plane generation fencing.",
+                    : graph.inputGeneration === undefined
+                      ? "This code graph carries no input generation to fence against: a graph file served without revalidation withholds one, and dumps written before cross-plane fencing never had one."
+                      : "The code generation moved while topology was loading.",
             };
         const result = topology.inspect(
           props.request,
@@ -180,24 +188,35 @@ export class SamchonGraphApplication implements ISamchonGraphApplication {
         return {
           audit:
             "Repository topology is returned from declared or owning-tool models; file joins are included only when the code generation stayed stable across the topology load.",
-          // A topology result that matched nothing is `outside`, the same
-          // answer `lookup` gives a name it could not resolve. `answer` states
-          // that the result carries the evidence and the caller should stop;
-          // an empty one carries none, and saying otherwise would end the
-          // caller's search on the strength of a repository model that never
-          // mentioned what they asked about.
+          // `answer` states that the result carries what the caller asked for
+          // and they should stop, so an empty one may not claim it. Which of
+          // the other two verdicts applies depends on why it is empty, and
+          // topology can tell: its query is exact equality against an id, a
+          // name or a coordinate, with no scoring and no near miss.
+          //
+          // So a query that matched nothing against a model that does hold
+          // nodes is `clarify` — the same call without it lists what exists,
+          // which is a restatement rather than an escape. Only a model with no
+          // nodes at all is `outside`, and then the repository plane really
+          // has nothing to say and the answer is elsewhere. Calling the first
+          // case `outside` would send a caller to read source over a spelling.
           next:
-            result.nodes.length === 0
+            result.nodes.length !== 0
               ? resultNext(
-                  "outside",
-                  "No repository topology node matched the requested query or available provider facts.",
-                )
-              : resultNext(
                   "answer",
                   result.truncated
                     ? "The requested repository orientation is present, and the result states that its configured bounds truncated additional facts."
                     : "The requested repository orientation is present in this topology result.",
-                ),
+                )
+              : topology.dump.nodes.length !== 0
+                ? resultNext(
+                    "clarify",
+                    "No repository topology node has that exact id, name or coordinate; this plane matches exactly, so restate the request or drop the query to list what it holds.",
+                  )
+                : resultNext(
+                    "outside",
+                    "No repository-context provider published any topology node for this project, so the repository plane has nothing to answer from.",
+                  ),
           result,
         };
       }

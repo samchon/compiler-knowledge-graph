@@ -145,8 +145,20 @@ export const test_mcp_topology_fences_file_joins_by_code_generation =
           unavailable.result.type === "topology"
             ? unavailable.result.truncated
             : false,
+          // The reason, not only the state. A graph file served without
+          // revalidation reaches this branch on every call, so it is the
+          // sentence most callers actually read, and it must not tell them a
+          // generation moved when one was withheld on purpose.
+          unavailable.result.type === "topology"
+            ? unavailable.result.join.reason
+            : undefined,
         ],
-        ["unavailable", false, true],
+        [
+          "unavailable",
+          false,
+          true,
+          "This code graph carries no input generation to fence against: a graph file served without revalidation withholds one, and dumps written before cross-plane fencing never had one.",
+        ],
       );
 
       // Two planes describing different repositories reach the same
@@ -203,8 +215,39 @@ export const test_mcp_topology_fences_file_joins_by_code_generation =
           stale.result.type === "topology"
             ? stale.result.edges.some((edge) => edge.kind === "joins-file")
             : true,
+          stale.result.type === "topology"
+            ? stale.result.join.reason
+            : undefined,
+          // A model that holds nodes but matched none is a restatement, not an
+          // escape: the same call without `query` lists what it holds. Only a
+          // model holding nothing at all sends the caller elsewhere.
+          stale.next.action,
         ],
-        ["unavailable", false],
+        [
+          "unavailable",
+          false,
+          "The code generation moved while topology was loading.",
+          "answer",
+        ],
+      );
+
+      const misspelled = await new SamchonGraphApplication(graph, () =>
+        topology,
+      ).inspect_code_graph({
+        question: "show the lib package",
+        draft: { reason: "repository orientation", type: "topology" },
+        review: "topology is correct",
+        request: { type: "topology", query: "sorce" },
+      });
+      TestValidator.equals(
+        "an exact-match miss against a populated model is a restatement",
+        [
+          misspelled.next.action,
+          misspelled.result.type === "topology"
+            ? misspelled.result.nodes.length
+            : -1,
+        ],
+        ["clarify", 0],
       );
 
       const emptyTopology = new SamchonRepositoryContextMemory({
@@ -236,9 +279,9 @@ export const test_mcp_topology_fences_file_joins_by_code_generation =
             : undefined,
           providerUnavailable.next.reason,
           // The action, not only the sentence beside it. `answer` tells the
-          // caller to stop because the result carries the evidence, and an
-          // empty topology carries none — the same judgement `lookup` makes
-          // for a name it could not resolve.
+          // caller to stop because the result carries what they asked for, and
+          // a plane holding no nodes at all carries nothing — this is the one
+          // empty case where the answer really is elsewhere.
           providerUnavailable.next.action,
         ],
         [
@@ -249,7 +292,7 @@ export const test_mcp_topology_fences_file_joins_by_code_generation =
             reason:
               "No repository-context provider produced a compatible current generation.",
           },
-          "No repository topology node matched the requested query or available provider facts.",
+          "No repository-context provider published any topology node for this project, so the repository plane has nothing to answer from.",
           "outside",
         ],
       );

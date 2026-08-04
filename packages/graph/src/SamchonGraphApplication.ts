@@ -155,10 +155,18 @@ export class SamchonGraphApplication implements ISamchonGraphApplication {
               ...(graph.inputGeneration !== undefined
                 ? { codeInputGeneration: graph.inputGeneration }
                 : {}),
+              // One reason per condition, because a reason is a claim like any
+              // other. Collapsing these would report a generation that moved
+              // to a caller whose two planes describe different repositories
+              // and never had a generation in common — a sentence the evidence
+              // does not support, in the field a reader consults precisely
+              // when the joins they expected are missing.
               reason:
-                topology.dump.provenance.length === 0
-                  ? "No repository-context provider produced a compatible current generation."
-                  : "The code generation moved while topology was loading, or the code dump predates cross-plane generation fencing.",
+                graph.project !== topology.dump.project
+                  ? "The code graph and the repository-context model describe different projects, so their file identities are not comparable."
+                  : topology.dump.provenance.length === 0
+                    ? "No repository-context provider produced a compatible current generation."
+                    : "The code generation moved while topology was loading, or the code dump predates cross-plane generation fencing.",
             };
         const result = topology.inspect(
           props.request,
@@ -172,14 +180,24 @@ export class SamchonGraphApplication implements ISamchonGraphApplication {
         return {
           audit:
             "Repository topology is returned from declared or owning-tool models; file joins are included only when the code generation stayed stable across the topology load.",
-          next: resultNext(
-            "answer",
+          // A topology result that matched nothing is `outside`, the same
+          // answer `lookup` gives a name it could not resolve. `answer` states
+          // that the result carries the evidence and the caller should stop;
+          // an empty one carries none, and saying otherwise would end the
+          // caller's search on the strength of a repository model that never
+          // mentioned what they asked about.
+          next:
             result.nodes.length === 0
-              ? "No repository topology node matched the requested query or available provider facts."
-              : result.truncated
-                ? "The requested repository orientation is present, and the result states that its configured bounds truncated additional facts."
-                : "The requested repository orientation is present in this topology result.",
-          ),
+              ? resultNext(
+                  "outside",
+                  "No repository topology node matched the requested query or available provider facts.",
+                )
+              : resultNext(
+                  "answer",
+                  result.truncated
+                    ? "The requested repository orientation is present, and the result states that its configured bounds truncated additional facts."
+                    : "The requested repository orientation is present in this topology result.",
+                ),
           result,
         };
       }

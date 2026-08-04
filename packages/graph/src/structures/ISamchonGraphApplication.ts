@@ -186,20 +186,22 @@ export namespace ISamchonGraphApplication {
 
     /**
      * Strict producer, authority, compiler and build-universe identity for the
-     * synchronized graph. Absent only for `escape` or a legacy/fallback-only
-     * dump with no strict producer.
+     * synchronized graph. Absent for `escape`, for `topology` whose facts come
+     * from the repository plane and carry their own provenance, and for a
+     * legacy or fallback-only dump with no strict producer.
      */
     provenance?: ISamchonGraphDump.IProvenance[];
 
     /**
      * Machine-readable completeness for the relationship families relevant to
-     * this operation. Absent only for `escape`.
+     * this operation. Absent for `escape` and for `topology`, which reports
+     * its own relation coverage inside the result.
      */
     coverage?: ISamchonGraphCoverageSummary;
 
     /**
      * Bounded structured uncertainty for the same operation-scoped families.
-     * Absent only for `escape`.
+     * Absent for `escape` and for `topology`, whose plane publishes none.
      */
     unresolved?: ISamchonGraphUnresolvedSummary;
 

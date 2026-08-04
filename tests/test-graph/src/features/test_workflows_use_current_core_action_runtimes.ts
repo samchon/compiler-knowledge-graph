@@ -150,13 +150,12 @@ export const test_workflows_use_current_core_action_runtimes = () => {
   // This originally refused any per-language exception, and the reason it gave
   // was a cause: the lane that wanted more than ninety minutes wanted it
   // because its provider had been serialized, so raising the budget preserved
-  // that cause instead of bounding it. Measurement retired the reason. The
-  // same 2,431 of 3,125 build steps take 85.1 minutes at two jobs and 81.2 at
-  // four, because the runner's four vCPUs are two physical cores; roughly 110
-  // minutes is the floor and no job count moves it. C and C++ build a compiler
-  // from source and the other fourteen rows install a released producer, so
-  // the difference is a property of those two rows and not a defect inside
-  // them.
+  // that cause instead of bounding it. The serialization was real and was
+  // removed — the build went from unfinished at 85 minutes to complete in 56 —
+  // and ninety still does not fit, because nine minutes of setup and a
+  // real-corpus lifecycle run sit around it. C and C++ build a compiler from
+  // source and the other fourteen rows install a released producer, so the
+  // difference is a property of those two rows and not a defect inside them.
   //
   // Asserted as the exact expression. That is the same shape of assertion as
   // the single number it replaces, not a tighter one — what changed is the
@@ -195,34 +194,43 @@ export const test_workflows_use_current_core_action_runtimes = () => {
   // check, the build would run in full, and — having hit an exact key — never
   // re-save. Permanent silent full-cost rebuilding, with the widened bound as
   // the normal path.
-  const cacheSteps = experimentJob
-    .split(/\n      - name: /u)
-    .filter((step) => step.includes("uses: actions/cache"));
-  TestValidator.equals(
-    "the built producer is restored and saved per pinned commit, not rebuilt",
-    cacheSteps.map((step) =>
-      [
-        /uses: actions\/cache\/(restore|save)@v6/u.exec(step)?.[1],
-        step.includes("path: tests/experiment/.work/tools"),
-        step.includes(
-          "(matrix.language == 'c' || matrix.language == 'cpp')",
-        ),
-      ].join(" "),
-    ),
-    ["restore true true", "save true true"],
+  const steps = experimentSteps(experimentJob);
+  const restore = steps.find((step) =>
+    step.body.includes("uses: actions/cache/restore@v6"),
   );
-  TestValidator.predicate(
-    "the restore key names every input the built bytes depend on",
-    experimentJob.includes(
-      "hashFiles('packages/graph/src/provider/cpp/CPP_CLANG_PRODUCER_COMMIT.ts', 'tests/experiment/src/catalog.mjs', 'tests/experiment/src/setup-language.mjs')",
-    ) &&
-      // Saved on a miss and before the corpus run, so a correct build is not
-      // discarded because an unrelated later assertion went red.
-      experimentJob.includes(
-        "steps.clang_producer.outputs.cache-hit != 'true'",
-      ) &&
-      experimentJob.indexOf("actions/cache/save") <
-        experimentJob.indexOf("Run LSP experiment"),
+  const save = steps.find((step) =>
+    step.body.includes("uses: actions/cache/save@v6"),
+  );
+  TestValidator.equals(
+    "the producer is restored and saved around the build, on the same key",
+    [
+      restore?.body.includes("id: clang_producer"),
+      restore?.body.includes("path: tests/experiment/.work/tools"),
+      restore?.body.includes(
+        "key: clang-producer-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('packages/graph/src/provider/cpp/CPP_CLANG_PRODUCER_COMMIT.ts', 'tests/experiment/src/catalog.mjs', 'tests/experiment/src/setup-language.mjs') }}",
+      ),
+      save?.body.includes("path: tests/experiment/.work/tools"),
+      save?.body.includes(
+        "key: ${{ steps.clang_producer.outputs.cache-primary-key }}",
+      ),
+      save?.body.includes("steps.clang_producer.outputs.cache-hit != 'true'"),
+      [restore, save].every((step) =>
+        step?.body.includes("(matrix.language == 'c' || matrix.language == 'cpp')"),
+      ),
+      // Order is the whole safety argument. Saving before the build writes an
+      // empty tree under the exact primary key, which then restores as a hit
+      // forever, fails `setup`'s version check, rebuilds, and never re-saves —
+      // the same terminal state as saving under a key the restore cannot hit.
+      // Saving after the corpus run instead loses a correct build to an
+      // unrelated assertion.
+      [restore, "Install language server", save, "Run LSP experiment"].map(
+        (entry) =>
+          typeof entry === "string"
+            ? steps.findIndex((step) => step.name === entry)
+            : (entry?.index ?? -1),
+      ),
+    ],
+    [true, true, true, true, true, true, true, [8, 9, 10, 11]],
   );
   TestValidator.predicate(
     "the Rust experiment launches the exact binary provisioned by setup",
@@ -297,6 +305,37 @@ export const test_workflows_use_current_core_action_runtimes = () => {
 
 function occurrences(text: string, needle: string): number {
   return text.split(needle).length - 1;
+}
+
+/**
+ * The matrix job's steps, in order, with their comments removed.
+ *
+ * Two properties this file needs and cannot get from a substring search over
+ * the whole job. Order, because the cache save has to happen after the step
+ * that builds and before the step that can fail for unrelated reasons, and a
+ * job-wide `indexOf` cannot tell those apart from a save at the top. And
+ * comment removal, because this workflow explains itself at length: every
+ * string these assertions look for also appears in prose a few lines above the
+ * step that implements it, so an `includes` over raw text is satisfied by the
+ * explanation of a step that was deleted.
+ */
+function experimentSteps(
+  job: string,
+): { name: string; body: string; index: number }[] {
+  return job
+    .split(/\n      - name: /u)
+    .slice(1)
+    .map((chunk, index) => {
+      const body = chunk
+        .split("\n")
+        .filter((line) => !/^\s*#/u.test(line))
+        .join("\n");
+      return {
+        name: body.split("\n", 1)[0]!.trim(),
+        body,
+        index,
+      };
+    });
 }
 
 /**

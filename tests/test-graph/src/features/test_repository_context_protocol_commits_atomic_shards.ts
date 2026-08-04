@@ -241,10 +241,13 @@ export const test_repository_context_protocol_commits_atomic_shards =
         const upsert = changedUpsert(frames);
         upsert.shard.edges[0]!.from = "";
       }),
-      // The endpoint arm the mutation above cannot reach: that one edits a
-      // `contains` edge and so takes the node-closure branch. A join naming a
-      // file the shard never declared is how the topology plane would start
-      // pointing at code the code generation has no record of.
+      // The only edge endpoint that is checked against the file list rather
+      // than the node list. `from` always resolves through nodes whatever the
+      // kind, and the sibling mutation above blanks a `from` and is refused
+      // earlier still, by shard validation. So this arm — a `joins-file`
+      // naming a file the shard never declared — is reached by nothing else,
+      // and it is how the topology plane would start pointing at code the code
+      // generation has no record of.
       mutate(transaction(3, unchanged, changedShard()), (frames) => {
         const upsert = changedUpsert(frames);
         upsert.shard.edges.find((edge) => edge.kind === "joins-file")!.to =

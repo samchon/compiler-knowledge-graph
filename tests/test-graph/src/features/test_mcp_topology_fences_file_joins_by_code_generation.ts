@@ -149,6 +149,37 @@ export const test_mcp_topology_fences_file_joins_by_code_generation =
         ["unavailable", false, true],
       );
 
+      // Two planes describing different repositories reach the same
+      // `unavailable` state as a moved generation, which is why the reason has
+      // to distinguish them: these two never had a generation in common, and
+      // reporting one as having moved would send a reader looking for a race
+      // that did not happen.
+      const foreign = await new SamchonGraphApplication(graph, () =>
+        new SamchonRepositoryContextMemory(
+          topologyDump(`${fixture.dump.project}-elsewhere`),
+        ),
+      ).inspect_code_graph({
+        question: "show repository topology",
+        draft: { reason: "repository orientation", type: "topology" },
+        review: "topology is correct",
+        request: { type: "topology", limit: 1 },
+      });
+      TestValidator.equals(
+        "a topology model for another project names that as the reason",
+        foreign.result.type === "topology"
+          ? [
+              foreign.result.join.state,
+              foreign.result.join.reason,
+              foreign.result.edges.some((edge) => edge.kind === "joins-file"),
+            ]
+          : [],
+        [
+          "unavailable",
+          "The code graph and the repository-context model describe different projects, so their file identities are not comparable.",
+          false,
+        ],
+      );
+
       let loads = 0;
       const moved = SamchonGraphMemory.from({
         ...fixture.dump,
@@ -204,6 +235,11 @@ export const test_mcp_topology_fences_file_joins_by_code_generation =
             ? providerUnavailable.result.join
             : undefined,
           providerUnavailable.next.reason,
+          // The action, not only the sentence beside it. `answer` tells the
+          // caller to stop because the result carries the evidence, and an
+          // empty topology carries none — the same judgement `lookup` makes
+          // for a name it could not resolve.
+          providerUnavailable.next.action,
         ],
         [
           {
@@ -214,6 +250,7 @@ export const test_mcp_topology_fences_file_joins_by_code_generation =
               "No repository-context provider produced a compatible current generation.",
           },
           "No repository topology node matched the requested query or available provider facts.",
+          "outside",
         ],
       );
 

@@ -9,11 +9,13 @@ import { GraphFixtures } from "../internal/GraphFixtures";
  * more so after each new family is added. This is the completeness gate for
  * that.
  *
- * The two halves are not equally strong, which is worth knowing before relying
- * on either. The edge half is anchored: it compares the fixture against the
- * package's own exported `GRAPH_EDGE_KINDS`, so a new family reaches it by
- * existing. The node half compares against a list this suite maintains by
- * hand, so a new node kind reaches it only when someone adds it there too.
+ * How much each half is worth is worth knowing before relying on either. The
+ * edge half is anchored through one more step: the fixture is compared to a
+ * suite-local list, and a separate assertion holds that list to the package's
+ * exported `GRAPH_EDGE_KINDS`, so a new family does reach it by existing —
+ * except through the traversal-only exemption, which is a second hand-kept
+ * list. The node half has no such anchor at all: it compares the fixture to a
+ * hand-kept list and nothing ties that list to the public union.
  */
 export const test_contract_fixture_covers_every_graph_node_and_edge_kind = () => {
   const { dump } = GraphFixtures.createContractFixture();

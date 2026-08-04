@@ -228,14 +228,23 @@ export const test_experiment_corpora_are_commit_pinned = () => {
   // is the thing that has to stay correct, so pin the decision rather than its
   // vocabulary. Naming `os.availableParallelism()` and `os.totalmem()` proves
   // nothing on its own: a comment saying why they were abandoned contains both
-  // names, and a `const jobs = 2` under it would satisfy every such check —
-  // which is precisely the regression this exists to refuse. So the binding is
-  // asserted end to end instead: the expression that computes the count, and
-  // the argument that hands that same count to the build.
-  const clangBuild = region(
-    setup,
-    "const installClangGraphProducer",
-    "const installScipPython",
+  // names, and a `const jobs = 2` under it would satisfy every such check.
+  // Comments are therefore stripped before anything is matched, and the
+  // binding is asserted end to end: the expression that computes the count,
+  // the argument that hands that same count to the build, and the log that
+  // makes it visible in a run.
+  //
+  // The configure call is inside this region too, and `-DLLVM_PARALLEL_*_JOBS`
+  // caps concurrency from there without touching `--build` at all. Watching
+  // only the build argv would leave that door open, so the region must set no
+  // such flag; if one is ever needed it has to be derived from `jobs` and this
+  // line has to change with it.
+  //
+  // This is a tripwire, not a proof. It refuses the regressions that have
+  // actually happened here and the nearest spellings of them; it cannot
+  // enumerate every way to reintroduce a constant.
+  const clangBuild = withoutLineComments(
+    region(setup, "const installClangGraphProducer", "const installScipPython"),
   );
   TestValidator.equals(
     "the native Clang build is sized by the machine and bounded by its memory",
@@ -245,9 +254,10 @@ export const test_experiment_corpora_are_commit_pinned = () => {
       ),
       /"--parallel",\s*String\(jobs\),/u.test(clangBuild),
       /"--parallel",\s*(?:"|`|'|\d)/u.test(clangBuild),
-      clangBuild.includes("console.log("),
+      /LLVM_PARALLEL_[A-Z_]*JOBS/u.test(clangBuild),
+      /console\.log\([\s\S]*?String\(jobs\)/u.test(clangBuild),
     ],
-    [true, true, false, true],
+    [true, true, false, false, true],
   );
   // A restored producer is untrusted input, and the whole point of restoring
   // it is to skip the build that would otherwise have proved what it is. So
@@ -518,6 +528,22 @@ export const test_experiment_corpora_are_commit_pinned = () => {
       !setup.includes("npm install -g pyright"),
   );
 };
+
+/**
+ * One source region with its line comments removed.
+ *
+ * These files explain themselves at length, and every identifier an assertion
+ * looks for is also written in the prose around the code that uses it. Without
+ * this, `includes` and even a careful regex are satisfied by a comment
+ * describing the very thing that was deleted — which is how the first version
+ * of the parallelism pin passed against a hard-coded job count.
+ */
+function withoutLineComments(source: string): string {
+  return source
+    .split("\n")
+    .filter((line) => !/^\s*\/\//u.test(line))
+    .join("\n");
+}
 
 function experimentSource(file: string): string {
   return fs.readFileSync(

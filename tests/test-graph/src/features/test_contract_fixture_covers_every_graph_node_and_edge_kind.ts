@@ -5,13 +5,15 @@ import { GraphFixtures } from "../internal/GraphFixtures";
 
 /**
  * The contract fixture is the shared corpus every operation test reasons from,
- * so a node or edge kind it happens not to contain is a kind nothing tests —
- * silently, and more so after each new family is added. This is the mechanical
- * completeness gate for that: every public node kind is realized, and every
- * edge kind an index can store is realized. The split matters as much as the
- * count. Traversal-only kinds are asserted to be stored by nothing, so the
- * fixture cannot quietly satisfy this gate by persisting a derived edge that
- * the graph is supposed to compute rather than keep.
+ * so a kind it happens not to contain is a kind nothing tests — silently, and
+ * more so after each new family is added. This is the completeness gate for
+ * that.
+ *
+ * The two halves are not equally strong, which is worth knowing before relying
+ * on either. The edge half is anchored: it compares the fixture against the
+ * package's own exported `GRAPH_EDGE_KINDS`, so a new family reaches it by
+ * existing. The node half compares against a list this suite maintains by
+ * hand, so a new node kind reaches it only when someone adds it there too.
  */
 export const test_contract_fixture_covers_every_graph_node_and_edge_kind = () => {
   const { dump } = GraphFixtures.createContractFixture();

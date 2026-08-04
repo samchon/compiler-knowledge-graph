@@ -241,11 +241,10 @@ export const test_repository_context_protocol_commits_atomic_shards =
         const upsert = changedUpsert(frames);
         upsert.shard.edges[0]!.from = "";
       }),
-      // `joins-file` is the one relation whose target is a file identity rather
-      // than a node identity, so it is the one endpoint the ordinary node
-      // closure check cannot cover. A join to a file the shard never declared
-      // is how the topology plane would start naming code the code generation
-      // has no record of.
+      // The endpoint arm the mutation above cannot reach: that one edits a
+      // `contains` edge and so takes the node-closure branch. A join naming a
+      // file the shard never declared is how the topology plane would start
+      // pointing at code the code generation has no record of.
       mutate(transaction(3, unchanged, changedShard()), (frames) => {
         const upsert = changedUpsert(frames);
         upsert.shard.edges.find((edge) => edge.kind === "joins-file")!.to =

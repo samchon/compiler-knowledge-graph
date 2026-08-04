@@ -19,12 +19,13 @@ import { parseGradleRepositoryContextModel } from "../../../../packages/graph/sr
  * reconstruct the topology from directory layout and publish it as though the
  * tool had said it. This pins the opposite behaviour per ecosystem. Detection
  * is keyed to the owning manifest rather than to any repository that happens
- * to contain a folder; `declared` and `tool-resolved` authority stay distinct
- * per node and edge; an absent Tooling API classpath, a failed tool, malformed
- * JSON, a stale CMake reply and a missing File API query each make the adapter
- * throw rather than answer; and a Gradle module name that resolves ambiguously
- * degrades `depends-on` to partial coverage with a warning instead of emitting
- * the edge it cannot prove.
+ * to contain a folder. An absent Tooling API classpath, a failed tool,
+ * malformed JSON, a stale CMake reply and a missing File API query each make
+ * the adapter throw rather than answer. A Gradle module name that resolves
+ * ambiguously degrades `depends-on` to partial coverage with a warning instead
+ * of emitting the edge it cannot prove. And pnpm — the one ecosystem here that
+ * mixes both grades in a single model — keeps `declared` and `tool-resolved`
+ * counted apart across its nodes and edges.
  */
 export const test_repository_context_adapters_preserve_authoritative_models =
   async () => {

@@ -224,21 +224,30 @@ export const test_experiment_corpora_are_commit_pinned = () => {
       setup.includes('tool: "samchon-clangd"') &&
       !cppSetup.includes('apt(["clangd"'),
   );
-  // A fixed parallelism here already cost two whole CI lanes: the build ran on
-  // half a four-vCPU runner and was killed at the job timeout with 694 of
-  // 3,125 steps left. The workflow refuses to widen that timeout for one
-  // language, so the size of this build is the thing that has to stay correct,
-  // and a literal is exactly how it silently stops being correct again. Pin
-  // both halves: sized by the machine, and bounded by its memory rather than
-  // by its core count alone, since the run that failed stopped before `clangd`
-  // was linked and therefore proved nothing about the memory peak.
-  TestValidator.predicate(
+  // A fixed parallelism here already cost CI lanes, and the size of this build
+  // is the thing that has to stay correct, so pin the decision rather than its
+  // vocabulary. Naming `os.availableParallelism()` and `os.totalmem()` proves
+  // nothing on its own: a comment saying why they were abandoned contains both
+  // names, and a `const jobs = 2` under it would satisfy every such check —
+  // which is precisely the regression this exists to refuse. So the binding is
+  // asserted end to end instead: the expression that computes the count, and
+  // the argument that hands that same count to the build.
+  const clangBuild = region(
+    setup,
+    "const installClangGraphProducer",
+    "const installScipPython",
+  );
+  TestValidator.equals(
     "the native Clang build is sized by the machine and bounded by its memory",
-    setup.includes("os.availableParallelism()") &&
-      setup.includes("os.totalmem()") &&
-      setup.includes('"--parallel",') &&
-      setup.includes("String(jobs),") &&
-      !/"--parallel",\s*\n\s*"\d+"/u.test(setup),
+    [
+      /const jobs = Math\.max\(\s*1,\s*Math\.min\(\s*os\.availableParallelism\(\),\s*Math\.floor\(os\.totalmem\(\) \/ \(2 \* 1024 \* 1024 \* 1024\)\),\s*\),\s*\);/u.test(
+        clangBuild,
+      ),
+      /"--parallel",\s*String\(jobs\),/u.test(clangBuild),
+      /"--parallel",\s*(?:"|`|'|\d)/u.test(clangBuild),
+      clangBuild.includes("console.log("),
+    ],
+    [true, true, false, true],
   );
   // A restored producer is untrusted input, and the whole point of restoring
   // it is to skip the build that would otherwise have proved what it is. So
@@ -248,19 +257,28 @@ export const test_experiment_corpora_are_commit_pinned = () => {
   // short of that — a missing file, an unreadable tree, an unexpected version,
   // any thrown error — falls back to building, because reuse is an
   // optimisation and may only be taken on complete evidence.
-  TestValidator.predicate(
+  //
+  // Bounded to the predicate's own body. An unbounded `[\s\S]*?` would let a
+  // deleted check pass by matching the identical text in the build path below
+  // it, so the region is what makes a deletion visible.
+  const restoredProducer = region(
+    setup,
+    "const installedClangGraphProducer",
+    "const installClangGraphProducer",
+  );
+  TestValidator.equals(
     "a restored native Clang producer is re-proved against the pin before reuse",
-    setup.includes("const installedClangGraphProducer = () =>") &&
-      setup.includes("if (installedClangGraphProducer()) return;") &&
-      cppSetup.includes("installClangGraphProducer()") &&
-      /installedClangGraphProducer[\s\S]*?String\(reported\.stdout\)\.includes\(\s*experiment\.producerCommit,?\s*\)/u.test(
-        setup,
-      ) &&
-      /installedClangGraphProducer[\s\S]*?"stddef\.h"/u.test(setup) &&
-      /installedClangGraphProducer[\s\S]*?versions\.length !== 1/u.test(setup) &&
-      /installedClangGraphProducer[\s\S]*?\} catch \{\s*\n\s*return false;/u.test(
-        setup,
+    [
+      setup.includes("if (installedClangGraphProducer()) return;"),
+      cppSetup.includes("installClangGraphProducer()"),
+      /String\(reported\.stdout\)\.includes\(\s*experiment\.producerCommit,?\s*\)/u.test(
+        restoredProducer,
       ),
+      restoredProducer.includes('"stddef.h"'),
+      restoredProducer.includes("versions.length !== 1"),
+      /\} catch \{\s*\n\s*return false;/u.test(restoredProducer),
+    ],
+    [true, true, true, true, true, true],
   );
   // scip-python 0.6.6 recovers from a malformed `pyproject.toml`, falls back to
   // Pyright defaults and emits no SCIP diagnostics. On the pinned Click

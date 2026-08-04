@@ -527,20 +527,33 @@ const installClangGraphProducer = () => {
   // wherever this runs — but on this runner it is not the constraint, and the
   // build's roughly 110-minute floor is not something a job count moves.
   //
-  // Capped by memory as well as by cores, because those are different limits
-  // and only one of them is visible here. The cancelled run proves nothing
-  // about the second: it stopped before `clangd` was linked, which is exactly
-  // where an LLVM build peaks, so its silence about allocation failure is
-  // absence of evidence rather than evidence of headroom. Two GiB per job is
-  // LLVM's own rule of thumb for compiling, and it keeps a many-core, modest
-  // memory workstation — the local `setup` path the language-support skill
-  // documents — from turning this into an out-of-memory kill.
+  // Also bounded by installed memory, which is a machine-class bound and not
+  // an out-of-memory guard — worth being exact about, because the two are easy
+  // to confuse and only the first is what this computes. It reads total rather
+  // than free memory, so it says "this machine should not run more than N
+  // concurrent compiles", not "this machine has room right now". It bounds
+  // compile concurrency only; the `clangd` link is a single build edge that
+  // runs whatever this number is, and LLVM's own controls for that
+  // (`LLVM_PARALLEL_LINK_JOBS` and friends) are deliberately not set here
+  // because no run has yet reached the link to measure it. Two GiB per compile
+  // job is this repository's figure, chosen as a conventional one; it is not
+  // quoted from LLVM.
+  //
+  // Logged because it is otherwise invisible. Ninja does not print its job
+  // count and `run` does not echo argv, so a machine whose memory quietly
+  // halves the count would look exactly like a slow build, which is the
+  // confusion that cost this lane two CI runs already.
   const jobs = Math.max(
     1,
     Math.min(
       os.availableParallelism(),
       Math.floor(os.totalmem() / (2 * 1024 * 1024 * 1024)),
     ),
+  );
+  console.log(
+    `${experiment.language}: building the pinned Clang producer with ${String(jobs)} jobs ` +
+      `(cores ${String(os.availableParallelism())}, ` +
+      `memory ${String(Math.round(os.totalmem() / (1024 * 1024 * 1024)))} GiB)`,
   );
   run("cmake", [
     "--build",

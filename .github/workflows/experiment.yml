@@ -83,9 +83,14 @@ jobs:
     # 3,125 steps take 85.1 minutes at two jobs and 81.2 at four, because four
     # vCPUs are two physical cores. Roughly 110 minutes is the floor, no job
     # count moves it, and a cold build plus its corpus run needs more than
-    # ninety. The wider bound is granted only to the two rows that build, and
-    # only on the run that has to build: the cache above means the ordinary
-    # push restores the binary and never reaches it.
+    # ninety. The wider bound is granted only to the two rows that build.
+    #
+    # It is a bound, not a prediction: 150 is the extrapolated ~110-minute
+    # build with room for the setup and corpus work around it, and neither of
+    # those has its own measurement yet. The restore below is what should keep
+    # an ordinary push far away from it, though that too is an expectation
+    # rather than a property — Actions caches are branch-scoped and evicted, so
+    # a first push on a fresh branch can still pay the full build.
     timeout-minutes: ${{ (matrix.language == 'c' || matrix.language == 'cpp') && 150 || 90 }}
     strategy:
       fail-fast: false
@@ -153,22 +158,47 @@ jobs:
       # C and C++ are the only rows whose producer is built rather than
       # downloaded, and it is a pinned commit: the same bytes, reproduced from
       # scratch, on every push. Restoring them instead is not a shortcut around
-      # the build but a removal of work that had no reason to happen twice. The
-      # key names the exact commit and the exact build recipe, so a producer
-      # bump or a recipe edit misses by construction, and `setup` re-checks the
-      # restored binary's own `--version` against the pin before using it.
+      # the build but a removal of work that had no reason to happen twice.
+      #
+      # The key hashes every file the built bytes depend on. `catalog.mjs` is
+      # the one `setup` actually reads its commit from, so it has to be here —
+      # keying on the adapter's constant alone would leave the two bound only
+      # by a text assertion in a different workflow, and a divergence would hit
+      # the key, fail the `--version` check, rebuild, and then not re-save,
+      # because an exact hit has nothing to write. That is silent, permanent,
+      # full-cost rebuilding, so the binding is made structural instead.
+      #
+      # Restore and save are split so the save runs even when a later step
+      # fails. A campaign iterating on these lanes is exactly the case where
+      # the producer builds and the experiment does not, and `cache`'s combined
+      # form would discard a correct 110-minute build because a corpus
+      # assertion afterwards went red.
       - name: Restore the pinned Clang producer
+        id: clang_producer
         if: ${{ (matrix.language == 'c' || matrix.language == 'cpp') && (github.event_name != 'workflow_dispatch' || inputs.language == 'all' || inputs.language == matrix.language) }}
-        uses: actions/cache@v6
+        uses: actions/cache/restore@v6
         with:
           path: tests/experiment/.work/tools
-          key: clang-producer-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('packages/graph/src/provider/cpp/CPP_CLANG_PRODUCER_COMMIT.ts', 'tests/experiment/src/setup-language.mjs') }}
+          key: clang-producer-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('packages/graph/src/provider/cpp/CPP_CLANG_PRODUCER_COMMIT.ts', 'tests/experiment/src/catalog.mjs', 'tests/experiment/src/setup-language.mjs') }}
 
       - name: Install language server
         if: ${{ github.event_name != 'workflow_dispatch' || inputs.language == 'all' || inputs.language == matrix.language }}
         run: pnpm --filter @samchon/graph-experiment run setup -- --language ${{ matrix.language }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Saved before the experiment runs, not after it, and only on a miss.
+      # The producer is proved by this point — `setup` refuses to finish unless
+      # the installed binary reports the pinned commit — and what follows is a
+      # corpus run whose failure says nothing about the compiler that was
+      # built. Waiting until the end would tie a correct build's survival to an
+      # unrelated assertion.
+      - name: Save the pinned Clang producer
+        if: ${{ (matrix.language == 'c' || matrix.language == 'cpp') && steps.clang_producer.outputs.cache-hit != 'true' && (github.event_name != 'workflow_dispatch' || inputs.language == 'all' || inputs.language == matrix.language) }}
+        uses: actions/cache/save@v6
+        with:
+          path: tests/experiment/.work/tools
+          key: ${{ steps.clang_producer.outputs.cache-primary-key }}
 
       - name: Run LSP experiment
         if: ${{ github.event_name != 'workflow_dispatch' || inputs.language == 'all' || inputs.language == matrix.language }}

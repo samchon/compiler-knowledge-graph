@@ -5,7 +5,7 @@ import { GraphFixtures } from "../internal/GraphFixtures";
 
 /**
  * Every request member is driven through the real application and its result
- * discriminator is compared, in order, against the advertised request list.
+ * discriminator is compared, in order, against this suite's own request list.
  * The property that buys is narrow but not otherwise held anywhere: no arm may
  * answer as another arm. Each one selects its own result union member, and a
  * mis-wired `switch` that returned an overview for a trace would satisfy the

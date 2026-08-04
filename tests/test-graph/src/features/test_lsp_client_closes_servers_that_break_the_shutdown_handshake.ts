@@ -100,23 +100,16 @@ const importLib = <T>(relative: string): Promise<T> =>
 /**
  * A language server that misbehaves during teardown leaves nothing behind in
  * the graph, so no result-shaped assertion can notice it; the evidence is a
- * process that outlives its session, or a second of wall clock nobody can
- * account for.
+ * process that outlives its session, or wall clock nobody can account for.
  *
- * The two servers here break the handshake in opposite directions, and the
- * correct response to each is the opposite of the other. One acknowledges
- * `shutdown` and then ignores `exit`, so the client must escalate: wait, kill,
- * and reject the in-flight request with the signal it had to send rather than
- * leaving it pending forever. The other exits on `shutdown` instead of
- * replying, so the client must *not* escalate — it is already gone, and
- * waiting out its grace period would cost every teardown a full second for
- * nothing. A client that only handled the first would pass a test that only
- * asked about leaks.
+ * The two servers below break the handshake in opposite directions, and each
+ * inline comment states its own case. What is worth saying once, here, is why
+ * both are needed: the correct response to one is escalation and to the other
+ * is refusing to escalate, so a client that handled only the first would still
+ * pass a suite that only asked about leaks.
  *
- * The case continues past teardown into the rest of the client's process and
- * transport surface, including the server-initiated request path, where a
- * request left unanswered deadlocks servers that withhold their own replies
- * until it is acknowledged.
+ * The case then continues into the rest of the client's process and transport
+ * surface.
  */
 export const test_lsp_client_closes_servers_that_break_the_shutdown_handshake =
   async () => {

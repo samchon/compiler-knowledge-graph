@@ -28,10 +28,9 @@ const CORPUS_NAMES = [
  * campaign — two comments explaining real defects by naming the corpus that
  * exhibited them — and both were rewritten to describe the condition instead.
  *
- * This is the mechanical guard for the class. Its reach is deliberate rather
- * than total: it walks `src` and `sidecars` for the text extensions the
- * product ships as code, so the README's benchmark tables — which name every
- * corpus on purpose, as published measurement evidence — stay outside it.
+ * Scope is `packages/graph/src` and `packages/graph/sidecars`. The README is
+ * outside it on purpose: its benchmark tables name every corpus as published
+ * measurement evidence.
  */
 export const test_shipped_source_does_not_leak_benchmark_corpus_names = () => {
   const roots = [
@@ -63,6 +62,10 @@ function walk(directory: string): string[] {
       return entry.isDirectory() ? walk(file) : [file];
     })
     .filter((file) =>
-      /\.(?:ts|js|mjs|cjs|json|html|go|lua|mod|sum)$/u.test(file),
+      // Every extension `copy-sidecars.mjs` ships, plus the package's own
+      // source. `.java` was missing while `sidecars/gradle` shipped a `.java`
+      // file, so the one shipped language most likely to name a JVM corpus was
+      // the one language this never read.
+      /\.(?:ts|js|mjs|cjs|json|html|go|java|lua|mod|sum)$/u.test(file),
     );
 }

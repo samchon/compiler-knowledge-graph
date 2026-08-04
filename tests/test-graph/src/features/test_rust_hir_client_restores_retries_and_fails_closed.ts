@@ -16,13 +16,13 @@ import { GraphPaths } from "../internal/GraphPaths.js";
  * This pins the client's side of that: a cancelled or content-modified response
  * is retried until the ready deadline rather than published, a no-op returns
  * the exact resident object rather than an equal copy, a rejected restart
- * checkpoint discards the persisted generation instead of reusing it, and an
- * unpersistable checkpoint degrades to a warning while the validated snapshot
- * stays resident.
+ * checkpoint discards the persisted generation instead of reusing it, and a
+ * checkpoint that cannot be written reaches the caller as a warning on a
+ * snapshot that was still published.
  *
  * The refusal cases assert the strictest available form of atomicity, which is
  * why they run on fresh clients: a producer response the adapter rejects, and
- * a generation the product validator refuses, must each leave `current`
+ * a generation the consumer contract refuses, must each leave `current`
  * undefined. Nothing partially applied, not merely nothing published.
  */
 export const test_rust_hir_client_restores_retries_and_fails_closed = async () => {

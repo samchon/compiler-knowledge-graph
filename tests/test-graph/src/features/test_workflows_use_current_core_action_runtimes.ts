@@ -18,6 +18,15 @@ import { GraphPaths } from "../internal/GraphPaths";
  * the files it was born with is not a policy. Enumerating the directory means a
  * new workflow is held to it by existing, and the maintained majors are named
  * once instead of being counted per file.
+ *
+ * Reconciled with upstream by hand, and only by hand: the deterministic suite
+ * may not reach the network, so nothing here can ask GitHub what the current
+ * major is. The check that runs is workflow-against-map, which makes this map
+ * an oracle only as good as the last time someone read the releases. Every
+ * entry was checked when `cache` was added — and `cache` is why the caveat is
+ * written down, because it was first added two majors behind from memory and
+ * nothing caught it: an action absent from this map is an action nobody
+ * watches.
  */
 const MAINTAINED: Record<string, number> = {
   cache: 6,
@@ -29,14 +38,14 @@ const MAINTAINED: Record<string, number> = {
 };
 
 /**
- * Nothing else in the suite reads a workflow, so every claim CI makes about
- * itself is unchecked by default: a retired action major, a release lane that
+ * Nothing in the product suite reads a workflow, so what CI claims about
+ * itself is unchecked here by default, and each way that goes wrong stays
+ * green until the day it matters: a retired action major, a release lane that
  * publishes before it audits, a producer pin that drifts, a hang boundary
- * quietly moved off the matrix job, or a classifier that fails open and skips
- * the matrix on the very heads it was meant to cover. Each of those stays
- * green until the day it matters. This reads the workflow and release-script
- * sources directly and holds them to {@link MAINTAINED} and to the ordering
- * and scoping each lane depends on.
+ * moved off the matrix job onto GitHub's six-hour default.
+ *
+ * This reads the workflow and release-script sources directly and holds them
+ * to {@link MAINTAINED} and to the ordering and scoping each lane depends on.
  */
 export const test_workflows_use_current_core_action_runtimes = () => {
   const directory = path.join(GraphPaths.repositoryRoot, ".github", "workflows");
@@ -51,8 +60,14 @@ export const test_workflows_use_current_core_action_runtimes = () => {
   const stale: string[] = [];
   for (const file of files) {
     const text = fs.readFileSync(path.join(directory, file), "utf8");
+    // Sub-actions count as their parent. `actions/cache/restore` ships from
+    // the `actions/cache` repository and carries its major, so a pattern that
+    // stopped at the first path segment would have watched `actions/cache@v6`
+    // and silently ignored `actions/cache/restore@v6` — which is the form the
+    // experiment workflow actually uses, and would have made this map's entry
+    // for it dead on arrival.
     for (const match of text.matchAll(
-      /uses:\s+actions\/([\w-]+)@v(\d+)/g,
+      /uses:\s+actions\/([\w-]+)(?:\/[\w-]+)*@v(\d+)/g,
     )) {
       const maintained = MAINTAINED[match[1]!];
       if (maintained !== undefined && Number(match[2]) !== maintained)
@@ -143,10 +158,12 @@ export const test_workflows_use_current_core_action_runtimes = () => {
   // the difference is a property of those two rows and not a defect inside
   // them.
   //
-  // Asserted as the exact expression, which makes this stricter than the
-  // single number it replaces: the ninety-minute bound still governs every
-  // other row, and a third language cannot reach the wider one — or a fourth
-  // number appear — without editing this line and answering for it.
+  // Asserted as the exact expression. That is the same shape of assertion as
+  // the single number it replaces, not a tighter one — what changed is the
+  // policy, not the grip. The grip is what matters here: the ninety-minute
+  // bound still governs every other row, and a third language cannot reach the
+  // wider one, nor a fourth number appear, without editing this line and
+  // answering for it.
   //
   // Scoped to the matrix job, not to the file. Counting `timeout-minutes:`
   // lines across the whole workflow passes just as well when the only one has
@@ -165,20 +182,47 @@ export const test_workflows_use_current_core_action_runtimes = () => {
       "timeout-minutes: ${{ (matrix.language == 'c' || matrix.language == 'cpp') && 150 || 90 }}",
     ],
   );
-  // The wider bound is only defensible because the ordinary push never reaches
-  // it. Pin the restore that makes that true, including the key: a producer
-  // bump or a build-recipe edit has to miss the cache, or a stale binary would
-  // outlive the commit it was built from.
+  // The wider bound is only defensible while an ordinary push does not reach
+  // it, and that depends entirely on the restore below. Pinned per step rather
+  // than as loose substrings over the job: four independent `includes` calls
+  // are satisfied by four unrelated steps, which would let the key, the path
+  // and the condition drift apart while the assertion stayed green.
+  //
+  // The key is pinned by its exact file list because that list is the whole
+  // claim. `catalog.mjs` is where the commit is actually read from, so leaving
+  // it out would bind the cache to the producer only by convention; the key
+  // would then survive a bump, the restored binary would fail its version
+  // check, the build would run in full, and — having hit an exact key — never
+  // re-save. Permanent silent full-cost rebuilding, with the widened bound as
+  // the normal path.
+  const cacheSteps = experimentJob
+    .split(/\n      - name: /u)
+    .filter((step) => step.includes("uses: actions/cache"));
+  TestValidator.equals(
+    "the built producer is restored and saved per pinned commit, not rebuilt",
+    cacheSteps.map((step) =>
+      [
+        /uses: actions\/cache\/(restore|save)@v6/u.exec(step)?.[1],
+        step.includes("path: tests/experiment/.work/tools"),
+        step.includes(
+          "(matrix.language == 'c' || matrix.language == 'cpp')",
+        ),
+      ].join(" "),
+    ),
+    ["restore true true", "save true true"],
+  );
   TestValidator.predicate(
-    "the built producer is restored by pinned commit rather than rebuilt",
-    experimentJob.includes("uses: actions/cache@v6") &&
-      experimentJob.includes("path: tests/experiment/.work/tools") &&
+    "the restore key names every input the built bytes depend on",
+    experimentJob.includes(
+      "hashFiles('packages/graph/src/provider/cpp/CPP_CLANG_PRODUCER_COMMIT.ts', 'tests/experiment/src/catalog.mjs', 'tests/experiment/src/setup-language.mjs')",
+    ) &&
+      // Saved on a miss and before the corpus run, so a correct build is not
+      // discarded because an unrelated later assertion went red.
       experimentJob.includes(
-        "hashFiles('packages/graph/src/provider/cpp/CPP_CLANG_PRODUCER_COMMIT.ts', 'tests/experiment/src/setup-language.mjs')",
+        "steps.clang_producer.outputs.cache-hit != 'true'",
       ) &&
-      experimentJob.includes(
-        "if: ${{ (matrix.language == 'c' || matrix.language == 'cpp')",
-      ),
+      experimentJob.indexOf("actions/cache/save") <
+        experimentJob.indexOf("Run LSP experiment"),
   );
   TestValidator.predicate(
     "the Rust experiment launches the exact binary provisioned by setup",

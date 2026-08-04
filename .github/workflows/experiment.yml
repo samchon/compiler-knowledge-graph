@@ -74,7 +74,19 @@ jobs:
     if: ${{ needs.latest_update.outputs.run == 'true' }}
     name: ${{ matrix.language }} LSP
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    # Fourteen rows install a released producer and finish in minutes; the
+    # ninety-minute bound is theirs and stays exactly where it is. C and C++
+    # build a compiler from source, and that is a property of the row rather
+    # than a defect inside it. The bound was first raised from forty-five on
+    # the theory that the build was serialized, which was the wrong reason and
+    # is why raising it did not work; the measurement is that the same 2,431 of
+    # 3,125 steps take 85.1 minutes at two jobs and 81.2 at four, because four
+    # vCPUs are two physical cores. Roughly 110 minutes is the floor, no job
+    # count moves it, and a cold build plus its corpus run needs more than
+    # ninety. The wider bound is granted only to the two rows that build, and
+    # only on the run that has to build: the cache above means the ordinary
+    # push restores the binary and never reaches it.
+    timeout-minutes: ${{ (matrix.language == 'c' || matrix.language == 'cpp') && 150 || 90 }}
     strategy:
       fail-fast: false
       matrix:
@@ -137,6 +149,20 @@ jobs:
       - name: Build package
         if: ${{ github.event_name != 'workflow_dispatch' || inputs.language == 'all' || inputs.language == matrix.language }}
         run: pnpm build
+
+      # C and C++ are the only rows whose producer is built rather than
+      # downloaded, and it is a pinned commit: the same bytes, reproduced from
+      # scratch, on every push. Restoring them instead is not a shortcut around
+      # the build but a removal of work that had no reason to happen twice. The
+      # key names the exact commit and the exact build recipe, so a producer
+      # bump or a recipe edit misses by construction, and `setup` re-checks the
+      # restored binary's own `--version` against the pin before using it.
+      - name: Restore the pinned Clang producer
+        if: ${{ (matrix.language == 'c' || matrix.language == 'cpp') && (github.event_name != 'workflow_dispatch' || inputs.language == 'all' || inputs.language == matrix.language) }}
+        uses: actions/cache@v6
+        with:
+          path: tests/experiment/.work/tools
+          key: clang-producer-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('packages/graph/src/provider/cpp/CPP_CLANG_PRODUCER_COMMIT.ts', 'tests/experiment/src/setup-language.mjs') }}
 
       - name: Install language server
         if: ${{ github.event_name != 'workflow_dispatch' || inputs.language == 'all' || inputs.language == matrix.language }}

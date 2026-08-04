@@ -20,6 +20,7 @@ import { GraphPaths } from "../internal/GraphPaths";
  * once instead of being counted per file.
  */
 const MAINTAINED: Record<string, number> = {
+  cache: 6,
   checkout: 7,
   "setup-go": 7,
   "setup-node": 7,
@@ -128,10 +129,24 @@ export const test_workflows_use_current_core_action_runtimes = () => {
     path.join(directory, "experiment.yml"),
     "utf8",
   );
-  // One hang boundary for every language. A per-language exception is how a
-  // budget stops being a boundary: the one lane that needed 90 minutes needed
-  // it because the provider had been serialized, so raising the budget was
-  // preserving the cause rather than bounding it.
+  // One boundary declaration for the whole matrix, and the exception set
+  // written into it rather than left to a reader.
+  //
+  // This originally refused any per-language exception, and the reason it gave
+  // was a cause: the lane that wanted more than ninety minutes wanted it
+  // because its provider had been serialized, so raising the budget preserved
+  // that cause instead of bounding it. Measurement retired the reason. The
+  // same 2,431 of 3,125 build steps take 85.1 minutes at two jobs and 81.2 at
+  // four, because the runner's four vCPUs are two physical cores; roughly 110
+  // minutes is the floor and no job count moves it. C and C++ build a compiler
+  // from source and the other fourteen rows install a released producer, so
+  // the difference is a property of those two rows and not a defect inside
+  // them.
+  //
+  // Asserted as the exact expression, which makes this stricter than the
+  // single number it replaces: the ninety-minute bound still governs every
+  // other row, and a third language cannot reach the wider one — or a fourth
+  // number appear — without editing this line and answering for it.
   //
   // Scoped to the matrix job, not to the file. Counting `timeout-minutes:`
   // lines across the whole workflow passes just as well when the only one has
@@ -144,9 +159,26 @@ export const test_workflows_use_current_core_action_runtimes = () => {
     .filter((line) => line.trim().startsWith("timeout-minutes:"))
     .map((line) => line.trim());
   TestValidator.equals(
-    "every real-tool language lane shares one hang boundary",
+    "one bound governs the matrix and only the compiler-building rows widen it",
     experimentTimeouts,
-    ["timeout-minutes: 90"],
+    [
+      "timeout-minutes: ${{ (matrix.language == 'c' || matrix.language == 'cpp') && 150 || 90 }}",
+    ],
+  );
+  // The wider bound is only defensible because the ordinary push never reaches
+  // it. Pin the restore that makes that true, including the key: a producer
+  // bump or a build-recipe edit has to miss the cache, or a stale binary would
+  // outlive the commit it was built from.
+  TestValidator.predicate(
+    "the built producer is restored by pinned commit rather than rebuilt",
+    experimentJob.includes("uses: actions/cache@v6") &&
+      experimentJob.includes("path: tests/experiment/.work/tools") &&
+      experimentJob.includes(
+        "hashFiles('packages/graph/src/provider/cpp/CPP_CLANG_PRODUCER_COMMIT.ts', 'tests/experiment/src/setup-language.mjs')",
+      ) &&
+      experimentJob.includes(
+        "if: ${{ (matrix.language == 'c' || matrix.language == 'cpp')",
+      ),
   );
   TestValidator.predicate(
     "the Rust experiment launches the exact binary provisioned by setup",

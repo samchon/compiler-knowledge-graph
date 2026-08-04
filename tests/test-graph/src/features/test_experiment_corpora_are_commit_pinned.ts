@@ -240,6 +240,28 @@ export const test_experiment_corpora_are_commit_pinned = () => {
       setup.includes("String(jobs),") &&
       !/"--parallel",\s*\n\s*"\d+"/u.test(setup),
   );
+  // A restored producer is untrusted input, and the whole point of restoring
+  // it is to skip the build that would otherwise have proved what it is. So
+  // reuse is admitted by the same evidence a fresh build must produce: both
+  // installed names report the pinned commit, and the resource headers the
+  // adapter resolves relative to the binary are present exactly once. Anything
+  // short of that — a missing file, an unreadable tree, an unexpected version,
+  // any thrown error — falls back to building, because reuse is an
+  // optimisation and may only be taken on complete evidence.
+  TestValidator.predicate(
+    "a restored native Clang producer is re-proved against the pin before reuse",
+    setup.includes("const installedClangGraphProducer = () =>") &&
+      setup.includes("if (installedClangGraphProducer()) return;") &&
+      cppSetup.includes("installClangGraphProducer()") &&
+      /installedClangGraphProducer[\s\S]*?String\(reported\.stdout\)\.includes\(\s*experiment\.producerCommit,?\s*\)/u.test(
+        setup,
+      ) &&
+      /installedClangGraphProducer[\s\S]*?"stddef\.h"/u.test(setup) &&
+      /installedClangGraphProducer[\s\S]*?versions\.length !== 1/u.test(setup) &&
+      /installedClangGraphProducer[\s\S]*?\} catch \{\s*\n\s*return false;/u.test(
+        setup,
+      ),
+  );
   // scip-python 0.6.6 recovers from a malformed `pyproject.toml`, falls back to
   // Pyright defaults and emits no SCIP diagnostics. On the pinned Click
   // fixture, the source and semantic fact planes stay unchanged. The aggregate

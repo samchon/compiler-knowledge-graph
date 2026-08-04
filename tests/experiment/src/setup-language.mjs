@@ -399,6 +399,61 @@ const installScipClang = () =>
       "06fd18c576f979a726c651594644ec4a35db4f471f2160b3f72eb89fa6001784",
   });
 
+/**
+ * Accept an already-installed pinned producer, or report that there is none.
+ *
+ * Deliberately total: any missing file, any unreadable resource tree, any
+ * version string that does not name the pinned commit, and any error at all
+ * means "build it". Reuse is an optimisation, so it may only ever be taken
+ * when the evidence for it is complete.
+ */
+const installedClangGraphProducer = () => {
+  try {
+    const installed = path.join(binRoot, "samchon-clangd");
+    const alias = path.join(binRoot, "clangd");
+    if (
+      !fs.statSync(installed, { throwIfNoEntry: false })?.isFile() ||
+      !fs.statSync(alias, { throwIfNoEntry: false })?.isFile()
+    ) {
+      return false;
+    }
+    const resources = path.join(toolsRoot, "lib", "clang");
+    const versions = fs
+      .readdirSync(resources, { withFileTypes: true })
+      .filter(
+        (entry) =>
+          entry.isDirectory() &&
+          fs
+            .statSync(path.join(resources, entry.name, "include", "stddef.h"), {
+              throwIfNoEntry: false,
+            })
+            ?.isFile(),
+      );
+    if (versions.length !== 1) return false;
+    for (const binary of [installed, alias]) {
+      const reported = run(binary, ["--version"], { stdio: "pipe" });
+      if (!String(reported.stdout).includes(experiment.producerCommit)) {
+        return false;
+      }
+    }
+  } catch {
+    return false;
+  }
+  record({
+    tool: "samchon-clangd",
+    version: experiment.producerCommit,
+    source: `${experiment.producerRepository}@${experiment.producerCommit}`,
+    digest: `git:${experiment.producerCommit}`,
+  });
+  record({
+    tool: "clangd",
+    version: experiment.producerCommit,
+    source: "alias of samchon-clangd",
+    digest: `git:${experiment.producerCommit}`,
+  });
+  return true;
+};
+
 const installClangGraphProducer = () => {
   if (
     typeof experiment.producerRepository !== "string" ||
@@ -408,6 +463,15 @@ const installClangGraphProducer = () => {
       `${experiment.language}: native Clang setup requires an exact producer repository and commit`,
     );
   }
+  // The producer is a pinned commit, so its binary is a pure function of that
+  // commit and this toolchain. Rebuilding it on every push was the actual
+  // waste: roughly two CPU-hours per workflow to reproduce bytes that cannot
+  // have changed. A restored install is therefore reused rather than rebuilt —
+  // but only after it says, itself, that it is the pinned producer. A cache is
+  // untrusted input, and the same `--version` check the fresh build has to
+  // pass is what admits a restored one, so a stale or foreign artifact fails
+  // closed here instead of quietly indexing a corpus with the wrong compiler.
+  if (installedClangGraphProducer()) return;
   const source = path.join(toolsRoot, "samchon-clangd-source");
   const build = path.join(source, "build");
   fs.rmSync(source, { force: true, recursive: true });
@@ -453,12 +517,15 @@ const installClangGraphProducer = () => {
     `-DLLVM_FORCE_VC_REVISION=${experiment.producerCommit}`,
     `-DLLVM_FORCE_VC_REPOSITORY=${experiment.producerRepository}`,
   ]);
-  // Build with the machine, not with a number. What was measured: a fixed `2`
-  // on a four-vCPU hosted runner reached step 2,431 of 3,125 in 85 minutes and
-  // was then killed at the job timeout. How much of the remaining gap width
-  // recovers is not measured and should not be written down as though it were;
-  // what is certain is only that half the runner sat idle for all 85 of those
-  // minutes.
+  // Build with the machine, not with a number — but do not expect that to be
+  // worth much here, because it was measured and it was not. The same 2,431 of
+  // 3,125 steps took 85.1 minutes at a fixed `2` and 81.2 minutes at the four
+  // the hosted runner advertises: a 4.8 percent gain for twice the job count.
+  // Four vCPUs are two physical cores behind SMT, and an LLVM compile
+  // saturates them well before the job count runs out. Sizing by the machine
+  // is still right — a constant that half-idles a wider machine is a defect
+  // wherever this runs — but on this runner it is not the constraint, and the
+  // build's roughly 110-minute floor is not something a job count moves.
   //
   // Capped by memory as well as by cores, because those are different limits
   // and only one of them is visible here. The cancelled run proves nothing

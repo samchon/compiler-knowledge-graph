@@ -237,15 +237,20 @@ export class RustGraphClient implements IBulkGraphSession {
             `rust HIR graph: producer did not become ready within ${String(this.readyTimeoutMs)} ms: ${error.message}`,
           );
         }
-        await delay(backoff, signal);
-        // Same backoff, same reason as the Clang client: a producer answering
-        // "not ready" is a producer doing the work that will make it ready,
-        // and a fixed short interval spends that producer's time on answering
-        // instead. This lane has never been the one to demonstrate it —
-        // rust-analyzer becomes ready quickly on the pinned corpus — but the
-        // loop is the same shape, so it should not be the one left to find out
-        // on a larger workspace.
-        backoff = Math.min(backoff * 2, MAX_RETRY_DELAY_MS);
+        await delay(
+          Math.min(backoff, Math.max(0, deadline - performance.now())),
+          signal,
+        );
+        // Same backoff, same clamp and same reset as the Clang client, for the
+        // same reasons written out there. This lane has never demonstrated the
+        // problem — rust-analyzer becomes ready quickly on the pinned corpus,
+        // and its row runs on the default timeout — but the loop is the same
+        // shape, so it should not be the one left to find out on a larger
+        // workspace.
+        backoff =
+          error.code === CONTENT_MODIFIED
+            ? RETRY_DELAY_MS
+            : Math.min(backoff * 2, MAX_RETRY_DELAY_MS);
       }
     }
   }

@@ -202,18 +202,37 @@ export class CppGraphClient implements IBulkGraphSession {
             `C/C++ clang graph: producer did not become ready within ${String(this.readyTimeoutMs)} ms: ${error.message}`,
           );
         }
-        await delay(backoff, signal);
-        // Backing off, because polling a producer that is busy becoming ready
-        // costs the producer more than it costs this loop. "Not ready" here
-        // means clangd is indexing the whole compilation database, and every
-        // retry asks that same busy process to assemble a paged snapshot
-        // again. At a flat 50 ms this issued roughly 5,400 requests over four
-        // and a half minutes and took the CI runner down with it, four times,
-        // always within seconds of the same offset — which is what a fixed
-        // interval looks like when the thing being polled is the thing under
-        // load. A short first wait keeps a producer that is ready-in-a-moment
-        // fast; the cap keeps a long index cheap.
-        backoff = Math.min(backoff * 2, MAX_RETRY_DELAY_MS);
+        // Clamped to what is left, so the wait cannot outlive the bound the
+        // error message quotes. Sleeping a flat cap from just before the
+        // deadline would overshoot it by up to that cap, which is a stated
+        // bound quietly widened — the thing this provider keeps having to
+        // correct elsewhere.
+        await delay(
+          Math.min(backoff, Math.max(0, deadline - performance.now())),
+          signal,
+        );
+        // Backing off, because polling twenty times a second for a condition
+        // that takes minutes is wrong on its own terms. Each retry is one
+        // round trip and one refusal — the producer rejects before assembling
+        // anything — but at a flat 50 ms that is still about 5,400 of them
+        // over four and a half minutes, aimed at a process that is indexing
+        // the whole compilation database.
+        //
+        // Four CI runs died there, the host reporting a shutdown 4m23s to
+        // 4m47s after indexing began, every one of them past the 180-second
+        // timeout that used to end the wait first. That the polling caused it
+        // is not established — this is a correlation and nothing here has
+        // measured the host — but it is the only thing this repository does at
+        // that cadence, and the change is cheap enough not to need the proof.
+        //
+        // Reset for content movement, which is a different condition: the
+        // inputs changed rather than the producer being busy, `notifyInputChanges`
+        // has already told it so, and an edit should not wait out a backoff
+        // that a previous slow index inflated.
+        backoff =
+          error.code === CONTENT_MODIFIED
+            ? RETRY_DELAY_MS
+            : Math.min(backoff * 2, MAX_RETRY_DELAY_MS);
       }
     }
   }

@@ -366,8 +366,13 @@ function targetShards(
  * Built across the whole target before any shard is adapted, because a call in
  * one compilation unit names a method declared in another and both endpoints
  * have to resolve to the same identity. A symbol declared twice inside one
- * target is a producer defect: javac attributes one declaration per symbol, so
- * two disagreeing records mean two compilations were folded into one target.
+ * target is a producer defect whether or not the two records agree: javac
+ * attributes one declaration per symbol, and publishing both would put the
+ * same node in two shards of one generation.
+ *
+ * Across targets it is ordinary. One source compiled into a main and a test
+ * source set is two declarations in two universes, which is exactly what
+ * target-scoped identity keeps apart.
  */
 function declaredNodes(
   root: string,
@@ -376,14 +381,12 @@ function declaredNodes(
   const declared = new Map<string, ISamchonGraphNode>();
   for (const shard of target.shards) {
     for (const node of shard.nodes) {
-      const adapted = adaptNode(root, target, node);
-      const prior = declared.get(node.symbol);
-      if (prior !== undefined && canonical(prior) !== canonical(adapted)) {
+      if (declared.has(node.symbol)) {
         throw new Error(
           `javac graph: symbol ${node.symbol} is declared twice in target ${target.name}`,
         );
       }
-      declared.set(node.symbol, adapted);
+      declared.set(node.symbol, adaptNode(root, target, node));
     }
   }
   return declared;
@@ -406,7 +409,10 @@ function sourceShard(
   for (const edge of shard.edges) {
     const from = endpoint(target, edge, edge.from, file, declared, externals);
     const to = endpoint(target, edge, edge.to, file, declared, externals);
-    const key = `${edge.kind}|${from}|${to}`;
+    // NUL-separated, the way every other edge key in this package is: a
+    // project-relative path is a legal endpoint here, and POSIX allows any
+    // byte but NUL in one.
+    const key = `${edge.kind}\0${from}\0${to}`;
     // The producer keys its own edges by evidence as well as by endpoints, so
     // one relationship written at two call sites arrives twice. The graph's
     // triple is unique and keeps the first source-order evidence, which the

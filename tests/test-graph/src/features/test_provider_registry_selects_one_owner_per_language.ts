@@ -516,12 +516,17 @@ async function assertSelection(): Promise<void> {
     owners.get("c"),
     owners.get("cpp"),
   );
+  // One launcher, two compiler plugins, two owners. They used to be one
+  // registry entry claiming both languages, which stopped being viable the
+  // moment a Java-only producer existed: a fallback owns the same atomic
+  // languages as the route it backs, so a strict Java route could only take
+  // the SCIP entry as its fallback by taking Kotlin's ownership with it.
   TestValidator.equals(
-    "only the JVM languages scip-java actually indexes share its universe",
+    "Java and Kotlin own their producers independently, and Scala neither",
     [owners.get("java"), owners.get("kotlin"), owners.get("scala")],
     [
-      ["scip-java"],
-      ["scip-java"],
+      ["javac-graph"],
+      ["scip-kotlinc"],
       undefined,
     ],
   );

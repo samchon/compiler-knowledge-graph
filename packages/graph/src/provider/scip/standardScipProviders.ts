@@ -111,21 +111,32 @@ const clangScipProvider = createScipProvider({
   ],
 });
 
-const jvmScipProvider = createScipProvider({
-  name: "scip-java",
-  // scip-java 0.13.1 sets enclosing ranges in both the javac and kotlinc
-  // producers and enclosing_symbol for javac locals, but no producer sets a
-  // type-definition relationship.
+/**
+ * The scip-java lanes, split so Java and Kotlin can move independently.
+ *
+ * One launcher drives two compiler plugins, and until now one registry entry
+ * claimed both languages. That was accurate while nothing beat it, and it stops
+ * being viable the moment a Java-only producer exists: a fallback must own the
+ * same atomic languages as the route it backs, so a Java strict route could
+ * only take this entry as its fallback by taking Kotlin's ownership with it.
+ *
+ * The names follow the producers rather than the launcher. `scip-java`'s javac
+ * plugin makes the Java facts and keeps the name; the Kotlin facts come from
+ * the kotlinc plugin the same launcher ships, and naming that lane for it is
+ * what lets the row state a Kotlin compiler version once the producer reports
+ * one. Today it reports none, which is why the field is empty rather than
+ * filled with the JVM that launched the tool.
+ */
+const jvmScipProps: Omit<
+  IStandardScipProvider,
+  "name" | "languages" | "compilerVersion"
+> = {
   omitFacts: ["type_ref"],
   toolchain: {
     label: "java",
     aliases: ["java"],
     override: "SAMCHON_GRAPH_JAVA_TOOLCHAIN",
   },
-  // Upstream calls this a Java and Kotlin indexer and ships only javac and
-  // kotlinc producers. Claiming Scala made an installed scip-java displace the
-  // Scala language-server lane with a tool that cannot index the language.
-  languages: ["java", "kotlin"],
   command: "scip-java",
   override: "SAMCHON_GRAPH_SCIP_JAVA",
   buildFiles: [
@@ -159,14 +170,30 @@ const jvmScipProvider = createScipProvider({
   // default command; choosing by the root is therefore part of the provider
   // contract rather than a fixture-specific Gradle property change.
   indexArgs: jvmScipIndexArgs,
-  // Java is both the runtime that launches scip-java and the compiler for a
-  // Java-only slice. It is not Kotlin's compiler. Until the producer exposes
-  // the Kotlin compiler revision it drove, a Kotlin-containing slice leaves
-  // the compiler field empty instead of misnaming the JVM.
-  compilerVersion: (languages, configuration) =>
-    languages.includes("kotlin")
-      ? ""
-      : standardCompilerVersion("scip-java", configuration),
+};
+
+const javaScipProvider = createScipProvider({
+  ...jvmScipProps,
+  name: "scip-java",
+  // Upstream calls this a Java and Kotlin indexer and ships only javac and
+  // kotlinc producers. Claiming Scala made an installed scip-java displace the
+  // Scala language-server lane with a tool that cannot index the language.
+  languages: ["java"],
+  // Java is both the runtime that launches scip-java and the compiler for the
+  // slice this entry owns, so the JVM's version is the right answer here and
+  // only here.
+  compilerVersion: (_languages, configuration) =>
+    standardCompilerVersion("scip-java", configuration),
+});
+
+const kotlinScipProvider = createScipProvider({
+  ...jvmScipProps,
+  name: "scip-kotlinc",
+  languages: ["kotlin"],
+  // The launcher is a JVM program and the JVM is not Kotlin's compiler. Until
+  // the producer exposes the kotlinc revision it drove, this row leaves the
+  // compiler field empty instead of misnaming the runtime that started it.
+  compilerVersion: () => "",
 });
 
 function jvmScipIndexArgs(artifact: string, root: string): string[] {
@@ -377,7 +404,8 @@ const phpScipProvider = createScipProvider({
 /** Standard SCIP producers in deterministic registry order. */
 export const standardScipProviders: readonly IGraphProvider[] = [
   clangScipProvider,
-  jvmScipProvider,
+  javaScipProvider,
+  kotlinScipProvider,
   dotnetScipProvider,
   pythonScipProvider,
   rubyScipProvider,

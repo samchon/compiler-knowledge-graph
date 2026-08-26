@@ -72,7 +72,7 @@ export const test_experiment_corpora_are_commit_pinned = () => {
   );
   TestValidator.predicate(
     "the remaining SCIP providers use isolated upstream lifecycle projects",
-    [java, kotlin, ruby, php, dart].every(
+    [kotlin, ruby, php, dart].every(
       (row) =>
         row.includes("projectRoot:") &&
         row.includes('strictAuthority: "semantic-index"') &&
@@ -146,12 +146,21 @@ export const test_experiment_corpora_are_commit_pinned = () => {
       php.includes('renamedSymbol: "SamchonGraphExperimentRenamed"') &&
       lifecycle.includes("fixture.renamedSymbol ?? fixture.createdSymbol"),
   );
+  // A pinned fixture of two empty classes carries no relationship at all, so
+  // the row's cross-file claim is proved by the transition that creates one.
+  // The created edge therefore has to be the family the row declares, not
+  // merely some family: an edge kind that no longer matched would leave the
+  // claim asserted and never exercised.
   TestValidator.predicate(
     "isolated lifecycle edges can prove a pinned corpus relationship claim",
-    [java, kotlin].every(
-      (row) =>
-        row.includes('kind: "references"') &&
-        row.includes("crossFile: true"),
+    [
+      [java, "instantiates"],
+      [kotlin, "references"],
+    ].every(
+      ([row, kind]) =>
+        row!.includes(`crossFileEdge: "${kind}"`) &&
+        row!.includes(`kind: "${kind}"`) &&
+        row!.includes("crossFile: true"),
     ) &&
       lifecycle.includes("fixture.createdEdge.crossFile !== true") &&
       runner.includes("const lifecycleCreatedEdge") &&

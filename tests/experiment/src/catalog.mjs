@@ -304,15 +304,32 @@ export const LANGUAGE_EXPERIMENTS = [
     // Conformance repeats a full compiler build for every lifecycle transition.
     // Use scip-java's own pinned Maven fixture for that contract; Gson remains
     // the separate large-corpus timing proof.
-    repository: "https://github.com/scip-code/scip-java.git",
-    commit: "a609ba1adaf630292df5a73ec4ba06c170caba93",
+    repository: "https://github.com/samchon/scip-java.git",
+    commit: "32eca214a413d1b8a375c481f666ff8a4ec96773",
     projectRoot: "scip-java/src/test/resources/fixtures/maven/basic",
-    strictProvider: "scip-java",
-    strictAuthority: "semantic-index",
+    // The producer and the corpus are one checkout on purpose. The fixture is
+    // the producer's own Maven project, so a pin that named a different
+    // revision for each would measure a plugin against a build it was never
+    // tested with.
+    producerRepository: "https://github.com/samchon/scip-java.git",
+    producerCommit: "32eca214a413d1b8a375c481f666ff8a4ec96773",
+    strictProvider: "javac-graph",
+    strictAuthority: "compiler",
     strictTool: "scip-java",
-    requiredCapabilities: ["universe", "diskDigests"],
-    semanticEdges: ["references"],
-    crossFileEdge: "references",
+    requiredCapabilities: [
+      "coverage",
+      "diskDigests",
+      "incremental",
+      "sourceDigests",
+      "universe",
+      "unresolved",
+    ],
+    // The pinned fixture is two empty classes, so containment is the only
+    // family its cold generation can truthfully carry. The lifecycle below
+    // creates the one cross-file relationship this row proves, and the runner
+    // counts that transition rather than pre-editing the pinned baseline.
+    semanticEdges: ["contains", "instantiates"],
+    crossFileEdge: "instantiates",
     lifecycle: {
       sourceFile: "src/main/java/com/Example.java",
       editSuffix: "\n// samchon-graph lifecycle edit\n",
@@ -324,8 +341,12 @@ export const LANGUAGE_EXPERIMENTS = [
       renamedText:
         "package com;\n\npublic final class SamchonGraphExperimentRenamed {\n    public static Example samchonGraphExperiment() {\n        return new Example();\n    }\n}\n",
       createdSymbol: "samchonGraphExperiment",
+      // `new Example()` resolves to two facts javac owns: a call of the
+      // constructor and an instantiation of the class. The class is the
+      // endpoint declared in another file, so it is the one that proves the
+      // route crosses a compilation unit.
       createdEdge: {
-        kind: "references",
+        kind: "instantiates",
         from: "samchonGraphExperiment",
         to: "Example",
         crossFile: true,
@@ -395,7 +416,7 @@ export const LANGUAGE_EXPERIMENTS = [
     commit: "e940c1889767a81347387067a375320dc6f5d83e",
     projectRoot:
       "scip-java/src/test/resources/fixtures/gradle/kotlin2",
-    strictProvider: "scip-java",
+    strictProvider: "scip-kotlinc",
     strictAuthority: "semantic-index",
     strictTool: "scip-java",
     requiredCapabilities: ["universe", "diskDigests"],

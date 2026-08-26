@@ -8,6 +8,7 @@ import {
   RUST_GRAPH_PRODUCER_COMMIT,
   CPP_CLANG_PRODUCER_COMMIT,
   cppGraphProvider,
+  javaGraphProvider,
   goGraphProvider,
   luaGraphProvider,
   rustGraphProvider,
@@ -929,8 +930,13 @@ function assertFixtureRegistryCoverage(): void {
     luaGraphProvider,
     rustGraphProvider,
     cppGraphProvider,
+    javaGraphProvider,
+    // The two SCIP entries a strict route owns as its fallback tier. They are
+    // exercised by the loop above, but the registry does not list them as
+    // owners, so the ledger must not either.
     ...standardScipProviders.filter(
-      (provider) => provider.name !== "scip-clang",
+      (provider) =>
+        provider.name !== "scip-clang" && provider.name !== "scip-java",
     ),
     ...standardSidecarProviders,
   ]
@@ -1503,8 +1509,18 @@ function emptyPath(): NodeJS.ProcessEnv {
  * row it emits is labelled after the command rather than the provider — and a
  * test that assumed the two were the same name was asserting a coincidence.
  */
+/**
+ * The executable a registry entry actually runs.
+ *
+ * Two entries do not run a program named after themselves: `scip-dart` invokes
+ * pub's `scip_dart`, and the Kotlin lane is a plugin inside the same
+ * `scip-java` launcher the Java lane uses. The configuration row names the
+ * command, so the fixture has to as well.
+ */
 function producerOf(provider: string): string {
-  return provider === "scip-dart" ? "scip_dart" : provider;
+  if (provider === "scip-dart") return "scip_dart";
+  if (provider === "scip-kotlinc") return "scip-java";
+  return provider;
 }
 
 function producerRowOf(provider: string): string {
@@ -1515,6 +1531,7 @@ function toolchainRowsOf(provider: string): string[] {
   const toolchains: Record<string, readonly string[]> = {
     "scip-clang": ["cc", "clang"],
     "scip-java": ["java"],
+    "scip-kotlinc": ["java"],
     "scip-dotnet": ["dotnet"],
     "scip-python": ["python3"],
     "scip-ruby": ["ruby"],
@@ -1529,8 +1546,10 @@ function toolchainRowsOf(provider: string): string[] {
 }
 
 function expectedCompilerVersion(provider: IGraphProvider): string {
-  return provider.name === "scip-java" &&
-    provider.languages.includes("kotlin")
+  // The launcher is a JVM program and the JVM is not Kotlin's compiler, so the
+  // Kotlin lane publishes no compiler row rather than the runtime that started
+  // it. The Java lane's launcher and compiler genuinely are the same JVM.
+  return provider.name === "scip-kotlinc"
     ? ""
     : toolchainRowsOf(provider.name).join("; ");
 }

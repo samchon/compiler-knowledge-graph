@@ -338,22 +338,22 @@ const installScipJava = () =>
 const SCIP_JAVA_KOTLIN_COMMIT =
   "e940c1889767a81347387067a375320dc6f5d83e";
 const SCIP_JAVA_KOTLIN_VERSION = "2.3.20";
-const installScipJavaKotlinSnapshot = async (gradle) => {
-  const url =
-    `https://codeload.github.com/scip-code/scip-java/tar.gz/${SCIP_JAVA_KOTLIN_COMMIT}`;
-  const archive = path.join(
-    toolsRoot,
-    `scip-java-${SCIP_JAVA_KOTLIN_COMMIT}.tar.gz`,
-  );
-  const source = path.join(
-    toolsRoot,
-    `scip-java-${SCIP_JAVA_KOTLIN_COMMIT}`,
-  );
+
+/**
+ * Build one exact `scip-java` source revision and install its launcher.
+ *
+ * Two rows need this and they need different revisions: Kotlin needs the
+ * upstream commit that completed the 2.3.20 plugin port, and Java needs the
+ * fork whose `index` command writes a graph artifact at all. The revision, its
+ * archive digest and the version string a run records are therefore arguments
+ * rather than constants — one builder, two pins, and no local patch on either.
+ */
+const installScipJavaSource = async (gradle, pin) => {
+  const url = `https://codeload.github.com/${pin.repository}/tar.gz/${pin.commit}`;
+  const archive = path.join(toolsRoot, `scip-java-${pin.commit}.tar.gz`);
+  const source = path.join(toolsRoot, `scip-java-${pin.commit}`);
   await downloadFile(url, archive);
-  verifySha256(
-    archive,
-    "985eb03ef165864dbae3db4453d4566e699f78761bace3e4614bf67d38ce76cf",
-  );
+  verifySha256(archive, pin.digest);
   fs.rmSync(source, { force: true, recursive: true });
   ensureDir(source);
   run(
@@ -380,12 +380,61 @@ const installScipJavaKotlinSnapshot = async (gradle) => {
   run(link, ["--version"]);
   record({
     tool: "scip-java",
-    version:
-      `${SCIP_JAVA_KOTLIN_COMMIT}+kotlin-${SCIP_JAVA_KOTLIN_VERSION}`,
+    version: pin.version,
     source: url,
-    digest:
-      "sha256:985eb03ef165864dbae3db4453d4566e699f78761bace3e4614bf67d38ce76cf",
+    digest: `sha256:${pin.digest}`,
   });
+  return link;
+};
+
+const installScipJavaKotlinSnapshot = (gradle) =>
+  installScipJavaSource(gradle, {
+    repository: "scip-code/scip-java",
+    commit: SCIP_JAVA_KOTLIN_COMMIT,
+    version: `${SCIP_JAVA_KOTLIN_COMMIT}+kotlin-${SCIP_JAVA_KOTLIN_VERSION}`,
+    digest:
+      "985eb03ef165864dbae3db4453d4566e699f78761bace3e4614bf67d38ce76cf",
+  });
+
+/**
+ * The javac graph producer, built from the exact fork revision the consumer
+ * pins.
+ *
+ * No released `scip-java` carries `--graph-output`, and the strict route
+ * declines a launcher that does not publish it — so a released install here
+ * would prove the decline rather than the route. The catalog names the exact
+ * revision so the corpus fixture and the plugin indexing it come from one
+ * checkout, and the launcher is then asked, as a condition of installation,
+ * to show the option this row exists to exercise.
+ */
+const installJavacGraphProducer = async (gradle) => {
+  if (
+    typeof experiment.producerRepository !== "string" ||
+    typeof experiment.producerCommit !== "string"
+  ) {
+    throw new Error(
+      "java: the javac graph setup requires an exact producer repository and commit",
+    );
+  }
+  const repository = experiment.producerRepository
+    .replace(/^https:\/\/github\.com\//u, "")
+    .replace(/\.git$/u, "");
+  const link = await installScipJavaSource(gradle, {
+    repository,
+    commit: experiment.producerCommit,
+    version: experiment.producerCommit,
+    digest:
+      "3ef45fedc5ad60ca6af0200a9b3fe7e978eadc8df63dda0a9dcba677f50b1417",
+  });
+  const help = String(
+    run(link, ["index", "--help"], { stdio: "pipe" }).stdout,
+  );
+  if (!help.includes("--graph-output")) {
+    throw new Error(
+      `java: the installed scip-java does not publish --graph-output:
+${help}`,
+    );
+  }
 };
 
 // Needs a compilation database, which is why the provider carries
@@ -936,8 +985,13 @@ switch (experiment.language) {
         "https://download.eclipse.org/jdtls/snapshots/jdt-language-server-latest.tar.gz",
       digest: "unpinned",
     });
+    // The generic JDT lane still gets the released launcher's SCIP fallback,
+    // and the strict lane gets the fork that writes a graph. Both resolve the
+    // same command name, so the source build is installed last and is the one
+    // a run resolves.
     await installScipJava();
     await installScip();
+    await installJavacGraphProducer(await installGradle());
     break;
   }
   case "csharp": {

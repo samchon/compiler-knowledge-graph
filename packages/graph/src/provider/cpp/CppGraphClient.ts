@@ -185,6 +185,7 @@ export class CppGraphClient implements IBulkGraphSession {
   ): Promise<ICppGraphSnapshot> {
     const deadline = performance.now() + this.readyTimeoutMs;
     let backoff = RETRY_DELAY_MS;
+    let waiting: string | undefined;
     for (;;) {
       throwIfAborted(signal);
       try {
@@ -197,6 +198,24 @@ export class CppGraphClient implements IBulkGraphSession {
           throw error;
         }
         if (error.code === CONTENT_MODIFIED) this.notifyInputChanges();
+        // Say what is being waited on, once per distinct answer.
+        //
+        // The producer refuses until every translation unit the compilation
+        // database registers has been indexed, and its refusal names how many
+        // are left. That number is the only thing that distinguishes a wait
+        // from a hang, and three separate CI hosts have now died during one of
+        // these waits with nothing in the log but a memory sample every ten
+        // seconds — so a reader cannot tell whether the collapse happened
+        // while units were still counting down or after the last one landed
+        // and the snapshot began to assemble. Those are different defects in
+        // different places. One line per change is enough to tell them apart,
+        // and it follows the same convention as the selection lines above it.
+        if (error.message !== waiting) {
+          waiting = error.message;
+          process.stderr.write(
+            `@samchon/graph: c, cpp: waiting for the clang graph producer: ${waiting}\n`,
+          );
+        }
         if (performance.now() >= deadline) {
           throw new Error(
             `C/C++ clang graph: producer did not become ready within ${String(this.readyTimeoutMs)} ms: ${error.message}`,

@@ -313,9 +313,11 @@ function compilerVersionOf(raw: IJavaGraphSnapshot): string {
  * One identity for a generation the producer committed per target.
  *
  * A build with two targets has two committed generations and no single one of
- * them identifies the pair, so this composes them. Length-prefixed, because a
- * target named `a` with generation `bc` and one named `ab` with generation `c`
- * are different builds and a plain concatenation cannot tell them apart.
+ * them identifies the pair, so this composes them. Through the canonical
+ * encoding rather than by concatenation: it quotes and escapes every string
+ * and keeps the array structure, so a target named `a` with generation `bc`
+ * and one named `ab` with generation `c` cannot collapse onto each other the
+ * way a joined string would.
  */
 function generationOf(raw: IJavaGraphSnapshot): string {
   return digest(

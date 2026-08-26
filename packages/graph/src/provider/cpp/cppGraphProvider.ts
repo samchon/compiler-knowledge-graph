@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 import { spawnableCommand } from "../../utils/spawnableCommand";
@@ -66,25 +67,37 @@ export const cppGraphProvider: IGraphProvider = {
     // possible at all: the producer is ready when every translation unit the
     // database registers has been indexed, and nothing else starts that work.
     //
-    // No `-j`. This provider carried one, derived from installed memory at
-    // eight GiB per worker, on the theory that concurrent translation units
-    // were what exhausted a 16 GiB CI host. They were not. The producer copied
-    // each completed translation unit and serialized it to JSON to derive a
-    // body digest — a second pass over every occurrence in the unit, on top of
-    // the serialization that already writes the shard. That is why one worker
-    // still took a 16 GiB host from 5,831 MiB free to 209 MiB on C++, and why
-    // plain C spent ten minutes with 53 units left to index while twelve GiB
-    // sat free: the clamp cost the C lane half its width and bought the C++
-    // lane nothing, because worker count was never the term that grew.
+    // The width is a measurement, and this is its second reading. At two
+    // workers under the previous producer, plain C held a 16 GiB host at
+    // twelve GiB free for ten minutes and never became ready — the producer
+    // was copying each finished translation unit and serializing it to JSON to
+    // derive a body digest, which starved indexing. The pinned producer
+    // derives that identity from fields it already holds, so this cost is
+    // gone; removing the width bound with it moved two things at once, and the
+    // lane then held ten GiB free for five minutes and collapsed to 174 MiB in
+    // a single thirty-second step, taking the runner agent with it.
     //
-    // The pinned producer derives that identity from the fields it already
-    // holds instead, so the term is gone rather than divided. Width belongs to
-    // the producer, which knows what one unit costs it; this provider states
-    // the pin and lets clangd size itself, and a memory bound here would need
-    // a measurement of the fixed producer that nobody has yet taken.
+    // So one variable moves this time. The width returns to exactly the figure
+    // that was alive under the old producer, against the new one, and the
+    // prediction is explicit: if the per-unit serialization was what made two
+    // workers too slow, two workers now become ready — and if the host still
+    // collapses at two, worker count is not the term that grows and the answer
+    // is in the producer's snapshot assembly rather than here.
+    //
+    // Eight GiB per worker is this repository's figure, chosen against the
+    // first host trace and not quoted from clangd: sixteen was not enough at
+    // four, so the rule has to land below two there rather than shave a worker
+    // off and call it sized.
+    const workers = Math.max(
+      1,
+      Math.min(
+        os.availableParallelism(),
+        Math.floor(os.totalmem() / (8 * 1024 * 1024 * 1024)),
+      ),
+    );
     const command = spawnableCommand.append(
       { ...props.command, args: [...props.command.args] },
-      ["--background-index"],
+      ["--background-index", `-j=${String(workers)}`],
     );
     return new CppGraphClient({
       root: props.root,

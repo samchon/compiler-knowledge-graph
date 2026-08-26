@@ -435,11 +435,12 @@ export const test_experiment_corpora_are_commit_pinned = () => {
     catalogRows.map((row) => `${named(row)}: 1`),
   );
 
-  // A strict row's verdict is a claim about one producer build. Lua's used to
-  // take whichever LuaLS release was latest that hour, and that is how the
-  // lane went red with no commit behind it: every run through 3.19.0 passed,
-  // upstream published 3.19.1, and the next run reported that a malformed
-  // build input no longer moved anything the row could observe. The remaining
+  // A strict row's verdict is a claim about one producer build, and lua's used
+  // to take whichever LuaLS release was latest that hour. That was proposed as
+  // the reason its lane went red and turned out not to be — the lane fails on
+  // 3.19.0, the release every green run used — so the pin removes a variable
+  // rather than fixing a defect. It is still the shape a strict row needs: one
+  // that cannot say which build it measured cannot be debugged. The remaining
   // `latestAsset` downloads are generic fallback servers, whose rows assert
   // counts rather than a producer's exact publication behaviour.
   TestValidator.equals(

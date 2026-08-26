@@ -367,8 +367,22 @@ export const runStrictLifecycle = async (experiment, pinnedRoot) => {
         experiment.strictProvider,
       );
       if (changed.length === 0) {
+        // Say what was compared, not only that it matched. A row claiming a
+        // degraded publication is claiming the producer behaves a particular
+        // way when its configuration breaks, and a bare refusal leaves the
+        // next reader unable to tell an untrue claim from a producer that
+        // stopped behaving that way — which is two runs of guessing before
+        // anyone learns which counts stayed equal.
         throw new Error(
-          `${experiment.language}: the catalog records a degraded publication, but only the declared build input changed`,
+          `${experiment.language}: the catalog records a degraded publication, but only the declared build input changed: ` +
+            [
+              `manifest ${prior.manifest === provenance.manifest ? "equal" : "moved"}`,
+              `content ${prior.content === provenance.content ? "equal" : "moved"}`,
+              ...["nodes", "edges", "coverage", "unresolved", "diagnostics"].map(
+                (plane) =>
+                  `${plane} ${(priorDump[plane] ?? []).length}/${(published[plane] ?? []).length}`,
+              ),
+            ].join("; "),
         );
       }
       dump = published;

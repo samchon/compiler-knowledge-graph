@@ -309,8 +309,21 @@ const callerShard = (target) =>
         targetQualifiedName: "java.lang.Object.toString",
         evidence: evidence("src/main/java/com/Caller.java", 5, 9, 5, 19),
       },
-      // An external endpoint the producer could not name at all. Its symbol is
-      // the only thing there is to display it by.
+      // The same endpoint reached from two sites, one of which could name it
+      // and one of which could not. The description that says something wins
+      // whichever order they arrive in — which is what javac does with a
+      // reference it attributes at one site and not another.
+      {
+        from: "semanticdb maven . . com/Caller#",
+        to: "semanticdb maven . . java/lang/Deprecated#",
+        kind: "type_ref",
+        access: null,
+        provenance: null,
+        targetKind: "interface",
+        targetName: "Deprecated",
+        targetQualifiedName: "java.lang.Deprecated",
+        evidence: evidence("src/main/java/com/Caller.java", 2, 1, 2, 12),
+      },
       {
         from: "semanticdb maven . . com/Caller#make().",
         to: "semanticdb maven . . java/lang/Deprecated#",
@@ -321,6 +334,22 @@ const callerShard = (target) =>
         targetName: null,
         targetQualifiedName: null,
         evidence: evidence("src/main/java/com/Caller.java", 3, 1, 3, 12),
+      },
+      // An edge whose *origin* the target does not declare. javac takes the
+      // enclosing symbol of a reference site, and inside an anonymous class
+      // body that owner is a symbol no compilation unit here declares; the
+      // producer names what an edge points at, never where it came from, so
+      // this endpoint has only its own symbol to be displayed by.
+      {
+        from: "semanticdb maven . . com/Caller#make().$anon1#run().",
+        to: "semanticdb maven . . com/Example#",
+        kind: "calls",
+        access: null,
+        provenance: null,
+        targetKind: "class",
+        targetName: "Example",
+        targetQualifiedName: "com.Example",
+        evidence: evidence("src/main/java/com/Caller.java", 4, 20, 4, 27),
       },
     ],
     unresolved:
@@ -411,6 +440,18 @@ const artifact = {
 // An edge with nothing on one end. A symbol the target does not declare is an
 // ordinary external endpoint and becomes a node; an empty string is not an
 // endpoint at all, and no reader can be told which declaration it meant.
+// One symbol described two ways by two sites that both claim to know. Not the
+// same as one site knowing and another not: this is a contradiction, and
+// picking either would publish a name the compiler never gave it.
+if (flag("two-named-externals")) {
+  const shard = artifact.targets[0].shards.find((entry) => entry.edges.length > 3);
+  const named = shard.edges.filter(
+    (edge) => edge.targetQualifiedName === "java.lang.Object.toString",
+  );
+  named[1].targetName = "hashCode";
+  named[1].targetQualifiedName = "java.lang.Object.hashCode";
+}
+
 if (flag("empty-endpoint")) {
   artifact.targets[0].shards[0].edges[0].to = "";
 }

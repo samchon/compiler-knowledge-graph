@@ -1137,11 +1137,14 @@ switch (experiment.language) {
 
   case "lua": {
     // Pinned, because this row's acceptance is a claim about one build's
-    // behaviour. It used to take whichever release was latest that hour, and
-    // that is exactly how it went red without a commit: every run through
-    // 3.19.0 passed, LuaLS published 3.19.1, and the next run reported that a
-    // malformed build input no longer changed anything the lane could observe
-    // besides the input itself. Nothing in this repository had moved.
+    // behaviour and it used to take whichever release was latest that hour.
+    //
+    // The pin was proposed as the cause of a red lane and is not: 3.19.0 is
+    // the release every green run used, and the lane fails on it too. So this
+    // removes a variable rather than fixing a defect, which is worth doing on
+    // its own terms — a row that cannot say which build it measured cannot be
+    // debugged — but the degraded-publication claim above it is still
+    // unexplained, and the refusal now prints what it compared.
     //
     // Moving this pin is a deliberate act with its own evidence. The two other
     // `latestAsset` downloads stay latest on purpose: they provision generic

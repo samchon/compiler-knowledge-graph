@@ -155,7 +155,29 @@ export const test_javac_graph_publishes_atomic_target_generations =
       TestValidator.equals(
         "a symbol reached twice from outside is still one external node",
         external.length,
-        2,
+        3,
+      );
+      // An edge can also originate outside the compilation, and the producer
+      // names what an edge points at rather than where it came from. Such an
+      // endpoint has only its own symbol to be displayed by, which is a
+      // display and not a name the compiler gave it.
+      TestValidator.predicate(
+        "an endpoint the producer never named displays its own symbol",
+        external.some(
+          (node) =>
+            node.qualifiedName === undefined &&
+            node.name.endsWith("$anon1#run()."),
+        ),
+      );
+      // The producer named this one at a `type_ref` site and named nothing at
+      // the `decorates` site that reached it first. The description that says
+      // something wins, and it wins regardless of which shard was adapted
+      // first, because the endpoint set is settled before any shard is built.
+      TestValidator.predicate(
+        "a site that names an endpoint outranks one that cannot",
+        external.some(
+          (node) => node.qualifiedName === "java.lang.Deprecated",
+        ),
       );
       TestValidator.predicate(
         "the external node keeps the producer's naming",
@@ -165,14 +187,6 @@ export const test_javac_graph_publishes_atomic_target_generations =
       );
       // A producer that could not name the endpoint leaves the symbol as the
       // only thing there is to display it by, rather than inventing one.
-      TestValidator.predicate(
-        "an unnamed external endpoint displays its own symbol",
-        external.some(
-          (node) =>
-            node.qualifiedName === undefined &&
-            node.name === "semanticdb maven . . java/lang/Deprecated#",
-        ),
-      );
       TestValidator.predicate(
         "an external symbol carries no file it does not have",
         external.every(
@@ -334,6 +348,9 @@ export const test_javac_graph_publishes_atomic_target_generations =
     ]);
     await refuses("an edge with nothing on one end", [
       "--fake-empty-endpoint",
+    ]);
+    await refuses("one external symbol named two ways", [
+      "--fake-two-named-externals",
     ]);
     await refuses("an edge of an unregistered family", [
       "--fake-unclaimed-family",

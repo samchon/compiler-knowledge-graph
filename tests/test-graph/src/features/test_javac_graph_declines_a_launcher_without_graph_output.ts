@@ -159,22 +159,43 @@ export const test_javac_graph_declines_a_launcher_without_graph_output =
     if (command === undefined) {
       throw new Error("javac-graph: the fixture launcher did not resolve");
     }
-    const session = javaGraphProvider.open({
-      root,
-      command,
-      languages: ["java"],
-      options: { cwd: root },
-    });
+    // A session reads the environment from the process, not from the object
+    // its provider was resolved with — every registry entry does, because a
+    // session outlives the selection that opened it. The fixture therefore has
+    // to put its toolchain where the session will look, or the row it derives
+    // depends on whatever JDK the host happens to have.
+    const previous = new Map<string, string | undefined>();
+    for (const key of [
+      "SAMCHON_GRAPH_JAVAC_GRAPH",
+      "SAMCHON_GRAPH_JAVA_TOOLCHAIN",
+    ]) {
+      previous.set(key, process.env[key]);
+      process.env[key] = environment[key];
+    }
     try {
-      const generation = await session.refresh();
-      TestValidator.predicate(
-        "the registered route publishes its own compiler-owned generation",
-        generation.mode === "initial" &&
-          generation.snapshot.provenance.provider === JAVA_GRAPH_PROVIDER &&
-          generation.snapshot.provenance.authority === "compiler" &&
-          generation.snapshot.protocol !== undefined,
-      );
+      const session = javaGraphProvider.open({
+        root,
+        command,
+        languages: ["java"],
+        options: { cwd: root },
+      });
+      try {
+        const generation = await session.refresh();
+        TestValidator.predicate(
+          "the registered route publishes its own compiler-owned generation",
+          generation.mode === "initial" &&
+            generation.snapshot.provenance.provider === JAVA_GRAPH_PROVIDER &&
+            generation.snapshot.provenance.authority === "compiler" &&
+            generation.snapshot.provenance.compilerVersion === "21.0.5" &&
+            generation.snapshot.protocol !== undefined,
+        );
+      } finally {
+        await session.close();
+      }
     } finally {
-      await session.close();
+      for (const [key, value] of previous) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
     }
   };

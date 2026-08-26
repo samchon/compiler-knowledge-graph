@@ -341,7 +341,7 @@ function targetShards(
   universe: string,
 ): GraphSnapshotProtocol.IShard[] {
   const declared = declaredNodes(root, target);
-  const externals = new Map<string, ISamchonGraphNode>();
+  const externals = externalNodes(target, declared);
   const shards: GraphSnapshotProtocol.IShard[] = [];
   const located = new Set<GraphEdgeKind>();
   for (const shard of target.shards) {
@@ -397,7 +397,7 @@ function sourceShard(
   target: IJavaGraphSnapshot.ITarget,
   shard: IJavaGraphSnapshot.IShard,
   declared: ReadonlyMap<string, ISamchonGraphNode>,
-  externals: Map<string, ISamchonGraphNode>,
+  externals: ReadonlyMap<string, ISamchonGraphNode>,
   universe: string,
 ): GraphSnapshotProtocol.IShard {
   const file = graphFile(root, shard.source);
@@ -407,8 +407,8 @@ function sourceShard(
   const edges: ISamchonGraphEdge[] = [];
   const seen = new Set<string>();
   for (const edge of shard.edges) {
-    const from = endpoint(target, edge, edge.from, file, declared, externals);
-    const to = endpoint(target, edge, edge.to, file, declared, externals);
+    const from = endpoint(edge.from, file, declared, externals);
+    const to = endpoint(edge.to, file, declared, externals);
     // NUL-separated, the way every other edge key in this package is: a
     // project-relative path is a legal endpoint here, and POSIX allows any
     // byte but NUL in one.
@@ -534,67 +534,121 @@ function metadataShard(
 }
 
 /**
- * Resolve one producer endpoint to a graph identity.
+ * Every endpoint the target reaches but does not declare, as one node each.
  *
- * Three shapes reach here. The compilation unit's own path is what `contains`
- * and `exports` hang off, and it stays a file coordinate rather than becoming
- * a synthesized node: the same file compiled into two targets would otherwise
- * need two file nodes with one id. A symbol the target declares resolves to
- * that declaration. Anything else is outside this compilation — a JDK class, a
- * dependency, a type from a target that is not in this artifact — and becomes
- * one external endpoint scoped to the target that referenced it.
+ * Collected across the whole target before any shard is built, because the
+ * producer describes an endpoint at the site that reached it and the sites do
+ * not all know the same amount. A reference javac could attribute carries the
+ * element kind and both names; one it could not carries three nulls for the
+ * same symbol. Resolving that per site would give one symbol two identities
+ * depending on which shard was adapted first, so the description is settled
+ * once, here, and the shards only look it up.
+ *
+ * A site that names nothing defers to one that does. Two sites that both name
+ * it and disagree are a producer contradiction: one symbol is not two
+ * declarations, and picking either would publish a name the compiler never
+ * gave it.
  */
-function endpoint(
+function externalNodes(
   target: IJavaGraphSnapshot.ITarget,
-  edge: IJavaGraphSnapshot.IEdge,
-  symbol: string,
-  file: string,
   declared: ReadonlyMap<string, ISamchonGraphNode>,
-  externals: Map<string, ISamchonGraphNode>,
-): string {
-  if (symbol === file) return file;
-  const node = declared.get(symbol);
-  if (node !== undefined) return node.id;
+): Map<string, ISamchonGraphNode> {
+  const described = new Map<string, INaming>();
+  for (const shard of target.shards) {
+    for (const edge of shard.edges) {
+      for (const symbol of [edge.from, edge.to]) {
+        if (symbol === shard.source || declared.has(symbol)) continue;
+        const naming = symbol === edge.to ? namingOf(edge) : { name: symbol };
+        const prior = described.get(symbol);
+        if (prior === undefined || anonymous(prior, symbol)) {
+          described.set(symbol, naming);
+          continue;
+        }
+        if (anonymous(naming, symbol)) continue;
+        if (
+          prior.name !== naming.name ||
+          prior.qualifiedName !== naming.qualifiedName
+        ) {
+          throw new Error(
+            `javac graph: external symbol ${symbol} is named two ways in target ${target.name}`,
+          );
+        }
+      }
+    }
+  }
+  const externals = new Map<string, ISamchonGraphNode>();
+  for (const [symbol, naming] of described) {
+    const display = naming.qualifiedName ?? naming.name;
+    externals.set(symbol, {
+      id: semanticGraphNodeId(
+        {
+          version: 2,
+          language: "java",
+          symbol,
+          role: "external_symbol",
+          native: { key: symbol, stability: "semantic" },
+          scope: { target: target.name },
+          stability: "persistent",
+        },
+        display,
+      ),
+      kind: "external_symbol",
+      language: "java",
+      name: naming.name,
+      ...(naming.qualifiedName === undefined
+        ? {}
+        : { qualifiedName: naming.qualifiedName }),
+      file: "",
+      external: true,
+    });
+  }
+  return externals;
+}
+
+interface INaming {
+  name: string;
+  qualifiedName?: string;
+}
+
+/** What one edge says about the endpoint it points at, if anything. */
+function namingOf(edge: IJavaGraphSnapshot.IEdge): INaming {
   const name =
     edge.targetName === null || edge.targetName === ""
-      ? symbol
+      ? edge.to
       : edge.targetName;
   const qualifiedName =
     edge.targetQualifiedName === null || edge.targetQualifiedName === ""
       ? undefined
       : edge.targetQualifiedName;
-  const display = qualifiedName ?? name;
-  const adapted: ISamchonGraphNode = {
-    id: semanticGraphNodeId(
-      {
-        version: 2,
-        language: "java",
-        symbol,
-        role: "external_symbol",
-        native: { key: symbol, stability: "semantic" },
-        scope: { target: target.name },
-        stability: "persistent",
-      },
-      display,
-    ),
-    kind: "external_symbol",
-    language: "java",
-    name,
-    ...(qualifiedName === undefined ? {} : { qualifiedName }),
-    file: "",
-    external: true,
-  };
-  const prior = externals.get(symbol);
-  if (prior !== undefined) {
-    if (canonical(prior) !== canonical(adapted)) {
-      throw new Error(
-        `javac graph: external symbol ${symbol} disagrees across target ${target.name}`,
-      );
-    }
-    return prior.id;
-  }
-  externals.set(symbol, adapted);
-  return adapted.id;
+  return qualifiedName === undefined ? { name } : { name, qualifiedName };
+}
+
+/** Whether a description says nothing the symbol did not already say. */
+function anonymous(naming: INaming, symbol: string): boolean {
+  return naming.name === symbol && naming.qualifiedName === undefined;
+}
+
+/**
+ * Resolve one producer endpoint to a graph identity.
+ *
+ * Three shapes reach here. The compilation unit own path is what `contains`
+ * and `exports` hang off, and it stays a file coordinate rather than becoming
+ * a synthesized node: the same file compiled into two targets would otherwise
+ * need two file nodes with one id. A symbol the target declares resolves to
+ * that declaration. Anything else was settled by {@link externalNodes}.
+ */
+function endpoint(
+  symbol: string,
+  file: string,
+  declared: ReadonlyMap<string, ISamchonGraphNode>,
+  externals: ReadonlyMap<string, ISamchonGraphNode>,
+): string {
+  if (symbol === file) return file;
+  const node = declared.get(symbol);
+  // Every endpoint that is neither the source coordinate nor a declaration was
+  // collected as an external node from these same edges, so the lookup cannot
+  // miss without the two walks having disagreed about what an endpoint is.
+  return node === undefined ? externals.get(symbol)!.id : node.id;
 }
 
 function adaptNode(

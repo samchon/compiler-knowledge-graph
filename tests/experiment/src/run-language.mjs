@@ -45,9 +45,7 @@ const pinned = cloneRepository(experiment, { refresh: args.refresh === "true" })
 // Some language servers need the checkout prepared before they can boot —
 // ruby-lsp, for one, composes a bundle from the project's Gemfile. That runs in
 // a copy for both lanes, so the clone keeps proving which revision was measured.
-const strictDeclared = experiment.strictProvider !== undefined;
-const releaseBoundary = experiment.strictReleaseBoundary;
-const strict = strictDeclared && releaseBoundary === undefined;
+const strict = experiment.strictProvider !== undefined;
 
 // Read before anything is indexed: a row that cannot be satisfied should
 // fail in seconds rather than after a full real-server build.
@@ -56,7 +54,7 @@ const strict = strictDeclared && releaseBoundary === undefined;
 // resolved this" and "an index built from a navigation skeleton reports this"
 // are different grades of evidence, and a row that does not say which one it
 // expects cannot detect a provider that silently changed grade.
-if (strictDeclared) {
+if (strict) {
   for (const field of [
     "strictAuthority",
     "strictTool",
@@ -107,18 +105,6 @@ if (strictDeclared) {
       `${experiment.language}: a strict row that accepts an unreproducible regeneration must state why`,
     );
   }
-  if (releaseBoundary !== undefined) {
-    for (const field of ["version", "warning", "reason"]) {
-      if (
-        typeof releaseBoundary[field] !== "string" ||
-        releaseBoundary[field].trim() === ""
-      ) {
-        throw new Error(
-          `${experiment.language}: a strict release boundary must state ${field}`,
-        );
-      }
-    }
-  }
 } else if (
   // A language without a strict row has to say why it has none. Otherwise the
   // catalog cannot distinguish a producer that was investigated and found
@@ -154,13 +140,7 @@ if (strict) {
     mode: "lsp",
     languages: [experiment.language],
     maxFiles: experiment.maxFiles,
-    // A published-release boundary must launch the registered provider once
-    // so the experiment proves its exact incompatibility before observing the
-    // ordinary fallback. The default cap deliberately disables whole-project
-    // providers and would turn that proof into a selection refusal.
-    ...(releaseBoundary === undefined
-      ? { lspReferenceLimit: experiment.referenceLimit ?? 250 }
-      : {}),
+    lspReferenceLimit: experiment.referenceLimit ?? 250,
     lspTimeoutMs: experiment.timeoutMs ?? 60_000,
     lspReadyTimeoutMs: experiment.readyTimeoutMs ?? 180_000,
     lspWarmupTimeoutMs: experiment.warmupTimeoutMs ?? 180_000,
@@ -168,25 +148,11 @@ if (strict) {
   elapsedMs = Math.round(performance.now() - started);
 }
 const warnings = dump.warnings ?? [];
-const declaredProvenance = strictDeclared
+const declaredProvenance = strict
   ? dump.provenance?.find(
       (row) => row.provider === experiment.strictProvider,
     )
   : undefined;
-
-if (
-  releaseBoundary !== undefined &&
-  (declaredProvenance !== undefined ||
-    !warnings.some(
-      (warning) =>
-        warning.includes(experiment.strictProvider) &&
-        warning.includes(releaseBoundary.warning),
-    ))
-) {
-  throw new Error(
-    `${experiment.language}: published ${releaseBoundary.version} did not prove the declared strict release boundary: ${warnings.join("; ")}`,
-  );
-}
 
 if (dump.indexer === "static") {
   throw new Error(`${experiment.language}: expected real LSP indexing, got static fallback: ${warnings.join("; ")}`);
@@ -352,7 +318,6 @@ const result = {
   edgeCount: dump.edges.length,
   diagnosticCount: dump.diagnostics?.length ?? 0,
   strictProvider: experiment.strictProvider,
-  strictReleaseBoundary: releaseBoundary,
   provenance,
   edgeKindCounts,
   semanticLimitation: experiment.semanticLimitation,

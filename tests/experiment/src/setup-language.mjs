@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import { createHash } from "node:crypto";
 import https from "node:https";
+import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 
@@ -704,43 +705,43 @@ switch (experiment.language) {
     // in 2.8 s read as the compiler-owned provider being fast when the
     // best-effort syntax reader had produced it.
     //
-    // `resolveTtscGraphCommand` prefers the indexed project's own `ttsc`
-    // installation, then a `ttscserver` beside it, and only then `ttscgraph` on
-    // PATH. A corpus fixture on stock TypeScript has neither of the first two,
-    // so the PATH fallback is the only route — and the binary lives inside the
-    // platform package rather than in `@ttsc/graph`, whose npm `bin` publishes
-    // `ttsc-graph` and not this.
-    const ttscVersion = experiment.strictReleaseBoundary?.version;
-    if (ttscVersion === undefined) {
-      throw new Error(
-        "typescript: the published ttsc setup must name its strict release boundary",
-      );
-    }
-    shell(`npm install -g @ttsc/linux-x64@${ttscVersion}`);
-    const globalRoot = shell("npm root -g", {
-      stdio: ["ignore", "pipe", "inherit"],
-    })
-      .stdout.toString()
-      .trim();
-    const ttscGraph = path.join(
-      globalRoot,
-      "@ttsc",
-      "linux-x64",
-      "bin",
-      "ttscgraph",
+    // The producer is the release this workspace's lockfile already resolves,
+    // not a separately installed one. `resolveTtscGraphCommand` prefers the
+    // indexed project's own `ttsc` installation over PATH, and every corpus
+    // copy lives under this package's work directory — so Node's upward
+    // lookup reaches `tests/experiment/node_modules/ttsc` before PATH is ever
+    // consulted. Provisioning a different release here puts two producers on
+    // one lane and proves whichever one resolution happened to reach: that is
+    // exactly how a lane pinned to 0.23.0 kept passing while the workspace
+    // moved to a release that speaks the native protocol.
+    //
+    // Reading the lockfile's release also makes the pin real. The platform
+    // binary is an exact-versioned optional dependency of `ttsc`, so its bytes
+    // are fixed by `pnpm-lock.yaml`'s integrity hash rather than by whatever a
+    // mutable global install channel serves that hour.
+    const ttscPackage = createRequire(import.meta.url).resolve(
+      "ttsc/package.json",
     );
-    if (!fs.existsSync(ttscGraph)) {
-      throw new Error(`ttscgraph not found after install at ${ttscGraph}`);
-    }
-    fs.chmodSync(ttscGraph, 0o755);
-    const link = path.join(binRoot, "ttscgraph");
+    const ttscVersion = JSON.parse(
+      fs.readFileSync(ttscPackage, "utf8"),
+    ).version;
+    const executable =
+      process.platform === "win32" ? "ttscgraph.exe" : "ttscgraph";
+    const platformPackage = `@ttsc/${process.platform}-${process.arch}`;
+    const ttscGraph = createRequire(ttscPackage).resolve(
+      `${platformPackage}/bin/${executable}`,
+    );
+    if (process.platform !== "win32") fs.chmodSync(ttscGraph, 0o755);
+    const link = path.join(binRoot, executable);
     fs.rmSync(link, { force: true });
     fs.symlinkSync(ttscGraph, link);
     record({
       tool: "ttscgraph",
       version: ttscVersion,
-      source: `npm install -g @ttsc/linux-x64@${ttscVersion}`,
-      digest: "unpinned",
+      source: `${platformPackage}@${ttscVersion} resolved from the workspace lockfile`,
+      digest: createHash("sha256")
+        .update(fs.readFileSync(ttscGraph))
+        .digest("hex"),
     });
     break;
   }

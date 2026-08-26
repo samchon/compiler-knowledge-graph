@@ -115,7 +115,18 @@ jobs:
     # tool provisioning, both quiet-host waits, the bounded Ruby/Dart diagnosis,
     # cleanup, and artifact upload. The process cap below is the measurement
     # verdict; this job cap is only the outer lifecycle backstop.
-    timeout-minutes: 120
+    #
+    # C and C++ provision a compiler built from source, which is a property of
+    # those two rows rather than a defect inside them, and the restore above is
+    # an expectation rather than a property: a cold key — a fresh branch, an
+    # eviction, or the first run after the producer pin moves — pays the whole
+    # build. Measured at 56 minutes to a linked `clangd` on one runner and 107
+    # on another in the same workflow. Under the old flat cap those two rows
+    # spent an hour and three quarters compiling and were killed with the
+    # measurement still running and nothing recorded. 210 covers the slow
+    # runner plus both measurement columns, and is still a bound, so a lane
+    # that hangs is caught rather than left to the six-hour platform limit.
+    timeout-minutes: ${{ (matrix.language == 'c' || matrix.language == 'cpp') && 210 || 120 }}
     strategy:
       fail-fast: false
       matrix:
@@ -172,6 +183,27 @@ jobs:
         if: ${{ github.event_name != 'workflow_dispatch' || inputs.project == 'all' || inputs.project == matrix.project }}
         run: pnpm build
 
+      # The C and C++ producer is an LLVM build, and this workflow used to make
+      # every run pay for it: leveldb and redis each spent about an hour and
+      # three quarters compiling clangd inside a two-hour job, reached the
+      # measurement with minutes left, and were killed by the job cap with
+      # nothing measured. The experiment matrix already restores that build by
+      # a key over the exact files its bytes depend on; measuring is not a
+      # reason to rebuild it, so the same restore/save pair runs here.
+      #
+      # The key is identical to the experiment workflow's, deliberately: the
+      # two lanes provision the same producer from the same sources, so
+      # whichever runs first pays and the other reads. Restore and save are
+      # split so a measurement that fails, times out, or is cancelled still
+      # leaves the compiler it built behind.
+      - name: Restore the pinned Clang producer
+        id: clang_producer
+        if: ${{ (matrix.language == 'c' || matrix.language == 'cpp') && (github.event_name != 'workflow_dispatch' || inputs.project == 'all' || inputs.project == matrix.project) }}
+        uses: actions/cache/restore@v6
+        with:
+          path: tests/experiment/.work/tools
+          key: clang-producer-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('packages/graph/src/provider/cpp/CPP_CLANG_PRODUCER_COMMIT.ts', 'tests/experiment/src/catalog.mjs', 'tests/experiment/src/setup-language.mjs') }}
+
       # The same provisioning the experiment matrix uses. It appends each tool's
       # directory to GITHUB_PATH, so the benchmark's own child processes resolve
       # the server without a machine-global install.
@@ -180,6 +212,13 @@ jobs:
         run: pnpm --filter @samchon/graph-experiment run setup -- --language ${{ matrix.language }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Save the pinned Clang producer
+        if: ${{ (matrix.language == 'c' || matrix.language == 'cpp') && steps.clang_producer.outputs.cache-hit != 'true' && (github.event_name != 'workflow_dispatch' || inputs.project == 'all' || inputs.project == matrix.project) }}
+        uses: actions/cache/save@v6
+        with:
+          path: tests/experiment/.work/tools
+          key: ${{ steps.clang_producer.outputs.cache-primary-key }}
 
       # What actually got installed, printed where the run can be read.
       # `recordTool` has always written this manifest and nothing ever surfaced

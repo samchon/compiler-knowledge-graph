@@ -13,12 +13,6 @@ export const LANGUAGE_EXPERIMENTS = [
     strictProvider: "ttscgraph",
     strictAuthority: "compiler",
     strictTool: "ttscgraph",
-    strictReleaseBoundary: {
-      version: "0.23.0",
-      warning: "legacy full dump",
-      reason:
-        "No published ttsc release implements graph snapshot protocol v1; 0.23.0 is provisioned to prove the explicit ttscserver fallback until the native producer ships.",
-    },
     // The pinned starter has no construction expression. The lifecycle below
     // creates one and checks the real ttscgraph generation that contains it.
     semanticEdges: ["calls", "type_ref"],
@@ -151,7 +145,7 @@ export const LANGUAGE_EXPERIMENTS = [
     strictAuthority: "compiler",
     strictTool: "samchon-clangd",
     producerRepository: "https://github.com/samchon/llvm-project.git",
-    producerCommit: "ae904413566b54aca08e46ebee1769c110601e6b",
+    producerCommit: "e414d433dd2021dfc9371205db21c55bfd788158",
     // A whole-compilation-database producer is not ready when it starts; it
     // is ready when clangd has background-indexed every translation unit the
     // database registers. The 180-second default expired on libuv with 62 of
@@ -237,7 +231,7 @@ export const LANGUAGE_EXPERIMENTS = [
     strictAuthority: "compiler",
     strictTool: "samchon-clangd",
     producerRepository: "https://github.com/samchon/llvm-project.git",
-    producerCommit: "ae904413566b54aca08e46ebee1769c110601e6b",
+    producerCommit: "e414d433dd2021dfc9371205db21c55bfd788158",
     // A whole-compilation-database producer is not ready when it starts; it
     // is ready when clangd has background-indexed every translation unit the
     // database registers. The 180-second default expired on libuv with 62 of

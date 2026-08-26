@@ -38,6 +38,12 @@ const dropArg = args.find((arg) => arg.startsWith("--drop-capability="));
 const dropped = dropArg?.slice("--drop-capability=".length);
 // Moves the build universe under an `incremental` label — a producer claiming it
 // reused a program whose own inputs say it could not have.
+// Answers the way every published ttsc release up to 0.23.0 answers: a
+// well-formed envelope that carries a complete `dump` where protocol v1 puts a
+// shard transaction. Modelled on that binary's real frame, whose envelope also
+// declares protocolVersion 1, mode "initial" and changed true — which is why
+// the version pin alone cannot catch it and the body has to.
+const legacyDump = args.includes("--legacy-dump");
 const universeDrift = args.includes("--universe-drift");
 const universeReload = args.includes("--universe-reload");
 // Transport- and process-level fault injection. These stand in for the wire
@@ -817,7 +823,13 @@ input.on("line", (line) => {
     return;
   }
   let response;
-  if (firstUnchanged) {
+  if (legacyDump) {
+    response = frame(request.id, {
+      changed: true,
+      mode: "initial",
+      dump: graph("first"),
+    });
+  } else if (firstUnchanged) {
     // A first answer that reuses a snapshot that does not exist yet.
     response = frame(request.id, { changed: false, mode: "unchanged" });
   } else if (invalidMode !== undefined) {

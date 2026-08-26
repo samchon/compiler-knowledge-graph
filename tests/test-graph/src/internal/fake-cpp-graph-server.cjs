@@ -465,7 +465,7 @@ function graphShard(command) {
   const interfaceFingerprint = digest(
     symbols
       .filter((entry) => entry.exported)
-      .map((entry) => `${entry.id.length}:${entry.id}${entry.signature.length}:${entry.signature}`)
+      .map((entry) => `${lengthPrefixed(entry.id)}${lengthPrefixed(entry.signature)}`)
       .join(""),
   );
   const shard = {
@@ -481,8 +481,41 @@ function graphShard(command) {
       state: COVERAGE[family],
     })),
   };
+  // The producer's own three-step composition. Its body term names what a
+  // published body is published under rather than serializing its contents,
+  // because deriving the old whole-body digest cost a second pass over every
+  // occurrence and exhausted a 16 GiB host on real C++.
+  const bodyDigest = digest(
+    lengthPrefixed(graph.producerFingerprint) +
+      lengthPrefixed(graph.mainFileUri) +
+      lengthPrefixed(graph.commandDigest) +
+      lengthPrefixed(graph.toolchainFingerprint) +
+      lengthPrefixed(graph.targetTriple) +
+      lengthPrefixed(graph.language) +
+      (graph.hadErrors ? "!" : ".") +
+      graph.sources
+        .map((entry) => `${lengthPrefixed(entry.uri)}${lengthPrefixed(entry.digest)}`)
+        .join("") +
+      [
+        graph.symbols.length,
+        graph.occurrences.length,
+        graph.relations.length,
+        graph.macros.length,
+        graph.includes.length,
+        graph.missingIncludes.length,
+        graph.modules.length,
+        graph.diagnostics.length,
+      ]
+        .map((count) => `${count},`)
+        .join(""),
+  );
+  const diskMaterial = graph.sources
+    .map((entry) => `${lengthPrefixed(entry.uri)}${lengthPrefixed(entry.diskDigest)}`)
+    .join("");
   shard.digest = digest(
-    `${key}\n${sourceDigest}\n${interfaceFingerprint}\n${JSON.stringify(graph)}`,
+    [key, sourceDigest, interfaceFingerprint, bodyDigest, diskMaterial].join(
+      "\n",
+    ),
   );
   return shard;
 }
@@ -593,6 +626,11 @@ function wordRanges(text, file, word) {
 
 function digest(value) {
   return crypto.createHash("sha256").update(value).digest("hex");
+}
+
+/** One length-prefixed value, byte-counted exactly as the producer writes it. */
+function lengthPrefixed(value) {
+  return `${Buffer.byteLength(value, "utf8")}:${value}`;
 }
 
 function coordinate(label, value) {

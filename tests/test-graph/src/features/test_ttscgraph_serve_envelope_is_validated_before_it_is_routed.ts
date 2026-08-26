@@ -188,6 +188,15 @@ export const test_ttscgraph_serve_envelope_is_validated_before_it_is_routed =
       mode: "initial",
       changed: true,
     });
+    // Exactly what ttsc up to 0.23.0 answers. The envelope is correct in every
+    // other respect, including the protocol version, so nothing but the body
+    // can tell this producer apart from a compatible one.
+    rejects("a complete legacy dump where the transaction belongs", {
+      ...base,
+      mode: "initial",
+      changed: true,
+      dump: { project: "/tmp/project", nodes: [], edges: [] },
+    });
     rejects("an unchanged frame carrying a shard transaction anyway", {
       ...base,
       mode: "unchanged",

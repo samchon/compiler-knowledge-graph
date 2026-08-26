@@ -14,9 +14,9 @@
       "facts": ["exports", "calls", "accesses", "instantiates", "type_ref", "extends", "implements", "overrides", "renders"],
       "commands": ["ttscgraph", "ttscserver"],
       "environmentOverrides": ["TTSC_GRAPH_BINARY"],
-      "install": "Install a ttsc release that supports graph snapshot protocol v1. `ttsc@0.23.0` provides the ordinary `ttscserver` fallback but predates this strict protocol.",
+      "install": "Install `ttsc@>=0.24.0` in the indexed project. 0.24.0 is the first published release whose `ttscgraph serve` answers graph snapshot protocol v1; 0.23.0 and earlier answer a legacy complete dump and are declined.",
       "installSources": [
-        {"label": "ttsc 0.23.0 legacy release", "url": "https://www.npmjs.com/package/ttsc/v/0.23.0"},
+        {"label": "ttsc 0.24.0 first protocol v1 release", "url": "https://www.npmjs.com/package/ttsc/v/0.24.0"},
         {"label": "native shard producer PR", "url": "https://github.com/samchon/ttsc/pull/1056"}
       ],
       "resolution": "Absolute `TTSC_GRAPH_BINARY`, target-project `ttsc` package/binary, target-project `.bin`, then PATH/global compatibility fallback.",
@@ -26,7 +26,7 @@
       "nativeAnalysis": "A compatible target-project ttsc checker owns one resident compiler process and its incremental semantic state.",
       "exportMerge": "Changed compiler-owned raw shards cross a versioned transaction; the client validates the complete manifest and adapts only upserts before atomic publication.",
       "reuseResident": "Unchanged requests reuse the exact snapshot; body edits reuse unaffected native and normalized shards, while build-universe changes reload safely.",
-      "limitations": "No compatible ttsc release is published yet. Version 0.23.0 returns a legacy complete dump and therefore falls back honestly until the native shard producer ships.",
+      "limitations": "A project on `ttsc@<=0.23.0` gets a legacy complete dump, which this route refuses rather than adapts, so those projects fall back honestly to `ttscserver`.",
       "decline": "A missing target-project ttsc binary, legacy full-dump producer, incompatible request cap, malformed transaction or unsupported schema declines the strict provider.",
       "fallback": "`ttscserver`, then `@samchon/graph-sitter`.",
       "experimentLanguages": ["typescript"],
@@ -133,7 +133,7 @@
       "commands": ["samchon-clangd", "clangd"],
       "projectCommandSources": ["compile_commands.json", "build/compile_commands.json"],
       "environmentOverrides": ["SAMCHON_GRAPH_CLANGD_SNAPSHOT"],
-      "install": "Build the `samchon/llvm-project` graph-snapshot fork at commit `ae904413566b54aca08e46ebee1769c110601e6b`; point `SAMCHON_GRAPH_CLANGD_SNAPSHOT` at `clangd` or install it as `samchon-clangd`, and provide a compilation database.",
+      "install": "Build the `samchon/llvm-project` graph-snapshot fork at commit `e414d433dd2021dfc9371205db21c55bfd788158`; point `SAMCHON_GRAPH_CLANGD_SNAPSHOT` at `clangd` or install it as `samchon-clangd`, and provide a compilation database.",
       "installSources": [
         {"label": "native Clang graph producer PR", "url": "https://github.com/samchon/llvm-project/pull/1"},
         {"label": "LLVM build instructions", "url": "https://llvm.org/docs/CMake.html"}

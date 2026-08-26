@@ -1078,8 +1078,7 @@ function assertShard(
     !SHA256.test(shard.interfaceFingerprint) ||
     !Array.isArray(shard.coverage) ||
     !isRecord(shard.graph) ||
-    shard.configuration !== shard.graph.commandDigest ||
-    shard.graph.hadErrors
+    shard.configuration !== shard.graph.commandDigest
   ) {
     throw new Error(`C/C++ clang graph: malformed shard ${shard.key}`);
   }
@@ -1098,11 +1097,41 @@ function assertShard(
   ) {
     throw new Error(`C/C++ clang graph: mismatched main source ${shard.key}`);
   }
+  // Rebuilt from the transmitted body, in the pinned producer's own assembly
+  // order, so the shard the consumer holds is tied to the digest the manifest
+  // names it by. That tie is what the resident delta rests on: a shard whose
+  // digest still matches its stored one is skipped without being read again.
+  //
+  // The producer composes it in three steps and so does this. Recomputing only
+  // the last would leave the interface and body terms unchecked, and they are
+  // where the payload actually lives — the outer digest carries nothing of the
+  // symbols, occurrences or relations except through them.
+  if (interfaceFingerprintOf(shard.graph) !== shard.interfaceFingerprint) {
+    throw new Error(
+      `C/C++ clang graph: interface fingerprint mismatch ${shard.key}`,
+    );
+  }
   const expected = sha256(
-    `${shard.key}\n${shard.checkerDigest}\n${shard.interfaceFingerprint}\n${JSON.stringify(shard.graph)}`,
+    [
+      shard.key,
+      shard.checkerDigest,
+      shard.interfaceFingerprint,
+      bodyDigestOf(shard.graph),
+      diskMaterialOf(shard.graph),
+    ].join("\n"),
   );
   if (expected !== shard.digest) {
     throw new Error(`C/C++ clang graph: shard digest mismatch ${shard.key}`);
+  }
+  // A translation unit that failed to compile is refused rather than
+  // published — but only once its integrity is proved. A reader has to be
+  // able to tell a corrupt payload from a body that compiled with errors, and
+  // checking this first would report every such body as malformed. The body
+  // digest covers the flag, so a producer cannot clear it in transit either.
+  if (shard.graph.hadErrors) {
+    throw new Error(
+      `C/C++ clang graph: shard reports a failed translation unit ${shard.key}`,
+    );
   }
   const families = new Set<string>();
   for (const row of shard.coverage) {
@@ -1434,6 +1463,81 @@ function nonnegativeInteger(value: unknown): value is number {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+/**
+ * One length-prefixed field, exactly as the producer's `Field` writes it.
+ *
+ * The prefix is the value's UTF-8 byte count because that is what
+ * `llvm::StringRef::size()` reports; a code-unit count would agree only for
+ * ASCII, and a non-ASCII path or signature is where it would stop agreeing.
+ */
+function graphField(value: string): string {
+  return `${String(Buffer.byteLength(value, "utf8"))}:${value}`;
+}
+
+/**
+ * The producer's `InterfaceFingerprint`: every exported symbol's id and
+ * signature, in the order the translation unit published them.
+ */
+function interfaceFingerprintOf(graph: ICppGraphSnapshot.ITU): string {
+  let material = "";
+  for (const symbol of graph.symbols) {
+    if (!symbol.exported) continue;
+    material += `${graphField(symbol.id)}${graphField(symbol.signature)}`;
+  }
+  return sha256(material);
+}
+
+/**
+ * The producer's `BodyDigest`: what identifies a published body rather than
+ * what it contains.
+ *
+ * The producer used to serialize the whole body to derive this, which cost a
+ * second pass over every occurrence in a translation unit and exhausted a
+ * 16 GiB host on C++. It now names the coordinates a body is published under
+ * and the size of each fact family, which is enough because a published body
+ * is only ever replaced by a reindex — and a reindex moves a source digest,
+ * which is part of this.
+ *
+ * Disk digests are deliberately absent: they belong to the snapshot that
+ * validated a source, not to the body, so a body identifies the same way
+ * whether it was just produced or just read back from its shard.
+ */
+function bodyDigestOf(graph: ICppGraphSnapshot.ITU): string {
+  let material =
+    graphField(graph.producerFingerprint) +
+    graphField(graph.mainFileUri) +
+    graphField(graph.commandDigest) +
+    graphField(graph.toolchainFingerprint) +
+    graphField(graph.targetTriple) +
+    graphField(graph.language) +
+    (graph.hadErrors ? "!" : ".");
+  for (const source of graph.sources) {
+    material += `${graphField(source.uri)}${graphField(source.digest)}`;
+  }
+  for (const count of [
+    graph.symbols.length,
+    graph.occurrences.length,
+    graph.relations.length,
+    graph.macros.length,
+    graph.includes.length,
+    graph.missingIncludes.length,
+    graph.modules.length,
+    graph.diagnostics.length,
+  ]) {
+    material += `${String(count)},`;
+  }
+  return sha256(material);
+}
+
+/** The disk state this snapshot validated each source against. */
+function diskMaterialOf(graph: ICppGraphSnapshot.ITU): string {
+  let material = "";
+  for (const source of graph.sources) {
+    material += `${graphField(source.uri)}${graphField(source.diskDigest)}`;
+  }
+  return material;
 }
 
 function sha256(value: string): string {

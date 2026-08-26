@@ -461,29 +461,34 @@ export const test_experiment_corpora_are_commit_pinned = () => {
       !runner.includes('experiment.strictAuthority ?? "compiler"') &&
       !runner.includes("experiment.strictTool ?? experiment.strictProvider"),
   );
+  // Two producers on one lane prove nothing about either. Every corpus copy
+  // lives under `tests/experiment/.work`, so Node's upward lookup reaches this
+  // package's own `ttsc` before PATH is consulted, and a separately installed
+  // release is simply not the binary the lane measures. Provisioning the
+  // lockfile-resolved release is what makes the recorded version the one that
+  // answered — and its digest real, because the platform binary is an
+  // exact-versioned optional dependency rather than a mutable global install.
   TestValidator.predicate(
-    "the TypeScript published-release boundary launches before fallback selection",
-    typescript.includes("strictReleaseBoundary: {") &&
-      typescript.includes('version: "0.23.0"') &&
-      typescript.includes('warning: "legacy full dump"') &&
-      typescript.includes("reason:") &&
+    "the TypeScript lane provisions the exact producer its corpus resolves",
+    !catalog.includes("strictReleaseBoundary") &&
+      !runner.includes("releaseBoundary") &&
+      typescript.includes('strictTool: "ttscgraph"') &&
+      setup.includes(
+        'const ttscPackage = createRequire(import.meta.url).resolve(',
+      ) &&
+      setup.includes('"ttsc/package.json",') &&
+      setup.includes(
+        "const platformPackage = `@ttsc/${process.platform}-${process.arch}`",
+      ) &&
+      setup.includes("createRequire(ttscPackage).resolve(") &&
+      setup.includes('digest: createHash("sha256")') &&
+      !setup.includes("npm install -g @ttsc/") &&
       runner.includes(
-        "const strictDeclared = experiment.strictProvider !== undefined",
+        "const strict = experiment.strictProvider !== undefined",
       ) &&
       runner.includes(
-        "const releaseBoundary = experiment.strictReleaseBoundary",
-      ) &&
-      runner.includes(
-        "const strict = strictDeclared && releaseBoundary === undefined",
-      ) &&
-      runner.includes("...(releaseBoundary === undefined") &&
-      runner.includes(
-        "? { lspReferenceLimit: experiment.referenceLimit ?? 250 }",
-      ) &&
-      runner.includes("releaseBoundary !== undefined &&") &&
-      runner.includes("declaredProvenance !== undefined") &&
-      runner.includes("warning.includes(releaseBoundary.warning)") &&
-      setup.includes("experiment.strictReleaseBoundary?.version"),
+        "lspReferenceLimit: experiment.referenceLimit ?? 250,",
+      ),
   );
   TestValidator.predicate(
     "the runner proves declared families are present and undeclared ones absent",

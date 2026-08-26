@@ -456,6 +456,20 @@ function assertNativeRefusals(
   rejects("a mismatched native shard digest is refused", (value) => {
     value.upserts[0]!.digest = "0".repeat(64);
   });
+  // The outer digest carries the symbol payload only through this term, so a
+  // body whose exported interface no longer matches the fingerprint it was
+  // published under is the one substitution the outer check cannot see.
+  rejects("a mismatched native interface fingerprint is refused", (value) => {
+    value.upserts[0]!.interfaceFingerprint = "0".repeat(64);
+  });
+  // Resealed, so the shard is intact and the only thing wrong with it is what
+  // the compiler said about the unit. That is the case the ordering exists
+  // for: an intact body from a failed compile must be refused as such rather
+  // than reported as malformed.
+  rejects("an intact native shard from a failed compile is refused", (value) => {
+    value.upserts[0]!.graph.hadErrors = true;
+    resealSnapshot(value);
+  });
   rejects("a mismatched native generation is refused", (value) => {
     value.generation = "0".repeat(64);
   });
@@ -1069,14 +1083,77 @@ function readLines(file: string): Array<Record<string, any>> {
     .map((line) => JSON.parse(line) as Record<string, any>);
 }
 
-function nativeShardDigest(shard: ICppGraphSnapshot.IShard): string {
+// The pinned producer's three-step composition, so a fixture that edits a body
+// reseals it the way clangd would rather than by a rule only this file knows.
+function lengthPrefixed(value: string): string {
+  return `${String(Buffer.byteLength(value, "utf8"))}:${value}`;
+}
+
+function nativeInterfaceFingerprint(graph: ICppGraphSnapshot.ITU): string {
   return sha256(
-    `${shard.key}\n${shard.checkerDigest}\n${shard.interfaceFingerprint}\n${JSON.stringify(shard.graph)}`,
+    graph.symbols
+      .filter((symbol) => symbol.exported)
+      .map(
+        (symbol) =>
+          `${lengthPrefixed(symbol.id)}${lengthPrefixed(symbol.signature)}`,
+      )
+      .join(""),
+  );
+}
+
+function nativeBodyDigest(graph: ICppGraphSnapshot.ITU): string {
+  return sha256(
+    lengthPrefixed(graph.producerFingerprint) +
+      lengthPrefixed(graph.mainFileUri) +
+      lengthPrefixed(graph.commandDigest) +
+      lengthPrefixed(graph.toolchainFingerprint) +
+      lengthPrefixed(graph.targetTriple) +
+      lengthPrefixed(graph.language) +
+      (graph.hadErrors ? "!" : ".") +
+      graph.sources
+        .map(
+          (source) =>
+            `${lengthPrefixed(source.uri)}${lengthPrefixed(source.digest)}`,
+        )
+        .join("") +
+      [
+        graph.symbols.length,
+        graph.occurrences.length,
+        graph.relations.length,
+        graph.macros.length,
+        graph.includes.length,
+        graph.missingIncludes.length,
+        graph.modules.length,
+        graph.diagnostics.length,
+      ]
+        .map((count) => `${String(count)},`)
+        .join(""),
+  );
+}
+
+function nativeShardDigest(shard: ICppGraphSnapshot.IShard): string {
+  const disk = shard.graph.sources
+    .map(
+      (source) =>
+        `${lengthPrefixed(source.uri)}${lengthPrefixed(source.diskDigest)}`,
+    )
+    .join("");
+  return sha256(
+    [
+      shard.key,
+      shard.checkerDigest,
+      shard.interfaceFingerprint,
+      nativeBodyDigest(shard.graph),
+      disk,
+    ].join("\n"),
   );
 }
 
 function resealSnapshot(snapshot: ICppGraphSnapshot): void {
-  for (const shard of snapshot.upserts) shard.digest = nativeShardDigest(shard);
+  for (const shard of snapshot.upserts) {
+    shard.interfaceFingerprint = nativeInterfaceFingerprint(shard.graph);
+    shard.digest = nativeShardDigest(shard);
+  }
   const digests = new Map(
     snapshot.upserts.map((shard) => [shard.key, shard.digest]),
   );

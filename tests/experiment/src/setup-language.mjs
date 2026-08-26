@@ -1082,19 +1082,36 @@ switch (experiment.language) {
     break;
 
   case "lua": {
-    const url = await latestAsset("LuaLS/lua-language-server", /linux-x64\.tar\.gz$/);
+    // Pinned, because this row's acceptance is a claim about one build's
+    // behaviour. It used to take whichever release was latest that hour, and
+    // that is exactly how it went red without a commit: every run through
+    // 3.19.0 passed, LuaLS published 3.19.1, and the next run reported that a
+    // malformed build input no longer changed anything the lane could observe
+    // besides the input itself. Nothing in this repository had moved.
+    //
+    // Moving this pin is a deliberate act with its own evidence. The two other
+    // `latestAsset` downloads stay latest on purpose: they provision generic
+    // language servers for the fallback arm, whose rows assert counts rather
+    // than a producer's exact publication behaviour.
+    const version = "3.19.0";
+    const url = `https://github.com/LuaLS/lua-language-server/releases/download/${version}/lua-language-server-${version}-linux-x64.tar.gz`;
     const archive = path.join(toolsRoot, "lua-language-server.tar.gz");
     const target = path.join(toolsRoot, "lua-language-server");
     await downloadFile(url, archive);
+    verifySha256(
+      archive,
+      "624ae8dd3bfbd5c2ee3ccf2f3547d33aeefa209971cce8c11d48f69fc1ec065a",
+    );
     fs.rmSync(target, { force: true, recursive: true });
     ensureDir(target);
     run("tar", ["-xzf", archive, "-C", target]);
     appendGithubPath(path.join(target, "bin"));
     record({
       tool: "lua-language-server",
-      version: "unpinned",
+      version,
       source: url,
-      digest: "unpinned",
+      digest:
+        "624ae8dd3bfbd5c2ee3ccf2f3547d33aeefa209971cce8c11d48f69fc1ec065a",
     });
     break;
   }

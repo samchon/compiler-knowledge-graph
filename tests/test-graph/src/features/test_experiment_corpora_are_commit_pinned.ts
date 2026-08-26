@@ -48,6 +48,7 @@ export const test_experiment_corpora_are_commit_pinned = () => {
   const php = region(catalog, 'language: "php"', 'language: "lua"');
   const lua = region(catalog, 'language: "lua"', 'language: "dart"');
   const dart = region(catalog, 'language: "dart"', "\n];");
+  const luaSetup = region(setup, 'case "lua"', 'case "dart"');
   const javaSetup = region(setup, 'case "java"', 'case "csharp"');
   const kotlinSetup = region(setup, 'case "kotlin"', 'case "swift"');
   const rustSetup = region(setup, 'case "rust"', 'case "cpp"');
@@ -425,6 +426,26 @@ export const test_experiment_corpora_are_commit_pinned = () => {
     catalogRows.map((row) => `${named(row)}: 1`),
   );
 
+  // A strict row's verdict is a claim about one producer build. Lua's used to
+  // take whichever LuaLS release was latest that hour, and that is how the
+  // lane went red with no commit behind it: every run through 3.19.0 passed,
+  // upstream published 3.19.1, and the next run reported that a malformed
+  // build input no longer moved anything the row could observe. The remaining
+  // `latestAsset` downloads are generic fallback servers, whose rows assert
+  // counts rather than a producer's exact publication behaviour.
+  TestValidator.equals(
+    "every strict producer is provisioned from an exact pinned artifact",
+    [
+      /const version = "3\.19\.0";/u.test(luaSetup),
+      /verifySha256\(\s*archive,\s*"[0-9a-f]{64}",\s*\)/u.test(luaSetup),
+      luaSetup.includes("latestAsset("),
+      [...setup.matchAll(/latestAsset\(\s*"([^"]+)"/gu)]
+        .map((match) => match[1]!)
+        .sort()
+        .join(","),
+    ],
+    [true, true, false, "fwcd/kotlin-language-server,zigtools/zls"],
+  );
   TestValidator.predicate(
     "the clone helper fetches and detaches the pinned revision",
     helpers.includes('["fetch", "--depth=1", "origin", experiment.commit]') &&

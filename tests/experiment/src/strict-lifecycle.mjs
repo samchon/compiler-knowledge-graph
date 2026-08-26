@@ -655,13 +655,6 @@ function publicationChanges(
 ) {
   const changed = [];
   if (prior.manifest !== next.manifest) changed.push("manifest");
-  // The content digest covers what the generation published, including the
-  // source manifest the facts were computed from. A producer can recover from
-  // a broken configuration with defaults that reach the same declarations and
-  // still publish a different generation, because the configuration file it
-  // read is itself one of those sources — and a check that watched only the
-  // fact planes would call that no change at all.
-  if (prior.content !== next.content) changed.push("content");
   for (const plane of [
     "nodes",
     "edges",

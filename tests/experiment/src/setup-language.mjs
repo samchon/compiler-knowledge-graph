@@ -319,15 +319,6 @@ const installScipRuby = () =>
 // and it has to be measured rather than assumed. Kotlin support is upstream's
 // own "less mature" than Java's, and Maven cannot index Kotlin at all; koin is
 // Gradle, so it is on the supported path.
-const installScipJava = () =>
-  installPinnedBinary({
-    tool: "scip-java",
-    version: "v0.13.1",
-    url: "https://github.com/scip-code/scip-java/releases/download/v0.13.1/scip-java-v0.13.1",
-    digest:
-      "a694cae143c32c5b6226362fb4bd268a8d13d3cd9b482819b3b0029a9a97b8fe",
-  });
-
 // scip-java v0.13.1 predates Kotlin 2.3's CompilerPluginRegistrar.pluginId
 // contract, so it cannot index current Koin. Compiler plugins are also coupled
 // to the compiler minor that loads them: #973's merged 2.4.0 tree builds but
@@ -985,11 +976,11 @@ switch (experiment.language) {
         "https://download.eclipse.org/jdtls/snapshots/jdt-language-server-latest.tar.gz",
       digest: "unpinned",
     });
-    // The generic JDT lane still gets the released launcher's SCIP fallback,
-    // and the strict lane gets the fork that writes a graph. Both resolve the
-    // same command name, so the source build is installed last and is the one
-    // a run resolves.
-    await installScipJava();
+    // One launcher, built from the pinned fork. It serves both the strict
+    // javac route and the SCIP lane behind it, so installing the released
+    // binary first only downloaded a `scip-java` the source build then
+    // shadowed under the same name — and recorded it in the tool manifest as
+    // though a run had used it.
     await installScip();
     await installJavacGraphProducer(await installGradle());
     break;

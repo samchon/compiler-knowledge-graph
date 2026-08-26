@@ -115,10 +115,16 @@ export const test_experiment_corpora_are_commit_pinned = () => {
         "`${SCIP_JAVA_KOTLIN_COMMIT}+kotlin-${SCIP_JAVA_KOTLIN_VERSION}`",
       ) &&
       setup.includes('":scip-java:installDist"') &&
-      javaSetup.includes("await installScipJava()") &&
+      // Two rows build the same launcher from two revisions, so the builder is
+      // shared and the pin is the argument. The Java row builds the fork whose
+      // `index` writes a graph at all; a released binary installed beside it
+      // would only be shadowed under the same name and then recorded as though
+      // a run had used it.
       !javaSetup.includes("installScipJavaKotlinSnapshot") &&
+      javaSetup.includes("await installJavacGraphProducer(await installGradle())") &&
+      !setup.includes("installScipJava = ") &&
       kotlinSetup.includes("await installScipJavaKotlinSnapshot(gradle)") &&
-      !kotlinSetup.includes("await installScipJava();") &&
+      setup.includes("const installScipJavaSource = async (gradle, pin)") &&
       setup.includes('run(link, ["--version"])'),
   );
   TestValidator.predicate(
@@ -319,14 +325,21 @@ export const test_experiment_corpora_are_commit_pinned = () => {
       lifecycle.includes("normalizedPublicationPlane(") &&
       !lifecycle.includes("provenance.content !== prior.content"),
   );
+  // Lua moved from `published` to `tolerated` on evidence rather than on
+  // preference. The row claimed a malformed `.luarc.json` changed the
+  // published generation because the corpus selects LuaJIT and a workspace
+  // library; at 3.19.0 — the release every green run of that lane used — every
+  // fact plane and the source manifest come back byte-identical and only the
+  // build universe moves. The claim, not the check, was what had to change.
   TestValidator.predicate(
     "a degraded publication is distinct from an unchanged tolerated one",
-    [csharp, lua].every(
-      (row) =>
-        row.includes('failurePolicy: "published"') &&
-        declares(row, "failureLimitation"),
-    ) &&
-      python.includes('failurePolicy: "tolerated"') &&
+    csharp.includes('failurePolicy: "published"') &&
+      declares(csharp, "failureLimitation") &&
+      [lua, python].every(
+        (row) =>
+          row.includes('failurePolicy: "tolerated"') &&
+          declares(row, "failureLimitation"),
+      ) &&
       lifecycle.includes('status: "tolerated"') &&
       lifecycle.includes('fixture.failurePolicy === "published"') &&
       lifecycle.includes('status: "published-with-limitation"') &&

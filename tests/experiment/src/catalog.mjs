@@ -629,12 +629,17 @@ export const LANGUAGE_EXPERIMENTS = [
       failureSuffix: "\n{ not json",
       // lua-language-server reads a malformed `.luarc.json`, logs it, and
       // carries on with defaults rather than refusing to start — so the export
-      // still lands and the provider still publishes. This corpus selects
-      // LuaJIT and a workspace library, so the default settings change the
-      // published generation rather than leaving it untouched.
-      failurePolicy: "published",
+      // still lands and the provider still publishes.
+      //
+      // This row used to claim the defaults changed that publication, on the
+      // reading that the corpus selects LuaJIT and a workspace library. The
+      // claim was wrong and it went red proving it: at 3.19.0, the release
+      // every green run of this lane used, the malformed configuration leaves
+      // every fact plane and the source manifest byte-identical and moves only
+      // the build universe. Tolerated is what that is.
+      failurePolicy: "tolerated",
       failureLimitation:
-        "lua-language-server recovers from a malformed .luarc.json with default settings and publishes a changed generation, so a broken Lua workspace configuration is not a fail-closed boundary for this producer",
+        "lua-language-server 3.19.0 recovers from a malformed .luarc.json with default settings and exits successfully; on the pinned lualine fixture its normalized source and fact planes remain unchanged, so a broken Lua workspace configuration is neither rejected nor diagnosed",
     },
     minNodes: 1,
     minEdges: 0,

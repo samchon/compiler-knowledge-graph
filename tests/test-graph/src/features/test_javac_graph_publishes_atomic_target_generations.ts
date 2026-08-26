@@ -28,10 +28,13 @@ const SOURCES = {
  * 1. A cold generation publishes compiler authority, target-scoped identities,
  *    a complete coverage matrix and one node per external endpoint.
  * 2. An unchanged build reuses the exact snapshot; a recompiled source moves
- *    one shard and keeps the rest, which is what makes it incremental.
+ *    one shard and keeps the rest, which is what makes it incremental; a moved
+ *    universe reloads instead; a dropped source leaves the generation.
  * 3. A producer that cannot be trusted — wrong schema, wrong protocol, wrong
- *    project, an incomplete matrix, an endpoint nothing declares — is refused
- *    with the prior generation intact.
+ *    project, an incomplete matrix, an edge with nothing on one end, one
+ *    symbol declared or named twice — is refused with the prior generation
+ *    intact. An endpoint the target merely does not declare is not one of
+ *    those: that is an ordinary external node, and case 1 requires it.
  */
 export const test_javac_graph_publishes_atomic_target_generations =
   async (): Promise<void> => {

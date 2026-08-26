@@ -85,6 +85,25 @@ export const test_project_input_generation_fences_every_owned_input =
         new Map(),
       )?.includes("does not bind") === true,
     );
+    // A tracked input the provider hashed the checker's text for and never
+    // hashed on disk. It is the one shape a reader cannot act on at all: the
+    // facts claim to describe that file, and nothing ties them to bytes the
+    // reader can hash for itself. The refusal has to say which of the four
+    // ways a source comes unbound this is, because each one is a defect in a
+    // different place.
+    TestValidator.predicate(
+      "a tracked provider source without a disk digest is unbound",
+      movedProviderSource(
+        new Map([
+          [
+            externalFile,
+            { checkerDigest: externalDigest, diskDigest: "" },
+          ],
+        ]),
+        new Map([[externalFile, externalDigest]]),
+        new Map([[externalFile, externalDigest]]),
+      )?.includes("published no on-disk digest") === true,
+    );
     TestValidator.predicate(
       "a missing external provider source cannot retain an old digest",
       movedProviderSource(

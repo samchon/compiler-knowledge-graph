@@ -833,7 +833,14 @@ function assertShard(
     typeof shard.source !== "string" ||
     shard.source === "" ||
     !SHA256.test(shard.checkerDigest) ||
-    (shard.diskDigest !== "" && !SHA256.test(shard.diskDigest)) ||
+    // A disk digest is required, not optional. This route claims the
+    // `diskDigests` capability, and the coordinator will not publish a
+    // generation whose sources it cannot hash for itself — so an empty one is
+    // a snapshot that parses, validates, and is then refused three refreshes
+    // later by a fence that cannot say it was the producer's doing. Every Java
+    // compilation unit has an on-disk identity, including a generated one;
+    // a producer that could not read one has not proved what it compiled.
+    !SHA256.test(shard.diskDigest) ||
     shard.target !== target.name ||
     typeof shard.compilerVersion !== "string" ||
     shard.compilerVersion === "" ||

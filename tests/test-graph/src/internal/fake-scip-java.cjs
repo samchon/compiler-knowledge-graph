@@ -458,19 +458,14 @@ if (flag("empty-endpoint")) {
 if (flag("unclaimed-family")) {
   artifact.targets[0].shards[0].edges[0].kind = "renders";
 }
+// One symbol declared by two compilation units of one target. Both sources
+// exist, so this reaches the identity rule rather than tripping the disk-digest
+// one on the way: javac attributes one declaration per symbol, and two shards
+// carrying it would put the same node in one generation twice.
 if (flag("duplicate-symbol")) {
-  artifact.targets[0].shards.push(
-    shard(artifact.targets[0].name, "src/main/java/com/Other.java", {
-      nodes: [
-        {
-          ...exampleShard(artifact.targets[0].name).nodes[0],
-          file: "src/main/java/com/Other.java",
-          signature: "public class Other",
-        },
-      ],
-      edges: [],
-      unresolved: [],
-    }),
+  const owner = artifact.targets[0];
+  owner.shards[owner.shards.length - 1].nodes.push(
+    structuredClone(exampleShard(owner.name).nodes[0]),
   );
 }
 if (flag("foreign-shard-target")) {

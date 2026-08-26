@@ -164,8 +164,14 @@ export const test_javac_graph_refuses_an_artifact_it_cannot_prove =
     rejects("a checker digest that is not a digest", (value) => {
       value.targets[0]!.shards[0]!.checkerDigest = "nope";
     });
-    rejects("a disk digest that is neither empty nor a digest", (value) => {
+    rejects("a disk digest that is not a digest", (value) => {
       value.targets[0]!.shards[0]!.diskDigest = "nope";
+    });
+    // The coordinator will not publish a generation whose sources it cannot
+    // hash for itself, so an absent disk digest is refused here rather than
+    // three refreshes later by a fence that cannot name the producer.
+    rejects("a source the producer could not read from disk", (value) => {
+      value.targets[0]!.shards[0]!.diskDigest = "";
     });
     rejects("a shard that states no compiler", (value) => {
       (value.targets[0]!.shards[0] as { compilerVersion?: unknown })

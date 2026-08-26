@@ -1,5 +1,6 @@
 import { TestValidator } from "@nestia/e2e";
 import {
+  buildGraphDump,
   JAVA_GRAPH_PROVIDER,
   javaGraphProvider,
   selectGraphProviders,
@@ -32,10 +33,20 @@ export const test_javac_graph_declines_a_launcher_without_graph_output =
       path.join(root, "pom.xml"),
       "<project><modelVersion>4.0.0</modelVersion></project>\n",
     );
-    fs.mkdirSync(path.join(root, "src", "main", "java"), { recursive: true });
+    // The two compilation units the fake producer reports having compiled.
+    // The coordinator hashes them itself before it will publish anything, so
+    // a fixture that named sources it does not have would fail that fence for
+    // the fixture reason rather than the route one.
+    fs.mkdirSync(path.join(root, "src", "main", "java", "com"), {
+      recursive: true,
+    });
     fs.writeFileSync(
-      path.join(root, "src", "main", "java", "Example.java"),
-      "public class Example {}\n",
+      path.join(root, "src", "main", "java", "com", "Example.java"),
+      "package com;\npublic class Example {}\n",
+    );
+    fs.writeFileSync(
+      path.join(root, "src", "main", "java", "com", "Caller.java"),
+      "package com;\npublic class Caller {\n    public static Example make() {\n        return new Example();\n    }\n}\n",
     );
 
     const windows = process.platform === "win32";
@@ -192,6 +203,29 @@ export const test_javac_graph_declines_a_launcher_without_graph_output =
       } finally {
         await session.close();
       }
+
+      // The whole route, through the coordinator that owns the project input
+      // generation. Opening the session directly proves the producer contract
+      // and nothing about the fence around it: a snapshot only publishes if
+      // every source it names binds to bytes the coordinator hashed itself,
+      // and a provider that omitted a disk digest or named a file in a form
+      // the coordinator cannot compare fails there rather than here.
+      const dump = await buildGraphDump({
+        cwd: root,
+        mode: "lsp",
+        languages: ["java"],
+      });
+      TestValidator.predicate(
+        "the coordinator publishes the route's generation, fence and all",
+        (dump.provenance ?? []).some(
+          (row) =>
+            row.provider === JAVA_GRAPH_PROVIDER &&
+            row.authority === "compiler",
+        ) &&
+          dump.nodes.some(
+            (node) => node.file === "src/main/java/com/Example.java",
+          ),
+      );
     } finally {
       for (const [key, value] of previous) {
         if (value === undefined) delete process.env[key];

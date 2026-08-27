@@ -20,24 +20,34 @@ const CONTENT_MODIFIED = -32801;
 const DEFAULT_READY_TIMEOUT_MS = 300_000;
 const RETRY_DELAY_MS = 50;
 const MAX_RETRY_DELAY_MS = 5_000;
-// A page is one shard, because a shard is the only unit whose size the
-// producer can state. The producer answers a page by holding every body it
-// carries, the whole page as a `llvm::json::Value` tree, and the serialized
-// text, all at once, so a page bounded by shard *count* is an unbounded
-// promise in bytes. Measured on the experiment corpora: one `fmt` translation
-// unit is 169,505 occurrences, 40,366 symbols and 173,255 relations, and a
-// 32-shard page took a 16 GiB host from 11.5 GiB free to dead in 76 seconds.
-// Asking for more than one is a bet that N of those fit, and nothing in this
-// protocol tells a client what N is safe for a repository it has not read.
+// A page size balances two costs that pull against each other, and the first
+// choice here only measured one of them.
 //
-// It is not free. The producer reads one main file's shard once per page and
-// serves every configuration of that file from it, so a file built under
-// several configurations is now read once per configuration instead of once.
-// Both pinned corpora build each file one way, so today that costs nothing;
-// a project with many configurations per file pays it. Reading a shard again
-// is a cost that scales with the work; holding thirty-two of them expanded
-// into a JSON tree is a cost that ends the process.
-const PAGE_SHARDS = 1;
+// Upward: the producer answers a page by holding every body it carries, the
+// whole page as a `llvm::json::Value` tree, and the serialized text at once.
+// One `fmt` translation unit is 169,505 occurrences, 40,366 symbols and
+// 173,255 relations -- some 590 MiB once expanded -- so a page bounded by
+// shard *count* is an unbounded promise in bytes, and thirty-two of them took
+// a 16 GiB host from 11.5 GiB free to dead in seventy-six seconds.
+//
+// Downward: every page costs the producer a copy of its whole snapshot cache,
+// shard metadata and per-shard source lists included, before it reads the one
+// shard the page is for. That is O(shards) paid O(shards) times. On libuv --
+// 242 translation units, each carrying its headers -- one shard to a page made
+// the memory fit and the wall clock quadratic: nine lifecycle refreshes spent
+// over eighty minutes without finishing, against a job that is killed at 150.
+//
+// Four is where those meet. It keeps a page within one order of magnitude of a
+// single shard, which is the only size this protocol lets a client reason
+// about, and it divides the producer's per-page fixed cost by four. It is not
+// derived from a rule; it is a reading of two measured curves, and it moves
+// again only against another reading.
+//
+// This is affordable now for a reason that did not hold before: the client
+// adapts each page as it arrives instead of accumulating the generation, so
+// what a page costs *this* process no longer scales with how many shards it
+// carries. Only the producer's side of the trade is left.
+const PAGE_SHARDS = 4;
 
 /** Resident LSP client for the pinned clangd graph-snapshot producer. */
 export class CppGraphClient implements IBulkGraphSession {

@@ -18,7 +18,16 @@ const CONTENT_MODIFIED = -32801;
 const DEFAULT_READY_TIMEOUT_MS = 300_000;
 const RETRY_DELAY_MS = 50;
 const MAX_RETRY_DELAY_MS = 5_000;
-const PAGE_SHARDS = 32;
+// A page is one shard, because a shard is the only unit whose size the
+// producer can state. The producer answers a page by holding every body it
+// carries, the whole page as a `llvm::json::Value` tree, and the serialized
+// text, all at once, so a page bounded by shard *count* is an unbounded
+// promise in bytes. Measured on the experiment corpora: one `fmt` translation
+// unit is 169,505 occurrences, 40,366 symbols and 173,255 relations, and a
+// 32-shard page took a 16 GiB host from 11.5 GiB free to dead in 76 seconds.
+// Asking for more than one is a bet that N of those fit, and nothing in this
+// protocol tells a client what N is safe for a repository it has not read.
+const PAGE_SHARDS = 1;
 
 /** Resident LSP client for the pinned clangd graph-snapshot producer. */
 export class CppGraphClient implements IBulkGraphSession {

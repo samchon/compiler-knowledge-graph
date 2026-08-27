@@ -616,7 +616,14 @@ async function assertClientLifecycle(root: string): Promise<void> {
       [deleted.changed, deleted.mode, deleted.generation],
       client.generation,
       edited.snapshot.nodes.some((node) => node.name === "editedCaller"),
-      readLines(requestLog).map((row) => row.knownGeneration !== undefined),
+      // A refresh opens with the one request that carries no cursor, and that
+      // is where it declares the generation it already holds. Continuations
+      // are answers to a cursor, so they are not asked that question again --
+      // reading only the openers keeps this about the handshake, not the page
+      // size the client happens to ask for.
+      readLines(requestLog)
+        .filter((row) => row.cursor === undefined)
+        .map((row) => row.knownGeneration !== undefined),
       readLines(watchLog).map((row) => row.changes[0]?.type),
     ],
     [
@@ -666,10 +673,13 @@ async function assertClientPagination(): Promise<void> {
         refreshed.snapshot.sources.size,
         refreshed.snapshot.protocol?.shards.length,
         requests.length,
-        requests.map((request) => request.maxShards),
-        requests.map((request) => typeof request.cursor),
+        [...new Set(requests.map((request) => request.maxShards))],
+        [...new Set(requests.map((request) => typeof request.cursor))],
+        typeof requests[0]?.cursor,
       ],
-      [35, 35, 2, [32, 32], ["undefined", "string"]],
+      // One shard to a page, so 35 translation units are 35 requests: the first
+      // opens the generation and every later one carries the cursor it was given.
+      [35, 35, 35, [1], ["undefined", "string"], "undefined"],
     );
     for (const [corruption, message] of [
       ["generation", "malformed paged generation"],

@@ -139,6 +139,7 @@ export const test_cpp_clang_snapshot_adapter_and_client_are_atomic = async () =>
   await assertProvider(root);
   await assertClientLifecycle(root);
   await assertClientInputShapes();
+  await assertClientReportsItsOwnSize(root);
   await assertClientPagination();
   await assertClientFailures(fixtureRoot());
 };
@@ -676,6 +677,82 @@ async function assertClientLifecycle(root: string): Promise<void> {
     "a closed Clang graph session rejects refresh",
     client.refresh(),
     "session is closed",
+  );
+}
+
+async function assertClientReportsItsOwnSize(root: string): Promise<void> {
+  // Three hosts died on this route before any stage said what it held, and the
+  // trace is off in every run but the one that needs it -- so the arm that is
+  // on has to be exercised somewhere. It writes to the stderr descriptor
+  // rather than through `process.stderr.write`, which is the point of writing
+  // it that way and the reason this needs its own process to be read back.
+  const clientModule = pathToFileURL(
+    path.join(
+      GraphPaths.graphPackageRoot,
+      "lib",
+      "provider",
+      "cpp",
+      "CppGraphClient.js",
+    ),
+  ).href;
+  const child = spawnSync(
+    process.execPath,
+    [
+      "--input-type=module",
+      "-e",
+      [
+        `const { CppGraphClient } = await import(${JSON.stringify(clientModule)});`,
+        "const client = new CppGraphClient({",
+        `  root: ${JSON.stringify(root)},`,
+        '  languages: ["c", "cpp"],',
+        `  command: ${JSON.stringify(process.execPath)},`,
+        `  args: [${JSON.stringify(GraphPaths.fakeCppGraphServer)}, ${JSON.stringify(`--commit=${COMMIT}`)}],`,
+        `  producerCommit: ${JSON.stringify(COMMIT)},`,
+        "  requestTimeoutMs: 5000,",
+        "  readyTimeoutMs: 10000,",
+        "});",
+        "try { await client.refresh(); } finally { await client.close(); }",
+      ].join("\n"),
+    ],
+    {
+      cwd: root,
+      encoding: "utf8",
+      env: { ...process.env, SAMCHON_GRAPH_CPP_HEAP_TRACE: "1" },
+      windowsHide: true,
+    },
+  );
+  const reported = child.stderr
+    .split("\n")
+    .filter((line) => line.startsWith("@samchon/graph: cpp-heap "))
+    .map((line) => line.replace(/ heap[A-Za-z]*MiB=\d+| rssMiB=\d+/gu, ""));
+  const counts = reported.map((line) =>
+    Number(/shards=(\d+)/u.exec(line)?.[1] ?? "-1"),
+  );
+  // The count is what makes this a measurement rather than a log line. Both
+  // boundaries, the same generation at each, and a generation with something
+  // in it: a stage that reported one boundary and not the other, or named a
+  // different corpus at each, would say nothing about what adapting costs and
+  // would still have run. The figures themselves are the host's, not this
+  // suite's, so they are read for shape rather than pinned.
+  TestValidator.equals(
+    "a traced refresh reports one generation at both boundaries",
+    [
+      child.status,
+      child.signal,
+      reported.map((line) => line.replace(/shards=\d+/u, "shards=N")),
+      counts[0] === counts[1],
+      (counts[0] ?? 0) > 0,
+    ],
+    [
+      0,
+      null,
+      [
+        "@samchon/graph: cpp-heap stage=paged shards=N",
+        "@samchon/graph: cpp-heap stage=committed shards=N",
+      ],
+      true,
+      true,
+    ],
   );
 }
 

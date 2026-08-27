@@ -9,6 +9,7 @@ import { LspClient } from "../../lsp/LspClient";
 import { LspResponseError } from "../../lsp/LspResponseError";
 import { GraphLanguage } from "../../typings";
 import { IBulkGraphSession } from "../IBulkGraphSession";
+import { cppGraphHeapTrace } from "./cppGraphHeapTrace";
 import { CppGraphReloadRequired } from "./CppGraphReloadRequired";
 import { CppGraphSnapshotAdapter } from "./CppGraphSnapshotAdapter";
 import { ICppGraphSnapshot } from "./ICppGraphSnapshot";
@@ -46,6 +47,8 @@ export class CppGraphClient implements IBulkGraphSession {
 
   private readonly lsp: LspClient;
   private readonly adapter: CppGraphSnapshotAdapter;
+  private readonly heapTrace: cppGraphHeapTrace.ITrace | undefined =
+    cppGraphHeapTrace();
   private readonly validate: (
     snapshot: IBulkGraphSession.ISnapshot,
   ) => void;
@@ -287,14 +290,32 @@ export class CppGraphClient implements IBulkGraphSession {
   private async applySnapshot(
     signal: AbortSignal,
   ): Promise<ReturnType<CppGraphSnapshotAdapter["apply"]>> {
-    const raw = await this.requestSnapshot(signal);
+    const adapt = (
+      raw: ICppGraphSnapshot,
+    ): CppGraphSnapshotAdapter.IResult => {
+      this.reportHeap("paged", raw.upserts.length);
+      const result = this.adapter.apply(raw, this.validate);
+      this.reportHeap("committed", raw.upserts.length);
+      return result;
+    };
     try {
-      return this.adapter.apply(raw, this.validate);
+      return adapt(await this.requestSnapshot(signal));
     } catch (error) {
       if (!(error instanceof CppGraphReloadRequired)) throw error;
       this.adapter.forget();
-      return this.adapter.apply(await this.requestSnapshot(signal), this.validate);
+      return adapt(await this.requestSnapshot(signal));
     }
+  }
+
+  /**
+   * Report what this consumer holds at one boundary, when asked to.
+   *
+   * One call site for the optional trace rather than four: a diagnostic that
+   * is off in every run but one should not put a branch on the path it
+   * measures four times over.
+   */
+  private reportHeap(stage: "paged" | "committed", shards: number): void {
+    this.heapTrace?.stage(stage, shards);
   }
 
   private async requestSnapshotPages(

@@ -183,7 +183,7 @@
       "decline": "A missing producer or JDK, a launcher without `--graph-output`, a producer that does not commit atomic generations, an incomplete coverage matrix, a foreign project root or a bounded request declines the strict provider.",
       "fallback": "`scip-java`, then `jdtls`, then `@samchon/graph-sitter`.",
       "experimentLanguages": ["java"],
-      "experimentTool": "scip-java",
+      "experimentTool": "scip-java-javac-graph",
       "experimentCapabilities": ["coverage", "diskDigests", "incremental", "sourceDigests", "universe", "unresolved"],
       "benchmarkProvider": "scip-java",
       "benchmarks": [{"project": "gson", "strictMs": 88653.49921, "fallbackMs": 231398.488953}],

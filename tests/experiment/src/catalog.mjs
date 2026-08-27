@@ -315,7 +315,12 @@ export const LANGUAGE_EXPERIMENTS = [
     producerCommit: "32eca214a413d1b8a375c481f666ff8a4ec96773",
     strictProvider: "javac-graph",
     strictAuthority: "compiler",
-    strictTool: "scip-java",
+    // The launcher and the producer are two names. `scip-java` is the command
+    // this lane runs; the thing inside it that wrote the graph is the javac
+    // plugin, and the artifact identifies itself by that. Asserting the
+    // launcher's name here would go green for any future launcher that shipped
+    // a different writer under the same command.
+    strictTool: "scip-java-javac-graph",
     requiredCapabilities: [
       "coverage",
       "diskDigests",

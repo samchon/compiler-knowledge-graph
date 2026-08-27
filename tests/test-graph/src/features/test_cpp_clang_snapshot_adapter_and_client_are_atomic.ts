@@ -841,6 +841,7 @@ async function assertClientPagination(): Promise<void> {
       ["generation", "malformed paged generation"],
       ["envelope", "malformed snapshot page envelope"],
       ["telemetry", "malformed page telemetry"],
+      ["arithmetic", "page telemetry does not add up"],
       ["cache", "malformed page cache state"],
       ["early", "paged generation ended early"],
       ["cursor", "invalid continuation cursor"],

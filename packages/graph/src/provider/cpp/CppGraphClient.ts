@@ -650,6 +650,18 @@ function assertSnapshotPage(
   if (typeof snapshot.phases.cacheHit !== "boolean") {
     throw new Error("C/C++ clang graph: malformed page cache state");
   }
+  // Each page's own arithmetic, which the assembled envelope used to carry
+  // for all of them. Summing first and checking once let two pages cancel:
+  // a total overstated on one and understated on another added up right.
+  if (
+    snapshot.phases.totalMillis !==
+    snapshot.phases.validationMillis +
+      snapshot.phases.semanticMillis +
+      snapshot.phases.shardMillis +
+      snapshot.phases.encodeMillis
+  ) {
+    throw new Error("C/C++ clang graph: page telemetry does not add up");
+  }
 }
 
 function assertSameGeneration(

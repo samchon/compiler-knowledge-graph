@@ -172,6 +172,10 @@ function corruptPage(result, continuation) {
   if (pageCorruption === "envelope") result.page.offset = -1;
   if (pageCorruption === "telemetry") result.phases.validationMillis = -1;
   if (pageCorruption === "cache") result.phases.cacheHit = "invalid";
+  // Every field still a valid non-negative integer, and only the sum wrong --
+  // the shape a per-page check catches and a check over the assembled total
+  // can have cancelled out.
+  if (pageCorruption === "arithmetic") result.phases.totalMillis += 1;
   if (pageCorruption === "early" && !continuation) result.page.nextCursor = null;
   if (pageCorruption === "cursor" && !continuation) {
     result.page.total = result.page.count;

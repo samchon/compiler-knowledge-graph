@@ -182,8 +182,34 @@ export const test_javac_graph_publishes_atomic_target_generations =
           (node) => node.qualifiedName === "java.lang.Deprecated",
         ),
       );
+      // The producer displays an executable with its parameter list, because
+      // that is what tells two overloads apart on sight. The graph's name is
+      // the simple declared name a reader types and a lookup matches, and a
+      // route that published the display as the name would leave every Java
+      // method unfindable by the name it is written with.
       TestValidator.predicate(
-        "the external node keeps the producer's naming",
+        "a method is named the way it is declared, not the way it displays",
+        snapshot.nodes.some(
+          (node) =>
+            node.kind === "method" &&
+            node.name === "make" &&
+            node.qualifiedName === "com.Caller.make",
+        ),
+      );
+      // Where the producer formats no signature, the display it came from is
+      // the only statement of the declaration's shape there is, so cutting the
+      // list out of the name has to put it somewhere rather than lose it.
+      TestValidator.predicate(
+        "a display with no signature beside it becomes the signature",
+        snapshot.nodes.some(
+          (node) =>
+            node.kind === "constructor" &&
+            node.name === "Caller" &&
+            node.signature === "Caller()",
+        ),
+      );
+      TestValidator.predicate(
+        "the external node keeps the producer's naming, list cut away",
         external.some(
           (node) => node.qualifiedName === "java.lang.Object.toString",
         ),

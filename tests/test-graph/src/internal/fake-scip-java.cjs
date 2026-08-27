@@ -210,13 +210,30 @@ const callerShard = (target) =>
       {
         symbol: "semanticdb maven . . com/Caller#make().",
         kind: "method",
-        name: "make",
-        qualifiedName: "com.Caller.make",
+        // The producer displays an executable with its parameter list, which
+        // is what tells two overloads apart on sight. The graph's name is the
+        // simple declared name and its signature is where a list belongs.
+        name: "make()",
+        qualifiedName: "com.Caller.make()",
         file: "src/main/java/com/Caller.java",
         exported: true,
         modifiers: ["public", "static"],
         signature: "public static Example make()",
         evidence: evidence("src/main/java/com/Caller.java", 3, 5, 5, 6),
+      },
+      // A constructor the producer displays with its parameter list and
+      // formats no signature for. The list is the only statement of its shape
+      // there is, so cutting it out of the name has to put it somewhere.
+      {
+        symbol: "semanticdb maven . . com/Caller#`<init>`().",
+        kind: "constructor",
+        name: "Caller()",
+        qualifiedName: "com.Caller.Caller()",
+        file: "src/main/java/com/Caller.java",
+        exported: true,
+        modifiers: ["public"],
+        signature: "",
+        evidence: evidence("src/main/java/com/Caller.java", 2, 1, 2, 20),
       },
       // A local: no owner to qualify it, nothing exported, no modifier javac
       // records in the shared vocabulary, and no signature. Every optional
@@ -292,8 +309,8 @@ const callerShard = (target) =>
         access: null,
         provenance: null,
         targetKind: "method",
-        targetName: "toString",
-        targetQualifiedName: "java.lang.Object.toString",
+        targetName: "toString()",
+        targetQualifiedName: "java.lang.Object.toString()",
         evidence: evidence("src/main/java/com/Caller.java", 4, 60, 4, 70),
       },
       // The same external symbol reached a second time. One endpoint outside
@@ -305,8 +322,8 @@ const callerShard = (target) =>
         access: "read",
         provenance: null,
         targetKind: "method",
-        targetName: "toString",
-        targetQualifiedName: "java.lang.Object.toString",
+        targetName: "toString()",
+        targetQualifiedName: "java.lang.Object.toString()",
         evidence: evidence("src/main/java/com/Caller.java", 5, 9, 5, 19),
       },
       // The same endpoint reached from two sites, one of which could name it
@@ -446,10 +463,10 @@ const artifact = {
 if (flag("two-named-externals")) {
   const shard = artifact.targets[0].shards.find((entry) => entry.edges.length > 3);
   const named = shard.edges.filter(
-    (edge) => edge.targetQualifiedName === "java.lang.Object.toString",
+    (edge) => edge.targetQualifiedName === "java.lang.Object.toString()",
   );
-  named[1].targetName = "hashCode";
-  named[1].targetQualifiedName = "java.lang.Object.hashCode";
+  named[1].targetName = "hashCode()";
+  named[1].targetQualifiedName = "java.lang.Object.hashCode()";
 }
 
 if (flag("empty-endpoint")) {

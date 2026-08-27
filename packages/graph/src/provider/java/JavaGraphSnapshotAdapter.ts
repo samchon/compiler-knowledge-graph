@@ -617,12 +617,34 @@ function namingOf(edge: IJavaGraphSnapshot.IEdge): INaming {
   const name =
     edge.targetName === null || edge.targetName === ""
       ? edge.to
-      : edge.targetName;
+      : declaredName(edge.targetName);
   const qualifiedName =
     edge.targetQualifiedName === null || edge.targetQualifiedName === ""
       ? undefined
-      : edge.targetQualifiedName;
+      : declaredName(edge.targetQualifiedName);
   return qualifiedName === undefined ? { name } : { name, qualifiedName };
+}
+
+/**
+ * The simple declared name, cut out of the producer's display form.
+ *
+ * javac has no one name for a method: the producer displays an executable as
+ * `make(int, java.lang.String)`, because that is what tells two overloads
+ * apart on sight. The graph's `name` is the simple declared name a reader
+ * types and a lookup matches, and its `signature` is where a parameter list
+ * belongs — a route that published the display as the name would leave every
+ * Java method unfindable by the name it is written with.
+ *
+ * Cutting at the first `(` is exact rather than approximate here. A Java
+ * simple name, a package name and a module name cannot contain one, and
+ * neither can a parameter type, so the only `(` in any of these strings opens
+ * the list this removes.
+ */
+function declaredName(display: string): string {
+  const open = display.indexOf("(");
+  /* c8 ignore next -- an executable display always has a name before its list */
+  if (open <= 0) return display;
+  return display.slice(0, open);
 }
 
 /** Whether a description says nothing the symbol did not already say. */
@@ -658,8 +680,21 @@ function adaptNode(
   target: IJavaGraphSnapshot.ITarget,
   node: IJavaGraphSnapshot.INode,
 ): ISamchonGraphNode {
-  const qualifiedName = node.qualifiedName === "" ? undefined : node.qualifiedName;
-  const display = qualifiedName ?? node.name;
+  const name = declaredName(node.name);
+  const qualified =
+    node.qualifiedName === "" ? undefined : declaredName(node.qualifiedName);
+  const qualifiedName = qualified;
+  const display = qualifiedName ?? name;
+  // The parameter list the producer displays is not lost, only moved. A
+  // producer-supplied signature is the better statement of it and wins; where
+  // there is none, the display it came from becomes the signature so a reader
+  // can still tell two overloads apart.
+  const signature =
+    node.signature !== ""
+      ? node.signature
+      : node.name === name
+        ? undefined
+        : node.name;
   return {
     id: semanticGraphNodeId(
       {
@@ -675,7 +710,7 @@ function adaptNode(
     ),
     kind: node.kind as GraphNodeKind,
     language: "java",
-    name: node.name,
+    name,
     ...(qualifiedName === undefined ? {} : { qualifiedName }),
     file: graphFile(root, node.file),
     external: false,
@@ -683,7 +718,7 @@ function adaptNode(
     ...(node.modifiers.length === 0
       ? {}
       : { modifiers: [...node.modifiers] as SamchonGraphNodeModifier[] }),
-    ...(node.signature === "" ? {} : { signature: node.signature }),
+    ...(signature === undefined ? {} : { signature }),
     evidence: adaptEvidence(root, node.evidence),
   };
 }

@@ -3,6 +3,7 @@ import { spawnSync } from "node:child_process";
 import { spawnableCommand } from "../../utils/spawnableCommand";
 import { assertGraphSnapshotContract } from "../assertGraphSnapshotContract";
 import { IGraphProvider } from "../IGraphProvider";
+import { providerInputFiles } from "../providerInputFiles";
 import { resolveProviderCommand } from "../resolveProviderCommand";
 import { standardScipProviders } from "../scip/standardScipProviders";
 import { toolchainVersion } from "../toolchainVersion";
@@ -22,12 +23,16 @@ if (javaScipProvider === undefined) {
   throw new Error("javac-graph: the scip-java fallback is not registered");
 }
 /**
- * Every input whose change can move a Java target's committed generation.
+ * The build files a registry entry watches, shared with the SCIP lane because
+ * the two routes read the same project configuration.
  *
- * Shared with the SCIP lane rather than restated, because the two routes read
- * the same project: the sources and the build files together, since either one
- * alone is a half-answer — a classpath edit in `pom.xml` recompiles sources it
- * never touched, and a source edit moves facts no build file mentions.
+ * These are the registry's `buildInputs`, and they are deliberately *not* the
+ * session's inputs. A registry entry declares the files outside its own
+ * language whose change invalidates it; a session fingerprints everything it
+ * compiled. Handing the first list to the second is what let a Java source
+ * edit leave the fingerprint unmoved, so the session reused a snapshot taken
+ * before the edit and the coordinator's fence refused it — correctly, and with
+ * a digest that described bytes no longer on disk.
  */
 const javaBuildInputs = javaScipProvider.buildInputs;
 /* c8 ignore next 4 -- every SCIP descriptor derives its build inputs from the
@@ -35,6 +40,22 @@ const javaBuildInputs = javaScipProvider.buildInputs;
 if (typeof javaBuildInputs !== "function") {
   throw new Error("javac-graph: the scip-java fallback names no build inputs");
 }
+
+/**
+ * Every input whose change can move a Java target's committed generation.
+ *
+ * Sources and build files together, because either alone is a half-answer: a
+ * classpath edit in `pom.xml` recompiles sources it never touched, and a
+ * source edit moves facts no build file mentions. This is the fingerprint that
+ * decides whether the build has to run at all, so a file missing from it is a
+ * file whose edit the route will not notice.
+ */
+const javaInputs = (root: string): string[] => [
+  ...new Set([
+    ...providerInputFiles(root, ["java"], []),
+    ...javaBuildInputs(root),
+  ]),
+];
 
 /**
  * The compiler-owned Java route: javac writes the graph, not a second reader.
@@ -96,7 +117,7 @@ export const javaGraphProvider: IGraphProvider = {
       languages: props.languages,
       provider: JAVA_GRAPH_PROVIDER,
       command: props.command,
-      inputs: () => [...javaBuildInputs(props.root)],
+      inputs: () => javaInputs(props.root),
       configuration: () => javaToolchain(props.root, process.env),
       validate: (snapshot) =>
         assertGraphSnapshotContract(

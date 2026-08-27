@@ -226,6 +226,28 @@ export const test_javac_graph_declines_a_launcher_without_graph_output =
             (node) => node.file === "src/main/java/com/Example.java",
           ),
       );
+
+      // An ordinary source edit, through the provider's own inputs rather than
+      // a fixture's list of them. This is the case a session that fingerprints
+      // only build files cannot pass: it would reuse the snapshot taken before
+      // the edit, and the coordinator would refuse it for describing bytes the
+      // file no longer has. A route that will not notice a source edit is not
+      // an incremental route, it is a stale one.
+      fs.writeFileSync(
+        path.join(root, "src", "main", "java", "com", "Example.java"),
+        "package com;\npublic class Example {}\n// edited\n",
+      );
+      const edited = await buildGraphDump({
+        cwd: root,
+        mode: "lsp",
+        languages: ["java"],
+      });
+      TestValidator.predicate(
+        "a source edit republishes rather than reusing a stale generation",
+        (edited.provenance ?? []).some(
+          (row) => row.provider === JAVA_GRAPH_PROVIDER,
+        ),
+      );
     } finally {
       for (const [key, value] of previous) {
         if (value === undefined) delete process.env[key];

@@ -498,7 +498,7 @@ function renderSupport(manifest) {
   return [
     "### Strict provider support",
     "",
-    "_Generated from [`docs/provider-support.json`](https://github.com/samchon/compiler-graph/blob/master/docs/provider-support.json); do not edit this block by hand._",
+    "_Generated from [`docs/provider-support.json`](https://github.com/samchon/compiler-knowledge-graph/blob/master/docs/provider-support.json); do not edit this block by hand._",
     "",
     "Strict selection is per registered provider and may decline for missing tools, incompatible options, or incomplete build metadata. Authority grades differ. A provider's `facts` list means it can defend those edge families; it is not a universal-completeness claim. Strict dumps carry provider/tool provenance plus universe, input-manifest, and content digests. The MCP result reports operation coverage and uncertainty, but does not promise #63's future complete producer-owned per-generation coverage contract. Generic language-server and static fallbacks remain valid lower-authority results and are identified as such.",
     "",
@@ -511,7 +511,7 @@ function renderSupport(manifest) {
     "",
     "#### Lifecycle",
     "",
-    `These are current implementation modes, not future route claims. Preparation and native/export/resident phases are stated separately because the [experiment catalog](https://github.com/samchon/compiler-graph/blob/master/tests/experiment/src/catalog.mjs) and [cold measurement artifact](https://github.com/samchon/compiler-graph/blob/master/${manifest.benchmark.artifact}) prove different boundaries; the artifact reports whole end-to-end cells, not isolated phase timings.`,
+    `These are current implementation modes, not future route claims. Preparation and native/export/resident phases are stated separately because the [experiment catalog](https://github.com/samchon/compiler-knowledge-graph/blob/master/tests/experiment/src/catalog.mjs) and [cold measurement artifact](https://github.com/samchon/compiler-knowledge-graph/blob/master/${manifest.benchmark.artifact}) prove different boundaries; the artifact reports whole end-to-end cells, not isolated phase timings.`,
     "",
     table(
       ["Provider", "Mode", "Preparation", "Native analysis", "Export and merge", "Reuse or resident state"],
@@ -529,7 +529,7 @@ function renderSupport(manifest) {
     "",
     "#### Verified cold index cells",
     "",
-    `These are exact same-run cold end-to-end strict/strict-disabled pairs from [\`${manifest.benchmark.artifact}\`](https://github.com/samchon/compiler-graph/blob/master/${manifest.benchmark.artifact}), produced by [the pinned workflow run](${manifest.benchmark.workflowRun}). They do not prove warm or semantic-incremental behavior. A zero-fact strict provider is not called semantically complete. Ruby and Dart report only that both whole cells exceeded the 1,800-second guard; that limit is not an isolated producer duration.`,
+    `These are exact same-run cold end-to-end strict/strict-disabled pairs from [\`${manifest.benchmark.artifact}\`](https://github.com/samchon/compiler-knowledge-graph/blob/master/${manifest.benchmark.artifact}), produced by [the pinned workflow run](${manifest.benchmark.workflowRun}). They do not prove warm or semantic-incremental behavior. A zero-fact strict provider is not called semantically complete. Ruby and Dart report only that both whole cells exceeded the 1,800-second guard; that limit is not an isolated producer duration.`,
     "",
     table(
       ["Project", "Strict provider", "Strict cell", "Strict-disabled cell"],

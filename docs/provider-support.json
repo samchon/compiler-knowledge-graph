@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "benchmark": {
     "artifact": "tests/benchmark/results/graph.json",
-    "workflowRun": "https://github.com/samchon/compiler-graph/actions/runs/30448033020",
+    "workflowRun": "https://github.com/samchon/compiler-knowledge-graph/actions/runs/30448033020",
     "kind": "cold end-to-end strict versus strict-disabled pairs"
   },
   "providers": [
@@ -34,7 +34,7 @@
       "experimentCapabilities": ["universe", "sourceDigests", "diskDigests", "diagnostics"],
       "benchmarks": [{"project": "excalidraw", "strictMs": 5340.295836, "fallbackMs": 2977.720236}],
       "upstream": "https://github.com/samchon/ttsc",
-      "childIssues": ["https://github.com/samchon/compiler-graph/issues/63"]
+      "childIssues": ["https://github.com/samchon/compiler-knowledge-graph/issues/63"]
     },
     {
       "provider": "samchon-graph-go",
@@ -64,7 +64,7 @@
       "experimentCapabilities": ["universe", "sourceDigests", "fullRebuild"],
       "benchmarks": [{"project": "gin", "strictMs": 38097.048393, "fallbackMs": 687.107355}],
       "upstream": "https://github.com/scip-code/scip-go",
-      "childIssues": ["https://github.com/samchon/compiler-graph/issues/63"]
+      "childIssues": ["https://github.com/samchon/compiler-knowledge-graph/issues/63"]
     },
     {
       "provider": "samchon-graph-lua",
@@ -91,7 +91,7 @@
       "experimentCapabilities": ["universe", "diskDigests"],
       "benchmarks": [{"project": "lualine", "strictMs": 18889.245252, "fallbackMs": 27848.006717}],
       "upstream": "https://github.com/LuaLS/lua-language-server",
-      "childIssues": ["https://github.com/samchon/compiler-graph/issues/83"]
+      "childIssues": ["https://github.com/samchon/compiler-knowledge-graph/issues/83"]
     },
     {
       "provider": "samchon-rust-analyzer-hir",
@@ -122,7 +122,7 @@
       "benchmarkProvider": "rust-analyzer-scip",
       "benchmarks": [{"project": "tokio", "strictMs": 55238.18003, "fallbackMs": 229860.9964}],
       "upstream": "https://github.com/samchon/rust-analyzer",
-      "childIssues": ["https://github.com/samchon/compiler-graph/issues/72"]
+      "childIssues": ["https://github.com/samchon/compiler-knowledge-graph/issues/72"]
     },
     {
       "provider": "clangd-snapshot",
@@ -157,7 +157,7 @@
         {"project": "leveldb", "strictMs": 8352.928418, "fallbackMs": 26451.951757}
       ],
       "upstream": "https://github.com/samchon/llvm-project",
-      "childIssues": ["https://github.com/samchon/compiler-graph/issues/73"]
+      "childIssues": ["https://github.com/samchon/compiler-knowledge-graph/issues/73"]
     },
     {
       "provider": "javac-graph",
@@ -188,7 +188,7 @@
       "benchmarkProvider": "scip-java",
       "benchmarks": [{"project": "gson", "strictMs": 88653.49921, "fallbackMs": 231398.488953}],
       "upstream": "https://github.com/samchon/scip-java",
-      "childIssues": ["https://github.com/samchon/compiler-graph/issues/74"]
+      "childIssues": ["https://github.com/samchon/compiler-knowledge-graph/issues/74"]
     },
     {
       "provider": "scip-kotlinc",
@@ -219,7 +219,7 @@
       "benchmarkProvider": "scip-java",
       "benchmarks": [{"project": "koin", "strictMs": 211263.800455, "fallbackMs": 967711.761431}],
       "upstream": "https://github.com/scip-code/scip-java",
-      "childIssues": ["https://github.com/samchon/compiler-graph/issues/76"]
+      "childIssues": ["https://github.com/samchon/compiler-knowledge-graph/issues/76"]
     },
     {
       "provider": "scip-dotnet",
@@ -249,7 +249,7 @@
       "experimentCapabilities": ["universe", "diskDigests"],
       "benchmarks": [{"project": "serilog", "strictMs": 20498.323945, "fallbackMs": 25085.071148}],
       "upstream": "https://github.com/sourcegraph/scip-dotnet",
-      "childIssues": ["https://github.com/samchon/compiler-graph/issues/75"]
+      "childIssues": ["https://github.com/samchon/compiler-knowledge-graph/issues/75"]
     },
     {
       "provider": "scip-python",
@@ -279,7 +279,7 @@
       "experimentCapabilities": ["universe", "diskDigests"],
       "benchmarks": [{"project": "flask", "strictMs": 10628.897103, "fallbackMs": 748.453891}],
       "upstream": "https://github.com/sourcegraph/scip-python",
-      "childIssues": ["https://github.com/samchon/compiler-graph/issues/80"]
+      "childIssues": ["https://github.com/samchon/compiler-knowledge-graph/issues/80"]
     },
     {
       "provider": "scip-ruby",
@@ -309,7 +309,7 @@
       "experimentCapabilities": ["universe", "diskDigests"],
       "benchmarks": [{"project": "sinatra", "strictTimedOutMs": 1800000, "fallbackTimedOutMs": 1800000}],
       "upstream": "https://github.com/sourcegraph/scip-ruby",
-      "childIssues": ["https://github.com/samchon/compiler-graph/issues/81"]
+      "childIssues": ["https://github.com/samchon/compiler-knowledge-graph/issues/81"]
     },
     {
       "provider": "scip-dart",
@@ -339,7 +339,7 @@
       "experimentCapabilities": ["universe", "diskDigests"],
       "benchmarks": [{"project": "darthttp", "strictTimedOutMs": 1800000, "fallbackTimedOutMs": 1800000}],
       "upstream": "https://pub.dev/packages/scip_dart",
-      "childIssues": ["https://github.com/samchon/compiler-graph/issues/84"]
+      "childIssues": ["https://github.com/samchon/compiler-knowledge-graph/issues/84"]
     },
     {
       "provider": "scip-php",
@@ -369,26 +369,26 @@
       "experimentCapabilities": ["universe", "diskDigests"],
       "benchmarks": [{"project": "slim", "strictMs": 3771.828111, "fallbackMs": 9611.108084}],
       "upstream": "https://github.com/davidrjenni/scip-php",
-      "childIssues": ["https://github.com/samchon/compiler-graph/issues/82"]
+      "childIssues": ["https://github.com/samchon/compiler-knowledge-graph/issues/82"]
     }
   ],
   "ordinaryOnly": [
     {
       "language": "scala",
       "server": "metals",
-      "issue": "https://github.com/samchon/compiler-graph/issues/77",
+      "issue": "https://github.com/samchon/compiler-knowledge-graph/issues/77",
       "reason": "No registered strict provider; scip-java no longer supports Scala."
     },
     {
       "language": "swift",
       "server": "sourcekit-lsp",
-      "issue": "https://github.com/samchon/compiler-graph/issues/78",
+      "issue": "https://github.com/samchon/compiler-knowledge-graph/issues/78",
       "reason": "No packaged IndexStoreDB/SourceKit-LSP snapshot producer is registered."
     },
     {
       "language": "zig",
       "server": "zls",
-      "issue": "https://github.com/samchon/compiler-graph/issues/79",
+      "issue": "https://github.com/samchon/compiler-knowledge-graph/issues/79",
       "reason": "No analyzer or compiler Sema snapshot producer is registered."
     }
   ]

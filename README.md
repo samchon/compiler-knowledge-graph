@@ -62,7 +62,7 @@ Each server must be on `PATH`. If none is present for a file's language, that la
 <!-- provider-support:start -->
 ### Strict provider support
 
-_Generated from [`docs/provider-support.json`](https://github.com/samchon/compiler-graph/blob/master/docs/provider-support.json); do not edit this block by hand._
+_Generated from [`docs/provider-support.json`](https://github.com/samchon/compiler-knowledge-graph/blob/master/docs/provider-support.json); do not edit this block by hand._
 
 Strict selection is per registered provider and may decline for missing tools, incompatible options, or incomplete build metadata. Authority grades differ. A provider's `facts` list means it can defend those edge families; it is not a universal-completeness claim. Strict dumps carry provider/tool provenance plus universe, input-manifest, and content digests. The MCP result reports operation coverage and uncertainty, but does not promise #63's future complete producer-owned per-generation coverage contract. Generic language-server and static fallbacks remain valid lower-authority results and are identified as such.
 
@@ -70,22 +70,22 @@ Strict selection is per registered provider and may decline for missing tools, i
 
 | Provider | Languages | Authority | Defensible facts | Evidence |
 | --- | --- | --- | --- | --- |
-| `ttscgraph` | `typescript` | `compiler` | `exports`, `calls`, `accesses`, `instantiates`, `type_ref`, `extends`, `implements`, `overrides`, `renders` | [upstream](https://github.com/samchon/ttsc) / [route #63](https://github.com/samchon/compiler-graph/issues/63) |
-| `samchon-graph-go` | `go` | `compiler` | `contains`, `exports`, `imports`, `calls`, `accesses`, `instantiates`, `type_ref`, `implements`, `dispatches`, `tests`, `references` | [upstream](https://github.com/scip-code/scip-go) / [route #63](https://github.com/samchon/compiler-graph/issues/63) |
-| `samchon-graph-lua` | `lua` | `analyzer` | `references` | [upstream](https://github.com/LuaLS/lua-language-server) / [route #83](https://github.com/samchon/compiler-graph/issues/83) |
-| `samchon-rust-analyzer-hir` | `rust` | `analyzer` | `contains`, `exports`, `imports`, `calls`, `accesses`, `instantiates`, `type_ref`, `extends`, `implements`, `overrides`, `dispatches`, `decorates`, `tests`, `references` | [upstream](https://github.com/samchon/rust-analyzer) / [route #72](https://github.com/samchon/compiler-graph/issues/72) |
-| `clangd-snapshot` | `c`, `cpp` | `compiler` | `contains`, `exports`, `imports`, `calls`, `accesses`, `instantiates`, `type_ref`, `extends`, `implements`, `overrides`, `dispatches`, `references` | [upstream](https://github.com/samchon/llvm-project) / [route #73](https://github.com/samchon/compiler-graph/issues/73) |
-| `javac-graph` | `java` | `compiler` | `contains`, `exports`, `imports`, `calls`, `accesses`, `instantiates`, `type_ref`, `extends`, `implements`, `overrides`, `dispatches`, `decorates`, `tests`, `references` | [upstream](https://github.com/samchon/scip-java) / [route #74](https://github.com/samchon/compiler-graph/issues/74) |
-| `scip-kotlinc` | `kotlin` | `semantic-index` | `contains`, `references` | [upstream](https://github.com/scip-code/scip-java) / [route #76](https://github.com/samchon/compiler-graph/issues/76) |
-| `scip-dotnet` | `csharp` | `semantic-index` | **none** | [upstream](https://github.com/sourcegraph/scip-dotnet) / [route #75](https://github.com/samchon/compiler-graph/issues/75) |
-| `scip-python` | `python` | `semantic-index` | `references` | [upstream](https://github.com/sourcegraph/scip-python) / [route #80](https://github.com/samchon/compiler-graph/issues/80) |
-| `scip-ruby` | `ruby` | `semantic-index` | **none** | [upstream](https://github.com/sourcegraph/scip-ruby) / [route #81](https://github.com/samchon/compiler-graph/issues/81) |
-| `scip-dart` | `dart` | `semantic-index` | **none** | [upstream](https://pub.dev/packages/scip_dart) / [route #84](https://github.com/samchon/compiler-graph/issues/84) |
-| `scip-php` | `php` | `semantic-index` | **none** | [upstream](https://github.com/davidrjenni/scip-php) / [route #82](https://github.com/samchon/compiler-graph/issues/82) |
+| `ttscgraph` | `typescript` | `compiler` | `exports`, `calls`, `accesses`, `instantiates`, `type_ref`, `extends`, `implements`, `overrides`, `renders` | [upstream](https://github.com/samchon/ttsc) / [route #63](https://github.com/samchon/compiler-knowledge-graph/issues/63) |
+| `samchon-graph-go` | `go` | `compiler` | `contains`, `exports`, `imports`, `calls`, `accesses`, `instantiates`, `type_ref`, `implements`, `dispatches`, `tests`, `references` | [upstream](https://github.com/scip-code/scip-go) / [route #63](https://github.com/samchon/compiler-knowledge-graph/issues/63) |
+| `samchon-graph-lua` | `lua` | `analyzer` | `references` | [upstream](https://github.com/LuaLS/lua-language-server) / [route #83](https://github.com/samchon/compiler-knowledge-graph/issues/83) |
+| `samchon-rust-analyzer-hir` | `rust` | `analyzer` | `contains`, `exports`, `imports`, `calls`, `accesses`, `instantiates`, `type_ref`, `extends`, `implements`, `overrides`, `dispatches`, `decorates`, `tests`, `references` | [upstream](https://github.com/samchon/rust-analyzer) / [route #72](https://github.com/samchon/compiler-knowledge-graph/issues/72) |
+| `clangd-snapshot` | `c`, `cpp` | `compiler` | `contains`, `exports`, `imports`, `calls`, `accesses`, `instantiates`, `type_ref`, `extends`, `implements`, `overrides`, `dispatches`, `references` | [upstream](https://github.com/samchon/llvm-project) / [route #73](https://github.com/samchon/compiler-knowledge-graph/issues/73) |
+| `javac-graph` | `java` | `compiler` | `contains`, `exports`, `imports`, `calls`, `accesses`, `instantiates`, `type_ref`, `extends`, `implements`, `overrides`, `dispatches`, `decorates`, `tests`, `references` | [upstream](https://github.com/samchon/scip-java) / [route #74](https://github.com/samchon/compiler-knowledge-graph/issues/74) |
+| `scip-kotlinc` | `kotlin` | `semantic-index` | `contains`, `references` | [upstream](https://github.com/scip-code/scip-java) / [route #76](https://github.com/samchon/compiler-knowledge-graph/issues/76) |
+| `scip-dotnet` | `csharp` | `semantic-index` | **none** | [upstream](https://github.com/sourcegraph/scip-dotnet) / [route #75](https://github.com/samchon/compiler-knowledge-graph/issues/75) |
+| `scip-python` | `python` | `semantic-index` | `references` | [upstream](https://github.com/sourcegraph/scip-python) / [route #80](https://github.com/samchon/compiler-knowledge-graph/issues/80) |
+| `scip-ruby` | `ruby` | `semantic-index` | **none** | [upstream](https://github.com/sourcegraph/scip-ruby) / [route #81](https://github.com/samchon/compiler-knowledge-graph/issues/81) |
+| `scip-dart` | `dart` | `semantic-index` | **none** | [upstream](https://pub.dev/packages/scip_dart) / [route #84](https://github.com/samchon/compiler-knowledge-graph/issues/84) |
+| `scip-php` | `php` | `semantic-index` | **none** | [upstream](https://github.com/davidrjenni/scip-php) / [route #82](https://github.com/samchon/compiler-knowledge-graph/issues/82) |
 
 #### Lifecycle
 
-These are current implementation modes, not future route claims. Preparation and native/export/resident phases are stated separately because the [experiment catalog](https://github.com/samchon/compiler-graph/blob/master/tests/experiment/src/catalog.mjs) and [cold measurement artifact](https://github.com/samchon/compiler-graph/blob/master/tests/benchmark/results/graph.json) prove different boundaries; the artifact reports whole end-to-end cells, not isolated phase timings.
+These are current implementation modes, not future route claims. Preparation and native/export/resident phases are stated separately because the [experiment catalog](https://github.com/samchon/compiler-knowledge-graph/blob/master/tests/experiment/src/catalog.mjs) and [cold measurement artifact](https://github.com/samchon/compiler-knowledge-graph/blob/master/tests/benchmark/results/graph.json) prove different boundaries; the artifact reports whole end-to-end cells, not isolated phase timings.
 
 | Provider | Mode | Preparation | Native analysis | Export and merge | Reuse or resident state |
 | --- | --- | --- | --- | --- | --- |
@@ -123,7 +123,7 @@ The troubleshooting table names the ordinary language-server/static fallback for
 
 #### Verified cold index cells
 
-These are exact same-run cold end-to-end strict/strict-disabled pairs from [`tests/benchmark/results/graph.json`](https://github.com/samchon/compiler-graph/blob/master/tests/benchmark/results/graph.json), produced by [the pinned workflow run](https://github.com/samchon/compiler-graph/actions/runs/30448033020). They do not prove warm or semantic-incremental behavior. A zero-fact strict provider is not called semantically complete. Ruby and Dart report only that both whole cells exceeded the 1,800-second guard; that limit is not an isolated producer duration.
+These are exact same-run cold end-to-end strict/strict-disabled pairs from [`tests/benchmark/results/graph.json`](https://github.com/samchon/compiler-knowledge-graph/blob/master/tests/benchmark/results/graph.json), produced by [the pinned workflow run](https://github.com/samchon/compiler-knowledge-graph/actions/runs/30448033020). They do not prove warm or semantic-incremental behavior. A zero-fact strict provider is not called semantically complete. Ruby and Dart report only that both whole cells exceeded the 1,800-second guard; that limit is not an isolated producer duration.
 
 | Project | Strict provider | Strict cell | Strict-disabled cell |
 | --- | --- | --- | --- |
@@ -166,9 +166,9 @@ These languages are indexed through their ordinary server and static fallback to
 
 | Language | Ordinary server | Why no strict provider | Route |
 | --- | --- | --- | --- |
-| `scala` | `metals` | No registered strict provider; scip-java no longer supports Scala. | [tracked route](https://github.com/samchon/compiler-graph/issues/77) |
-| `swift` | `sourcekit-lsp` | No packaged IndexStoreDB/SourceKit-LSP snapshot producer is registered. | [tracked route](https://github.com/samchon/compiler-graph/issues/78) |
-| `zig` | `zls` | No analyzer or compiler Sema snapshot producer is registered. | [tracked route](https://github.com/samchon/compiler-graph/issues/79) |
+| `scala` | `metals` | No registered strict provider; scip-java no longer supports Scala. | [tracked route](https://github.com/samchon/compiler-knowledge-graph/issues/77) |
+| `swift` | `sourcekit-lsp` | No packaged IndexStoreDB/SourceKit-LSP snapshot producer is registered. | [tracked route](https://github.com/samchon/compiler-knowledge-graph/issues/78) |
+| `zig` | `zls` | No analyzer or compiler Sema snapshot producer is registered. | [tracked route](https://github.com/samchon/compiler-knowledge-graph/issues/79) |
 <!-- provider-support:end -->
 
 ### Repository topology

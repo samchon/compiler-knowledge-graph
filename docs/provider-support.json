@@ -104,7 +104,7 @@
       "install": "Build the `samchon/rust-analyzer` graph-snapshot fork at commit `2850ecba80311bebd4cdaa9fedc5321533b5b1e7`; point `SAMCHON_GRAPH_RUST_ANALYZER_HIR` at that binary or install it as `samchon-rust-analyzer`.",
       "installSources": [
         {"label": "native HIR graph producer PR", "url": "https://github.com/samchon/rust-analyzer/pull/1"},
-        {"label": "rust-analyzer build instructions", "url": "https://rust-analyzer.github.io/book/contributing.html"}
+        {"label": "rust-analyzer build instructions", "url": "https://rust-analyzer.github.io/book/contributing/"}
       ],
       "resolution": "Absolute `SAMCHON_GRAPH_RUST_ANALYZER_HIR`, then project/PATH `samchon-rust-analyzer`, then a project/PATH `rust-analyzer` only when its version reports the pinned producer commit.",
       "requirements": "Cargo metadata/config, lock/toolchain inputs, target/features/cfg and build-script/proc-macro universe.",

@@ -9,6 +9,7 @@ import { LspClient } from "../../lsp/LspClient";
 import { LspResponseError } from "../../lsp/LspResponseError";
 import { GraphLanguage } from "../../typings";
 import { IBulkGraphSession } from "../IBulkGraphSession";
+import { CppGraphReloadRequired } from "./CppGraphReloadRequired";
 import { CppGraphSnapshotAdapter } from "./CppGraphSnapshotAdapter";
 import { ICppGraphSnapshot } from "./ICppGraphSnapshot";
 
@@ -101,8 +102,7 @@ export class CppGraphClient implements IBulkGraphSession {
       const signal = combineSignals(options.signal, this.lifecycleAbort.signal);
       await this.initialize(signal);
       this.notifyInputChanges();
-      const raw = await this.requestSnapshot(signal);
-      const result = this.adapter.apply(raw, this.validate);
+      const result = await this.applySnapshot(signal);
       this.commitSnapshotInputs(result.snapshot);
       if (!result.changed) {
         return {
@@ -270,6 +270,30 @@ export class CppGraphClient implements IBulkGraphSession {
             ? RETRY_DELAY_MS
             : Math.min(backoff * 2, MAX_RETRY_DELAY_MS);
       }
+    }
+  }
+
+  /**
+   * Adapt one generation, asking for a whole one if a delta cannot serve.
+   *
+   * The adapter remembers a published shard by seven strings and not by its
+   * body, so a reload -- the served languages or the compilation universe
+   * moving -- has nothing to re-adapt from. The producer still holds every
+   * shard, so the answer is to forget the generation and ask again. It refuses
+   * before it has assigned anything, and the second request cannot ask for the
+   * same thing twice: with no known generation the producer sends a whole
+   * generation, which is the case a reload is already prepared for.
+   */
+  private async applySnapshot(
+    signal: AbortSignal,
+  ): Promise<ReturnType<CppGraphSnapshotAdapter["apply"]>> {
+    const raw = await this.requestSnapshot(signal);
+    try {
+      return this.adapter.apply(raw, this.validate);
+    } catch (error) {
+      if (!(error instanceof CppGraphReloadRequired)) throw error;
+      this.adapter.forget();
+      return this.adapter.apply(await this.requestSnapshot(signal), this.validate);
     }
   }
 

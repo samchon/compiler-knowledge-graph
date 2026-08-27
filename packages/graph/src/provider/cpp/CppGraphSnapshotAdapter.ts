@@ -22,6 +22,7 @@ import { GraphSnapshotProtocol } from "../GraphSnapshotProtocol";
 import { IBulkGraphSession } from "../IBulkGraphSession";
 import { semanticGraphNodeId } from "../semanticIdentity";
 import { CPP_CLANG_FACTS } from "./CPP_CLANG_FACTS";
+import { CppGraphReloadRequired } from "./CppGraphReloadRequired";
 import { CPP_CLANG_PROVIDER } from "./CPP_CLANG_PROVIDER";
 import { ICppGraphSnapshot } from "./ICppGraphSnapshot";
 
@@ -55,11 +56,46 @@ const CAPABILITIES = [
   "unresolved",
 ];
 
+/**
+ * What a published shard is remembered by between generations.
+ *
+ * Seven strings. The manifest is ordered by main file and configuration and
+ * carries key and digest; the universe check reads target triple and toolchain
+ * fingerprint; `hello` reads the language. Nothing between generations reads a
+ * node, an edge, an occurrence or a source -- and on a 242 translation-unit
+ * project those are gigabytes held to answer questions about names.
+ */
+interface IRetainedShard {
+  key: string;
+  digest: string;
+  configuration: string;
+  graph: {
+    mainFile: string;
+    targetTriple: string;
+    toolchainFingerprint: string;
+    language: string;
+  };
+}
+
+function retain(shard: ICppGraphSnapshot.IShard): IRetainedShard {
+  return {
+    key: shard.key,
+    digest: shard.digest,
+    configuration: shard.configuration,
+    graph: {
+      mainFile: shard.graph.mainFile,
+      targetTriple: shard.graph.targetTriple,
+      toolchainFingerprint: shard.graph.toolchainFingerprint,
+      language: shard.graph.language,
+    },
+  };
+}
+
 /** Converts one validated native clangd generation into the common protocol. */
 export class CppGraphSnapshotAdapter {
   public readonly store: GraphSnapshotProtocol.Store;
   private readonly selectedLanguages: ReadonlySet<GraphLanguage>;
-  private rawShards = new Map<string, ICppGraphSnapshot.IShard>();
+  private rawShards = new Map<string, IRetainedShard>();
   private graphShards = new Map<string, GraphSnapshotProtocol.IShard>();
   private rawGeneration: string | undefined;
 
@@ -74,6 +110,11 @@ export class CppGraphSnapshotAdapter {
 
   public get generation(): string | undefined {
     return this.rawGeneration;
+  }
+
+  /** Drop the generation, so the next request asks for a whole one. */
+  public forget(): void {
+    this.rawGeneration = undefined;
   }
 
   public apply(
@@ -108,7 +149,7 @@ export class CppGraphSnapshotAdapter {
     }
     const nextRaw =
       raw.baseGeneration === null
-        ? new Map<string, ICppGraphSnapshot.IShard>()
+        ? new Map<string, IRetainedShard>()
         : new Map(this.rawShards);
     const touched = new Set<string>();
     for (const key of raw.deletes) {
@@ -123,12 +164,7 @@ export class CppGraphSnapshotAdapter {
         throw new Error(`C/C++ clang graph: duplicate delta ${shard.key}`);
       }
       touched.add(shard.key);
-      // The parsed shard itself, not a copy of it. Nothing mutates a shard
-      // after this point, and holding the original lets the rest of the page
-      // -- envelope, manifest, telemetry -- be collected while the bodies this
-      // map exists for stay reachable. Copying held both at once, and on a full
-      // generation that is the whole corpus twice.
-      nextRaw.set(shard.key, shard);
+      nextRaw.set(shard.key, retain(shard));
     }
     const expectedManifest = nativeManifest(nextRaw);
     if (
@@ -150,12 +186,28 @@ export class CppGraphSnapshotAdapter {
     const universeChanged =
       prior !== undefined && raw.universe.digest !== prior.provenance.universe;
     const requiresReload = languagesChanged || universeChanged;
+    if (requiresReload && raw.baseGeneration !== null) {
+      // Nothing has been assigned yet, so refusing here leaves this adapter
+      // exactly as it was and the caller free to ask again.
+      throw new CppGraphReloadRequired(
+        languagesChanged ? "the served languages moved" : "the universe moved",
+      );
+    }
     const nextGraph =
       raw.baseGeneration === null || requiresReload
         ? new Map<string, GraphSnapshotProtocol.IShard>()
         : new Map(this.graphShards);
-    const graphUpserts = requiresReload ? [...nextRaw.values()] : raw.upserts;
-    for (const key of raw.deletes) nextGraph.delete(graphKey(key));
+    // Always the response's own upserts, and no deletes to apply to them.
+    //
+    // A delta that drops a shard drops the configuration only that shard had,
+    // so it moves the universe -- and a moved universe is refused above and
+    // comes back as a whole generation, whose graph starts empty. A delta that
+    // deletes without moving the universe does not survive
+    // `assertNativeGeneration`, which is where a generation is made to describe
+    // the shards it actually carries. Between them there is no delta that
+    // reaches this point with something to delete, and a loop that can only
+    // ever run zero times is a loop that stops proving it deletes correctly.
+    const graphUpserts = raw.upserts;
     for (const shard of graphUpserts) {
       const key = graphKey(shard.key);
       const language = shard.graph.language;
@@ -920,7 +972,7 @@ const NODE_KINDS: Record<number, GraphNodeKind> = {
 
 function helloOf(
   raw: ICppGraphSnapshot,
-  shards: ReadonlyMap<string, ICppGraphSnapshot.IShard>,
+  shards: ReadonlyMap<string, IRetainedShard>,
   selectedLanguages: ReadonlySet<GraphLanguage>,
 ): GraphSnapshotProtocol.IHello {
   const languages = new Set<GraphLanguage>();
@@ -1340,7 +1392,7 @@ function assertGraph(graph: ICppGraphSnapshot.ITU, key: string): void {
 }
 
 function nativeManifest(
-  shards: ReadonlyMap<string, ICppGraphSnapshot.IShard>,
+  shards: ReadonlyMap<string, IRetainedShard>,
 ): Array<{ key: string; digest: string }> {
   return [...shards.values()]
     .sort((left, right) => {
@@ -1360,7 +1412,7 @@ function nativeManifest(
 function assertNativeGeneration(
   raw: ICppGraphSnapshot,
   manifest: Array<{ key: string; digest: string }>,
-  shards: ReadonlyMap<string, ICppGraphSnapshot.IShard>,
+  shards: ReadonlyMap<string, IRetainedShard>,
 ): void {
   const configurations = [
     ...new Set([...shards.values()].map((shard) => shard.configuration)),

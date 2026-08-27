@@ -580,14 +580,41 @@ function assertNativeRefusals(
     .sort();
   deletionDelta.upserts = [];
   deletionDelta.page = { offset: 0, count: 0, total: 0, nextCursor: null };
-  const universeReload = sameLanguage.apply(
-    deletionDelta,
-    () => undefined,
+  // A universe move re-adapts every surviving shard, and this adapter
+  // remembers a published shard by seven strings rather than by its body, so a
+  // delta has nothing to re-adapt from. It refuses before it assigns anything;
+  // the client answers by forgetting its generation and asking again, and the
+  // producer -- which still holds every shard -- sends a whole one.
+  TestValidator.error(
+    "a moved universe cannot be served by a delta",
+    () => sameLanguage.apply(deletionDelta, () => undefined),
   );
+  const universeReload = sameLanguage.apply(one, () => undefined);
   TestValidator.equals(
     "a configuration-universe deletion reloads every surviving shard",
     [universeReload.mode, universeReload.snapshot.languages],
     ["reload", ["cpp"]],
+  );
+
+  // The other half of why a surviving delta never has anything to delete. A
+  // shard owns the only configuration naming its own compile command, so
+  // dropping one while claiming the universe stood still is a generation that
+  // does not describe its own shards. Above, a delta that admits the universe
+  // moved is refused and comes back whole. Between the two there is no delta
+  // that both passes validation and carries a delete.
+  fs.writeFileSync(database, JSON.stringify(cppCommands));
+  const standing = new CppGraphSnapshotAdapter(root, COMMIT);
+  const base = nativeSnapshot(root);
+  standing.apply(structuredClone(base), () => undefined);
+  const contradictory = structuredClone(base);
+  contradictory.baseGeneration = base.generation;
+  contradictory.upserts = [];
+  contradictory.deletes = [base.manifest[0]!.key];
+  contradictory.manifest = base.manifest.slice(1);
+  contradictory.page = { offset: 0, count: 0, total: 0, nextCursor: null };
+  TestValidator.error(
+    "a delta that deletes a shard while the universe stands still is refused",
+    () => standing.apply(contradictory, () => undefined),
   );
   fs.writeFileSync(database, JSON.stringify(commands));
 }
@@ -633,7 +660,13 @@ async function assertClientLifecycle(root: string): Promise<void> {
       [true, "reload", 3],
       3,
       true,
-      [false, true, true, true],
+      // Five openers for four refreshes. Deleting a compile command moves the
+      // universe, which re-adapts every surviving shard -- and the adapter
+      // remembers a shard by seven strings, not by its body, so it refuses the
+      // delta and the client asks again with no generation to build on. That
+      // second opener declaring nothing is the recovery, and the `reload` mode
+      // above is what it recovered.
+      [false, true, true, true, false],
       [1, 2, 2],
     ],
   );

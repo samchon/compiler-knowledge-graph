@@ -72,9 +72,17 @@ export const test_ttscgraph_phase_trace_is_opt_in_and_filters_producer_stderr =
       trace.forwardProducer("", "x".repeat(5_000)).length,
       4_096,
     );
+    // The sink counts, so this states something. Asserting `true` after a call
+    // that would have thrown does prove the call returned — but only to a
+    // reader who works out that the throw would have propagated, and it goes
+    // on passing if the sink stops being reached at all, which is the one way
+    // the property could be lost without anything else changing.
+    let refused = 0;
+    const emitted = lines.length;
     const resilient = ttscGraphPhaseTrace(
       { SAMCHON_GRAPH_TTSC_PHASE_TRACE: "1" },
       () => {
+        refused += 1;
         throw new Error("synthetic trace sink failure");
       },
     )!;
@@ -84,9 +92,10 @@ export const test_ttscgraph_phase_trace_is_opt_in_and_filters_producer_stderr =
       phase: "mcp-ready",
       durationMs: 1,
     });
-    TestValidator.predicate(
-      "a failed trace sink cannot change provider control flow",
-      true,
+    TestValidator.equals(
+      "a failed trace sink is reached, contained, and emits nothing",
+      [refused, lines.length - emitted],
+      [1, 0],
     );
 
     const root = GraphPaths.createTempDirectory("samchon-graph-phase-trace-");

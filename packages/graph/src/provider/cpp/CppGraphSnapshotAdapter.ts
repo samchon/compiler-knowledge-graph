@@ -123,7 +123,12 @@ export class CppGraphSnapshotAdapter {
         throw new Error(`C/C++ clang graph: duplicate delta ${shard.key}`);
       }
       touched.add(shard.key);
-      nextRaw.set(shard.key, structuredClone(shard));
+      // The parsed shard itself, not a copy of it. Nothing mutates a shard
+      // after this point, and holding the original lets the rest of the page
+      // -- envelope, manifest, telemetry -- be collected while the bodies this
+      // map exists for stay reachable. Copying held both at once, and on a full
+      // generation that is the whole corpus twice.
+      nextRaw.set(shard.key, shard);
     }
     const expectedManifest = nativeManifest(nextRaw);
     if (
@@ -209,7 +214,9 @@ export class CppGraphSnapshotAdapter {
       fullFrames.push({
         type: "upsertShard",
         digest: entry.digest,
-        shard: structuredClone(nextGraph.get(entry.key)!),
+        // `Store.apply` deep-clones every shard it retains, so a copy here is
+        // a copy the store immediately copies again.
+        shard: nextGraph.get(entry.key)!,
       });
     }
     fullFrames.push(commit);
@@ -239,6 +246,10 @@ export namespace CppGraphSnapshotAdapter {
   }
 }
 
+// Frames carry the shards themselves. `Store.apply` deep-clones what it
+// retains, so cloning on the way in produced a copy that was copied again and
+// then dropped -- one whole corpus of garbage per generation, on the path that
+// already holds the largest object this process builds.
 function framesOf(
   hello: GraphSnapshotProtocol.IHello,
   begin: GraphSnapshotProtocol.IBegin,
@@ -253,7 +264,7 @@ function framesOf(
       frames.push({
         type: "upsertShard",
         digest: entry.digest,
-        shard: structuredClone(shards.get(entry.key)!),
+        shard: shards.get(entry.key)!,
       });
     }
   } else {
@@ -265,7 +276,7 @@ function framesOf(
       frames.push({
         type: "upsertShard",
         digest: entry.digest,
-        shard: structuredClone(shards.get(entry.key)!),
+        shard: shards.get(entry.key)!,
       });
     }
   }

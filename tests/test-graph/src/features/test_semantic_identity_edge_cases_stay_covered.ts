@@ -534,15 +534,22 @@ export const test_semantic_identity_edge_cases_stay_covered = async () => {
     gnode({ id: "src/a.go#Base.run:method", name: "run(x)", kind: "method", qualifiedName: "Base.run" }),
     gnode({ id: "src/a.go#Impl.run:method", name: "run(x)", kind: "method", qualifiedName: "Impl.run" }),
   ];
-  overrideEdges(
-    sharedMembers,
-    sharedMembers.map((node) => ({
-      from: "src/a.go#Owner:class",
-      to: node.id,
-      kind: "contains" as const,
-    })),
+  const sharedContains = sharedMembers.map((node) => ({
+    from: "src/a.go#Owner:class",
+    to: node.id,
+    kind: "contains" as const,
+  }));
+  const sharedOverrides = overrideEdges(sharedMembers, sharedContains);
+  // Two members with the same signature key and no inheritance between their
+  // owners are two methods that happen to share a name. Asserting only that
+  // the call returns states nothing: a version that invented an override for
+  // every key collision would return too, and so would one that rewrote the
+  // `contains` edges it was handed.
+  TestValidator.equals(
+    "a shared member key is not by itself an override",
+    [sharedOverrides, sharedContains.map((edge) => edge.kind)],
+    [[], ["contains", "contains"]],
   );
-  TestValidator.predicate("overrideEdges tolerates shared member keys", true);
 
   // SamchonGraphMemory: a duplicate semantic id in a dump is a producer defect.
   const dupId = semanticGraphNodeId(identity({ symbol: "demo.Dup", role: "class", native: { key: "d", stability: "semantic" }, overload: "" }), "demo.Dup");

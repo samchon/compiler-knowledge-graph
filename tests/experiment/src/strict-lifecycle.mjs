@@ -607,8 +607,21 @@ function assertCreatedSymbol(
     (node) => node.name === expectedSymbol,
   );
   if (created === undefined || created.file !== expectedFile) {
+    // Say which of the two it was, and what the file did publish. A producer
+    // that never compiled the new source and one that named its declaration
+    // differently are different defects, and the sentence used to cover both
+    // — which costs a CI round to tell apart every time it fires.
+    const fromFile = dump.nodes
+      .filter((node) => node.file === expectedFile)
+      .map((node) => `${node.name}:${node.kind}`)
+      .sort();
     throw new Error(
-      `${language}: lifecycle declaration ${expectedSymbol} was not published from ${expectedFile}`,
+      `${language}: lifecycle declaration ${expectedSymbol} was not published from ${expectedFile}: ` +
+        (created === undefined
+          ? fromFile.length === 0
+            ? "that file published no declaration at all"
+            : `that file published ${fromFile.join(", ")}`
+          : `it was published from ${created.file} instead`),
     );
   }
 }

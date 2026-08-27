@@ -316,8 +316,12 @@ export class CppGraphClient implements IBulkGraphSession {
    * is off in every run but one should not put a branch on the path it
    * measures four times over.
    */
-  private reportHeap(stage: "paged" | "committed", shards: number): void {
-    this.heapTrace?.stage(stage, shards);
+  private reportHeap(
+    stage: "paged" | "committed",
+    shards: number,
+    startedAt: number,
+  ): void {
+    this.heapTrace?.stage(stage, shards, performance.now() - startedAt);
   }
 
   /**
@@ -347,6 +351,7 @@ export class CppGraphClient implements IBulkGraphSession {
     let cursor: string | undefined;
     let expectedOffset = 0;
     let expectedTotal: number | undefined;
+    const startedAt = performance.now();
     let first: ICppGraphSnapshot | undefined;
     let settled: CppGraphSnapshotAdapter.IResult | undefined;
     let ingest: CppGraphSnapshotAdapter.IOpen | undefined;
@@ -398,9 +403,9 @@ export class CppGraphClient implements IBulkGraphSession {
           throw new Error("C/C++ clang graph: paged generation ended early");
         }
         if (settled !== undefined) return settled;
-        this.reportHeap("paged", expectedTotal);
+        this.reportHeap("paged", expectedTotal, startedAt);
         const result = ingest!.finish();
-        this.reportHeap("committed", expectedTotal);
+        this.reportHeap("committed", expectedTotal, startedAt);
         return result;
       }
       if (

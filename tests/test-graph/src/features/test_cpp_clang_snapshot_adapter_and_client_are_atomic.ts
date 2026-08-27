@@ -762,7 +762,9 @@ async function assertClientReportsItsOwnSize(root: string): Promise<void> {
   const reported = child.stderr
     .split("\n")
     .filter((line) => line.startsWith("@samchon/graph: cpp-heap "))
-    .map((line) => line.replace(/ heap[A-Za-z]*MiB=\d+| rssMiB=\d+/gu, ""));
+    .map((line) =>
+      line.replace(/ elapsedMs=\d+| heap[A-Za-z]*MiB=\d+| rssMiB=\d+/gu, ""),
+    );
   const counts = reported.map((line) =>
     Number(/shards=(\d+)/u.exec(line)?.[1] ?? "-1"),
   );

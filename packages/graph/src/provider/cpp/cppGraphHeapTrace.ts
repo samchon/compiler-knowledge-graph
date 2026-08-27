@@ -4,7 +4,7 @@ const HEAP_TRACE_ENVIRONMENT = "SAMCHON_GRAPH_CPP_HEAP_TRACE";
 const PREFIX = "@samchon/graph: cpp-heap ";
 
 /**
- * Opt-in, payload-free heap trace for the native C/C++ route.
+ * Opt-in, payload-free heap and timing trace for the native C/C++ route.
  *
  * Three hosts died on this route before anything said where the memory went,
  * and each answer since has come from making a stage state its own size rather
@@ -27,13 +27,14 @@ export function cppGraphHeapTrace(
 ): cppGraphHeapTrace.ITrace | undefined {
   if (env[HEAP_TRACE_ENVIRONMENT] !== "1") return undefined;
   return {
-    stage: (stage, shards) => {
+    stage: (stage, shards, elapsedMs) => {
       const memory = usage();
       const mib = (value: number): string =>
         String(Math.round(value / (1024 * 1024)));
       try {
         write(
           `${PREFIX}stage=${stage} shards=${String(shards)}` +
+            ` elapsedMs=${String(Math.round(elapsedMs))}` +
             ` heapUsedMiB=${mib(memory.heapUsed)}` +
             ` heapTotalMiB=${mib(memory.heapTotal)}` +
             ` rssMiB=${mib(memory.rss)}\n`,
@@ -47,7 +48,19 @@ export function cppGraphHeapTrace(
 
 export namespace cppGraphHeapTrace {
   export interface ITrace {
-    /** Report what is resident at one named boundary of a refresh. */
-    stage: (stage: "paged" | "committed", shards: number) => void;
+    /**
+     * Report what is resident at one named boundary of a refresh, and how long
+     * this refresh has taken to reach it.
+     *
+     * The time matters as much as the bytes. A generation that pages in eighty
+     * minutes has not passed because it eventually fit; it has arrived just
+     * before the job timeout. Two stamped boundaries separate the walk from
+     * what closing costs, which are paid by different sides of the protocol.
+     */
+    stage: (
+      stage: "paged" | "committed",
+      shards: number,
+      elapsedMs: number,
+    ) => void;
   }
 }

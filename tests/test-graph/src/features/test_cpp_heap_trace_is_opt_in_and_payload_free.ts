@@ -41,14 +41,16 @@ export const test_cpp_heap_trace_is_opt_in_and_payload_free = async () => {
       arrayBuffers: 0,
     }),
   )!;
-  trace.stage("paged", 242);
-  trace.stage("committed", 242);
+  trace.stage("paged", 242, 1_500);
+  trace.stage("committed", 242, 90_250.7);
   TestValidator.equals(
     "each stage reports counts and megabytes, and nothing that names code",
     lines,
     [
-      "@samchon/graph: cpp-heap stage=paged shards=242 heapUsedMiB=1 heapTotalMiB=2 rssMiB=3\n",
-      "@samchon/graph: cpp-heap stage=committed shards=242 heapUsedMiB=1 heapTotalMiB=2 rssMiB=3\n",
+      "@samchon/graph: cpp-heap stage=paged shards=242 elapsedMs=1500 " +
+        "heapUsedMiB=1 heapTotalMiB=2 rssMiB=3\n",
+      "@samchon/graph: cpp-heap stage=committed shards=242 elapsedMs=90251 " +
+        "heapUsedMiB=1 heapTotalMiB=2 rssMiB=3\n",
     ],
   );
 
@@ -64,7 +66,7 @@ export const test_cpp_heap_trace_is_opt_in_and_payload_free = async () => {
       throw new Error("synthetic heap sink failure");
     },
   )!;
-  resilient.stage("paged", 1);
+  resilient.stage("paged", 1, 0);
   TestValidator.equals(
     "a failed heap sink is reached, contained, and emits nothing",
     [refused, lines.length - emitted],
@@ -79,7 +81,7 @@ export const test_cpp_heap_trace_is_opt_in_and_payload_free = async () => {
   const direct = cppGraphHeapTrace({ SAMCHON_GRAPH_CPP_HEAP_TRACE: "1" })!;
   TestValidator.equals(
     "the shipped writer is reachable and reports nothing back",
-    direct.stage("committed", 0),
+    direct.stage("committed", 0, 0),
     undefined,
   );
 
@@ -102,7 +104,7 @@ export const test_cpp_heap_trace_is_opt_in_and_payload_free = async () => {
       "    undefined,",
       "    () => ({ rss: 7340032, heapTotal: 5242880, heapUsed: 4194304, external: 0, arrayBuffers: 0 }),",
       "  );",
-      "  trace.stage('committed', 5);",
+      "  trace.stage('committed', 5, 12);",
       "})().catch((error) => { throw error; });",
     ].join("\n"),
     { eval: true, stderr: true },
@@ -126,7 +128,7 @@ export const test_cpp_heap_trace_is_opt_in_and_payload_free = async () => {
     [exit, workerStderr],
     [
       0,
-      "@samchon/graph: cpp-heap stage=committed shards=5 " +
+      "@samchon/graph: cpp-heap stage=committed shards=5 elapsedMs=12 " +
         "heapUsedMiB=4 heapTotalMiB=5 rssMiB=7\n",
     ],
   );

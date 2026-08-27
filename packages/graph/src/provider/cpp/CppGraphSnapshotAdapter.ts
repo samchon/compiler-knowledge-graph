@@ -137,8 +137,9 @@ export class CppGraphSnapshotAdapter {
   /**
    * Begin a generation, to be given its shards one at a time.
    *
-   * A whole-compilation-database producer answers a 242 translation-unit
-   * project with 242 shards, and holding them all as parsed JSON until the last
+   * A whole-compilation-database producer answered a 242 translation-unit
+   * project with 469 shards -- a file built under two configurations publishes
+   * a view of each -- and holding them all as parsed JSON until the last
    * one arrives is what exhausted this consumer: it died inside `JSON.parse`
    * with the generation still incomplete, before it had adapted anything. So a
    * shard is adapted as it is handed over and the parsed form released, leaving

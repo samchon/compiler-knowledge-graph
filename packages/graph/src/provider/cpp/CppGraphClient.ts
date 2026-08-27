@@ -327,8 +327,9 @@ export class CppGraphClient implements IBulkGraphSession {
   /**
    * Walk a paged generation into the adapter, one shard at a time.
    *
-   * Nothing accumulates here. A whole-compilation-database producer answers a
-   * 242 translation-unit project with 242 shards, and holding them as parsed
+   * Nothing accumulates here. A whole-compilation-database producer answered a
+   * 242 translation-unit project with 469 shards -- a file built under two
+   * configurations publishes a view of each -- and holding them as parsed
    * JSON until the last one arrived is what exhausted this process: it died
    * inside `JSON.parse` with the generation still incomplete, having adapted
    * nothing. Each page is handed over and released, so what stays is the graph

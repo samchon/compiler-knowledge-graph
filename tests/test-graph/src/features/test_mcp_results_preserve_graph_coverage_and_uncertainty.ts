@@ -48,8 +48,9 @@ export const test_mcp_results_preserve_graph_coverage_and_uncertainty =
         ),
         GRAPH_EDGE_KINDS.length - 2,
         {
-          count: 2,
+          count: 3,
           reasons: [
+            { reason: "conditional-build", count: 1 },
             { reason: "dynamic", count: 1 },
             { reason: "reflection", count: 1 },
           ],
@@ -70,7 +71,7 @@ export const test_mcp_results_preserve_graph_coverage_and_uncertainty =
         entrypoints.coverage?.families,
         entrypoints.unresolved?.count,
       ],
-      [lookup.coverage?.families, 2],
+      [lookup.coverage?.families, 3],
     );
 
     const overview = await application.inspect_code_graph({
@@ -85,7 +86,7 @@ export const test_mcp_results_preserve_graph_coverage_and_uncertainty =
         overview.coverage?.families,
         overview.unresolved?.count,
       ],
-      [GRAPH_EDGE_KINDS, 2],
+      [GRAPH_EDGE_KINDS, 3],
     );
 
     const trace = await application.inspect_code_graph({
@@ -105,8 +106,9 @@ export const test_mcp_results_preserve_graph_coverage_and_uncertainty =
       ],
       [
         GRAPH_EDGE_KINDS.length,
-        2,
+        3,
         [
+          { reason: "conditional-build", count: 1 },
           { reason: "dynamic", count: 1 },
           { reason: "reflection", count: 1 },
         ],
@@ -179,6 +181,19 @@ function fixture(): ISamchonGraphDump {
         family: "calls",
         evidence: { file: "src/main.ts", startLine: 2, startCol: 1 },
         reason: "reflection",
+      },
+      // Published last and sorted first. The summary states that its reason
+      // counts are ordered, and two sites already arriving in order proved
+      // only that it left them alone — a summary that returned the producer's
+      // order would have passed that. This one has to move.
+      {
+        provider: "fixture-compiler",
+        language: "typescript",
+        target: "app",
+        universe,
+        family: "calls",
+        evidence: { file: "src/main.ts", startLine: 3, startCol: 1 },
+        reason: "conditional-build",
       },
     ],
     nodes: [

@@ -242,8 +242,10 @@ export namespace GraphSnapshotProtocol {
   }
 
   function compareText(left: string, right: string): number {
-    /* c8 ignore next -- canonical object keys and shard keys are distinct. */
-    return left < right ? -1 : left > right ? 1 : 0;
+    // Two-way: canonical object keys and shard-manifest keys are distinct by
+    // construction, so the equal arm cannot run and an ignore directive over it
+    // would take the two reachable arms out of the coverage gate with it.
+    return left < right ? -1 : 1;
   }
 
   function sameList(

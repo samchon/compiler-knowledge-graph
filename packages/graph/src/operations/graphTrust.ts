@@ -90,6 +90,11 @@ function cloneProvenance(
 }
 
 function compareText(left: string, right: string): number {
-  /* c8 ignore next 2 -- reason keys are distinct. */
-  return left < right ? -1 : left > right ? 1 : 0;
+  // Two-way, because the values are Map keys and no two of them are equal. A
+  // three-way form would carry an arm nothing can reach, and silencing that
+  // arm silences the two beside it: the directive that forces it covered
+  // forces the whole line covered, so a reversed ordering would stop being a
+  // failing test. Removing the unreachable case is what keeps the reachable
+  // ones enforced.
+  return left < right ? -1 : 1;
 }

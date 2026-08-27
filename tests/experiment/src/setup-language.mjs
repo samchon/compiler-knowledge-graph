@@ -930,10 +930,14 @@ switch (experiment.language) {
   }
   case "cpp":
   case "c":
-    // `bear` alongside clangd because scip-clang declines without a compilation
-    // database, and a Makefile project has no way to emit one — bear records
-    // the compiler invocations as the build runs. A CMake project needs nothing
-    // extra, since configure writes the database on its own.
+    // `clang`, `cmake` and `ninja-build` are what builds the pinned producer:
+    // this row's clangd is compiled from the fork below rather than installed,
+    // so the distribution's own clangd is deliberately absent from this list.
+    //
+    // `bear` is for a compilation database a configure step cannot write. Both
+    // pinned corpora are CMake and emit one themselves, so nothing here uses it
+    // today; it stays because the database is what makes this route selectable
+    // at all, and a Makefile corpus would otherwise be unable to produce one.
     apt(["clang", "cmake", "ninja-build", "bear"]);
     installClangGraphProducer();
     record({

@@ -869,6 +869,15 @@ function assertShard(
     shard.language !== "java" ||
     typeof shard.source !== "string" ||
     shard.source === "" ||
+    // Canonical, project-relative and POSIX. Two walks over these edges compare
+    // an endpoint against this string: one against the producer's spelling of
+    // it, one against the normalized path a graph node carries. `./a/B.java`
+    // and `a/B.java` are the same file and different strings, so a producer
+    // that spells it the first way makes those walks disagree about what an
+    // endpoint is — and the disagreement surfaces as a dereference of the
+    // lookup that did not find it rather than as a sentence naming the defect.
+    // Requiring one spelling is what makes the two walks provably the same.
+    !isCanonicalRelativeSource(shard.source) ||
     !SHA256.test(shard.checkerDigest) ||
     // A disk digest is required, not optional. This route claims the
     // `diskDigests` capability, and the coordinator will not publish a
@@ -889,7 +898,7 @@ function assertShard(
       `javac graph: malformed shard in target ${target.name}`,
     );
   }
-  const key = `${target.name} ${shard.source}`;
+  const key = `${target.name}\0${shard.source}`;
   if (sources.has(key)) {
     throw new Error(
       `javac graph: source ${shard.source} is committed twice in target ${target.name}`,
@@ -982,6 +991,20 @@ function assertEvidence(
   }
 }
 
+/** Whether the producer named a source the way both endpoint walks read it. */
+function isCanonicalRelativeSource(source: string): boolean {
+  return (
+    !source.includes("\0") &&
+    !source.includes("\\") &&
+    !path.posix.isAbsolute(source) &&
+    !/^[A-Za-z]:/u.test(source) &&
+    path.posix.normalize(source) === source &&
+    source
+      .split("/")
+      .every((part) => part !== "" && part !== "." && part !== "..")
+  );
+}
+
 function shardKey(target: string, source: string): string {
   return `java-shard:${digest([target, source])}`;
 }
@@ -1037,8 +1060,10 @@ function canonical(value: unknown): string {
 }
 
 function compareText(left: string, right: string): number {
-  /* c8 ignore next 2 -- every collection sorted here holds distinct keys. */
-  return left < right ? -1 : left > right ? 1 : 0;
+  // Two-way: every collection sorted through here holds distinct keys, so the
+  // equal arm is unreachable and covering it by directive would stop the gate
+  // from enforcing the ordering itself.
+  return left < right ? -1 : 1;
 }
 
 function sameList(

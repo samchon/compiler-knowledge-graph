@@ -270,6 +270,8 @@ function throwIfAborted(signal: AbortSignal | undefined): void {
 }
 
 function compare(left: string, right: string): number {
-  /* c8 ignore next -- canonical input and shard sets contain distinct keys. */
-  return left < right ? -1 : left > right ? 1 : 0;
+  // Two-way: canonical input paths and shard keys are distinct, so the equal
+  // arm cannot run and an ignore directive over it would remove the reachable
+  // arms from the coverage gate as well.
+  return left < right ? -1 : 1;
 }

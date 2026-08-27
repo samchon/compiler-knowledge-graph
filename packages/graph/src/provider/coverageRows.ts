@@ -26,6 +26,8 @@ export function coverageRows(
 }
 
 function compareText(left: string, right: string): number {
-  /* c8 ignore next 2 -- normalized language sets contain distinct values. */
-  return left < right ? -1 : left > right ? 1 : 0;
+  // Two-way: a normalized language set holds distinct values, so the equal arm
+  // is unreachable and an ignore directive over it would stop enforcing the
+  // two that are not.
+  return left < right ? -1 : 1;
 }

@@ -67,27 +67,20 @@ export const cppGraphProvider: IGraphProvider = {
     // possible at all: the producer is ready when every translation unit the
     // database registers has been indexed, and nothing else starts that work.
     //
-    // The width is a measurement, and this is its second reading. At two
-    // workers under the previous producer, plain C held a 16 GiB host at
-    // twelve GiB free for ten minutes and never became ready — the producer
-    // was copying each finished translation unit and serializing it to JSON to
-    // derive a body digest, which starved indexing. The pinned producer
-    // derives that identity from fields it already holds, so this cost is
-    // gone; removing the width bound with it moved two things at once, and the
-    // lane then held ten GiB free for five minutes and collapsed to 174 MiB in
-    // a single thirty-second step, taking the runner agent with it.
+    // The width is a measurement, and its question has been answered: worker
+    // count is not the term that grows. Both lanes died at two workers as
+    // readily as at clangd's default four, so the width experiment came back
+    // negative and the search moved into the producer, where a completed
+    // translation unit's body was being held three times over per worker. That
+    // is fixed in the pinned producer rather than here.
     //
-    // So one variable moves this time. The width returns to exactly the figure
-    // that was alive under the old producer, against the new one, and the
-    // prediction is explicit: if the per-unit serialization was what made two
-    // workers too slow, two workers now become ready — and if the host still
-    // collapses at two, worker count is not the term that grows and the answer
-    // is in the producer's snapshot assembly rather than here.
-    //
-    // Eight GiB per worker is this repository's figure, chosen against the
-    // first host trace and not quoted from clangd: sixteen was not enough at
-    // four, so the rule has to land below two there rather than shave a worker
-    // off and call it sized.
+    // The bound stays anyway, and on its own grounds. Eight GiB per worker is
+    // this repository's figure, chosen against the first host trace and not
+    // quoted from clangd: a 16 GiB host was not enough at four, so the rule has
+    // to land below two there rather than shave one worker off and call it
+    // sized. It is a stated ceiling on a cost that scales with width, not a
+    // claim that this width is what made the lane survive — and it moves again
+    // only against a new reading, never against a hope.
     const workers = Math.max(
       1,
       Math.min(

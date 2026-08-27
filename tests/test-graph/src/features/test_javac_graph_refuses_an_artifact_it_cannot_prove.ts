@@ -161,6 +161,30 @@ export const test_javac_graph_refuses_an_artifact_it_cannot_prove =
     rejects("a shard with no source", (value) => {
       value.targets[0]!.shards[0]!.source = "";
     });
+    // A source identity is compared twice against the same edge endpoints:
+    // once as the producer spelled it, once as the normalized path a node
+    // carries. `./a/B.java` and `a/B.java` are one file and two strings, so a
+    // producer that spells it either second way makes those two walks disagree
+    // about what an endpoint is — and the route has to say that, rather than
+    // dereference the lookup that came back empty. One case per spelling,
+    // because each is a different way of being non-canonical and a check that
+    // caught only the first would let the rest through.
+    for (const [label, source] of [
+      ["a source spelled with a leading dot segment", "./src/main/java/com/Example.java"],
+      ["a source spelled with an interior dot segment", "src/main/./java/com/Example.java"],
+      ["a source that climbs out of the project", "../Example.java"],
+      ["a source spelled with Windows separators", "src\\main\\java\\com\\Example.java"],
+      ["a source given as an absolute POSIX path", "/src/main/java/com/Example.java"],
+      ["a source given as an absolute Windows path", "C:/src/Example.java"],
+      ["a source carrying a NUL", "src/main/java/com/Exa\0mple.java"],
+      ["a source with an empty segment", "src//Example.java"],
+      ["a source that is only a dot segment", "."],
+      ["a source spelled as a directory", "src/main/java/com/"],
+    ] as const) {
+      rejects(label, (value) => {
+        value.targets[0]!.shards[0]!.source = source;
+      });
+    }
     rejects("a checker digest that is not a digest", (value) => {
       value.targets[0]!.shards[0]!.checkerDigest = "nope";
     });

@@ -297,7 +297,14 @@ export class CppGraphClient implements IBulkGraphSession {
       const page = value;
       expectedTotal ??= page.page.total;
       if (combined === undefined) {
-        combined = structuredClone(page);
+        // Not cloned. `LspClient` parses each response body and resolves the
+        // result without keeping a reference, so this page is already a private
+        // object graph -- and it is the largest one this process holds. Copying
+        // it doubled the peak and walked every occurrence a second time, to
+        // defend against an alias that does not exist. Accumulating the parsed
+        // shards directly also lets each page's envelope and manifest be
+        // collected while the upserts that matter stay reachable.
+        combined = page;
       } else {
         assertSameGeneration(combined, page);
         if (page.manifest.length !== 0 || page.deletes.length !== 0) {
@@ -305,7 +312,7 @@ export class CppGraphClient implements IBulkGraphSession {
             "C/C++ clang graph: continuation repeated generation metadata",
           );
         }
-        combined.upserts.push(...structuredClone(page.upserts));
+        combined.upserts.push(...page.upserts);
         combined.phases.validationMillis += page.phases.validationMillis;
         combined.phases.semanticMillis += page.phases.semanticMillis;
         combined.phases.shardMillis += page.phases.shardMillis;

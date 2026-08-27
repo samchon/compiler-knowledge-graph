@@ -197,10 +197,19 @@ jobs:
           path: tests/experiment/.work/tools
           key: ${{ steps.clang_producer.outputs.cache-primary-key }}
 
+      # Node sizes its old space from a heuristic, not from the runner, and on
+      # these 16 GiB hosts it settles near 4 GiB. A real C project's graph is
+      # larger than that: the C lane reached 4,068 MiB and aborted inside
+      # `JSON.parse` while roughly seven GiB of the host sat unused. Ten GiB
+      # leaves room for the producer beside it and stops an unrelated default
+      # from deciding what these lanes can measure. It is a ceiling on the
+      # consumer, not a relaxation of anything a lane asserts -- a run that
+      # needs more than this still fails, and says so with a number.
       - name: Run LSP experiment
         if: ${{ github.event_name != 'workflow_dispatch' || inputs.language == 'all' || inputs.language == matrix.language }}
         run: pnpm --filter @samchon/graph-experiment start -- --language ${{ matrix.language }}
         env:
+          NODE_OPTIONS: --max-old-space-size=10240
           SAMCHON_GRAPH_RUST_ANALYZER_HIR: ${{ github.workspace }}/tests/experiment/.work/tools/bin/samchon-rust-analyzer
 
       - name: Upload result

@@ -77,18 +77,41 @@ export const cppGraphProvider: IGraphProvider = {
     // gigabytes is answering the first page, which is why the fix is the size
     // this client asks for rather than anything on this line.
     //
-    // The bound stays anyway, and on its own grounds. Eight GiB per worker is
-    // this repository's figure, chosen against the first host trace and not
-    // quoted from clangd: a 16 GiB host was not enough at four, so the rule has
-    // to land below two there rather than shave one worker off and call it
-    // sized. It is a stated ceiling on a cost that scales with width, not a
-    // claim that this width is what made the lane survive — and it moves again
-    // only against a new reading, never against a hope.
+    // Twelve GiB a worker, and this is the new reading that moved it.
+    //
+    // The earlier note recorded the width experiment as negative -- both lanes
+    // died at two workers as readily as at four. That was measured while the
+    // deaths were in paging, where width does not appear at all, so it says
+    // nothing about the case that is left. C++ now fails before any page is
+    // requested:
+    //
+    //     14:11:59  14,666 MiB free of 15,990
+    //     14:12:09   9,508     (5.1 GiB in ten seconds)
+    //     14:12:48   27 translation units are still indexing
+    //     14:13:19     188     -> SIGTERM
+    //
+    // Eighty seconds, and twenty-seven of thirty-one units still queued: four
+    // or five `fmt` translation units in flight and just written exhaust a 16
+    // GiB host. Roughly three and a half gigabytes each, against a rule that
+    // budgeted eight for two of them. In indexing, unlike in paging, width is
+    // a multiplier, so this is the one place the number can still be wrong.
+    //
+    // Twelve leaves one worker on a 16 GiB host and two from 24 GiB up. It
+    // costs the C lane: libuv indexed 242 units in seven and a half minutes at
+    // two workers and will take about fifteen at one, which a job whose
+    // producer comes from cache can afford and one that builds it cannot.
+    //
+    // The honest reason this matters more than the arithmetic: when the host
+    // dies, the runner takes the log with it. `cpp`'s job log for the run that
+    // produced the trace above does not exist -- the agent was killed before it
+    // uploaded. The producer reports its largest body in bytes now, split by
+    // family, and that reading is the one that says which array to fix. It
+    // cannot be read from a machine that is dead.
     const workers = Math.max(
       1,
       Math.min(
         os.availableParallelism(),
-        Math.floor(os.totalmem() / (8 * 1024 * 1024 * 1024)),
+        Math.floor(os.totalmem() / (12 * 1024 * 1024 * 1024)),
       ),
     );
     const command = spawnableCommand.append(

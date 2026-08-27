@@ -194,13 +194,21 @@ export class RustGraphSnapshotAdapter {
       }));
     const begin = beginOf(raw, sequence, graphManifest, nextGraph, prior);
     const commit = commitOf(hello, begin, graphManifest, nextGraph);
+    // Frames carry the shards themselves. `Store.apply` deep-clones every
+    // shard it retains -- it has to, since a published generation cannot share
+    // structure with a caller still holding a reference -- so cloning on the
+    // way in produced a copy the store copied again and then dropped. Nothing
+    // mutates a shard after it is adapted, and this map is handed to the store
+    // and then kept read-only as `this.graphShards`. The checkpoint clones
+    // elsewhere stay: that one is persisted and read back, where isolation is
+    // the whole point.
     const frames: GraphSnapshotProtocol.Frame[] = [hello, begin];
     if (begin.baseGeneration === undefined) {
       for (const entry of graphManifest) {
         frames.push({
           type: "upsertShard",
           digest: entry.digest,
-          shard: structuredClone(nextGraph.get(entry.key)!),
+          shard: nextGraph.get(entry.key)!,
         });
       }
     } else {
@@ -212,7 +220,7 @@ export class RustGraphSnapshotAdapter {
         frames.push({
           type: "upsertShard",
           digest: entry.digest,
-          shard: structuredClone(nextGraph.get(entry.key)!),
+          shard: nextGraph.get(entry.key)!,
         });
       }
       for (const key of previous.keys()) {
@@ -232,7 +240,7 @@ export class RustGraphSnapshotAdapter {
       fullFrames.push({
         type: "upsertShard",
         digest: entry.digest,
-        shard: structuredClone(nextGraph.get(entry.key)!),
+        shard: nextGraph.get(entry.key)!,
       });
     }
     fullFrames.push({ ...commit, sequence });

@@ -330,6 +330,15 @@ export const LANGUAGE_EXPERIMENTS = [
     // counts that transition rather than pre-editing the pinned baseline.
     semanticEdges: ["contains", "instantiates"],
     crossFileEdge: "instantiates",
+    // The producer cannot yet reproduce its own generation, and the exemption
+    // names the exact reason rather than accepting an unexplained difference.
+    // Restoring the original sources returns identical facts — five nodes and
+    // eight edges both times — and a different build universe, because the
+    // universe is digested from the raw javac invocation and that invocation
+    // names the temporary directory the launcher unpacked its compiler plugin
+    // into, which is new on every run. Filed at samchon/scip-java#1.
+    regenerationLimitation:
+      "scip-java 32eca214a413d1b8a375c481f666ff8a4ec96773 digests its build universe from the raw javac invocation, which names the per-run temporary directory its embedded plugin jar is unpacked into, so an unchanged checkout reproduces identical facts under a different universe",
     lifecycle: {
       sourceFile: "src/main/java/com/Example.java",
       editSuffix: "\n// samchon-graph lifecycle edit\n",

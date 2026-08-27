@@ -364,9 +364,17 @@ export const test_experiment_corpora_are_commit_pinned = () => {
   TestValidator.predicate(
     "native C and C++ regeneration stays reproducible",
     [cpp, c].every((row) => !declares(row, "regenerationLimitation")) &&
-      // Counted over the whole catalog so any future reproduction exemption
-      // requires a reviewed contract change here.
-      [...catalog.matchAll(/regenerationLimitation:/g)].length === 0 &&
+      // Counted over the whole catalog so any reproduction exemption requires
+      // a reviewed contract change here. There is exactly one, and this is the
+      // review: scip-java digests its build universe from the raw javac
+      // invocation, and that invocation names the per-run temporary directory
+      // its embedded plugin jar is unpacked into. An unchanged checkout comes
+      // back with identical facts under a different universe — five nodes and
+      // eight edges both times — so the exemption is about the producer's
+      // universe rather than about its facts, and it says so.
+      [...catalog.matchAll(/regenerationLimitation:/g)].length === 1 &&
+      declares(java, "regenerationLimitation") &&
+      java.includes("temporary directory its embedded plugin jar") &&
       runner.includes("experiment.regenerationLimitation !== undefined") &&
       runner.includes("regenerationLimitation.trim() === \"\"") &&
       runner.includes(

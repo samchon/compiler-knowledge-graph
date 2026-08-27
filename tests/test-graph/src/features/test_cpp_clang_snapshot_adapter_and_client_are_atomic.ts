@@ -554,6 +554,44 @@ function assertNativeRefusals(
   );
   fs.writeFileSync(database, JSON.stringify(commands));
 
+  // `open` is the shape the client streams into, and streaming replaces two
+  // things the envelope used to carry on its own: how many shards a generation
+  // holds, and whether it holds any. A caller that promises a count and then
+  // hands over fewer has produced a generation nobody validated the size of,
+  // and a generation the producer says did not move has nothing to close.
+  const promised = new CppGraphSnapshotAdapter(root, COMMIT);
+  const opened = promised.open(
+    structuredClone(valid),
+    valid.upserts.length,
+    () => undefined,
+  );
+  TestValidator.error(
+    "an ingest handed fewer shards than it was promised is refused",
+    () => opened.finish(),
+  );
+
+  const settledAdapter = new CppGraphSnapshotAdapter(root, COMMIT);
+  const settledBase = structuredClone(valid);
+  settledAdapter.apply(settledBase, () => undefined);
+  const still = structuredClone(valid);
+  still.baseGeneration = settledBase.generation;
+  still.upserts = [];
+  still.manifest = [];
+  still.deletes = [];
+  still.page = { offset: 0, count: 0, total: 0, nextCursor: null };
+  still.phases = { ...still.phases, cacheHit: true };
+  const unchanged = settledAdapter.apply(still, () => undefined);
+  TestValidator.equals(
+    "a generation the producer says did not move is the prior one",
+    [unchanged.changed, unchanged.mode, unchanged.snapshot === settledBase],
+    [false, "unchanged", false],
+  );
+  const settled = settledAdapter.open(still, 0, () => undefined);
+  TestValidator.error(
+    "a settled generation has nothing to finish",
+    () => settled.finish(),
+  );
+
   const cppCommands = commands.map((row, index) => ({
     ...(row as Record<string, unknown>),
     arguments: [

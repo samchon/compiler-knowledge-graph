@@ -117,180 +117,275 @@ export class CppGraphSnapshotAdapter {
     this.rawGeneration = undefined;
   }
 
+  /**
+   * Adapt one whole generation.
+   *
+   * Kept as the shape every fixture uses, and routed through the same three
+   * phases the client streams into, so a case that hands over a complete
+   * generation exercises exactly the path a paged one takes.
+   */
   public apply(
     raw: ICppGraphSnapshot,
     validate: (snapshot: IBulkGraphSession.ISnapshot) => void,
   ): CppGraphSnapshotAdapter.IResult {
-    assertSnapshot(raw, this.producerCommit);
+    const opened = this.open(raw, raw.upserts.length, validate);
+    if (opened.settled !== undefined) return opened.settled;
+    for (const shard of raw.upserts) opened.shard(shard);
+    return opened.finish();
+  }
+
+  /**
+   * Begin a generation, to be given its shards one at a time.
+   *
+   * A whole-compilation-database producer answers a 242 translation-unit
+   * project with 242 shards, and holding them all as parsed JSON until the last
+   * one arrives is what exhausted this consumer: it died inside `JSON.parse`
+   * with the generation still incomplete, before it had adapted anything. So a
+   * shard is adapted as it is handed over and the parsed form released, leaving
+   * the graph rather than the graph and the producer's rendering of it.
+   *
+   * `shards` is what the envelope's page claims the generation holds. It is
+   * checked against what arrives, because a caller that streams is making a
+   * promise the envelope alone can no longer verify.
+   */
+  public open(
+    envelope: ICppGraphSnapshot,
+    shards: number,
+    validate: (snapshot: IBulkGraphSession.ISnapshot) => void,
+  ): CppGraphSnapshotAdapter.IIngest {
+    assertSnapshot(envelope, this.producerCommit, shards);
     if (
-      raw.baseGeneration !== null &&
-      raw.baseGeneration !== this.rawGeneration
+      envelope.baseGeneration !== null &&
+      envelope.baseGeneration !== this.rawGeneration
     ) {
       throw new Error("C/C++ clang graph: stale producer base generation");
     }
     const prior = this.store.current;
     if (
       prior !== undefined &&
-      raw.generation === this.rawGeneration &&
-      raw.baseGeneration === this.rawGeneration &&
-      raw.upserts.length === 0 &&
-      raw.deletes.length === 0 &&
-      raw.manifest.length === 0 &&
-      raw.page.total === 0 &&
-      raw.phases.cacheHit &&
-      raw.universe.digest === prior.provenance.universe
+      envelope.generation === this.rawGeneration &&
+      envelope.baseGeneration === this.rawGeneration &&
+      shards === 0 &&
+      envelope.deletes.length === 0 &&
+      envelope.manifest.length === 0 &&
+      envelope.page.total === 0 &&
+      envelope.phases.cacheHit &&
+      envelope.universe.digest === prior.provenance.universe
     ) {
       assertNativeGeneration(
-        raw,
+        envelope,
         nativeManifest(this.rawShards),
         this.rawShards,
       );
-      return { changed: false, mode: "unchanged", snapshot: prior };
+      return {
+        settled: { changed: false, mode: "unchanged", snapshot: prior },
+      };
     }
     const nextRaw =
-      raw.baseGeneration === null
+      envelope.baseGeneration === null
         ? new Map<string, IRetainedShard>()
         : new Map(this.rawShards);
+    // A reload starts from nothing and a delta starts from the prior graph,
+    // and which it is follows from the base generation alone: a reload that
+    // arrives as a delta is refused in `finish`, so every generation that
+    // reaches there with a base has one to build on.
+    const nextGraph =
+      envelope.baseGeneration === null
+        ? new Map<string, GraphSnapshotProtocol.IShard>()
+        : new Map(this.graphShards);
     const touched = new Set<string>();
-    for (const key of raw.deletes) {
+    for (const key of envelope.deletes) {
       if (touched.has(key) || !nextRaw.delete(key)) {
         throw new Error(`C/C++ clang graph: invalid delete ${key}`);
       }
       touched.add(key);
     }
-    for (const shard of raw.upserts) {
-      assertShard(shard, producerFingerprint(raw.producer));
-      if (touched.has(shard.key)) {
-        throw new Error(`C/C++ clang graph: duplicate delta ${shard.key}`);
-      }
-      touched.add(shard.key);
-      nextRaw.set(shard.key, retain(shard));
-    }
-    const expectedManifest = nativeManifest(nextRaw);
-    if (
-      expectedManifest.length !== raw.manifest.length ||
-      expectedManifest.some(
-        (entry, index) =>
-          entry.key !== raw.manifest[index]?.key ||
-          entry.digest !== raw.manifest[index]?.digest,
-      )
-    ) {
-      throw new Error("C/C++ clang graph: producer manifest mismatch");
-    }
-    assertNativeGeneration(raw, expectedManifest, nextRaw);
-
-    const hello = helloOf(raw, nextRaw, this.selectedLanguages);
-    const languagesChanged =
-      prior !== undefined &&
-      JSON.stringify(prior.languages) !== JSON.stringify(hello.languages);
-    const universeChanged =
-      prior !== undefined && raw.universe.digest !== prior.provenance.universe;
-    const requiresReload = languagesChanged || universeChanged;
-    if (requiresReload && raw.baseGeneration !== null) {
-      // Nothing has been assigned yet, so refusing here leaves this adapter
-      // exactly as it was and the caller free to ask again.
-      throw new CppGraphReloadRequired(
-        languagesChanged ? "the served languages moved" : "the universe moved",
-      );
-    }
-    const nextGraph =
-      raw.baseGeneration === null || requiresReload
-        ? new Map<string, GraphSnapshotProtocol.IShard>()
-        : new Map(this.graphShards);
-    // Always the response's own upserts, and no deletes to apply to them.
-    //
-    // A delta that drops a shard drops the configuration only that shard had,
-    // so it moves the universe -- and a moved universe is refused above and
-    // comes back as a whole generation, whose graph starts empty. A delta that
-    // deletes without moving the universe does not survive
-    // `assertNativeGeneration`, which is where a generation is made to describe
-    // the shards it actually carries. Between them there is no delta that
-    // reaches this point with something to delete, and a loop that can only
-    // ever run zero times is a loop that stops proving it deletes correctly.
-    const graphUpserts = raw.upserts;
-    for (const shard of graphUpserts) {
-      const key = graphKey(shard.key);
-      const language = shard.graph.language;
-      if (
-        (language !== "c" && language !== "cpp") ||
-        !this.selectedLanguages.has(language)
-      ) {
-        nextGraph.delete(key);
-        continue;
-      }
-      nextGraph.set(key, adaptShard(this.root, raw, shard, hello.languages));
-    }
-    const sequence = (prior?.protocol?.sequence ?? 0) + 1;
-    const manifest = [...nextGraph]
-      .sort(([left], [right]) => compareText(left, right))
-      .map(([key, shard]) => ({
-        key,
-        digest: GraphSnapshotProtocol.shardDigest(shard),
-      }));
-    const ordered = manifest.map((entry) => nextGraph.get(entry.key)!);
-    const targets = [...new Set(ordered.map((shard) => shard.target))].sort(
-      compareText,
-    );
-    const begin: GraphSnapshotProtocol.IBegin = {
-      type: "begin",
-      sequence,
-      generation: raw.generation,
-      ...(raw.baseGeneration !== null && prior !== undefined && !requiresReload
-        ? {
-            baseSequence: prior.protocol!.sequence,
-            baseGeneration: prior.protocol!.generation,
-          }
-        : {}),
-      universe: raw.universe.digest,
-      manifest: GraphSnapshotProtocol.manifestDigest(
-        ordered.flatMap((shard) => shard.sources),
-      ),
-      targets,
-    };
-    const facts = factsOf(hello, begin, ordered);
-    const commit: GraphSnapshotProtocol.ICommit = {
-      type: "commit",
-      sequence,
-      generation: raw.generation,
-      shards: manifest,
-      factDigest: GraphSnapshotProtocol.factDigest(facts),
-    };
-    const frames = framesOf(hello, begin, commit, manifest, nextGraph, prior);
-    const fullBegin: GraphSnapshotProtocol.IBegin = {
-      ...begin,
-      baseSequence: undefined,
-      baseGeneration: undefined,
-    };
-    const fullFrames: GraphSnapshotProtocol.Frame[] = [hello, fullBegin];
-    for (const entry of manifest) {
-      fullFrames.push({
-        type: "upsertShard",
-        digest: entry.digest,
-        // `Store.apply` deep-clones every shard it retains, so a copy here is
-        // a copy the store immediately copies again.
-        shard: nextGraph.get(entry.key)!,
-      });
-    }
-    fullFrames.push(commit);
-    new GraphSnapshotProtocol.Store(this.root).apply(fullFrames, { validate });
-    const snapshot = this.store.apply(frames, { validate });
-    this.rawShards = nextRaw;
-    this.graphShards = nextGraph;
-    this.rawGeneration = raw.generation;
+    const fingerprint = producerFingerprint(envelope.producer);
+    // The producer's own coverage rows for each shard adapted here, fifteen to
+    // a shard. The matrix a shard publishes names every language the generation
+    // serves, and that set is only settled once the last shard has arrived --
+    // so adaptation leaves it empty and `finish` fills it, which is what lets a
+    // shard be adapted before the generation is complete.
+    const pending = new Map<string, IPendingCoverage>();
+    let delivered = 0;
     return {
-      changed: true,
-      mode:
-        prior === undefined
-          ? "initial"
-          : begin.baseGeneration === undefined
-            ? "reload"
-            : "incremental",
-      snapshot,
+      shard: (shard) => {
+        assertShard(shard, fingerprint);
+        if (touched.has(shard.key)) {
+          throw new Error(`C/C++ clang graph: duplicate delta ${shard.key}`);
+        }
+        touched.add(shard.key);
+        delivered += 1;
+        nextRaw.set(shard.key, retain(shard));
+        const key = graphKey(shard.key);
+        const language = shard.graph.language;
+        if (
+          (language !== "c" && language !== "cpp") ||
+          !this.selectedLanguages.has(language)
+        ) {
+          nextGraph.delete(key);
+          pending.delete(key);
+          return;
+        }
+        nextGraph.set(
+          key,
+          adaptShard(this.root, envelope.universe.digest, shard),
+        );
+        pending.set(key, {
+          rows: shard.coverage,
+          mainFileUri: shard.graph.mainFileUri,
+        });
+      },
+      finish: () => {
+        if (delivered !== shards) {
+          throw new Error(
+            "C/C++ clang graph: generation delivered " +
+              `${String(delivered)} of ${String(shards)} shards`,
+          );
+        }
+        const expectedManifest = nativeManifest(nextRaw);
+        if (
+          expectedManifest.length !== envelope.manifest.length ||
+          expectedManifest.some(
+            (entry, index) =>
+              entry.key !== envelope.manifest[index]?.key ||
+              entry.digest !== envelope.manifest[index]?.digest,
+          )
+        ) {
+          throw new Error("C/C++ clang graph: producer manifest mismatch");
+        }
+        assertNativeGeneration(envelope, expectedManifest, nextRaw);
+
+        const hello = helloOf(envelope, nextRaw, this.selectedLanguages);
+        const languagesChanged =
+          prior !== undefined &&
+          JSON.stringify(prior.languages) !== JSON.stringify(hello.languages);
+        const universeChanged =
+          prior !== undefined &&
+          envelope.universe.digest !== prior.provenance.universe;
+        const requiresReload = languagesChanged || universeChanged;
+        if (requiresReload && envelope.baseGeneration !== null) {
+          // Nothing has been assigned yet, so refusing here leaves this adapter
+          // exactly as it was and the caller free to ask again.
+          throw new CppGraphReloadRequired(
+            languagesChanged ? "the served languages moved" : "the universe moved",
+          );
+        }
+        for (const [key, source] of pending) {
+          completeCoverage(
+            this.root,
+            nextGraph.get(key)!,
+            source,
+            envelope.universe.digest,
+            hello.languages,
+          );
+        }
+        const sequence = (prior?.protocol?.sequence ?? 0) + 1;
+        const manifest = [...nextGraph]
+          .sort(([left], [right]) => compareText(left, right))
+          .map(([key, shard]) => ({
+            key,
+            digest: GraphSnapshotProtocol.shardDigest(shard),
+          }));
+        const ordered = manifest.map((entry) => nextGraph.get(entry.key)!);
+        const targets = [...new Set(ordered.map((shard) => shard.target))].sort(
+          compareText,
+        );
+        const begin: GraphSnapshotProtocol.IBegin = {
+          type: "begin",
+          sequence,
+          generation: envelope.generation,
+          ...(envelope.baseGeneration !== null &&
+          prior !== undefined &&
+          !requiresReload
+            ? {
+                baseSequence: prior.protocol!.sequence,
+                baseGeneration: prior.protocol!.generation,
+              }
+            : {}),
+          universe: envelope.universe.digest,
+          manifest: GraphSnapshotProtocol.manifestDigest(
+            ordered.flatMap((shard) => shard.sources),
+          ),
+          targets,
+        };
+        const facts = factsOf(hello, begin, ordered);
+        const commit: GraphSnapshotProtocol.ICommit = {
+          type: "commit",
+          sequence,
+          generation: envelope.generation,
+          shards: manifest,
+          factDigest: GraphSnapshotProtocol.factDigest(facts),
+        };
+        const frames = framesOf(
+          hello,
+          begin,
+          commit,
+          manifest,
+          nextGraph,
+          prior,
+        );
+        const fullBegin: GraphSnapshotProtocol.IBegin = {
+          ...begin,
+          baseSequence: undefined,
+          baseGeneration: undefined,
+        };
+        const fullFrames: GraphSnapshotProtocol.Frame[] = [hello, fullBegin];
+        for (const entry of manifest) {
+          fullFrames.push({
+            type: "upsertShard",
+            digest: entry.digest,
+            // `Store.apply` deep-clones every shard it retains, so a copy here
+            // is a copy the store immediately copies again.
+            shard: nextGraph.get(entry.key)!,
+          });
+        }
+        fullFrames.push(commit);
+        new GraphSnapshotProtocol.Store(this.root).apply(fullFrames, {
+          validate,
+        });
+        const snapshot = this.store.apply(frames, { validate });
+        this.rawShards = nextRaw;
+        this.graphShards = nextGraph;
+        this.rawGeneration = envelope.generation;
+        return {
+          changed: true,
+          mode:
+            prior === undefined
+              ? "initial"
+              : begin.baseGeneration === undefined
+                ? "reload"
+                : "incremental",
+          snapshot,
+        };
+      },
     };
   }
 }
 
 export namespace CppGraphSnapshotAdapter {
+  /**
+   * One generation, either already answered or waiting for its shards.
+   *
+   * Two members rather than one with unreachable halves: a producer that
+   * reported no movement has nothing to hand over and nothing to close, and an
+   * open generation always has both. Modelling it as one shape meant a `shard`
+   * that could never be called and a `finish` that could only throw.
+   */
+  export type IIngest = ISettled | IOpen;
+
+  /** A generation the producer says did not move. */
+  export interface ISettled {
+    settled: IResult;
+  }
+
+  /** A generation being built, one shard at a time. */
+  export interface IOpen {
+    settled?: undefined;
+    shard: (shard: ICppGraphSnapshot.IShard) => void;
+    finish: () => IResult;
+  }
+
   export interface IResult {
     changed: boolean;
     mode: IBulkGraphSession.Mode;
@@ -338,7 +433,7 @@ function framesOf(
 
 interface IContext {
   root: string;
-  raw: ICppGraphSnapshot;
+  universe: string;
   shard: ICppGraphSnapshot.IShard;
   graph: ICppGraphSnapshot.ITU;
   language: GraphLanguage;
@@ -350,17 +445,95 @@ interface IContext {
   unresolved: ISamchonGraphUnresolved[];
 }
 
+/**
+ * One shard's graph, without the coverage matrix.
+ *
+ * Everything here is derived from the shard and the one envelope field a
+ * shard needs, so it can run before the generation is complete. The matrix
+ * names every language the generation serves, which is not known until the
+ * last shard has arrived, so `coverageMatrix` supplies it afterwards.
+ */
+/**
+ * The exhaustive matrix one shard publishes, and the gaps it admits to.
+ *
+ * Every language the generation serves gets a row for every family, and a
+ * family this shard's own language does not produce is `unsupported` rather
+ * than absent. A `partial` family has to name at least one site it could
+ * not resolve; where the producer claimed partial and the walk found
+ * nothing to point at, the shard says so against its own main file rather
+ * than publishing a partial nobody can check.
+ *
+ * Both are properties of the generation rather than of one shard -- the
+ * language set is not settled until the last shard has arrived -- which is
+ * why neither is part of adapting one.
+ */
+function completeCoverage(
+  root: string,
+  shard: GraphSnapshotProtocol.IShard,
+  source: IPendingCoverage,
+  universe: string,
+  snapshotLanguages: readonly GraphLanguage[],
+): void {
+  const language = shard.languages[0]!;
+  const byFamily = new Map(
+    source.rows.map((row) => [row.family, row.state]),
+  );
+  const advertised = new Set(CPP_CLANG_FACTS);
+  shard.coverage = snapshotLanguages.flatMap((coverageLanguage) =>
+    GRAPH_EDGE_KINDS.map((family) => ({
+      provider: CPP_CLANG_PROVIDER,
+      language: coverageLanguage,
+      target: shard.target,
+      family,
+      state:
+        coverageLanguage === language && advertised.has(family)
+          ? (byFamily.get(family)! as ISamchonGraphCoverage["state"])
+          : "unsupported",
+    })),
+  );
+  const fallbackEvidence = evidenceOf(root, {
+    file: source.mainFileUri,
+    startLine: 0,
+    startColumn: 0,
+    endLine: 0,
+    endColumn: 0,
+  });
+  for (const row of shard.coverage) {
+    if (
+      row.language !== language ||
+      row.state !== "partial" ||
+      shard.unresolved.some((site) => site.family === row.family)
+    ) {
+      continue;
+    }
+    shard.unresolved.push({
+      provider: CPP_CLANG_PROVIDER,
+      language,
+      target: shard.target,
+      universe,
+      family: row.family,
+      evidence: fallbackEvidence,
+      reason: "provider-gap",
+    });
+  }
+}
+
+/** What a shard still owes its coverage matrix once the languages settle. */
+interface IPendingCoverage {
+  rows: ICppGraphSnapshot.IShard["coverage"];
+  mainFileUri: string;
+}
+
 function adaptShard(
   root: string,
-  raw: ICppGraphSnapshot,
+  universe: string,
   shard: ICppGraphSnapshot.IShard,
-  snapshotLanguages: readonly GraphLanguage[],
 ): GraphSnapshotProtocol.IShard {
   const graph = shard.graph;
   const language = graph.language as GraphLanguage;
   const context: IContext = {
     root,
-    raw,
+    universe,
     shard,
     graph,
     language,
@@ -426,50 +599,7 @@ function adaptShard(
   for (const relation of graph.relations) adaptRelation(context, relation);
   for (const macro of graph.macros) adaptMacro(context, macro);
 
-  const coverageByFamily = new Map(
-    shard.coverage.map((row) => [row.family, row.state]),
-  );
-  const advertised = new Set(CPP_CLANG_FACTS);
-  const coverage: ISamchonGraphCoverage[] = snapshotLanguages.flatMap(
-    (coverageLanguage) =>
-      GRAPH_EDGE_KINDS.map((family) => ({
-        provider: CPP_CLANG_PROVIDER,
-        language: coverageLanguage,
-        target: context.target,
-        family,
-        state:
-          coverageLanguage === language && advertised.has(family)
-            ? (coverageByFamily.get(
-                family,
-              )! as ISamchonGraphCoverage["state"])
-            : "unsupported",
-      })),
-  );
-  const fallbackEvidence = evidenceOf(root, {
-    file: graph.mainFileUri,
-    startLine: 0,
-    startColumn: 0,
-    endLine: 0,
-    endColumn: 0,
-  });
-  for (const row of coverage) {
-    if (
-      row.language !== language ||
-      row.state !== "partial" ||
-      context.unresolved.some((site) => site.family === row.family)
-    ) {
-      continue;
-    }
-    context.unresolved.push({
-      provider: CPP_CLANG_PROVIDER,
-      language,
-      target: context.target,
-      universe: raw.universe.digest,
-      family: row.family,
-      evidence: fallbackEvidence,
-      reason: "provider-gap",
-    });
-  }
+  const coverage: ISamchonGraphCoverage[] = [];
   const diagnostics: ISamchonGraphDiagnostic[] = graph.diagnostics.map(
     (row) => ({
       file: graphFile(root, row.range.file),
@@ -779,7 +909,7 @@ function adaptOccurrence(
       provider: CPP_CLANG_PROVIDER,
       language: context.language,
       target: context.target,
-      universe: context.raw.universe.digest,
+      universe: context.universe,
       family: "dispatches",
       evidence: evidenceOf(context.root, range),
       reason: "dynamic",
@@ -1036,7 +1166,11 @@ function factsOf(
   };
 }
 
-function assertSnapshot(raw: ICppGraphSnapshot, commit: string): void {
+function assertSnapshot(
+  raw: ICppGraphSnapshot,
+  commit: string,
+  shards: number,
+): void {
   if (
     raw === null ||
     typeof raw !== "object" ||
@@ -1088,8 +1222,11 @@ function assertSnapshot(raw: ICppGraphSnapshot, commit: string): void {
     !nonnegativeInteger(raw.page.count) ||
     !nonnegativeInteger(raw.page.total) ||
     raw.page.offset !== 0 ||
-    raw.page.count !== raw.upserts.length ||
-    raw.page.total !== raw.upserts.length ||
+    // Against what the generation is said to hold, not against what this
+    // envelope carries: a streamed generation arrives with its shards
+    // separately, and its envelope has none.
+    raw.page.count !== shards ||
+    raw.page.total !== shards ||
     raw.page.nextCursor !== null
   ) {
     throw new Error("C/C++ clang graph: malformed assembled page");

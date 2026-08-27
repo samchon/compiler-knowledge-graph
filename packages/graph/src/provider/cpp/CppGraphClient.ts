@@ -202,7 +202,7 @@ export class CppGraphClient implements IBulkGraphSession {
 
   private async requestSnapshot(
     signal: AbortSignal,
-  ): Promise<ICppGraphSnapshot> {
+  ): Promise<CppGraphSnapshotAdapter.IResult> {
     const deadline = performance.now() + this.readyTimeoutMs;
     let backoff = RETRY_DELAY_MS;
     let waiting: string | undefined;
@@ -289,21 +289,13 @@ export class CppGraphClient implements IBulkGraphSession {
    */
   private async applySnapshot(
     signal: AbortSignal,
-  ): Promise<ReturnType<CppGraphSnapshotAdapter["apply"]>> {
-    const adapt = (
-      raw: ICppGraphSnapshot,
-    ): CppGraphSnapshotAdapter.IResult => {
-      this.reportHeap("paged", raw.upserts.length);
-      const result = this.adapter.apply(raw, this.validate);
-      this.reportHeap("committed", raw.upserts.length);
-      return result;
-    };
+  ): Promise<CppGraphSnapshotAdapter.IResult> {
     try {
-      return adapt(await this.requestSnapshot(signal));
+      return await this.requestSnapshot(signal);
     } catch (error) {
       if (!(error instanceof CppGraphReloadRequired)) throw error;
       this.adapter.forget();
-      return adapt(await this.requestSnapshot(signal));
+      return await this.requestSnapshot(signal);
     }
   }
 
@@ -318,14 +310,36 @@ export class CppGraphClient implements IBulkGraphSession {
     this.heapTrace?.stage(stage, shards);
   }
 
+  /**
+   * Walk a paged generation into the adapter, one shard at a time.
+   *
+   * Nothing accumulates here. A whole-compilation-database producer answers a
+   * 242 translation-unit project with 242 shards, and holding them as parsed
+   * JSON until the last one arrived is what exhausted this process: it died
+   * inside `JSON.parse` with the generation still incomplete, having adapted
+   * nothing. Each page is handed over and released, so what stays is the graph
+   * rather than the graph and the producer's rendering of it.
+   *
+   * The first page is the envelope, with its own `page` replaced by the one the
+   * assembled generation has: offset zero, every shard, no cursor. Its
+   * `upserts` are handed over like any other page's rather than left on the
+   * envelope, so a page's shards are reachable exactly as long as they are
+   * being adapted.
+   *
+   * A partial walk costs nothing to abandon. `open` assigns no adapter state,
+   * so a page that fails validation, a producer that moves underneath the
+   * cursor, and a reload refused at `finish` all leave the adapter as it was.
+   */
   private async requestSnapshotPages(
     signal: AbortSignal,
-  ): Promise<ICppGraphSnapshot> {
+  ): Promise<CppGraphSnapshotAdapter.IResult> {
     const knownGeneration = this.adapter.generation;
     let cursor: string | undefined;
     let expectedOffset = 0;
     let expectedTotal: number | undefined;
-    let combined: ICppGraphSnapshot | undefined;
+    let first: ICppGraphSnapshot | undefined;
+    let settled: CppGraphSnapshotAdapter.IResult | undefined;
+    let ingest: CppGraphSnapshotAdapter.IOpen | undefined;
     const cursors = new Set<string>();
     for (;;) {
       const value = await this.lsp.request<unknown>(
@@ -341,41 +355,43 @@ export class CppGraphClient implements IBulkGraphSession {
       assertSnapshotPage(value, expectedOffset, expectedTotal);
       const page = value;
       expectedTotal ??= page.page.total;
-      if (combined === undefined) {
-        // Not cloned. `LspClient` parses each response body and resolves the
-        // result without keeping a reference, so this page is already a private
-        // object graph -- and it is the largest one this process holds. Copying
-        // it doubled the peak and walked every occurrence a second time, to
-        // defend against an alias that does not exist. Accumulating the parsed
-        // shards directly also lets each page's envelope and manifest be
-        // collected while the upserts that matter stay reachable.
-        combined = page;
+      if (first === undefined) {
+        first = page;
+        const opened = this.adapter.open(
+          {
+            ...page,
+            upserts: [],
+            page: {
+              offset: 0,
+              count: expectedTotal,
+              total: expectedTotal,
+              nextCursor: null,
+            },
+          },
+          expectedTotal,
+          this.validate,
+        );
+        if (opened.settled !== undefined) settled = opened.settled;
+        else ingest = opened;
       } else {
-        assertSameGeneration(combined, page);
+        assertSameGeneration(first!, page);
         if (page.manifest.length !== 0 || page.deletes.length !== 0) {
           throw new Error(
             "C/C++ clang graph: continuation repeated generation metadata",
           );
         }
-        combined.upserts.push(...page.upserts);
-        combined.phases.validationMillis += page.phases.validationMillis;
-        combined.phases.semanticMillis += page.phases.semanticMillis;
-        combined.phases.shardMillis += page.phases.shardMillis;
-        combined.phases.encodeMillis += page.phases.encodeMillis;
-        combined.phases.totalMillis += page.phases.totalMillis;
       }
+      for (const shard of page.upserts) ingest?.shard(shard);
       expectedOffset += page.page.count;
       if (page.page.nextCursor === null) {
         if (expectedOffset !== expectedTotal) {
           throw new Error("C/C++ clang graph: paged generation ended early");
         }
-        combined.page = {
-          offset: 0,
-          count: combined.upserts.length,
-          total: combined.upserts.length,
-          nextCursor: null,
-        };
-        return combined;
+        if (settled !== undefined) return settled;
+        this.reportHeap("paged", expectedTotal);
+        const result = ingest!.finish();
+        this.reportHeap("committed", expectedTotal);
+        return result;
       }
       if (
         expectedOffset >= expectedTotal ||

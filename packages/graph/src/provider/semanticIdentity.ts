@@ -219,8 +219,11 @@ function normalizeSignature(value: string): string {
 }
 
 function compareText(left: string, right: string): number {
-  /* c8 ignore next 2 -- callers sort distinct ids or handles. */
-  return left < right ? -1 : left > right ? 1 : 0;
+  // Two-way: callers sort distinct ids or handles, so the equal arm cannot run,
+  // and an ignore directive over it would take the two reachable arms out of
+  // the coverage gate with it -- which is how a reversed ordering stops being a
+  // failing test.
+  return left < right ? -1 : 1;
 }
 
 const SEMANTIC_NODE_ID = /^@(v2|g2)\/([^/]+)\/([0-9a-f]{64})#([^#]+):([^:]+)$/;

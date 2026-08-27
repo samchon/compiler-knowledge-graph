@@ -78,7 +78,16 @@ function assertTheAdditiveBoundary(): void {
           { kind: "calls", from: "caller", to: "callee" },
           { kind: "calls", from: "callee", to: "caller" },
         ],
-        warnings: ["one limitation", "one limitation", "another limitation"],
+        // Four spellings so the dedup has something to remove and the ordering
+        // has to move a value in both directions. Two warnings that already
+        // arrive in descending order come out sorted whether the comparison
+        // orders them or merely reverses what it was handed.
+        warnings: [
+          "one limitation",
+          "one limitation",
+          "another limitation",
+          "zeroth limitation",
+        ],
       };
     },
   });
@@ -114,7 +123,7 @@ function assertTheAdditiveBoundary(): void {
         "calls:callee->caller",
         "calls:caller->callee",
       ],
-      ["another limitation", "one limitation"],
+      ["another limitation", "one limitation", "zeroth limitation"],
       true,
       true,
       true,

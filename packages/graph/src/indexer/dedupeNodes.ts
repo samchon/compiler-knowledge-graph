@@ -141,6 +141,9 @@ function locationKey(evidence: ISamchonGraphEvidence): string {
 }
 
 function compareText(left: string, right: string): number {
-  /* c8 ignore next 2 -- uniqueLocations removes equal keys before sorting. */
-  return left < right ? -1 : left > right ? 1 : 0;
+  // Two-way: uniqueLocations removes equal keys before sorting, so the equal
+  // arm cannot run, and an ignore directive over it would take the two
+  // reachable arms out of the coverage gate with it -- which is how a reversed
+  // ordering stops being a failing test.
+  return left < right ? -1 : 1;
 }

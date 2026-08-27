@@ -653,8 +653,11 @@ function isAborted(signal: AbortSignal | undefined): boolean {
 }
 
 function compareOrdinalPath(left: string, right: string): number {
-  /* c8 ignore next 2 -- input lists hold distinct project-relative paths. */
-  return left < right ? -1 : left > right ? 1 : 0;
+  // Two-way: input lists hold distinct project-relative paths, so the equal arm
+  // cannot run, and an ignore directive over it would take the two reachable
+  // arms out of the coverage gate with it -- which is how a reversed ordering
+  // stops being a failing test.
+  return left < right ? -1 : 1;
 }
 
 function frame(

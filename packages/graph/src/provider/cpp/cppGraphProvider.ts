@@ -67,12 +67,15 @@ export const cppGraphProvider: IGraphProvider = {
     // possible at all: the producer is ready when every translation unit the
     // database registers has been indexed, and nothing else starts that work.
     //
-    // The width is a measurement, and its question has been answered: worker
-    // count is not the term that grows. Both lanes died at two workers as
-    // readily as at clangd's default four, so the width experiment came back
-    // negative and the search moved into the producer, where a completed
-    // translation unit's body was being held three times over per worker. That
-    // is fixed in the pinned producer rather than here.
+    // The width is a measurement, and its question has been answered twice
+    // over. Worker count is not the term that grows -- both lanes died at two
+    // workers as readily as at clangd's default four -- and the term that does
+    // is not in the indexing path at all. Instrumenting the producer's
+    // not-ready answer put a number on it: on libuv the last translation unit
+    // finished indexing with 11.5 GiB free, and the host died seventy-six
+    // seconds later, after the snapshot was already built. What spends those
+    // gigabytes is answering the first page, which is why the fix is the size
+    // this client asks for rather than anything on this line.
     //
     // The bound stays anyway, and on its own grounds. Eight GiB per worker is
     // this repository's figure, chosen against the first host trace and not

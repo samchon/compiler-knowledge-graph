@@ -114,8 +114,11 @@ function frame(
 }
 
 function compareOrdinal(left: string, right: string): number {
-  /* c8 ignore next 2 -- sorted sets/maps contain distinct string identities. */
-  return left < right ? -1 : left > right ? 1 : 0;
+  // Two-way: sorted sets/maps contain distinct string identities, so the equal
+  // arm cannot run, and an ignore directive over it would take the two
+  // reachable arms out of the coverage gate with it -- which is how a reversed
+  // ordering stops being a failing test.
+  return left < right ? -1 : 1;
 }
 
 function providerSourceIdentity(file: string): string {

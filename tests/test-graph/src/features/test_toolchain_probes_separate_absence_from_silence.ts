@@ -41,6 +41,7 @@ export const test_toolchain_probes_separate_absence_from_silence = async () => {
   assertATopologyRestoresPerProviderRow();
   assertTopologyAsksOnlyTheProvidersWithoutASession();
   assertTopologySortsRowsWithTheirEvidence();
+  assertTopologyOrdersWhatItWasGivenUnsorted();
   assertAStaleOverrideFallsThroughToTheAliases();
   assertALaunchThatNeverRanSaysNothing();
   assertAProbeThatCouldNotStartIsNotSilence();
@@ -584,6 +585,43 @@ function assertTopologyAsksOnlyTheProvidersWithoutASession(): void {
     "a candidate that did not serve carries its configuration",
     rows(new Set())[0]?.configuration,
     ["toolchain=1.0.0"],
+  );
+}
+
+function assertTopologyOrdersWhatItWasGivenUnsorted(): void {
+  // Topology states a provider's languages and its configuration rows in a
+  // stable order, and neither list arrives in one. A registry entry names its
+  // languages however its author wrote them, and a derivation names its rows in
+  // the order it probed them; every other case here hands both in already
+  // sorted, so an ordering that only ever agreed with its input would pass them
+  // all. Three unsorted entries are the smallest input that has to move in both
+  // directions to come out ordered.
+  const root = GraphPaths.createTempDirectory(
+    "graph-toolchain-topology-unsorted-",
+  );
+  const provider: IGraphProvider = {
+    ...ProviderFixtures.provider({
+      name: "unsorted-provider",
+      languages: ["typescript", "go", "lua"],
+    }),
+    configurationDerivation: () =>
+      toolchainVersion.derive(["beta=2", "gamma=3", "alpha=1"]),
+  };
+  const rows = providerTopology.available(
+    root,
+    ["go", "lua", "typescript"],
+    { cwd: root },
+    { PATH: "", Path: "" },
+    [provider],
+  );
+  TestValidator.equals(
+    "topology orders languages and configuration rows the caller left unsorted",
+    [rows.length, rows[0]?.languages, rows[0]?.configuration],
+    [
+      1,
+      ["go", "lua", "typescript"],
+      ["alpha=1", "beta=2", "gamma=3"],
+    ],
   );
 }
 

@@ -674,12 +674,16 @@ async function assertClientPagination(): Promise<void> {
         refreshed.snapshot.protocol?.shards.length,
         requests.length,
         [...new Set(requests.map((request) => request.maxShards))],
-        [...new Set(requests.map((request) => typeof request.cursor))],
+        // Exactly one request opens the generation. Counting them rather than
+        // listing the sequence keeps this independent of the page size, without
+        // letting a continuation that silently restarted the walk pass as one
+        // more `undefined` among many.
+        requests.filter((request) => request.cursor === undefined).length,
         typeof requests[0]?.cursor,
       ],
       // One shard to a page, so 35 translation units are 35 requests: the first
       // opens the generation and every later one carries the cursor it was given.
-      [35, 35, 35, [1], ["undefined", "string"], "undefined"],
+      [35, 35, 35, [1], 1, "undefined"],
     );
     for (const [corruption, message] of [
       ["generation", "malformed paged generation"],

@@ -27,6 +27,14 @@ const MAX_RETRY_DELAY_MS = 5_000;
 // 32-shard page took a 16 GiB host from 11.5 GiB free to dead in 76 seconds.
 // Asking for more than one is a bet that N of those fit, and nothing in this
 // protocol tells a client what N is safe for a repository it has not read.
+//
+// It is not free. The producer reads one main file's shard once per page and
+// serves every configuration of that file from it, so a file built under
+// several configurations is now read once per configuration instead of once.
+// Both pinned corpora build each file one way, so today that costs nothing;
+// a project with many configurations per file pays it. Reading a shard again
+// is a cost that scales with the work; holding thirty-two of them expanded
+// into a JSON tree is a cost that ends the process.
 const PAGE_SHARDS = 1;
 
 /** Resident LSP client for the pinned clangd graph-snapshot producer. */

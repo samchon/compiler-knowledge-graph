@@ -56,6 +56,22 @@ export namespace ICppGraphSnapshot {
     checkerDigest: string;
     interfaceFingerprint: string;
     digest: string;
+
+    /**
+     * The body's own content digest, and where the producer published it.
+     *
+     * A body is the largest thing this route moves and the only part that is
+     * wanted whole, so the producer writes it once and the page names it. The
+     * name is the digest of the bytes, which is why a header two hundred
+     * translation units include resolves to one file: the second unit to see
+     * it writes the same name with the same content and the write is a no-op.
+     *
+     * `graph` is carried inline instead when the producer had nowhere to
+     * publish -- a project with no cache directory -- so a generation is
+     * readable either way. Exactly one of the two is present.
+     */
+    bodyDigest: string;
+    graphPath?: string;
     graph: ITU;
     coverage: Array<{
       family: string;

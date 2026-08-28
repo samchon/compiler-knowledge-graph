@@ -329,7 +329,9 @@ export class CppGraphClient implements IBulkGraphSession {
       producerMs: number;
       producerFetchMs: number;
       producerEncodeMs: number;
+      bodyMs: number;
       adaptMs: number;
+      census: CppGraphSnapshotAdapter.ICensus;
     },
   ): void {
     this.heapTrace?.stage(stage, shards, {
@@ -337,7 +339,10 @@ export class CppGraphClient implements IBulkGraphSession {
       producerMs: split.producerMs,
       producerFetchMs: split.producerFetchMs,
       producerEncodeMs: split.producerEncodeMs,
+      bodyMs: split.bodyMs,
       adaptMs: split.adaptMs,
+      nodes: split.census.nodes,
+      nodesOffMain: split.census.offMain,
     });
   }
 
@@ -378,7 +383,9 @@ export class CppGraphClient implements IBulkGraphSession {
       producerMs: 0,
       producerFetchMs: 0,
       producerEncodeMs: 0,
+      bodyMs: 0,
       adaptMs: 0,
+      census: { nodes: 0, offMain: 0 } as CppGraphSnapshotAdapter.ICensus,
     };
     let first: ICppGraphSnapshot | undefined;
     let settled: CppGraphSnapshotAdapter.IResult | undefined;
@@ -425,7 +432,10 @@ export class CppGraphClient implements IBulkGraphSession {
           this.validate,
         );
         if (opened.settled !== undefined) settled = opened.settled;
-        else ingest = opened;
+        else {
+          ingest = opened;
+          split.census = opened.census;
+        }
       } else {
         assertSameGeneration(first!, page);
         if (page.manifest.length !== 0 || page.deletes.length !== 0) {
@@ -434,6 +444,14 @@ export class CppGraphClient implements IBulkGraphSession {
           );
         }
       }
+      // A page names its bodies rather than carrying them, so they are read
+      // here, from the producer's own store, by the digest that named them.
+      // What crosses the pipe is a path; what the producer skipped is building
+      // a `json::Value` tree of the body, serializing it, and reading the body
+      // off disk only to put the same bytes back through a socket.
+      const readAt = performance.now();
+      for (const shard of page.upserts) readGraphBody(shard);
+      split.bodyMs += performance.now() - readAt;
       const adaptedAt = performance.now();
       for (const shard of page.upserts) ingest?.shard(shard);
       split.adaptMs += performance.now() - adaptedAt;
@@ -654,6 +672,57 @@ function cancelledError(signal?: AbortSignal): Error {
 
 function asError(error: unknown): Error {
   return error instanceof Error ? error : new Error(String(error));
+}
+
+/**
+ * Fill in a shard's body from the file the producer published it to.
+ *
+ * The producer writes a completed body once, named by the body's own
+ * content digest, and a page names it instead of carrying it. That takes
+ * the largest object this route moves out of the request path entirely:
+ * no `json::Value` tree on one side, no serialization between, and no
+ * megabytes of JSON through a pipe that delivers it in sixty-four
+ * kibibyte pieces.
+ *
+ * A shard that carries its body inline is left alone -- that is what a
+ * project with nowhere to publish gets, and the body is the same either
+ * way. A shard that has neither is a producer that broke its own
+ * contract, and is refused rather than adapted into an empty graph.
+ */
+function readGraphBody(shard: ICppGraphSnapshot.IShard): void {
+  // A page's shards arrive from `JSON.parse`, so `graph` is absent in fact
+  // whenever the producer published a path instead -- the declared type is
+  // what holds from here on, and holding it is this function's whole job.
+  const carried = shard as { graph?: ICppGraphSnapshot.ITU };
+  if (carried.graph !== undefined) return;
+  if (typeof shard.graphPath !== "string" || shard.graphPath === "") {
+    throw new Error(
+      `C/C++ clang graph: shard carries neither a body nor a path: ${shard.key}`,
+    );
+  }
+  let body: string;
+  try {
+    body = fs.readFileSync(shard.graphPath, "utf8");
+  } catch {
+    throw new Error(
+      `C/C++ clang graph: published body cannot be read: ${shard.graphPath}`,
+    );
+  }
+  // Parsed and handed on without a check of its own, because the check that
+  // matters already exists and is stronger. `assertShard` rebuilds the
+  // producer's three-step digest chain from the body it is given -- interface
+  // fingerprint, body digest, disk material -- and refuses a shard whose
+  // digest does not follow. A body read from a file is verified by exactly
+  // that, so bytes that are not the ones this generation was planned against
+  // are refused whoever wrote them, and hashing the file here would only add
+  // a weaker second opinion over the same bytes.
+  try {
+    carried.graph = JSON.parse(body) as ICppGraphSnapshot.ITU;
+  } catch {
+    throw new Error(
+      `C/C++ clang graph: published body is not valid JSON: ${shard.graphPath}`,
+    );
+  }
 }
 
 function assertSnapshotPage(

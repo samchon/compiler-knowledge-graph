@@ -1,3 +1,3 @@
 /** Exact samchon/llvm-project producer revision required by this adapter. */
 export const CPP_CLANG_PRODUCER_COMMIT =
-  "b558cc99710e538b69dd161734d8d64ac5d8d645";
+  "0670af22a2142c989e2b3e807a85b347cae6baa2";

@@ -27,6 +27,12 @@ const requestConfiguration = args.includes("--request-configuration");
 const requestEmptyConfiguration = args.includes("--request-empty-configuration");
 const requestUnknown = args.includes("--request-unknown");
 const pageCorruption = valueOf("--page-corruption=");
+// Where to publish bodies instead of carrying them, mirroring the producer:
+// one file per body, named by the body's own content digest.
+const bodyRoot = valueOf("--body-root=");
+// How a producer can break the published-body contract: name nothing, name a
+// file that is not there, or publish something that is not a body.
+const bodyFault = valueOf("--body-fault=");
 const edgeCases = args.includes("--edge-cases");
 const invalidSourceUri = args.includes("--invalid-source-uri");
 const unsupportedSourceUri = args.includes("--unsupported-source-uri");
@@ -283,7 +289,16 @@ function pageOf(plan, offset, maxShards) {
     sequence: plan.sequence,
     generation: plan.generation,
     baseGeneration: plan.baseGeneration,
-    upserts: plan.upserts.slice(offset, end),
+    // A page names a published body rather than carrying it, which is the
+    // whole point of publishing: the largest object this protocol moves
+    // never enters the request path.
+    upserts: plan.upserts.slice(offset, end).map((shard) => {
+      if (shard.graphPath === undefined) return shard;
+      const { graph, graphPath, unnamedBody, ...named } = shard;
+      // `unnamedBody` publishes nothing and names nothing, which is a
+      // producer breaking the contract rather than a mode of it.
+      return unnamedBody ? named : { ...named, graphPath };
+    }),
     deletes: offset === 0 ? plan.deletes : [],
     manifest: offset === 0 && !plan.cacheHit ? plan.manifest : [],
     page: {
@@ -521,6 +536,23 @@ function graphShard(command) {
       "\n",
     ),
   );
+  // The body's own digest. A published page names the body by this instead
+  // of carrying it, so the field is the claim such a producer is checked
+  // against. This fixture always carries the body inline.
+  shard.bodyDigest = bodyDigest;
+  // Published while the body is in hand, named by its own digest, exactly as
+  // the producer does. The body stays on the shard until a page is built,
+  // because the envelope is still assembled from it.
+  if (bodyRoot !== undefined) {
+    fs.mkdirSync(bodyRoot, { recursive: true });
+    const bodyPath = path.join(bodyRoot, bodyDigest + ".graph.json");
+    if (!fs.existsSync(bodyPath))
+      fs.writeFileSync(bodyPath, JSON.stringify(graph));
+    shard.graphPath = bodyPath;
+    if (bodyFault === "absent") shard.graphPath = bodyPath + ".missing";
+    if (bodyFault === "unnamed") shard.unnamedBody = true;
+    if (bodyFault === "malformed") fs.writeFileSync(bodyPath, "{ not json");
+  }
   return shard;
 }
 

@@ -140,6 +140,7 @@ export const test_cpp_clang_snapshot_adapter_and_client_are_atomic = async () =>
   await assertClientLifecycle(root);
   await assertClientInputShapes();
   await assertClientReportsItsOwnSize();
+  await assertClientReadsPublishedBodies(root);
   await assertClientPagination();
   await assertClientFailures(fixtureRoot());
 };
@@ -784,7 +785,7 @@ async function assertClientReportsItsOwnSize(): Promise<void> {
     .filter((line) => line.startsWith("@samchon/graph: cpp-heap "))
     .map((line) =>
       line.replace(
-        / (?:elapsedMs|producer[A-Za-z]*Ms|adaptMs|heap[A-Za-z]*MiB|rssMiB)=\d+/gu,
+        / (?:elapsedMs|producer[A-Za-z]*Ms|adaptMs|nodes[A-Za-z]*|nodes|heap[A-Za-z]*MiB|rssMiB)=\d+/gu,
         "",
       ),
     );
@@ -810,6 +811,76 @@ async function assertClientReportsItsOwnSize(): Promise<void> {
     ],
     [0, null, ["walking", "paged", "committed"], true, true],
   );
+}
+
+async function assertClientReadsPublishedBodies(root: string): Promise<void> {
+  // A page names its bodies instead of carrying them. That takes the largest
+  // object this route moves out of the request path: no `json::Value` tree on
+  // the producer's side, no serialization between, and no megabytes of JSON
+  // through a pipe that hands them over in sixty-four kibibyte pieces.
+  //
+  // The name is the body's own digest, so reading it is also checking it: the
+  // file that answers to a digest either hashes to it or is not the body this
+  // generation was planned against, whoever wrote it.
+  const bodyRoot = path.join(root, "published-bodies");
+  const client = cppClient(root, [`--body-root=${bodyRoot}`]);
+  try {
+    const refreshed = await client.refresh();
+    const files = fs.readdirSync(bodyRoot);
+    TestValidator.equals(
+      "a generation whose bodies were published reads the same as one that carried them",
+      [
+        refreshed.snapshot.sources.size > 0,
+        refreshed.snapshot.nodes.length > 0,
+        files.length > 0,
+        files.every((name) => name.endsWith(".graph.json")),
+      ],
+      [true, true, true, true],
+    );
+    // A body read from a file is still a body the digest chain answers for:
+    // `assertShard` rebuilds that chain from what it was handed, so bytes
+    // swapped underneath a published name are refused rather than adapted.
+    // That is the only thing standing between a shared directory and a graph
+    // nobody can account for.
+    for (const name of files)
+      fs.writeFileSync(path.join(bodyRoot, name), "{\"tampered\":true}");
+    const tampered = cppClient(root, [`--body-root=${bodyRoot}`]);
+    try {
+      await rejected(
+        "a published body swapped underneath its name is refused",
+        tampered.refresh(),
+        "malformed shard",
+      );
+    } finally {
+      await tampered.close();
+    }
+
+    // The three ways a producer can break the contract it just took on. A page
+    // that names nothing has published nothing; a name pointing at no file is
+    // a body this client cannot read; and a file that is not a body is not
+    // one, however it is named. None of them may become an empty graph.
+    for (const [fault, message] of [
+      ["unnamed", "carries neither a body nor a path"],
+      ["absent", "published body cannot be read"],
+      ["malformed", "published body is not valid JSON"],
+    ] as const) {
+      const broken = cppClient(root, [
+        `--body-root=${path.join(root, `broken-${fault}`)}`,
+        `--body-fault=${fault}`,
+      ]);
+      try {
+        await rejected(
+          `a producer that publishes ${fault} bodies is refused`,
+          broken.refresh(),
+          message,
+        );
+      } finally {
+        await broken.close();
+      }
+    }
+  } finally {
+    await client.close();
+  }
 }
 
 async function assertClientPagination(): Promise<void> {

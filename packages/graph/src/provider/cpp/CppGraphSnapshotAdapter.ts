@@ -211,8 +211,10 @@ export class CppGraphSnapshotAdapter {
     // so adaptation leaves it empty and `finish` fills it, which is what lets a
     // shard be adapted before the generation is complete.
     const pending = new Map<string, IPendingCoverage>();
+    const census: CppGraphSnapshotAdapter.ICensus = { nodes: 0, offMain: 0 };
     let delivered = 0;
     return {
+      census,
       shard: (shard) => {
         assertShard(shard, fingerprint);
         if (touched.has(shard.key)) {
@@ -231,10 +233,19 @@ export class CppGraphSnapshotAdapter {
           pending.delete(key);
           return;
         }
-        nextGraph.set(
-          key,
-          adaptShard(this.root, envelope.universe.digest, shard),
+        const adapted = adaptShard(
+          this.root,
+          envelope.universe.digest,
+          shard,
         );
+        // A shard is one translation unit's view, so a node whose file is not
+        // this unit's main file came from something it included -- and will
+        // arrive again from every other unit that includes the same header.
+        const main = graphFile(this.root, shard.graph.mainFile);
+        census.nodes += adapted.nodes.length;
+        for (const node of adapted.nodes)
+          if (node.file !== main) census.offMain += 1;
+        nextGraph.set(key, adapted);
         pending.set(key, {
           rows: shard.coverage,
           mainFileUri: shard.graph.mainFileUri,
@@ -413,6 +424,15 @@ export namespace CppGraphSnapshotAdapter {
     settled?: undefined;
     shard: (shard: ICppGraphSnapshot.IShard) => void;
     finish: () => IResult;
+
+    /** Nodes adapted so far, and how many came from outside the main file. */
+    readonly census: ICensus;
+  }
+
+  /** What a walk has materialised, for the trace to report. */
+  export interface ICensus {
+    nodes: number;
+    offMain: number;
   }
 
   export interface IResult {

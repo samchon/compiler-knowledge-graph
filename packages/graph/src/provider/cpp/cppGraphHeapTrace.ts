@@ -43,7 +43,10 @@ export function cppGraphHeapTrace(
             ` producerMs=${ms(split.producerMs)}` +
             ` producerFetchMs=${ms(split.producerFetchMs)}` +
             ` producerEncodeMs=${ms(split.producerEncodeMs)}` +
+            ` bodyMs=${ms(split.bodyMs)}` +
             ` adaptMs=${ms(split.adaptMs)}` +
+            ` nodes=${String(split.nodes)}` +
+            ` nodesOffMain=${String(split.nodesOffMain)}` +
             ` heapUsedMiB=${mib(memory.heapUsed)}` +
             ` heapTotalMiB=${mib(memory.heapTotal)}` +
             ` rssMiB=${mib(memory.rss)}\n`,
@@ -97,6 +100,22 @@ export namespace cppGraphHeapTrace {
      */
     producerFetchMs: number;
     producerEncodeMs: number;
+
+    /** Reading the bodies the producer published, by the digest that named them. */
+    bodyMs: number;
     adaptMs: number;
+
+    /**
+     * Nodes adapted so far, and how many came from a file other than the
+     * shard's own main file.
+     *
+     * A shard is one translation unit's view, so every symbol a header
+     * declares is materialised again in every unit that includes it, and
+     * libuv's headers are included by all 242 of its units. If that is where
+     * the consumer's seven gibibytes of live graph goes, this ratio says so --
+     * and if it is not, it stops a producer being rebuilt around a guess.
+     */
+    nodes: number;
+    nodesOffMain: number;
   }
 }

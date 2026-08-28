@@ -783,7 +783,10 @@ async function assertClientReportsItsOwnSize(): Promise<void> {
     .split("\n")
     .filter((line) => line.startsWith("@samchon/graph: cpp-heap "))
     .map((line) =>
-      line.replace(/ elapsedMs=\d+| heap[A-Za-z]*MiB=\d+| rssMiB=\d+/gu, ""),
+      line.replace(
+        / (?:elapsedMs|producerMs|adaptMs|heap[A-Za-z]*MiB|rssMiB)=\d+/gu,
+        "",
+      ),
     );
   const stages = reported.map((line) => /stage=(\w+)/u.exec(line)?.[1]);
   const counts = reported.map((line) =>

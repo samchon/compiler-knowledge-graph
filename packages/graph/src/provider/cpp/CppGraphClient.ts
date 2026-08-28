@@ -324,9 +324,13 @@ export class CppGraphClient implements IBulkGraphSession {
   private reportHeap(
     stage: "walking" | "paged" | "committed",
     shards: number,
-    startedAt: number,
+    split: { startedAt: number; producerMs: number; adaptMs: number },
   ): void {
-    this.heapTrace?.stage(stage, shards, performance.now() - startedAt);
+    this.heapTrace?.stage(stage, shards, {
+      elapsedMs: performance.now() - split.startedAt,
+      producerMs: split.producerMs,
+      adaptMs: split.adaptMs,
+    });
   }
 
   /**
@@ -358,11 +362,16 @@ export class CppGraphClient implements IBulkGraphSession {
     let expectedOffset = 0;
     let expectedTotal: number | undefined;
     const startedAt = performance.now();
+    // The two halves of a walk, kept apart. A stride that costs thirteen
+    // seconds a shard is one problem if the producer owns it and another if
+    // this process does, and the wall clock alone cannot say which.
+    const split = { startedAt, producerMs: 0, adaptMs: 0 };
     let first: ICppGraphSnapshot | undefined;
     let settled: CppGraphSnapshotAdapter.IResult | undefined;
     let ingest: CppGraphSnapshotAdapter.IOpen | undefined;
     const cursors = new Set<string>();
     for (;;) {
+      const askedAt = performance.now();
       const value = await this.lsp.request<unknown>(
         GRAPH_METHOD,
         {
@@ -373,6 +382,7 @@ export class CppGraphClient implements IBulkGraphSession {
         this.requestTimeoutMs,
         signal,
       );
+      split.producerMs += performance.now() - askedAt;
       assertSnapshotPage(value, expectedOffset, expectedTotal);
       const page = value;
       expectedTotal ??= page.page.total;
@@ -402,7 +412,9 @@ export class CppGraphClient implements IBulkGraphSession {
           );
         }
       }
+      const adaptedAt = performance.now();
       for (const shard of page.upserts) ingest?.shard(shard);
+      split.adaptMs += performance.now() - adaptedAt;
       const before = expectedOffset;
       expectedOffset += page.page.count;
       // Every stride of shards, so a walk that never finishes still says how
@@ -414,16 +426,18 @@ export class CppGraphClient implements IBulkGraphSession {
         Math.floor(before / WALK_STRIDE) !==
           Math.floor(expectedOffset / WALK_STRIDE)
       ) {
-        this.reportHeap("walking", expectedOffset, startedAt);
+        this.reportHeap("walking", expectedOffset, split);
       }
       if (page.page.nextCursor === null) {
         if (expectedOffset !== expectedTotal) {
           throw new Error("C/C++ clang graph: paged generation ended early");
         }
         if (settled !== undefined) return settled;
-        this.reportHeap("paged", expectedTotal, startedAt);
+        this.reportHeap("paged", expectedTotal, split);
+        const finishedAt = performance.now();
         const result = ingest!.finish();
-        this.reportHeap("committed", expectedTotal, startedAt);
+        split.adaptMs += performance.now() - finishedAt;
+        this.reportHeap("committed", expectedTotal, split);
         return result;
       }
       if (

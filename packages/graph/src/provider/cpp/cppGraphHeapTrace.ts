@@ -31,14 +31,17 @@ export function cppGraphHeapTrace(
 ): cppGraphHeapTrace.ITrace | undefined {
   if (env[HEAP_TRACE_ENVIRONMENT] !== "1") return undefined;
   return {
-    stage: (stage, shards, elapsedMs) => {
+    stage: (stage, shards, split) => {
       const memory = usage();
       const mib = (value: number): string =>
         String(Math.round(value / (1024 * 1024)));
+      const ms = (value: number): string => String(Math.round(value));
       try {
         write(
           `${PREFIX}stage=${stage} shards=${String(shards)}` +
-            ` elapsedMs=${String(Math.round(elapsedMs))}` +
+            ` elapsedMs=${ms(split.elapsedMs)}` +
+            ` producerMs=${ms(split.producerMs)}` +
+            ` adaptMs=${ms(split.adaptMs)}` +
             ` heapUsedMiB=${mib(memory.heapUsed)}` +
             ` heapTotalMiB=${mib(memory.heapTotal)}` +
             ` rssMiB=${mib(memory.rss)}\n`,
@@ -64,7 +67,22 @@ export namespace cppGraphHeapTrace {
     stage: (
       stage: "walking" | "paged" | "committed",
       shards: number,
-      elapsedMs: number,
+      split: ISplit,
     ) => void;
+  }
+
+  /**
+   * Where a refresh's time went, so far.
+   *
+   * `elapsedMs` is wall clock since the refresh began. `producerMs` is what was
+   * spent awaiting the producer's answers and `adaptMs` what was spent turning
+   * them into shards -- the two halves of a walk, paid by different processes.
+   * A stride that costs thirteen seconds a shard is a different problem
+   * depending on which of them owns it, and no reading so far could say.
+   */
+  export interface ISplit {
+    elapsedMs: number;
+    producerMs: number;
+    adaptMs: number;
   }
 }

@@ -96,7 +96,6 @@ export class CppGraphSnapshotAdapter {
   public readonly store: GraphSnapshotProtocol.Store;
   private readonly selectedLanguages: ReadonlySet<GraphLanguage>;
   private rawShards = new Map<string, IRetainedShard>();
-  private graphShards = new Map<string, GraphSnapshotProtocol.IShard>();
   private rawGeneration: string | undefined;
 
   public constructor(
@@ -190,10 +189,14 @@ export class CppGraphSnapshotAdapter {
     // and which it is follows from the base generation alone: a reload that
     // arrives as a delta is refused in `finish`, so every generation that
     // reaches there with a base has one to build on.
+    // Seeded from the store's own published generation rather than from a
+    // second copy of it. These are read here and handed back to `apply`, which
+    // deep-clones what it retains, so the generation being built never shares
+    // structure with the one it replaces.
     const nextGraph =
       envelope.baseGeneration === null
         ? new Map<string, GraphSnapshotProtocol.IShard>()
-        : new Map(this.graphShards);
+        : new Map(this.store.shards);
     const touched = new Set<string>();
     for (const key of envelope.deletes) {
       if (touched.has(key) || !nextRaw.delete(key)) {
@@ -347,7 +350,6 @@ export class CppGraphSnapshotAdapter {
         });
         const snapshot = this.store.apply(frames, { validate });
         this.rawShards = nextRaw;
-        this.graphShards = nextGraph;
         this.rawGeneration = envelope.generation;
         return {
           changed: true,

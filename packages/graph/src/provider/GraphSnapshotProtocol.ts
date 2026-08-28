@@ -266,6 +266,9 @@ export namespace GraphSnapshotProtocol {
    */
   export class Store {
     private committed = new Map<string, ICommittedShard>();
+    // The same shards as `committed`, without the digest beside them, so a
+    // caller reading them costs a map of references rather than a rebuild.
+    private published = new Map<string, IShard>();
     private identity: IHello | undefined;
     private readonly root: string;
     private snapshot: IBulkGraphSession.ISnapshot | undefined;
@@ -277,6 +280,24 @@ export namespace GraphSnapshotProtocol {
 
     public get current(): IBulkGraphSession.ISnapshot | undefined {
       return this.snapshot;
+    }
+
+    /**
+     * The shards of the committed generation, by key.
+     *
+     * A route that builds the next generation from the previous one needs the
+     * shards that did not change, and it was keeping its own copy of every one
+     * of them beside this store's. On a 242 translation-unit C project that
+     * second copy is gigabytes of the same objects.
+     *
+     * Read-only, and meant to be read: these are the published generation, and
+     * a caller that mutates one corrupts a generation this store has already
+     * promised is immutable. Handing them to `apply` is safe -- it deep-clones
+     * everything it retains, so the next generation never shares structure
+     * with this one.
+     */
+    public get shards(): ReadonlyMap<string, IShard> {
+      return this.published;
     }
 
     public apply(
@@ -454,6 +475,9 @@ export namespace GraphSnapshotProtocol {
       options.validate?.(assembled);
       throwIfAborted(options.signal);
       this.committed = next;
+      this.published = new Map(
+        [...next].map(([key, entry]) => [key, entry.shard]),
+      );
       this.identity = clone(hello);
       this.snapshot = assembled;
       return assembled;

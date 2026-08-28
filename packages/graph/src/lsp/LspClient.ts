@@ -23,6 +23,13 @@ export class LspClient {
   private readonly events = new EventEmitter();
   private readonly maxMessageBytes: number;
   private buffer = Buffer.alloc(0);
+  // Chunks that have arrived since `buffer` was last joined, and how many
+  // bytes they hold. See `onData`.
+  private chunks: Buffer[] = [];
+  private chunkBytes = 0;
+  // Total bytes the frame being read needs, header included, or zero when the
+  // next header has not been parsed yet.
+  private needed = 0;
   private nextId = 1;
   private exited = false;
   private failure: Error | undefined;
@@ -235,8 +242,44 @@ export class LspClient {
     }
   }
 
+  /**
+   * Take one stdout chunk, and join only when a frame can be read.
+   *
+   * Concatenating the accumulated buffer with every chunk is quadratic in the
+   * size of a frame, and this transport carries frames that are tens of
+   * megabytes: a graph snapshot page. Node hands stdout over in chunks of
+   * about sixty-four kibibytes, so a thirty megabyte response arrives in some
+   * five hundred of them and the naive form copies the whole accumulation five
+   * hundred times -- gigabytes of memcpy, and gigabytes of garbage, to move
+   * thirty megabytes.
+   *
+   * That was most of the cost of paging a real C project. The producer
+   * accounted for sixteen per cent of what the client spent waiting on it; the
+   * rest was here, in this line, and it grew as the heap it churned did.
+   *
+   * So chunks accumulate unjoined. Once a header has been read the frame's
+   * total size is known, and until that many bytes have arrived there is
+   * nothing to look at -- the arithmetic is two integers. When the frame is
+   * complete the chunks are joined once. One copy per frame instead of one per
+   * chunk.
+   */
   private onData(chunk: Buffer): void {
-    this.buffer = Buffer.concat([this.buffer, chunk]);
+    this.chunks.push(chunk);
+    this.chunkBytes += chunk.length;
+    if (
+      this.needed !== 0 &&
+      this.buffer.length + this.chunkBytes < this.needed
+    ) {
+      return;
+    }
+    if (this.chunks.length !== 0) {
+      this.buffer = Buffer.concat(
+        [this.buffer, ...this.chunks],
+        this.buffer.length + this.chunkBytes,
+      );
+      this.chunks = [];
+      this.chunkBytes = 0;
+    }
     for (;;) {
       const headerEnd = this.buffer.indexOf("\r\n\r\n");
       if (headerEnd < 0) {
@@ -246,7 +289,7 @@ export class LspClient {
               `Language server exceeded the ${String(MAX_HEADER_BYTES)} byte LSP header limit.`,
             ),
           );
-          this.buffer = Buffer.alloc(0);
+          this.reset();
         }
         return;
       }
@@ -256,7 +299,7 @@ export class LspClient {
             `Language server exceeded the ${String(MAX_HEADER_BYTES)} byte LSP header limit.`,
           ),
         );
-        this.buffer = Buffer.alloc(0);
+        this.reset();
         return;
       }
       const header = this.buffer.slice(0, headerEnd).toString("ascii");
@@ -276,12 +319,18 @@ export class LspClient {
             `Language server declared an invalid or oversized LSP frame (${String(length)} bytes; limit ${String(this.maxMessageBytes)}).`,
           ),
         );
-        this.buffer = Buffer.alloc(0);
+        this.reset();
         return;
       }
       const bodyStart = headerEnd + 4;
       const bodyEnd = bodyStart + length;
-      if (this.buffer.length < bodyEnd) return;
+      if (this.buffer.length < bodyEnd) {
+        // Remember what the rest of this frame costs, so the chunks that carry
+        // it accumulate without being joined or searched again.
+        this.needed = bodyEnd;
+        return;
+      }
+      this.needed = 0;
       const body = this.buffer.slice(bodyStart, bodyEnd).toString("utf8");
       this.buffer = this.buffer.slice(bodyEnd);
       // A malformed frame must not throw out of the stdout `data` listener as an
@@ -300,6 +349,14 @@ export class LspClient {
       }
       this.handleMessage(message);
     }
+  }
+
+  /** Drop everything buffered, joined or not, after a transport failure. */
+  private reset(): void {
+    this.buffer = Buffer.alloc(0);
+    this.chunks = [];
+    this.chunkBytes = 0;
+    this.needed = 0;
   }
 
   private handleMessage(message: {

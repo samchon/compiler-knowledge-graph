@@ -117,6 +117,57 @@ export const test_lsp_client_closes_servers_that_break_the_shutdown_handshake =
       LspClient: LspClientConstructor;
     }>("lsp/LspClient.js");
 
+    // A frame larger than a pipe's chunk, delivered in pieces.
+    //
+    // This transport carries graph snapshot pages, which are tens of megabytes,
+    // and the operating system hands those over in chunks of about sixty-four
+    // kibibytes. Joining the accumulation with every chunk is quadratic in the
+    // frame: five hundred chunks copy the whole of it five hundred times, which
+    // was most of what paging a real C project cost. Chunks now accumulate
+    // unjoined until the frame the header declared has arrived.
+    //
+    // The server below writes its header and then dribbles the body out in
+    // pieces, so the client has to hold an incomplete frame across many reads
+    // and assemble it byte-exact. A body that arrives in one chunk would prove
+    // none of that.
+    const SIZE = 2 * 1024 * 1024;
+    const pieces = new LspClient(process.execPath, [
+      "-e",
+      [
+        "let buf = Buffer.alloc(0);",
+        "process.stdin.on('data', (d) => {",
+        "  buf = Buffer.concat([buf, d]);",
+        "  for (;;) {",
+        "    const head = buf.indexOf('\\r\\n\\r\\n');",
+        "    if (head < 0) return;",
+        "    const len = Number(/Content-Length: (\\d+)/.exec(buf.slice(0, head).toString())[1]);",
+        "    if (buf.length < head + 4 + len) return;",
+        "    const msg = JSON.parse(buf.slice(head + 4, head + 4 + len).toString());",
+        "    buf = buf.slice(head + 4 + len);",
+        "    if (msg.id === undefined) continue;",
+        `    const body = Buffer.from(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: { blob: 'x'.repeat(${SIZE}) } }));`,
+        "    process.stdout.write('Content-Length: ' + body.length + '\\r\\n\\r\\n');",
+        "    for (let i = 0; i < body.length; i += 65536)",
+        "      process.stdout.write(body.subarray(i, i + 65536));",
+        "  }",
+        "});",
+      ].join("\n"),
+    ]);
+    try {
+      const assembled = await pieces.request<{ blob: string }>(
+        "initialize",
+        {},
+        30_000,
+      );
+      TestValidator.equals(
+        "a frame delivered in pieces is assembled byte-exact",
+        [assembled.blob.length, assembled.blob === "x".repeat(SIZE)],
+        [SIZE, true],
+      );
+    } finally {
+      await pieces.close();
+    }
+
     // A language server that acknowledges `shutdown` and then ignores `exit` is
     // the leak this teardown exists to prevent: nothing else ends that process,
     // so an orphaned server would outlive the session that spawned it, holding

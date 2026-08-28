@@ -367,7 +367,14 @@ export class CppGraphSnapshotAdapter {
             validate,
           });
         }
-        const snapshot = this.store.apply(frames, { validate });
+        // Adopted, not copied. `nextGraph` is built here and released as
+        // this returns -- the adapter has kept no map of its own since the
+        // store began publishing its committed generation -- so the copy the
+        // store would otherwise make is a second whole graph guarding against
+        // a reference that no longer exists. On libuv that copy is what the
+        // commit ran out of heap for, immediately after a walk that finally
+        // finished.
+        const snapshot = this.store.apply(frames, { validate, adopt: true });
         this.rawShards = nextRaw;
         this.rawGeneration = envelope.generation;
         return {

@@ -300,12 +300,23 @@ export namespace GraphSnapshotProtocol {
       return this.published;
     }
 
+    /**
+     * Commit one transaction.
+     *
+     * `adopt` hands the frames' shards to this store instead of copying them.
+     * The copy exists because a published generation cannot share structure
+     * with a caller that still holds a reference and might write through it,
+     * so a caller may only adopt when it drops every reference it has as this
+     * returns. On a 469-shard generation the copy is a second whole graph,
+     * held at the moment the caller is still holding the first.
+     */
     public apply(
       frames: readonly Frame[],
       options: {
         signal?: AbortSignal;
         warnings?: readonly string[];
         validate?: (snapshot: IBulkGraphSession.ISnapshot) => void;
+        adopt?: boolean;
       } = {},
     ): IBulkGraphSession.ISnapshot {
       throwIfAborted(options.signal);
@@ -385,7 +396,8 @@ export namespace GraphSnapshotProtocol {
           }
           next.set(frame.shard.key, {
             digest,
-            shard: clone(frame.shard),
+            shard:
+              options.adopt === true ? frame.shard : clone(frame.shard),
           });
         } else if (frame.type === "deleteShard") {
           assertString(frame.key, "deleteShard.key");

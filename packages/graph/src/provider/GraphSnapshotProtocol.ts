@@ -503,19 +503,6 @@ export namespace GraphSnapshotProtocol {
   }
 
   /**
-   * Keep one node per identity across the shards that name it.
-   *
-   * A node id names an entity, and an entity a shard did not invent -- a
-   * function declared in a header -- is named by every shard whose unit read
-   * that header. Concatenating shard arrays therefore held one copy of every
-   * header's facts per including unit, which is the size of how often a
-   * project is read rather than the size of what it declares.
-   *
-   * The copy kept is the better informed one. Two units see the same entity
-   * from different sides, and the one that compiled the definition is the one
-   * that knows where the implementation is.
-   */
-  /**
    * Fold shards' node, edge and diagnostic lanes into one graph.
    *
    * Exposed because a provider that composes a generation without the store
@@ -531,7 +518,7 @@ export namespace GraphSnapshotProtocol {
     const nodes: ISamchonGraphNode[] = [];
     const edges: ISamchonGraphEdge[] = [];
     const diagnostics: ISamchonGraphDiagnostic[] = [];
-    const seenNodes = new Map<string, number>();
+    const seenNodes = new Set<string>();
     const seenEdges = new Set<string>();
     const seenDiagnostics = new Set<string>();
     for (const shard of shards) {
@@ -543,20 +530,30 @@ export namespace GraphSnapshotProtocol {
     return { nodes, edges, diagnostics };
   }
 
+  /**
+   * Keep one node per identity across the shards that name it.
+   *
+   * A node id names an entity, and an entity a shard did not invent -- a
+   * function declared in a header -- is named by every shard whose unit read
+   * that header. Concatenating shard arrays therefore held one copy of every
+   * header's facts per including unit, which is the size of how often a
+   * project is read rather than the size of what it declares.
+   *
+   * The first instance is kept, because a provider that publishes an entity
+   * from two shards publishes the same entity: settling what each of them
+   * knows about it is the provider's own business, done while its generation
+   * is still being adapted, not something to redo here from what survived.
+   */
   function foldNode(
     nodes: ISamchonGraphNode[],
-    seen: Map<string, number>,
+    seen: Set<string>,
     node: ISamchonGraphNode,
   ): void {
-    const at = seen.get(node.id);
-    if (at === undefined) {
-      seen.set(node.id, nodes.length);
-      nodes.push(node);
-      return;
-    }
-    const prior = nodes[at]!;
-    if (node.implementation !== undefined && prior.implementation === undefined)
-      nodes[at] = node;
+    if (seen.has(node.id)) return;
+    seen.add(node.id);
+    nodes.push(node);
+    // Kept, not compared: a provider that publishes the same node from two
+    // shards publishes the same node.
   }
 
   /** Keep one edge per endpoint pair and kind, for the same reason. */
@@ -610,7 +607,7 @@ export namespace GraphSnapshotProtocol {
     const coverage: ISamchonGraphCoverage[] = [];
     const unresolved: ISamchonGraphUnresolved[] = [];
     const sources = new Map<string, IBulkGraphSession.ISourceDigest>();
-    const seenNodes = new Map<string, number>();
+    const seenNodes = new Set<string>();
     const seenEdges = new Set<string>();
     const seenDiagnostics = new Set<string>();
     for (const entry of manifest) {

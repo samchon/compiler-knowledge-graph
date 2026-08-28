@@ -814,8 +814,8 @@ async function assertClientReportsItsOwnSize(): Promise<void> {
 }
 
 /**
- * A root of three units: one defines what the shared header declares, two
- * only include it.
+ * A root of four units: two define what the shared header declares, two only
+ * include it.
  *
  * That is the case splitting bodies exists for, and the shape every C project
  * has. Publishing whole bodies writes the header's facts once per including
@@ -831,7 +831,7 @@ function publishedFixtureRoot(): string {
     path.join(root, "include", "fixture.h"),
     "void callee();\n",
   );
-  const files = ["first.cpp", "second.cpp", "third.cpp"];
+  const files = ["first.cpp", "second.cpp", "third.cpp", "fourth.cpp"];
   for (const file of files)
     fs.writeFileSync(
       path.join(root, file),
@@ -872,13 +872,13 @@ async function assertClientReadsPublishedBodies(root: string): Promise<void> {
         files.length,
         files.every((name) => name.endsWith(".graph.json")),
       ],
-      // Five files for three units of two pieces each. The three main pieces
-      // differ, and so does the header as the defining unit sees it -- it
-      // records where the definition is. The two units that only include the
-      // header agree exactly, so they share one piece: a piece carries no
-      // unit identity and its name is its own content. Six would mean the
-      // split had bought nothing.
-      [true, true, 5, true],
+      // Seven files for four units of two pieces each. The four main pieces
+      // differ. So does the header as each defining unit sees it, because
+      // that piece records where the definition is. The two units that only
+      // include the header agree exactly and share one piece: a piece carries
+      // no unit identity and its name is its own content. Eight would mean
+      // the split had bought nothing.
+      [true, true, 7, true],
     );
     // A body read from a file is still a body the digest chain answers for:
     // `assertShard` rebuilds that chain from what it was handed, so bytes

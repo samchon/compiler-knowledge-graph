@@ -412,8 +412,16 @@ function graphShard(command) {
   // implemented. Both publish the same node, because a declaration is where
   // an entity's identity lives, and folding them has to keep the one that
   // knows more.
+  //
+  // An inline function a header declares is defined in every unit that uses
+  // it, so more than one unit can be the informed one. The database's last
+  // two entries are given that role: the informed copies then arrive after
+  // the ones they displace, and meet each other, which is the case a fixture
+  // with a single definer never reaches.
   if (sharedHeaderUri !== undefined) {
-    const first = compilationCommands()[0];
+    const definers = compilationCommands()
+      .slice(-2)
+      .map((row) => path.resolve(row.directory || process.cwd(), row.file));
     const shared = symbol(
       "c:@F@shared#",
       "shared",
@@ -421,10 +429,7 @@ function graphShard(command) {
       range(sharedHeaderUri, 0, 0, 0, 12),
       true,
     );
-    if (
-      first !== undefined &&
-      path.resolve(directory, first.file) === mainFile
-    )
+    if (definers.includes(mainFile))
       shared.definition = range(mainFileUri, 1, 0, 1, 12);
     symbols.push(shared);
   }
@@ -579,45 +584,59 @@ function graphShard(command) {
     // whole reason bodies are split before they are published.
     const byFile = new Map();
     const pieceOf = (uri) => {
-      let piece = byFile.get(uri);
+      // A fact whose file is empty is filed under the main file rather than
+      // dropped: the pieces have to partition the unit, because a body's
+      // digest counts the facts it was made from.
+      const key = uri === "" ? graph.mainFileUri : uri;
+      let piece = byFile.get(key);
       if (piece === undefined) {
-        // Only the main file's piece carries the unit's identity. A header's
-        // piece must not: two units that include the same header would
-        // otherwise write two files differing solely in whose unit read it,
-        // and the deduplication this split exists for would never happen.
-        const identity = uri === graph.mainFileUri
-          ? graph
+        // Only the main file's piece carries the unit's identity and its
+        // source list. A header's piece must not: two units that include the
+        // same header would otherwise write two files differing solely in
+        // whose unit read it, and the deduplication this split exists for
+        // would never happen.
+        piece = key === graph.mainFileUri
+          ? { ...graph, sources: graph.sources }
           : { producerFingerprint: "", mainFileUri: "", mainFile: "",
               directory: "", commandLine: [], output: "", commandDigest: "",
               toolchainFingerprint: "", targetTriple: "", language: "",
-              hadErrors: false };
-        piece = { ...identity, symbols: [], occurrences: [], relations: [],
+              hadErrors: false, sources: [] };
+        piece = { ...piece, symbols: [], occurrences: [], relations: [],
           macros: [], includes: [], missingIncludes: [], modules: [],
-          diagnostics: [], sources: [] };
-        byFile.set(uri, piece);
+          diagnostics: [] };
+        if (key === graph.mainFileUri) piece.sources = graph.sources;
+        byFile.set(key, piece);
       }
       return piece;
     };
-    // Every source gets a piece, as the producer does: a header this unit
-    // read is a file this unit saw, whether or not it declared anything.
+    // Every file the unit read gets a piece, whether or not it holds a fact.
     for (const source of graph.sources) pieceOf(source.uri);
-    pieceOf(graph.mainFileUri).sources = graph.sources;
-    for (const symbol of graph.symbols)
-      pieceOf(symbol.declaration.file).symbols.push(symbol);
+    pieceOf(graph.mainFileUri);
+    const symbolFiles = new Map();
+    for (const symbol of graph.symbols) {
+      const uri = symbol.declaration.file || symbol.definition.file;
+      if (!symbolFiles.has(symbol.id)) symbolFiles.set(symbol.id, uri);
+      pieceOf(uri).symbols.push(symbol);
+    }
     for (const occurrence of graph.occurrences)
       pieceOf(occurrence.spelling.file).occurrences.push(occurrence);
-    for (const relation of graph.relations)
-      pieceOf(graph.mainFileUri).relations.push(relation);
+    for (const relation of graph.relations) {
+      const uri = symbolFiles.get(relation.subjectId) ||
+        symbolFiles.get(relation.objectId) || "";
+      pieceOf(uri).relations.push(relation);
+    }
     for (const macro of graph.macros)
-      pieceOf(graph.mainFileUri).macros.push(macro);
+      pieceOf(
+        macro.definition.file || macro.spelling.file || macro.expansion.file,
+      ).macros.push(macro);
     for (const include of graph.includes)
       pieceOf(include.source).includes.push(include);
     for (const missing of graph.missingIncludes)
-      pieceOf(graph.mainFileUri).missingIncludes.push(missing);
+      pieceOf(missing.source).missingIncludes.push(missing);
     for (const module of graph.modules)
-      pieceOf(graph.mainFileUri).modules.push(module);
+      pieceOf(module.evidence.file).modules.push(module);
     for (const diagnostic of graph.diagnostics)
-      pieceOf(graph.mainFileUri).diagnostics.push(diagnostic);
+      pieceOf(diagnostic.range.file).diagnostics.push(diagnostic);
     const write = (piece) => {
       const text = JSON.stringify(piece);
       const file = path.join(bodyRoot, digest(text) + ".graph.json");

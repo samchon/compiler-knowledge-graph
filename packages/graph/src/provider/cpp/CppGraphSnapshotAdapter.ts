@@ -215,6 +215,18 @@ export class CppGraphSnapshotAdapter {
     // shard be adapted before the generation is complete.
     const pending = new Map<string, IPendingCoverage>();
     const census: CppGraphSnapshotAdapter.ICensus = { nodes: 0, offMain: 0 };
+    // One instance per node and per edge, for the whole walk.
+    //
+    // Shards name the same entity: a header's declarations belong to every
+    // unit that included it, and each of those units adapts them again. The
+    // facts are equal, so what is kept is one object the shards share -- the
+    // walk then holds an array slot per naming rather than a whole node, and
+    // a generation costs what the project declares instead of what its units
+    // read.
+    const canonical = {
+      nodes: new Map<string, ISamchonGraphNode>(),
+      edges: new Map<string, ISamchonGraphEdge>(),
+    };
     let delivered = 0;
     return {
       census,
@@ -236,7 +248,10 @@ export class CppGraphSnapshotAdapter {
           pending.delete(key);
           return;
         }
-        const adapted = adaptShard(this.root, envelope.universe.digest, shard);
+        const adapted = intern(
+          canonical,
+          adaptShard(this.root, envelope.universe.digest, shard),
+        );
         // A shard is one translation unit's view, so a node whose file is not
         // this unit's main file came from something it included -- and will
         // arrive again from every other unit that includes the same header.
@@ -570,6 +585,57 @@ function completeCoverage(
 interface IPendingCoverage {
   rows: ICppGraphSnapshot.IShard["coverage"];
   mainFileUri: string;
+}
+
+/**
+ * Replace a shard's nodes and edges with the walk's canonical instances.
+ *
+ * Two units that include one header adapt its declarations into equal nodes.
+ * Holding both is holding the same fact twice, and a project whose headers
+ * are included everywhere holds it once per including unit -- which is what a
+ * walk runs out of heap carrying. Keeping the first instance and pointing the
+ * rest at it costs an array slot per naming instead of a node.
+ *
+ * The instance kept is the better informed one: the unit that compiled a
+ * definition knows where the implementation is and the units that only
+ * included the declaration do not. Shards adapted before it keep pointing at
+ * the earlier instance, and the fold that assembles the generation settles
+ * between them by the same rule.
+ */
+function intern(
+  canonical: {
+    nodes: Map<string, ISamchonGraphNode>;
+    edges: Map<string, ISamchonGraphEdge>;
+  },
+  shard: GraphSnapshotProtocol.IShard,
+): GraphSnapshotProtocol.IShard {
+  shard.nodes = shard.nodes.map((node) => {
+    const prior = canonical.nodes.get(node.id);
+    if (prior === undefined) {
+      canonical.nodes.set(node.id, node);
+      return node;
+    }
+    // What one unit knows and another does not is merged into the instance
+    // they share, rather than kept as a second instance. A unit that compiled
+    // a definition knows where the implementation is; the units that only
+    // included the declaration do not, and they may have been adapted first.
+    // Adding it to the copy they already point at means every shard tells the
+    // same story, and the rule lives in one place instead of being repeated
+    // wherever a generation is assembled.
+    if (prior.implementation === undefined && node.implementation !== undefined)
+      prior.implementation = node.implementation;
+    return prior;
+  });
+  shard.edges = shard.edges.map((edge) => {
+    const key = [edge.kind, edge.from, edge.to].join(String.fromCharCode(0));
+    const prior = canonical.edges.get(key);
+    if (prior === undefined) {
+      canonical.edges.set(key, edge);
+      return edge;
+    }
+    return prior;
+  });
+  return shard;
 }
 
 function adaptShard(

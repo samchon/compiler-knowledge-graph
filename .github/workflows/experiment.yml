@@ -219,22 +219,25 @@ jobs:
       # the initial generation was committing three copies of itself where one
       # was proof and the others were a tautology.
       #
-      # Ten is arithmetic now rather than a guess. The C walk finishes and
-      # reports what it holds: 6,930 MiB of heap and 7,562 of resident set at
-      # the last page, a ratio of 1.09 once the transport stopped churning.
-      # The commit that follows needs headroom above that peak and eight left
-      # it 1.2 GiB, which was not enough. The producer measures at 4.9 GiB on
-      # this corpus, so ten puts the pair near 16 with the host's own share
-      # still to come -- close, deliberately, because the alternative is not
-      # knowing whether the commit fits at all.
+      # Eight, and ten was tried. The C walk finishes and reports what it
+      # holds -- 6,930 MiB of heap, 7,562 of resident set at the last of 469
+      # shards -- and the commit after it failed at both ceilings with
+      # `Ineffective mark-compacts near heap limit`. That message is the
+      # finding: the heap is nearly all *live*, so no ceiling helps, and at ten
+      # the host itself was down to 400 MiB with the producer's measured 4.9
+      # GiB beside it.
       #
-      # If it does not, the consumer is still the one that fails and says so,
-      # which is the property worth keeping.
+      # Seven gibibytes of live graph for one 242 translation-unit C project is
+      # a property of the representation -- a header's symbols are materialised
+      # once per translation unit that includes it -- and not something a
+      # ceiling can be chosen around. Eight is where the consumer fails first,
+      # cleanly, and leaves the host its margin, which keeps the log that says
+      # so.
       - name: Run LSP experiment
         if: ${{ github.event_name != 'workflow_dispatch' || inputs.language == 'all' || inputs.language == matrix.language }}
         run: pnpm --filter @samchon/graph-experiment start -- --language ${{ matrix.language }}
         env:
-          NODE_OPTIONS: --max-old-space-size=10240
+          NODE_OPTIONS: --max-old-space-size=8192
           # What the consumer holds when a whole producer generation has been
           # parsed, and again once it has been adapted and committed. The
           # difference between the two is what decides whether a page can be

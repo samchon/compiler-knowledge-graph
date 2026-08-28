@@ -77,7 +77,17 @@ export const cppGraphProvider: IGraphProvider = {
     // gigabytes is answering the first page, which is why the fix is the size
     // this client asks for rather than anything on this line.
     //
-    // Twelve GiB a worker, and this is the new reading that moved it.
+    // Eight GiB a worker. Twelve was tried against the C++ host and reverted:
+    // it bought nothing there -- one worker died as readily as two -- and it
+    // cost the C lane the run. Halving the width doubled indexing, which then
+    // did not finish inside the ten-minute readiness window: sixty-four of
+    // libuv's units were still going when the wait expired, against seven and
+    // a half minutes for all 242 at two workers.
+    //
+    // The width experiment has now come back negative twice, from opposite
+    // directions, and the reason it keeps doing so is that C++ does not fail
+    // on how many units are in flight. What follows is the note from when that
+    // was first measured.
     //
     // The earlier note recorded the width experiment as negative -- both lanes
     // died at two workers as readily as at four. That was measured while the
@@ -111,7 +121,7 @@ export const cppGraphProvider: IGraphProvider = {
       1,
       Math.min(
         os.availableParallelism(),
-        Math.floor(os.totalmem() / (12 * 1024 * 1024 * 1024)),
+        Math.floor(os.totalmem() / (8 * 1024 * 1024 * 1024)),
       ),
     );
     const command = spawnableCommand.append(

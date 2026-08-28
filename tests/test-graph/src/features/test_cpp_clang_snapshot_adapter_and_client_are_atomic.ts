@@ -784,7 +784,7 @@ async function assertClientReportsItsOwnSize(): Promise<void> {
     .filter((line) => line.startsWith("@samchon/graph: cpp-heap "))
     .map((line) =>
       line.replace(
-        / (?:elapsedMs|producerMs|adaptMs|heap[A-Za-z]*MiB|rssMiB)=\d+/gu,
+        / (?:elapsedMs|producer[A-Za-z]*Ms|adaptMs|heap[A-Za-z]*MiB|rssMiB)=\d+/gu,
         "",
       ),
     );

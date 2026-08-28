@@ -324,11 +324,19 @@ export class CppGraphClient implements IBulkGraphSession {
   private reportHeap(
     stage: "walking" | "paged" | "committed",
     shards: number,
-    split: { startedAt: number; producerMs: number; adaptMs: number },
+    split: {
+      startedAt: number;
+      producerMs: number;
+      producerFetchMs: number;
+      producerEncodeMs: number;
+      adaptMs: number;
+    },
   ): void {
     this.heapTrace?.stage(stage, shards, {
       elapsedMs: performance.now() - split.startedAt,
       producerMs: split.producerMs,
+      producerFetchMs: split.producerFetchMs,
+      producerEncodeMs: split.producerEncodeMs,
       adaptMs: split.adaptMs,
     });
   }
@@ -365,7 +373,13 @@ export class CppGraphClient implements IBulkGraphSession {
     // The two halves of a walk, kept apart. A stride that costs thirteen
     // seconds a shard is one problem if the producer owns it and another if
     // this process does, and the wall clock alone cannot say which.
-    const split = { startedAt, producerMs: 0, adaptMs: 0 };
+    const split = {
+      startedAt,
+      producerMs: 0,
+      producerFetchMs: 0,
+      producerEncodeMs: 0,
+      adaptMs: 0,
+    };
     let first: ICppGraphSnapshot | undefined;
     let settled: CppGraphSnapshotAdapter.IResult | undefined;
     let ingest: CppGraphSnapshotAdapter.IOpen | undefined;
@@ -385,6 +399,14 @@ export class CppGraphClient implements IBulkGraphSession {
       split.producerMs += performance.now() - askedAt;
       assertSnapshotPage(value, expectedOffset, expectedTotal);
       const page = value;
+      // The producer's own account of the time this client just spent waiting.
+      // It measured both halves while building the page and says so in every
+      // response; nothing else has to be asked.
+      split.producerFetchMs +=
+        page.phases.validationMillis +
+        page.phases.semanticMillis +
+        page.phases.shardMillis;
+      split.producerEncodeMs += page.phases.encodeMillis;
       expectedTotal ??= page.page.total;
       if (first === undefined) {
         first = page;

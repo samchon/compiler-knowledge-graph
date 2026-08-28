@@ -41,6 +41,8 @@ export function cppGraphHeapTrace(
           `${PREFIX}stage=${stage} shards=${String(shards)}` +
             ` elapsedMs=${ms(split.elapsedMs)}` +
             ` producerMs=${ms(split.producerMs)}` +
+            ` producerFetchMs=${ms(split.producerFetchMs)}` +
+            ` producerEncodeMs=${ms(split.producerEncodeMs)}` +
             ` adaptMs=${ms(split.adaptMs)}` +
             ` heapUsedMiB=${mib(memory.heapUsed)}` +
             ` heapTotalMiB=${mib(memory.heapTotal)}` +
@@ -83,6 +85,18 @@ export namespace cppGraphHeapTrace {
   export interface ISplit {
     elapsedMs: number;
     producerMs: number;
+
+    /**
+     * The producer's own account of its time, summed over the pages so far.
+     *
+     * Every page carries the phase telemetry the producer measured while
+     * building it: what it spent before encoding -- the cursor lookup, the
+     * shard reads, the body digests -- and what the encoding itself cost. The
+     * client already knew how long it waited; these say what it was waiting
+     * for, without a second instrument on the other side of the pipe.
+     */
+    producerFetchMs: number;
+    producerEncodeMs: number;
     adaptMs: number;
   }
 }

@@ -329,25 +329,44 @@ export class CppGraphSnapshotAdapter {
           nextGraph,
           prior,
         );
-        const fullBegin: GraphSnapshotProtocol.IBegin = {
-          ...begin,
-          baseSequence: undefined,
-          baseGeneration: undefined,
-        };
-        const fullFrames: GraphSnapshotProtocol.Frame[] = [hello, fullBegin];
-        for (const entry of manifest) {
-          fullFrames.push({
-            type: "upsertShard",
-            digest: entry.digest,
-            // `Store.apply` deep-clones every shard it retains, so a copy here
-            // is a copy the store immediately copies again.
-            shard: nextGraph.get(entry.key)!,
+        // A delta is proved against the full generation it claims to be
+        // equivalent to, by replaying that generation into a fresh store and
+        // requiring it to be accepted on its own.
+        //
+        // Only a delta needs it. When `begin` carries no base -- an initial
+        // generation, or a reload -- `framesOf` already emits every shard in
+        // the manifest, and `fullBegin` differs from `begin` only by clearing
+        // a base that is not there. The two transactions are the same frames
+        // in the same order, so replaying is applying the commit twice and
+        // proving that it equals itself.
+        //
+        // It is not free to do that. `Store.apply` deep-clones every shard it
+        // retains, so the replay holds a second whole generation beside the
+        // one being committed, at the moment the adapter is already holding
+        // the graph it built. On libuv that is three copies of 469 shards, and
+        // the initial walk -- the one case where the replay proves nothing --
+        // is where the consumer runs out of heap.
+        if (begin.baseGeneration !== undefined) {
+          const fullBegin: GraphSnapshotProtocol.IBegin = {
+            ...begin,
+            baseSequence: undefined,
+            baseGeneration: undefined,
+          };
+          const fullFrames: GraphSnapshotProtocol.Frame[] = [hello, fullBegin];
+          for (const entry of manifest) {
+            fullFrames.push({
+              type: "upsertShard",
+              digest: entry.digest,
+              // `Store.apply` deep-clones every shard it retains, so a copy
+              // here is a copy the store immediately copies again.
+              shard: nextGraph.get(entry.key)!,
+            });
+          }
+          fullFrames.push(commit);
+          new GraphSnapshotProtocol.Store(this.root).apply(fullFrames, {
+            validate,
           });
         }
-        fullFrames.push(commit);
-        new GraphSnapshotProtocol.Store(this.root).apply(fullFrames, {
-          validate,
-        });
         const snapshot = this.store.apply(frames, { validate });
         this.rawShards = nextRaw;
         this.rawGeneration = envelope.generation;

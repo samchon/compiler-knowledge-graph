@@ -383,6 +383,7 @@ function graphShard(command) {
   }];
   const header = path.join(directory, "include", "fixture.h");
   let includes = [];
+  let sharedHeaderUri;
   try {
     const headerUri = pathToFileURL(header).href;
     const headerDigest = digest(fs.readFileSync(header));
@@ -400,7 +401,33 @@ function graphShard(command) {
       moduleImported: false,
       evidence: sourceRange,
     }];
+    // Last, so a root without the header leaves this unset: a URI can be
+    // formed for a file that is not there, and a fact about a file no source
+    // row binds is a fact the protocol refuses.
+    sharedHeaderUri = headerUri;
   } catch {}
+  // A function the header declares and exactly one unit defines: the shape
+  // every C project has. Units that only include the header know where it is
+  // declared; the unit that compiles the definition also knows where it is
+  // implemented. Both publish the same node, because a declaration is where
+  // an entity's identity lives, and folding them has to keep the one that
+  // knows more.
+  if (sharedHeaderUri !== undefined) {
+    const first = compilationCommands()[0];
+    const shared = symbol(
+      "c:@F@shared#",
+      "shared",
+      13,
+      range(sharedHeaderUri, 0, 0, 0, 12),
+      true,
+    );
+    if (
+      first !== undefined &&
+      path.resolve(directory, first.file) === mainFile
+    )
+      shared.definition = range(mainFileUri, 1, 0, 1, 12);
+    symbols.push(shared);
+  }
   const graph = {
     producerFingerprint: producerFingerprint({
       version: "clang version 22.1.8",

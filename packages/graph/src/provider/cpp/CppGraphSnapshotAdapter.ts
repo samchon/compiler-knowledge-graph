@@ -20,7 +20,10 @@ import {
 } from "../../typings";
 import { GraphSnapshotProtocol } from "../GraphSnapshotProtocol";
 import { IBulkGraphSession } from "../IBulkGraphSession";
-import { semanticGraphNodeId } from "../semanticIdentity";
+import {
+  IGraphSemanticIdentity,
+  semanticGraphNodeId,
+} from "../semanticIdentity";
 import { CPP_CLANG_FACTS } from "./CPP_CLANG_FACTS";
 import { CppGraphReloadRequired } from "./CppGraphReloadRequired";
 import { CPP_CLANG_PROVIDER } from "./CPP_CLANG_PROVIDER";
@@ -233,11 +236,7 @@ export class CppGraphSnapshotAdapter {
           pending.delete(key);
           return;
         }
-        const adapted = adaptShard(
-          this.root,
-          envelope.universe.digest,
-          shard,
-        );
+        const adapted = adaptShard(this.root, envelope.universe.digest, shard);
         // A shard is one translation unit's view, so a node whose file is not
         // this unit's main file came from something it included -- and will
         // arrive again from every other unit that includes the same header.
@@ -283,7 +282,9 @@ export class CppGraphSnapshotAdapter {
           // Nothing has been assigned yet, so refusing here leaves this adapter
           // exactly as it was and the caller free to ask again.
           throw new CppGraphReloadRequired(
-            languagesChanged ? "the served languages moved" : "the universe moved",
+            languagesChanged
+              ? "the served languages moved"
+              : "the universe moved",
           );
         }
         for (const [key, source] of pending) {
@@ -524,9 +525,7 @@ function completeCoverage(
   snapshotLanguages: readonly GraphLanguage[],
 ): void {
   const language = shard.languages[0]!;
-  const byFamily = new Map(
-    source.rows.map((row) => [row.family, row.state]),
-  );
+  const byFamily = new Map(source.rows.map((row) => [row.family, row.state]));
   const advertised = new Set(CPP_CLANG_FACTS);
   shard.coverage = snapshotLanguages.flatMap((coverageLanguage) =>
     GRAPH_EDGE_KINDS.map((family) => ({
@@ -678,14 +677,56 @@ function adaptShard(
   };
 }
 
+/**
+ * The build coordinates that are part of a C/C++ node's identity.
+ *
+ * A function declared in a header is one entity, however many translation
+ * units include that header. Scoping every node by the unit that happened to
+ * read it made the same function a different node in each of them: on a
+ * project whose headers are included everywhere, the graph held one copy of
+ * every header's facts per including unit, and a walk ran out of heap before
+ * it could commit a generation.
+ *
+ * So the coordinates are the ones the entity actually has -- the target it is
+ * built for and the file it is written in. Entities that are genuinely
+ * distinct stay distinct: `native.key` carries the producer's own id, which
+ * already adds a declaring-file or owner coordinate wherever a raw USR can
+ * collide, and an entity that is per-unit by definition -- one with internal
+ * linkage, or no linkage at all -- keeps the unit in its scope, because two
+ * units that include it really do have two of them.
+ */
+function scopeOf(
+  context: IContext,
+  file: string,
+  unitScoped: boolean,
+): IGraphSemanticIdentity.IScope {
+  return {
+    target: context.graph.targetTriple,
+    ...(unitScoped
+      ? {
+          translationUnit: graphFile(context.root, context.graph.mainFileUri),
+        }
+      : {}),
+    ...(file === "" ? {} : { document: file }),
+  };
+}
+
 function symbolNode(
   context: IContext,
   symbol: ICppGraphSnapshot.ISymbol,
 ): string {
   const range = preferredRange(symbol);
-  const file = graphFile(
+  const file = graphFile(context.root, range.file || context.graph.mainFileUri);
+  // Identity follows the declaration, not the preferred range. A function
+  // declared in a header and defined in one source file is one entity: the
+  // unit that compiles the definition and every unit that only sees the
+  // declaration have to arrive at the same node, and they only do if the
+  // coordinate is the one they agree on.
+  const declared = graphFile(
     context.root,
-    range.file || context.graph.mainFileUri,
+    symbol.declaration.file ||
+      symbol.definition.file ||
+      context.graph.mainFileUri,
   );
   const kind = nodeKind(symbol.kind);
   const display = symbol.qualifiedName || symbol.name;
@@ -696,14 +737,11 @@ function symbolNode(
       symbol: symbol.id,
       role: kind,
       native: { key: symbol.id, stability: "semantic" },
-      scope: {
-        target: context.shard.configuration,
-        translationUnit: graphFile(
-          context.root,
-          context.graph.mainFileUri,
-        ),
-        document: file,
-      },
+      scope: scopeOf(
+        context,
+        declared,
+        symbol.local || symbol.internal || symbol.anonymous,
+      ),
       stability: "persistent",
     },
     display,
@@ -720,8 +758,14 @@ function symbolNode(
     external: isExternal(file),
     exported: symbol.exported,
     ...(symbol.signature === "" ? {} : { signature: symbol.signature }),
-    ...(validRange(range)
-      ? { evidence: evidenceOf(context.root, range) }
+    ...(validRange(range) ? { evidence: evidenceOf(context.root, range) } : {}),
+    // Where it is implemented, when that is somewhere other than where it is
+    // declared. A unit that compiles a definition knows this and a unit that
+    // only included the declaration does not, and they publish the same node:
+    // saying it here is what lets the two be folded into the one that knows.
+    ...(validRange(symbol.definition) &&
+    symbol.definition.file !== symbol.declaration.file
+      ? { implementation: evidenceOf(context.root, symbol.definition) }
       : {}),
     ...(symbol.attributes.length === 0
       ? {}
@@ -754,14 +798,7 @@ function macroNode(context: IContext, macro: ICppGraphSnapshot.IMacro): string {
       symbol: macro.id,
       role: "variable",
       native: { key: macro.id, stability: "semantic" },
-      scope: {
-        target: context.shard.configuration,
-        translationUnit: graphFile(
-          context.root,
-          context.graph.mainFileUri,
-        ),
-        document: file,
-      },
+      scope: scopeOf(context, file, false),
       stability: "persistent",
     },
     macro.name,
@@ -789,10 +826,7 @@ function moduleNode(
   const raw = `module:${name}`;
   const found = context.ids.get(raw);
   if (found !== undefined) return found;
-  const file = graphFile(
-    context.root,
-    range.file || context.graph.mainFileUri,
-  );
+  const file = graphFile(context.root, range.file || context.graph.mainFileUri);
   const id = semanticGraphNodeId(
     {
       version: 2,
@@ -800,13 +834,7 @@ function moduleNode(
       symbol: raw,
       role: "module",
       native: { key: raw, stability: "semantic" },
-      scope: {
-        target: context.shard.configuration,
-        translationUnit: graphFile(
-          context.root,
-          context.graph.mainFileUri,
-        ),
-      },
+      scope: scopeOf(context, file, false),
       stability: "persistent",
     },
     name,
@@ -835,14 +863,7 @@ function fileNode(context: IContext, uri: string): string {
       symbol: `file:${key}`,
       role: "file",
       native: { key, stability: "semantic" },
-      scope: {
-        target: context.shard.configuration,
-        translationUnit: graphFile(
-          context.root,
-          context.graph.mainFileUri,
-        ),
-        document: file,
-      },
+      scope: scopeOf(context, file, false),
       stability: "persistent",
     },
     file,
@@ -871,13 +892,7 @@ function endpoint(context: IContext, raw: string): string {
       symbol: name,
       role: "external_symbol",
       native: { key: name, stability: "semantic" },
-      scope: {
-        target: context.shard.configuration,
-        translationUnit: graphFile(
-          context.root,
-          context.graph.mainFileUri,
-        ),
-      },
+      scope: scopeOf(context, "", false),
       stability: "persistent",
     },
     name,
@@ -938,7 +953,7 @@ function adaptOccurrence(
   if (occurrence.roles & ROLE.call) {
     addEdge(context, owner, target, "calls", range);
   }
-  if ((occurrence.roles & ROLE.call) && occurrence.targetKind === 23) {
+  if (occurrence.roles & ROLE.call && occurrence.targetKind === 23) {
     addEdge(context, owner, target, "instantiates", range);
   }
   if (occurrence.roles & (ROLE.read | ROLE.write)) {
@@ -948,12 +963,12 @@ function adaptOccurrence(
     addEdge(context, owner, target, "references", range);
   }
   if (
-    (occurrence.roles & (ROLE.reference | ROLE.nameReference)) &&
+    occurrence.roles & (ROLE.reference | ROLE.nameReference) &&
     TYPE_KINDS.has(occurrence.targetKind)
   ) {
     addEdge(context, owner, target, "type_ref", range);
   }
-  if ((occurrence.roles & ROLE.dynamic) && validRange(range)) {
+  if (occurrence.roles & ROLE.dynamic && validRange(range)) {
     context.unresolved.push({
       provider: CPP_CLANG_PROVIDER,
       language: context.language,
@@ -969,11 +984,8 @@ function adaptOccurrence(
 
 function adaptMacro(context: IContext, macro: ICppGraphSnapshot.IMacro): void {
   const target = macroNode(context, macro);
-  const range = validRange(macro.expansion)
-    ? macro.expansion
-    : macro.spelling;
-  const definitionFile =
-    macro.definition.file || context.graph.mainFileUri;
+  const range = validRange(macro.expansion) ? macro.expansion : macro.spelling;
+  const definitionFile = macro.definition.file || context.graph.mainFileUri;
   if (macro.roles & ROLE.reference) {
     addEdge(
       context,
@@ -1008,9 +1020,7 @@ function addEdge(
     from,
     to,
     kind,
-    ...(validRange(range)
-      ? { evidence: evidenceOf(context.root, range) }
-      : {}),
+    ...(validRange(range) ? { evidence: evidenceOf(context.root, range) } : {}),
   });
 }
 
@@ -1093,10 +1103,7 @@ function isSupportedSource(source: string): boolean {
       return false;
     }
   }
-  return (
-    path.isAbsolute(source) ||
-    !/^[A-Za-z][A-Za-z0-9+.-]*:/u.test(source)
-  );
+  return path.isAbsolute(source) || !/^[A-Za-z][A-Za-z0-9+.-]*:/u.test(source);
 }
 
 function graphKey(raw: string): string {
@@ -1193,11 +1200,15 @@ function factsOf(
   | "unresolved"
   | "provenance"
 > {
+  // Folded, not concatenated: an entity named by every unit that read its
+  // header is one node, and this path has to arrive at the same graph the
+  // store's streaming path does.
+  const folded = GraphSnapshotProtocol.fold(shards);
   return {
     languages: [...hello.languages],
-    nodes: shards.flatMap((shard) => shard.nodes),
-    edges: shards.flatMap((shard) => shard.edges),
-    diagnostics: shards.flatMap((shard) => shard.diagnostics),
+    nodes: folded.nodes,
+    edges: folded.edges,
+    diagnostics: folded.diagnostics,
     coverage: shards.flatMap((shard) => shard.coverage),
     unresolved: shards.flatMap((shard) => shard.unresolved),
     provenance: {
@@ -1608,9 +1619,7 @@ function assertNativeGeneration(
   ].sort(compareText);
   const toolchains = [
     ...new Set(
-      [...shards.values()].map(
-        (shard) => shard.graph.toolchainFingerprint,
-      ),
+      [...shards.values()].map((shard) => shard.graph.toolchainFingerprint),
     ),
   ].sort(compareText);
   if (
@@ -1652,17 +1661,13 @@ function coordinate(label: string, value: string): string {
   return `${label}:${Buffer.byteLength(value, "utf8")}:${value}`;
 }
 
-function producerFingerprint(
-  producer: ICppGraphSnapshot.IProducer,
-): string {
+function producerFingerprint(producer: ICppGraphSnapshot.IProducer): string {
   return sha256(
     `samchon-graph-schema:1\nversion:${producer.version}\nrepository:${producer.commit}`,
   );
 }
 
-function validNativeRange(
-  value: unknown,
-): value is ICppGraphSnapshot.IRange {
+function validNativeRange(value: unknown): value is ICppGraphSnapshot.IRange {
   if (
     !isRecord(value) ||
     typeof value.file !== "string" ||

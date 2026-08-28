@@ -814,12 +814,15 @@ async function assertClientReportsItsOwnSize(): Promise<void> {
 }
 
 /**
- * A root whose two translation units include the same header.
+ * A root of three units: one defines what the shared header declares, two
+ * only include it.
  *
- * That is the case splitting bodies exists for: the header's facts are in
- * both units, so publishing whole bodies writes them twice and reading whole
- * bodies parses them twice. Split and named by content, the header's piece is
- * one file both units point at, written once and parsed once.
+ * That is the case splitting bodies exists for, and the shape every C project
+ * has. Publishing whole bodies writes the header's facts once per including
+ * unit and reading them parses the same facts again for each. Split and named
+ * by content, the two units that merely include the header point at one file,
+ * written once and parsed once; the unit that compiles the definition knows
+ * something they do not and gets its own.
  */
 function publishedFixtureRoot(): string {
   const root = GraphPaths.createTempDirectory("samchon-graph-cpp-published-");
@@ -828,7 +831,7 @@ function publishedFixtureRoot(): string {
     path.join(root, "include", "fixture.h"),
     "void callee();\n",
   );
-  const files = ["first.cpp", "second.cpp"];
+  const files = ["first.cpp", "second.cpp", "third.cpp"];
   for (const file of files)
     fs.writeFileSync(
       path.join(root, file),
@@ -869,11 +872,13 @@ async function assertClientReadsPublishedBodies(root: string): Promise<void> {
         files.length,
         files.every((name) => name.endsWith(".graph.json")),
       ],
-      // Three files for two units of two pieces each: the header both units
-      // include is one piece, because a piece carries no unit identity and
-      // its name is its own content. Four would mean the split had bought
-      // nothing -- the same header facts written and parsed once per unit.
-      [true, true, 3, true],
+      // Five files for three units of two pieces each. The three main pieces
+      // differ, and so does the header as the defining unit sees it -- it
+      // records where the definition is. The two units that only include the
+      // header agree exactly, so they share one piece: a piece carries no
+      // unit identity and its name is its own content. Six would mean the
+      // split had bought nothing.
+      [true, true, 5, true],
     );
     // A body read from a file is still a body the digest chain answers for:
     // `assertShard` rebuilds that chain from what it was handed, so bytes

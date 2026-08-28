@@ -58,11 +58,7 @@ export namespace GraphSnapshotProtocol {
     "heuristic",
   ]);
   const FACTS = new Set<GraphEdgeKind>(GRAPH_EDGE_KINDS);
-  const COVERAGE_STATES = new Set([
-    "complete",
-    "partial",
-    "unsupported",
-  ]);
+  const COVERAGE_STATES = new Set(["complete", "partial", "unsupported"]);
   const UNRESOLVED_REASONS = new Set<ISamchonGraphUnresolved["reason"]>([
     "dynamic",
     "reflection",
@@ -139,12 +135,7 @@ export namespace GraphSnapshotProtocol {
     factDigest: string;
   }
 
-  export type Frame =
-    | IHello
-    | IBegin
-    | IUpsertShard
-    | IDeleteShard
-    | ICommit;
+  export type Frame = IHello | IBegin | IUpsertShard | IDeleteShard | ICommit;
 
   /** SHA-256 over the canonical content of one shard. */
   export function shardDigest(shard: IShard): string {
@@ -186,16 +177,18 @@ export namespace GraphSnapshotProtocol {
    * Producer and consumer call this same function; a commit cannot substitute a
    * manifest whose shards happen to parse but reconstruct different facts.
    */
-  export function factDigest(snapshot: Pick<
-    IBulkGraphSession.ISnapshot,
-    | "languages"
-    | "nodes"
-    | "edges"
-    | "diagnostics"
-    | "coverage"
-    | "unresolved"
-    | "provenance"
-  >): string {
+  export function factDigest(
+    snapshot: Pick<
+      IBulkGraphSession.ISnapshot,
+      | "languages"
+      | "nodes"
+      | "edges"
+      | "diagnostics"
+      | "coverage"
+      | "unresolved"
+      | "provenance"
+    >,
+  ): string {
     return digest({
       languages: snapshot.languages,
       nodes: snapshot.nodes,
@@ -231,7 +224,8 @@ export namespace GraphSnapshotProtocol {
   }
 
   function canonical(value: unknown): string {
-    if (value === null || typeof value !== "object") return JSON.stringify(value);
+    if (value === null || typeof value !== "object")
+      return JSON.stringify(value);
     if (Array.isArray(value))
       return `[${value.map((entry) => canonical(entry)).join(",")}]`;
     const object = value as Record<string, unknown>;
@@ -327,13 +321,19 @@ export namespace GraphSnapshotProtocol {
       const begin = frames[1];
       const commit = frames.at(-1);
       if (hello?.type !== "hello") {
-        throw new Error("graph snapshot protocol: transaction must start with hello");
+        throw new Error(
+          "graph snapshot protocol: transaction must start with hello",
+        );
       }
       if (begin?.type !== "begin") {
-        throw new Error("graph snapshot protocol: hello must be followed by begin");
+        throw new Error(
+          "graph snapshot protocol: hello must be followed by begin",
+        );
       }
       if (commit?.type !== "commit") {
-        throw new Error("graph snapshot protocol: transaction must end with commit");
+        throw new Error(
+          "graph snapshot protocol: transaction must end with commit",
+        );
       }
       assertHello(hello);
       assertBegin(begin);
@@ -396,8 +396,7 @@ export namespace GraphSnapshotProtocol {
           }
           next.set(frame.shard.key, {
             digest,
-            shard:
-              options.adopt === true ? frame.shard : clone(frame.shard),
+            shard: options.adopt === true ? frame.shard : clone(frame.shard),
           });
         } else if (frame.type === "deleteShard") {
           assertString(frame.key, "deleteShard.key");
@@ -449,7 +448,9 @@ export namespace GraphSnapshotProtocol {
         .sort(([left], [right]) => compareText(left, right))
         .map(([key, value]) => ({ key, digest: value.digest }));
       if (!equalManifest(commit.shards, expectedManifest)) {
-        throw new Error("graph snapshot protocol: commit shard manifest mismatch");
+        throw new Error(
+          "graph snapshot protocol: commit shard manifest mismatch",
+        );
       }
       const assembled = assemble(
         hello,
@@ -501,6 +502,100 @@ export namespace GraphSnapshotProtocol {
     shard: IShard;
   }
 
+  /**
+   * Keep one node per identity across the shards that name it.
+   *
+   * A node id names an entity, and an entity a shard did not invent -- a
+   * function declared in a header -- is named by every shard whose unit read
+   * that header. Concatenating shard arrays therefore held one copy of every
+   * header's facts per including unit, which is the size of how often a
+   * project is read rather than the size of what it declares.
+   *
+   * The copy kept is the better informed one. Two units see the same entity
+   * from different sides, and the one that compiled the definition is the one
+   * that knows where the implementation is.
+   */
+  /**
+   * Fold shards' node, edge and diagnostic lanes into one graph.
+   *
+   * Exposed because a provider that composes a generation without the store
+   * -- one that was handed every frame at once rather than streamed them --
+   * has to arrive at the same graph. A rule about what a node id means
+   * cannot hold in one composition path and not the other.
+   */
+  export function fold(shards: readonly IShard[]): {
+    nodes: ISamchonGraphNode[];
+    edges: ISamchonGraphEdge[];
+    diagnostics: ISamchonGraphDiagnostic[];
+  } {
+    const nodes: ISamchonGraphNode[] = [];
+    const edges: ISamchonGraphEdge[] = [];
+    const diagnostics: ISamchonGraphDiagnostic[] = [];
+    const seenNodes = new Map<string, number>();
+    const seenEdges = new Set<string>();
+    const seenDiagnostics = new Set<string>();
+    for (const shard of shards) {
+      for (const node of shard.nodes) foldNode(nodes, seenNodes, node);
+      for (const edge of shard.edges) foldEdge(edges, seenEdges, edge);
+      for (const row of shard.diagnostics)
+        foldDiagnostic(diagnostics, seenDiagnostics, row);
+    }
+    return { nodes, edges, diagnostics };
+  }
+
+  function foldNode(
+    nodes: ISamchonGraphNode[],
+    seen: Map<string, number>,
+    node: ISamchonGraphNode,
+  ): void {
+    const at = seen.get(node.id);
+    if (at === undefined) {
+      seen.set(node.id, nodes.length);
+      nodes.push(node);
+      return;
+    }
+    const prior = nodes[at]!;
+    if (node.implementation !== undefined && prior.implementation === undefined)
+      nodes[at] = node;
+  }
+
+  /** Keep one edge per endpoint pair and kind, for the same reason. */
+  function foldEdge(
+    edges: ISamchonGraphEdge[],
+    seen: Set<string>,
+    edge: ISamchonGraphEdge,
+  ): void {
+    const key = [edge.kind, edge.from, edge.to].join(String.fromCharCode(0));
+    if (seen.has(key)) return;
+    seen.add(key);
+    edges.push(edge);
+  }
+
+  /**
+   * Keep one diagnostic per place and message.
+   *
+   * A warning in a header is reported by every unit that compiles it. It is
+   * one warning about one line, and repeating it once per including unit
+   * tells a reader nothing it did not already know.
+   */
+  function foldDiagnostic(
+    diagnostics: ISamchonGraphDiagnostic[],
+    seen: Set<string>,
+    row: ISamchonGraphDiagnostic,
+  ): void {
+    const key = [
+      row.file,
+      row.line,
+      row.column,
+      row.code,
+      row.severity,
+      row.message,
+    ].join(String.fromCharCode(0));
+    if (seen.has(key)) return;
+    seen.add(key);
+    diagnostics.push(row);
+  }
+
   function assemble(
     hello: IHello,
     begin: IBegin,
@@ -515,11 +610,15 @@ export namespace GraphSnapshotProtocol {
     const coverage: ISamchonGraphCoverage[] = [];
     const unresolved: ISamchonGraphUnresolved[] = [];
     const sources = new Map<string, IBulkGraphSession.ISourceDigest>();
+    const seenNodes = new Map<string, number>();
+    const seenEdges = new Set<string>();
+    const seenDiagnostics = new Set<string>();
     for (const entry of manifest) {
       const shard = shards.get(entry.key)!.shard;
-      nodes.push(...shard.nodes);
-      edges.push(...shard.edges);
-      diagnostics.push(...shard.diagnostics);
+      for (const node of shard.nodes) foldNode(nodes, seenNodes, node);
+      for (const edge of shard.edges) foldEdge(edges, seenEdges, edge);
+      for (const row of shard.diagnostics)
+        foldDiagnostic(diagnostics, seenDiagnostics, row);
       coverage.push(...shard.coverage);
       unresolved.push(...shard.unresolved);
       for (const source of shard.sources) {
@@ -545,7 +644,10 @@ export namespace GraphSnapshotProtocol {
       nodes,
       edges,
       diagnostics,
-      sources: sealedMap(sources, "the graph snapshot protocol source manifest"),
+      sources: sealedMap(
+        sources,
+        "the graph snapshot protocol source manifest",
+      ),
       provenance: {
         provider: hello.provider,
         authority: hello.authority,
@@ -618,7 +720,9 @@ export namespace GraphSnapshotProtocol {
     }
     assertUnique(hello.capabilities, "hello.capabilities");
     if (hello.capabilities.some((capability) => capability === "")) {
-      throw new Error("graph snapshot protocol: hello capabilities are invalid");
+      throw new Error(
+        "graph snapshot protocol: hello capabilities are invalid",
+      );
     }
   }
 
@@ -735,11 +839,15 @@ export namespace GraphSnapshotProtocol {
         !FACTS.has(row.family) ||
         !COVERAGE_STATES.has(row.state)
       ) {
-        throw new Error("graph snapshot protocol: coverage row has foreign ownership");
+        throw new Error(
+          "graph snapshot protocol: coverage row has foreign ownership",
+        );
       }
       const key = coverageKey(row);
       if (rows.has(key)) {
-        throw new Error(`graph snapshot protocol: duplicate coverage row ${key}`);
+        throw new Error(
+          `graph snapshot protocol: duplicate coverage row ${key}`,
+        );
       }
       rows.set(key, row);
     }
@@ -754,7 +862,9 @@ export namespace GraphSnapshotProtocol {
           });
           const row = rows.get(key);
           if (row === undefined) {
-            throw new Error(`graph snapshot protocol: missing coverage row ${key}`);
+            throw new Error(
+              `graph snapshot protocol: missing coverage row ${key}`,
+            );
           }
           if (
             row.state !== "unsupported" &&
@@ -764,7 +874,7 @@ export namespace GraphSnapshotProtocol {
               `graph snapshot protocol: unadvertised family is not unsupported: ${key}`,
             );
           }
-    }
+        }
     const unresolvedKeys = new Set<string>();
     const unresolvedCoverage = new Set<string>();
     for (const site of snapshot.unresolved!) {
@@ -812,31 +922,22 @@ export namespace GraphSnapshotProtocol {
     snapshot: IBulkGraphSession.ISnapshot,
     hello: IHello,
   ): void {
+    // Uniqueness is not checked here. The assembled lanes come from `fold`,
+    // which keeps one node per id and one edge per endpoint pair by
+    // construction, so a check for duplicates could only ever pass -- and a
+    // check that cannot fail says nothing about the thing it guards.
     const nodeIds = new Set<string>();
     const files = new Set(snapshot.sources.keys());
     for (const node of snapshot.nodes) {
-      if (nodeIds.has(node.id)) {
-        throw new Error(
-          `graph snapshot protocol: duplicate assembled node ${node.id}`,
-        );
-      }
       nodeIds.add(node.id);
       if (node.file !== "") files.add(node.file);
     }
-    const edgeKeys = new Set<string>();
     for (const edge of snapshot.edges) {
       if (!hello.supportedFacts.includes(edge.kind)) {
         throw new Error(
           `graph snapshot protocol: assembled edge uses unadvertised family ${String(edge.kind)}`,
         );
       }
-      const key = `${edge.kind}\0${edge.from}\0${edge.to}`;
-      if (edgeKeys.has(key)) {
-        throw new Error(
-          `graph snapshot protocol: duplicate assembled edge ${key}`,
-        );
-      }
-      edgeKeys.add(key);
       if (
         (!nodeIds.has(edge.from) && !files.has(edge.from)) ||
         (!nodeIds.has(edge.to) && !files.has(edge.to))
@@ -848,10 +949,12 @@ export namespace GraphSnapshotProtocol {
     }
   }
 
-  function coverageKey(row: Pick<
-    ISamchonGraphCoverage,
-    "provider" | "language" | "target" | "family"
-  >): string {
+  function coverageKey(
+    row: Pick<
+      ISamchonGraphCoverage,
+      "provider" | "language" | "target" | "family"
+    >,
+  ): string {
     return `${row.provider}\0${row.language}\0${row.target}\0${row.family}`;
   }
 

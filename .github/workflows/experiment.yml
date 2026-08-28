@@ -204,13 +204,25 @@ jobs:
       # job log with it -- twice the reading that would have explained a run
       # did not exist, because GitHub never received it. Six leaves the
       # producer its half and makes the consumer fail with a number instead of
-      # taking the machine down. A run that needs more than this still fails,
-      # and says so with a number rather than with silence.
+      # taking the machine down.
+      #
+      # Six was still not low enough. The C lane died again with no job log at
+      # all, and the last trace before it explains why: Node's own resident set
+      # was six gibibytes while the host had one hundred and forty-one
+      # megabytes left, so the other nine were the producer's. A ceiling bounds
+      # old space, not resident set, and a consumer that reaches its ceiling
+      # has already taken more than that from the machine.
+      #
+      # Four is chosen to lose. The point is no longer to let the consumer
+      # finish -- it is to guarantee that when it cannot, it is the one that
+      # fails, because a dead host uploads nothing and every reading lost so
+      # far was lost that way. A number in a log beats a run that finished
+      # nothing and said nothing.
       - name: Run LSP experiment
         if: ${{ github.event_name != 'workflow_dispatch' || inputs.language == 'all' || inputs.language == matrix.language }}
         run: pnpm --filter @samchon/graph-experiment start -- --language ${{ matrix.language }}
         env:
-          NODE_OPTIONS: --max-old-space-size=6144
+          NODE_OPTIONS: --max-old-space-size=4096
           # What the consumer holds when a whole producer generation has been
           # parsed, and again once it has been adapted and committed. The
           # difference between the two is what decides whether a page can be

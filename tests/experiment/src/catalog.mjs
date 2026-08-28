@@ -166,7 +166,18 @@ export const LANGUAGE_EXPERIMENTS = [
     // database. The numbers are chosen so one cold index fits comfortably and
     // a producer that never becomes ready still fails its row rather than
     // hanging it — not so that every pathological path stays inside the job.
-    readyTimeoutMs: 600_000,
+    // Readiness now covers more than indexing. The pinned producer publishes
+    // each completed body to disk while it is in hand, so a snapshot can name
+    // it instead of carrying it through the pipe -- and one libuv unit is 98
+    // MiB of it. That work used to happen when a page was requested, after
+    // this window had closed; it now happens inside it.
+    //
+    // Ten minutes was sized for a window covering indexing alone, and at two
+    // workers it left forty of libuv's 242 units unfinished once publishing
+    // joined them. Twenty is the same window sized for what it now contains.
+    // It is a ceiling on the wait, not a target -- the walk after it is what
+    // publishing exists to make cheap, and that is the number worth watching.
+    readyTimeoutMs: 1_200_000,
     timeoutMs: 300_000,
     requiredCapabilities: [
       "coverage",
@@ -252,7 +263,18 @@ export const LANGUAGE_EXPERIMENTS = [
     // database. The numbers are chosen so one cold index fits comfortably and
     // a producer that never becomes ready still fails its row rather than
     // hanging it — not so that every pathological path stays inside the job.
-    readyTimeoutMs: 600_000,
+    // Readiness now covers more than indexing. The pinned producer publishes
+    // each completed body to disk while it is in hand, so a snapshot can name
+    // it instead of carrying it through the pipe -- and one libuv unit is 98
+    // MiB of it. That work used to happen when a page was requested, after
+    // this window had closed; it now happens inside it.
+    //
+    // Ten minutes was sized for a window covering indexing alone, and at two
+    // workers it left forty of libuv's 242 units unfinished once publishing
+    // joined them. Twenty is the same window sized for what it now contains.
+    // It is a ceiling on the wait, not a target -- the walk after it is what
+    // publishing exists to make cheap, and that is the number worth watching.
+    readyTimeoutMs: 1_200_000,
     timeoutMs: 300_000,
     requiredCapabilities: [
       "coverage",

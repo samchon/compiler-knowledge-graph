@@ -71,7 +71,17 @@ export namespace ICppGraphSnapshot {
      * readable either way. Exactly one of the two is present.
      */
     bodyDigest: string;
-    graphPath?: string;
+
+    /**
+     * Where the producer published this body's pieces, main file first.
+     *
+     * A body is split by the file each fact was found in before it is written,
+     * because a header's facts are in every translation unit that includes it.
+     * The pieces are named by their own content, so a header's piece is stored
+     * once however many units saw it -- and read once here, however many name
+     * it, since the same path resolves to the same parse.
+     */
+    graphPaths?: string[];
     graph: ITU;
     coverage: Array<{
       family: string;

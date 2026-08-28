@@ -140,7 +140,7 @@ export const test_cpp_clang_snapshot_adapter_and_client_are_atomic = async () =>
   await assertClientLifecycle(root);
   await assertClientInputShapes();
   await assertClientReportsItsOwnSize();
-  await assertClientReadsPublishedBodies(root);
+  await assertClientReadsPublishedBodies(publishedFixtureRoot());
   await assertClientPagination();
   await assertClientFailures(fixtureRoot());
 };
@@ -813,6 +813,40 @@ async function assertClientReportsItsOwnSize(): Promise<void> {
   );
 }
 
+/**
+ * A root whose two translation units include the same header.
+ *
+ * That is the case splitting bodies exists for: the header's facts are in
+ * both units, so publishing whole bodies writes them twice and reading whole
+ * bodies parses them twice. Split and named by content, the header's piece is
+ * one file both units point at, written once and parsed once.
+ */
+function publishedFixtureRoot(): string {
+  const root = GraphPaths.createTempDirectory("samchon-graph-cpp-published-");
+  fs.mkdirSync(path.join(root, "include"));
+  fs.writeFileSync(
+    path.join(root, "include", "fixture.h"),
+    "void callee();\n",
+  );
+  const files = ["first.cpp", "second.cpp"];
+  for (const file of files)
+    fs.writeFileSync(
+      path.join(root, file),
+      `#include "include/fixture.h"\nvoid caller_${file.slice(0, -4)}() {}\n`,
+    );
+  fs.writeFileSync(
+    path.join(root, "compile_commands.json"),
+    JSON.stringify(
+      files.map((file) => ({
+        directory: root,
+        file,
+        arguments: ["clang++", "-x", "c++", "-c", file],
+      })),
+    ),
+  );
+  return root;
+}
+
 async function assertClientReadsPublishedBodies(root: string): Promise<void> {
   // A page names its bodies instead of carrying them. That takes the largest
   // object this route moves out of the request path: no `json::Value` tree on
@@ -832,10 +866,14 @@ async function assertClientReadsPublishedBodies(root: string): Promise<void> {
       [
         refreshed.snapshot.sources.size > 0,
         refreshed.snapshot.nodes.length > 0,
-        files.length > 0,
+        files.length,
         files.every((name) => name.endsWith(".graph.json")),
       ],
-      [true, true, true, true],
+      // Three files for two units of two pieces each: the header both units
+      // include is one piece, because a piece carries no unit identity and
+      // its name is its own content. Four would mean the split had bought
+      // nothing -- the same header facts written and parsed once per unit.
+      [true, true, 3, true],
     );
     // A body read from a file is still a body the digest chain answers for:
     // `assertShard` rebuilds that chain from what it was handed, so bytes
@@ -849,7 +887,7 @@ async function assertClientReadsPublishedBodies(root: string): Promise<void> {
       await rejected(
         "a published body swapped underneath its name is refused",
         tampered.refresh(),
-        "malformed shard",
+        "published body is not a graph",
       );
     } finally {
       await tampered.close();

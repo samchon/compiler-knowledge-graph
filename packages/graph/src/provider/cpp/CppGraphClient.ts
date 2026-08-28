@@ -378,6 +378,10 @@ export class CppGraphClient implements IBulkGraphSession {
     // The two halves of a walk, kept apart. A stride that costs thirteen
     // seconds a shard is one problem if the producer owns it and another if
     // this process does, and the wall clock alone cannot say which.
+    // Pieces already parsed in this walk, by the path that named them. A
+    // header's piece is named by every unit that includes it, and reading it
+    // once is the whole reason bodies are split before they are published.
+    const pieces = new Map<string, ICppGraphSnapshot.ITU>();
     const split = {
       startedAt,
       producerMs: 0,
@@ -450,7 +454,7 @@ export class CppGraphClient implements IBulkGraphSession {
       // a `json::Value` tree of the body, serializing it, and reading the body
       // off disk only to put the same bytes back through a socket.
       const readAt = performance.now();
-      for (const shard of page.upserts) readGraphBody(shard);
+      for (const shard of page.upserts) readGraphBody(shard, pieces);
       split.bodyMs += performance.now() - readAt;
       const adaptedAt = performance.now();
       for (const shard of page.upserts) ingest?.shard(shard);
@@ -689,40 +693,95 @@ function asError(error: unknown): Error {
  * way. A shard that has neither is a producer that broke its own
  * contract, and is refused rather than adapted into an empty graph.
  */
-function readGraphBody(shard: ICppGraphSnapshot.IShard): void {
+// The lists reassembly reads out of every piece.
+const PIECE_LISTS = [
+  "symbols",
+  "occurrences",
+  "relations",
+  "macros",
+  "includes",
+  "missingIncludes",
+  "modules",
+  "diagnostics",
+] as const;
+
+function readGraphBody(
+  shard: ICppGraphSnapshot.IShard,
+  pieces: Map<string, ICppGraphSnapshot.ITU>,
+): void {
   // A page's shards arrive from `JSON.parse`, so `graph` is absent in fact
-  // whenever the producer published a path instead -- the declared type is
+  // whenever the producer published paths instead -- the declared type is
   // what holds from here on, and holding it is this function's whole job.
   const carried = shard as { graph?: ICppGraphSnapshot.ITU };
   if (carried.graph !== undefined) return;
-  if (typeof shard.graphPath !== "string" || shard.graphPath === "") {
+  if (!Array.isArray(shard.graphPaths) || shard.graphPaths.length === 0) {
     throw new Error(
       `C/C++ clang graph: shard carries neither a body nor a path: ${shard.key}`,
     );
   }
-  let body: string;
-  try {
-    body = fs.readFileSync(shard.graphPath, "utf8");
-  } catch {
-    throw new Error(
-      `C/C++ clang graph: published body cannot be read: ${shard.graphPath}`,
-    );
+  const read = (file: string): ICppGraphSnapshot.ITU => {
+    const known = pieces.get(file);
+    if (known !== undefined) return known;
+    let text: string;
+    try {
+      text = fs.readFileSync(file, "utf8");
+    } catch {
+      throw new Error(
+        `C/C++ clang graph: published body cannot be read: ${file}`,
+      );
+    }
+    let piece: ICppGraphSnapshot.ITU;
+    try {
+      piece = JSON.parse(text) as ICppGraphSnapshot.ITU;
+    } catch {
+      throw new Error(
+        `C/C++ clang graph: published body is not valid JSON: ${file}`,
+      );
+    }
+    // A piece has to be a piece before it can be added to one. Reassembly
+    // reads eight lists out of it, and a file that is valid JSON but not a
+    // graph would otherwise fail somewhere inside that spread, as a type
+    // error about a property rather than as what it is: a published body that
+    // is not one.
+    for (const key of PIECE_LISTS)
+      if (!Array.isArray((piece as unknown as Record<string, unknown>)[key])) {
+        throw new Error(
+          `C/C++ clang graph: published body is not a graph: ${file}`,
+        );
+      }
+    pieces.set(file, piece);
+    return piece;
+  };
+  // The first piece is the main file's, which carries the unit's identity and
+  // its whole source set; the rest add the facts found in the files it
+  // included. Reassembled, they are the unit -- and `assertShard` checks that
+  // by rebuilding the producer's digest chain over the result, so pieces that
+  // do not belong together fail there rather than becoming a graph.
+  const [first, ...rest] = shard.graphPaths;
+  const main = read(first!);
+  const body: ICppGraphSnapshot.ITU = {
+    ...main,
+    symbols: [...main.symbols],
+    occurrences: [...main.occurrences],
+    relations: [...main.relations],
+    macros: [...main.macros],
+    includes: [...main.includes],
+    missingIncludes: [...main.missingIncludes],
+    modules: [...main.modules],
+    diagnostics: [...main.diagnostics],
+  };
+  for (const file of rest) {
+    const piece = read(file);
+    body.symbols.push(...piece.symbols);
+    body.occurrences.push(...piece.occurrences);
+    body.relations.push(...piece.relations);
+    body.macros.push(...piece.macros);
+    body.includes.push(...piece.includes);
+    body.missingIncludes.push(...piece.missingIncludes);
+    body.modules.push(...piece.modules);
+    body.diagnostics.push(...piece.diagnostics);
   }
-  // Parsed and handed on without a check of its own, because the check that
-  // matters already exists and is stronger. `assertShard` rebuilds the
-  // producer's three-step digest chain from the body it is given -- interface
-  // fingerprint, body digest, disk material -- and refuses a shard whose
-  // digest does not follow. A body read from a file is verified by exactly
-  // that, so bytes that are not the ones this generation was planned against
-  // are refused whoever wrote them, and hashing the file here would only add
-  // a weaker second opinion over the same bytes.
-  try {
-    carried.graph = JSON.parse(body) as ICppGraphSnapshot.ITU;
-  } catch {
-    throw new Error(
-      `C/C++ clang graph: published body is not valid JSON: ${shard.graphPath}`,
-    );
-  }
+  carried.graph = body;
 }
 
 function assertSnapshotPage(

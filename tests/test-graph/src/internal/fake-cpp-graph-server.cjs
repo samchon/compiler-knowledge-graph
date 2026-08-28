@@ -293,11 +293,11 @@ function pageOf(plan, offset, maxShards) {
     // whole point of publishing: the largest object this protocol moves
     // never enters the request path.
     upserts: plan.upserts.slice(offset, end).map((shard) => {
-      if (shard.graphPath === undefined) return shard;
-      const { graph, graphPath, unnamedBody, ...named } = shard;
+      if (shard.graphPaths === undefined) return shard;
+      const { graph, graphPaths, unnamedBody, ...named } = shard;
       // `unnamedBody` publishes nothing and names nothing, which is a
       // producer breaking the contract rather than a mode of it.
-      return unnamedBody ? named : { ...named, graphPath };
+      return unnamedBody ? named : { ...named, graphPaths };
     }),
     deletes: offset === 0 ? plan.deletes : [],
     manifest: offset === 0 && !plan.cacheHit ? plan.manifest : [],
@@ -540,18 +540,74 @@ function graphShard(command) {
   // of carrying it, so the field is the claim such a producer is checked
   // against. This fixture always carries the body inline.
   shard.bodyDigest = bodyDigest;
-  // Published while the body is in hand, named by its own digest, exactly as
-  // the producer does. The body stays on the shard until a page is built,
-  // because the envelope is still assembled from it.
+  // Published while the body is in hand, split by file and each piece named
+  // by its own digest, exactly as the producer does. The body stays on the
+  // shard until a page is built, because the envelope is still assembled
+  // from it.
   if (bodyRoot !== undefined) {
     fs.mkdirSync(bodyRoot, { recursive: true });
-    const bodyPath = path.join(bodyRoot, bodyDigest + ".graph.json");
-    if (!fs.existsSync(bodyPath))
-      fs.writeFileSync(bodyPath, JSON.stringify(graph));
-    shard.graphPath = bodyPath;
-    if (bodyFault === "absent") shard.graphPath = bodyPath + ".missing";
+    // Split by file, as the producer does: the facts spelled in the main
+    // file, then those spelled in each header it included. A header piece
+    // is named by every unit that includes it and read once, which is the
+    // whole reason bodies are split before they are published.
+    const byFile = new Map();
+    const pieceOf = (uri) => {
+      let piece = byFile.get(uri);
+      if (piece === undefined) {
+        // Only the main file's piece carries the unit's identity. A header's
+        // piece must not: two units that include the same header would
+        // otherwise write two files differing solely in whose unit read it,
+        // and the deduplication this split exists for would never happen.
+        const identity = uri === graph.mainFileUri
+          ? graph
+          : { producerFingerprint: "", mainFileUri: "", mainFile: "",
+              directory: "", commandLine: [], output: "", commandDigest: "",
+              toolchainFingerprint: "", targetTriple: "", language: "",
+              hadErrors: false };
+        piece = { ...identity, symbols: [], occurrences: [], relations: [],
+          macros: [], includes: [], missingIncludes: [], modules: [],
+          diagnostics: [], sources: [] };
+        byFile.set(uri, piece);
+      }
+      return piece;
+    };
+    // Every source gets a piece, as the producer does: a header this unit
+    // read is a file this unit saw, whether or not it declared anything.
+    for (const source of graph.sources) pieceOf(source.uri);
+    pieceOf(graph.mainFileUri).sources = graph.sources;
+    for (const symbol of graph.symbols)
+      pieceOf(symbol.declaration.file).symbols.push(symbol);
+    for (const occurrence of graph.occurrences)
+      pieceOf(occurrence.spelling.file).occurrences.push(occurrence);
+    for (const relation of graph.relations)
+      pieceOf(graph.mainFileUri).relations.push(relation);
+    for (const macro of graph.macros)
+      pieceOf(graph.mainFileUri).macros.push(macro);
+    for (const include of graph.includes)
+      pieceOf(include.source).includes.push(include);
+    for (const missing of graph.missingIncludes)
+      pieceOf(graph.mainFileUri).missingIncludes.push(missing);
+    for (const module of graph.modules)
+      pieceOf(graph.mainFileUri).modules.push(module);
+    for (const diagnostic of graph.diagnostics)
+      pieceOf(graph.mainFileUri).diagnostics.push(diagnostic);
+    const write = (piece) => {
+      const text = JSON.stringify(piece);
+      const file = path.join(bodyRoot, digest(text) + ".graph.json");
+      if (!fs.existsSync(file)) fs.writeFileSync(file, text);
+      return file;
+    };
+    shard.graphPaths = [
+      write(pieceOf(graph.mainFileUri)),
+      ...[...byFile.entries()]
+        .filter(([uri]) => uri !== graph.mainFileUri)
+        .map(([, piece]) => write(piece)),
+    ];
+    if (bodyFault === "absent")
+      shard.graphPaths = [shard.graphPaths[0] + ".missing"];
     if (bodyFault === "unnamed") shard.unnamedBody = true;
-    if (bodyFault === "malformed") fs.writeFileSync(bodyPath, "{ not json");
+    if (bodyFault === "malformed")
+      fs.writeFileSync(shard.graphPaths[0], "{ not json");
   }
   return shard;
 }

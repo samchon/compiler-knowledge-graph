@@ -219,16 +219,22 @@ jobs:
       # the initial generation was committing three copies of itself where one
       # was proof and the others were a tautology.
       #
-      # Eight is chosen to fit. With those gone the consumer's resident set is
-      # about 1.15 times its heap rather than 1.5, and the producer's own share
-      # measures at 4.9 GiB on the C corpus, so eight leaves the host a margin
-      # it did not have at six. If it is still not enough the consumer is still
-      # the one that fails, which is the property worth keeping.
+      # Ten is arithmetic now rather than a guess. The C walk finishes and
+      # reports what it holds: 6,930 MiB of heap and 7,562 of resident set at
+      # the last page, a ratio of 1.09 once the transport stopped churning.
+      # The commit that follows needs headroom above that peak and eight left
+      # it 1.2 GiB, which was not enough. The producer measures at 4.9 GiB on
+      # this corpus, so ten puts the pair near 16 with the host's own share
+      # still to come -- close, deliberately, because the alternative is not
+      # knowing whether the commit fits at all.
+      #
+      # If it does not, the consumer is still the one that fails and says so,
+      # which is the property worth keeping.
       - name: Run LSP experiment
         if: ${{ github.event_name != 'workflow_dispatch' || inputs.language == 'all' || inputs.language == matrix.language }}
         run: pnpm --filter @samchon/graph-experiment start -- --language ${{ matrix.language }}
         env:
-          NODE_OPTIONS: --max-old-space-size=8192
+          NODE_OPTIONS: --max-old-space-size=10240
           # What the consumer holds when a whole producer generation has been
           # parsed, and again once it has been adapted and committed. The
           # difference between the two is what decides whether a page can be

@@ -6,13 +6,17 @@ const PREFIX = "@samchon/graph: cpp-heap ";
 /**
  * Opt-in, payload-free heap and timing trace for the native C/C++ route.
  *
- * Three hosts died on this route before anything said where the memory went,
- * and each answer since has come from making a stage state its own size rather
- * than inferring one from the stage after it. This says what the consumer holds
- * at the two boundaries that matter: when every page has been parsed and the
- * whole producer generation is resident, and when it has been adapted and
- * committed. The difference between those two is the number that decides
- * whether a page can be adapted as it arrives or the shape has to change.
+ * Several hosts have died on this route, and every answer so far has come from
+ * making a stage state its own size rather than inferring one from the stage
+ * after it. Twice now the reading that was needed did not exist because the run
+ * died before the boundary that would have reported it -- once mid-parse with
+ * the generation incomplete, once forty-three minutes into a walk that never
+ * finished. A trace that only speaks at the end says nothing about the runs
+ * that do not get there.
+ *
+ * So the walk reports as it goes, every `WALK_STRIDE` shards, and the two
+ * boundaries still report exactly. A run that dies partway now says how far it
+ * got, how long that took, and what it was holding.
  *
  * Counts, not payload. A shard count and a byte figure say nothing about the
  * code being indexed.
@@ -58,7 +62,7 @@ export namespace cppGraphHeapTrace {
      * what closing costs, which are paid by different sides of the protocol.
      */
     stage: (
-      stage: "paged" | "committed",
+      stage: "walking" | "paged" | "committed",
       shards: number,
       elapsedMs: number,
     ) => void;

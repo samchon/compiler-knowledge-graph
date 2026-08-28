@@ -139,7 +139,7 @@ export const test_cpp_clang_snapshot_adapter_and_client_are_atomic = async () =>
   await assertProvider(root);
   await assertClientLifecycle(root);
   await assertClientInputShapes();
-  await assertClientReportsItsOwnSize(root);
+  await assertClientReportsItsOwnSize();
   await assertClientPagination();
   await assertClientFailures(fixtureRoot());
 };
@@ -718,12 +718,32 @@ async function assertClientLifecycle(root: string): Promise<void> {
   );
 }
 
-async function assertClientReportsItsOwnSize(root: string): Promise<void> {
+async function assertClientReportsItsOwnSize(): Promise<void> {
   // Three hosts died on this route before any stage said what it held, and the
   // trace is off in every run but the one that needs it -- so the arm that is
   // on has to be exercised somewhere. It writes to the stderr descriptor
   // rather than through `process.stderr.write`, which is the point of writing
   // it that way and the reason this needs its own process to be read back.
+  //
+  // Its own corpus, and a large one, because the walk reports every stride of
+  // shards and a two-shard project never reaches the first. A run that dies
+  // partway is exactly the run whose reading matters, so the case that proves
+  // the walk speaks has to be long enough for it to speak.
+  const root = GraphPaths.createTempDirectory("samchon-graph-cpp-walk-");
+  const commands: Array<Record<string, unknown>> = [];
+  for (let index = 0; index < 70; ++index) {
+    const file = `walk-${String(index).padStart(2, "0")}.cpp`;
+    fs.writeFileSync(path.join(root, file), "void walked() {}\n");
+    commands.push({
+      directory: root,
+      file,
+      arguments: ["clang++", "-x", "c++", "-c", file],
+    });
+  }
+  fs.writeFileSync(
+    path.join(root, "compile_commands.json"),
+    JSON.stringify(commands),
+  );
   const clientModule = pathToFileURL(
     path.join(
       GraphPaths.graphPackageRoot,
@@ -765,34 +785,27 @@ async function assertClientReportsItsOwnSize(root: string): Promise<void> {
     .map((line) =>
       line.replace(/ elapsedMs=\d+| heap[A-Za-z]*MiB=\d+| rssMiB=\d+/gu, ""),
     );
+  const stages = reported.map((line) => /stage=(\w+)/u.exec(line)?.[1]);
   const counts = reported.map((line) =>
     Number(/shards=(\d+)/u.exec(line)?.[1] ?? "-1"),
   );
-  // The count is what makes this a measurement rather than a log line. Both
-  // boundaries, the same generation at each, and a generation with something
-  // in it: a stage that reported one boundary and not the other, or named a
-  // different corpus at each, would say nothing about what adapting costs and
-  // would still have run. The figures themselves are the host's, not this
-  // suite's, so they are read for shape rather than pinned.
+  // Seventy translation units at four shards to a page crosses the stride
+  // once, so the walk speaks once on the way and the two boundaries speak
+  // exactly. A trace that only spoke at the end would say nothing about the
+  // runs that never reach one -- which is every run this instrument was added
+  // for. The figures are the host's, not this suite's, so the shape is what is
+  // pinned: a progress report short of the total, then the whole generation
+  // twice.
   TestValidator.equals(
-    "a traced refresh reports one generation at both boundaries",
+    "a long walk reports its progress and then both boundaries",
     [
       child.status,
       child.signal,
-      reported.map((line) => line.replace(/shards=\d+/u, "shards=N")),
-      counts[0] === counts[1],
-      (counts[0] ?? 0) > 0,
+      stages,
+      counts[0] === 64,
+      counts[1] === 70 && counts[2] === 70,
     ],
-    [
-      0,
-      null,
-      [
-        "@samchon/graph: cpp-heap stage=paged shards=N",
-        "@samchon/graph: cpp-heap stage=committed shards=N",
-      ],
-      true,
-      true,
-    ],
+    [0, null, ["walking", "paged", "committed"], true, true],
   );
 }
 

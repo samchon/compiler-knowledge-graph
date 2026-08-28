@@ -41,12 +41,15 @@ export const test_cpp_heap_trace_is_opt_in_and_payload_free = async () => {
       arrayBuffers: 0,
     }),
   )!;
+  trace.stage("walking", 64, 900);
   trace.stage("paged", 242, 1_500);
   trace.stage("committed", 242, 90_250.7);
   TestValidator.equals(
     "each stage reports counts and megabytes, and nothing that names code",
     lines,
     [
+      "@samchon/graph: cpp-heap stage=walking shards=64 elapsedMs=900 " +
+        "heapUsedMiB=1 heapTotalMiB=2 rssMiB=3\n",
       "@samchon/graph: cpp-heap stage=paged shards=242 elapsedMs=1500 " +
         "heapUsedMiB=1 heapTotalMiB=2 rssMiB=3\n",
       "@samchon/graph: cpp-heap stage=committed shards=242 elapsedMs=90251 " +

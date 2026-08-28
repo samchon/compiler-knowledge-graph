@@ -48,6 +48,11 @@ const MAX_RETRY_DELAY_MS = 5_000;
 // what a page costs *this* process no longer scales with how many shards it
 // carries. Only the producer's side of the trade is left.
 const PAGE_SHARDS = 4;
+// How often a walk in progress reports itself. Sixty-four shards is a hundred
+// and twenty lines over a 469-shard generation -- enough to see the shape of
+// the curve and where it bends, and few enough that the trace is not the thing
+// filling the log.
+const WALK_STRIDE = 64;
 
 /** Resident LSP client for the pinned clangd graph-snapshot producer. */
 export class CppGraphClient implements IBulkGraphSession {
@@ -317,7 +322,7 @@ export class CppGraphClient implements IBulkGraphSession {
    * measures four times over.
    */
   private reportHeap(
-    stage: "paged" | "committed",
+    stage: "walking" | "paged" | "committed",
     shards: number,
     startedAt: number,
   ): void {
@@ -398,7 +403,19 @@ export class CppGraphClient implements IBulkGraphSession {
         }
       }
       for (const shard of page.upserts) ingest?.shard(shard);
+      const before = expectedOffset;
       expectedOffset += page.page.count;
+      // Every stride of shards, so a walk that never finishes still says how
+      // far it got and what it was holding when it stopped. Twice the reading
+      // that was needed did not exist because the run died before the boundary
+      // that would have reported it.
+      if (
+        ingest !== undefined &&
+        Math.floor(before / WALK_STRIDE) !==
+          Math.floor(expectedOffset / WALK_STRIDE)
+      ) {
+        this.reportHeap("walking", expectedOffset, startedAt);
+      }
       if (page.page.nextCursor === null) {
         if (expectedOffset !== expectedTotal) {
           throw new Error("C/C++ clang graph: paged generation ended early");

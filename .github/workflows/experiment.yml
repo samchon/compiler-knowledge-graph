@@ -198,18 +198,19 @@ jobs:
           key: ${{ steps.clang_producer.outputs.cache-primary-key }}
 
       # Node sizes its old space from a heuristic, not from the runner, and on
-      # these 16 GiB hosts it settles near 4 GiB. A real C project's graph is
-      # larger than that: the C lane reached 4,068 MiB and aborted inside
-      # `JSON.parse` while roughly seven GiB of the host sat unused. Ten GiB
-      # leaves room for the producer beside it and stops an unrelated default
-      # from deciding what these lanes can measure. It is a ceiling on the
-      # consumer, not a relaxation of anything a lane asserts -- a run that
-      # needs more than this still fails, and says so with a number.
+      # these 16 GiB hosts it settles near 4 GiB, which a real C project's
+      # graph outgrows. Ten was too generous in the other direction: the C lane
+      # grew into the space clangd needed and the *host* died, which takes the
+      # job log with it -- twice the reading that would have explained a run
+      # did not exist, because GitHub never received it. Six leaves the
+      # producer its half and makes the consumer fail with a number instead of
+      # taking the machine down. A run that needs more than this still fails,
+      # and says so with a number rather than with silence.
       - name: Run LSP experiment
         if: ${{ github.event_name != 'workflow_dispatch' || inputs.language == 'all' || inputs.language == matrix.language }}
         run: pnpm --filter @samchon/graph-experiment start -- --language ${{ matrix.language }}
         env:
-          NODE_OPTIONS: --max-old-space-size=10240
+          NODE_OPTIONS: --max-old-space-size=6144
           # What the consumer holds when a whole producer generation has been
           # parsed, and again once it has been adapted and committed. The
           # difference between the two is what decides whether a page can be

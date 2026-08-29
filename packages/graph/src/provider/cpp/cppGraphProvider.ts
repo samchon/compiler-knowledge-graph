@@ -117,11 +117,24 @@ export const cppGraphProvider: IGraphProvider = {
     // uploaded. The producer reports its largest body in bytes now, split by
     // family, and that reading is the one that says which array to fix. It
     // cannot be read from a machine that is dead.
+    // Twelve gibibytes a worker, which is one on a sixteen gibibyte host.
+    //
+    // The C++ lane still dies during indexing, and the reading is unambiguous
+    // about where: the host sits at seven gibibytes free while units are
+    // indexed and then loses seven more in twenty seconds, with twenty-eight
+    // units still going. One C++ unit's facts are 342 MiB and a worker holds
+    // its unit's whole graph while the unit is being built, so the peak is
+    // per worker and halving the workers halves it.
+    //
+    // It costs indexing time and the budget can afford it: the C lane indexes
+    // libuv in 61 seconds at two workers, and one worker roughly doubles that
+    // -- still inside three minutes. A host with more memory still gets more
+    // workers, which is what the rule has always said.
     const workers = Math.max(
       1,
       Math.min(
         os.availableParallelism(),
-        Math.floor(os.totalmem() / (8 * 1024 * 1024 * 1024)),
+        Math.floor(os.totalmem() / (12 * 1024 * 1024 * 1024)),
       ),
     );
     const command = spawnableCommand.append(

@@ -236,6 +236,7 @@ export const test_lsp_client_closes_servers_that_break_the_shutdown_handshake =
     await assertRequestTracing(LspClient);
     await assertRequestTraceFormatting();
     await assertServerRequestFailureAndBareResponse(LspClient);
+    await assertServerLogIsPassedThroughWhenAsked(LspClient);
 
     // An already-cancelled request never enters the wire or waits for the
     // otherwise-unlimited default deadline. The client still owns its child and
@@ -257,6 +258,77 @@ export const test_lsp_client_closes_servers_that_break_the_shutdown_handshake =
     );
     await cancelled.close();
   };
+
+/**
+ * A stalled language server's only witness is its own log.
+ *
+ * A producer that spends twenty minutes saying it is still discovering
+ * changes has said nothing a consumer can act on, and the words that would
+ * explain it go to stderr, which this client drops by default because a
+ * healthy server's log is noise. The switch passes them through; a sink that
+ * throws must not end the session it was only watching.
+ */
+const assertServerLogIsPassedThroughWhenAsked = async (
+  LspClient: LspClientConstructor,
+): Promise<void> => {
+  const CRLF2 = "String.fromCharCode(13, 10, 13, 10)";
+  const server = [
+    "const eol = String.fromCharCode(13, 10);",
+    "process.stderr.write('background index: 3 files' + String.fromCharCode(10));",
+    "let buf = Buffer.alloc(0);",
+    "process.stdin.on('data', (d) => {",
+    "  buf = Buffer.concat([buf, d]);",
+    "  for (;;) {",
+    `    const head = buf.indexOf(${CRLF2});`,
+    "    if (head < 0) return;",
+    "    const header = buf.slice(0, head).toString();",
+    "    const at = header.toLowerCase().indexOf('content-length:');",
+    "    const len = Number(header.slice(at + 15).trim().split(eol)[0]);",
+    "    if (buf.length < head + 4 + len) return;",
+    "    const msg = JSON.parse(buf.slice(head + 4, head + 4 + len).toString());",
+    "    buf = buf.slice(head + 4 + len);",
+    "    if (msg.id === undefined) continue;",
+    "    process.stderr.write('answered ' + msg.method + String.fromCharCode(10));",
+    "    const body = Buffer.from(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: {} }));",
+    `    process.stdout.write('Content-Length: ' + body.length + ${CRLF2});`,
+    "    process.stdout.write(body);",
+    "  }",
+    "});",
+  ].join(String.fromCharCode(10));
+  const captured: string[] = [];
+  const original = process.stderr.write.bind(process.stderr);
+  let sink: (text: string) => void = (text) => void captured.push(text);
+  (process.stderr as { write: unknown }).write = (chunk: unknown): boolean => {
+    sink(String(chunk));
+    return true;
+  };
+  process.env.SAMCHON_GRAPH_LSP_SERVER_LOG = "1";
+  const client = new LspClient(process.execPath, ["-e", server]);
+  try {
+    await client.request("initialize", {}, 30_000);
+    while (!captured.some((line) => line.includes("background index")))
+      await new Promise<void>((resolve) => setTimeout(resolve, 10));
+    // A sink that throws is still a sink this client must survive.
+    sink = () => {
+      throw new Error("fixture stderr sink is gone");
+    };
+    const answered = await client.request("fixture/again", {}, 30_000);
+    sink = (text) => void captured.push(text);
+    TestValidator.equals(
+      "a server's log reaches the run that asked for it, and a sink that fails does not end it",
+      [
+        captured.some((line) => line.includes("background index: 3 files")),
+        captured.every((line) => line.startsWith(`[${process.execPath}] `)),
+        answered,
+      ],
+      [true, true, {}],
+    );
+  } finally {
+    delete process.env.SAMCHON_GRAPH_LSP_SERVER_LOG;
+    (process.stderr as { write: unknown }).write = original;
+    await client.close();
+  }
+};
 
 const assertServerRequestFailureAndBareResponse = async (
   LspClient: LspClientConstructor,

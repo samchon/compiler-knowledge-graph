@@ -67,8 +67,20 @@ export class LspClient {
     ownedProcess.start(this.process, owned);
     this.exit = ownedProcess.exit(this.process);
     this.process.stdout.on("data", (chunk: Buffer) => this.onData(chunk));
-    this.process.stderr.on("data", () => {
-      // Language servers often log noisy progress to stderr.
+    // Language servers log to stderr, and a server that is busy says so
+    // there and nowhere else. It is dropped by default because the log of a
+    // healthy run is noise -- but a run that stalls has exactly one witness,
+    // and dropping it left a producer that spent twenty minutes 'discovering
+    // changes' with nothing to say for itself. The same switch that turns on
+    // this consumer's own trace passes the server's words through.
+    const echo = process.env["SAMCHON_GRAPH_LSP_SERVER_LOG"] === "1";
+    this.process.stderr.on("data", (chunk: Buffer) => {
+      if (!echo) return;
+      try {
+        process.stderr.write(`[${owned.command}] ${chunk.toString("utf8")}`);
+      } catch {
+        // A trace must never end a session it was only watching.
+      }
     });
     /* c8 ignore start -- direct POSIX spawn failures are exercised on POSIX.
      * Windows starts a stable Job Object supervisor first and reports a nested

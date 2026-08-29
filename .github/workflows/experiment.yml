@@ -243,6 +243,9 @@ jobs:
           # difference between the two is what decides whether a page can be
           # adapted as it arrives or the shape has to change.
           SAMCHON_GRAPH_CPP_HEAP_TRACE: "1"
+          # The language server's own words. A run that stalls waiting for a
+          # producer has exactly one witness, and it writes to stderr.
+          SAMCHON_GRAPH_LSP_SERVER_LOG: "1"
           SAMCHON_GRAPH_RUST_ANALYZER_HIR: ${{ github.workspace }}/tests/experiment/.work/tools/bin/samchon-rust-analyzer
 
       - name: Upload result

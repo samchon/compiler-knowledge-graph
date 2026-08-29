@@ -145,7 +145,7 @@ export const LANGUAGE_EXPERIMENTS = [
     strictAuthority: "compiler",
     strictTool: "samchon-clangd",
     producerRepository: "https://github.com/samchon/llvm-project.git",
-    producerCommit: "9be768885ff4dc7809639eb2f4cf9da634568841",
+    producerCommit: "fe48b3842c55df878445b1bc193d40e797fa6333",
     // A whole-compilation-database producer is not ready when it starts; it
     // is ready when clangd has background-indexed every translation unit the
     // database registers. The 180-second default expired on libuv with 62 of
@@ -242,7 +242,7 @@ export const LANGUAGE_EXPERIMENTS = [
     strictAuthority: "compiler",
     strictTool: "samchon-clangd",
     producerRepository: "https://github.com/samchon/llvm-project.git",
-    producerCommit: "9be768885ff4dc7809639eb2f4cf9da634568841",
+    producerCommit: "fe48b3842c55df878445b1bc193d40e797fa6333",
     // A whole-compilation-database producer is not ready when it starts; it
     // is ready when clangd has background-indexed every translation unit the
     // database registers. The 180-second default expired on libuv with 62 of

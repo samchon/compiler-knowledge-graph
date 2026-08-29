@@ -133,7 +133,7 @@
       "commands": ["samchon-clangd", "clangd"],
       "projectCommandSources": ["compile_commands.json", "build/compile_commands.json"],
       "environmentOverrides": ["SAMCHON_GRAPH_CLANGD_SNAPSHOT"],
-      "install": "Build the `samchon/llvm-project` graph-snapshot fork at commit `a6f0fb35716018ef8a33ba27eadfbb4b8a09829c`; point `SAMCHON_GRAPH_CLANGD_SNAPSHOT` at `clangd` or install it as `samchon-clangd`, and provide a compilation database.",
+      "install": "Build the `samchon/llvm-project` graph-snapshot fork at commit `367a621131c9304933fe913dedf088d76e764930`; point `SAMCHON_GRAPH_CLANGD_SNAPSHOT` at `clangd` or install it as `samchon-clangd`, and provide a compilation database.",
       "installSources": [
         {"label": "native Clang graph producer PR", "url": "https://github.com/samchon/llvm-project/pull/1"},
         {"label": "LLVM build instructions", "url": "https://llvm.org/docs/CMake.html"}

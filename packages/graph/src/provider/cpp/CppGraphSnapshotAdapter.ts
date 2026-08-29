@@ -1244,8 +1244,28 @@ function evidenceOf(
   };
 }
 
+/**
+ * Repository-relative paths, remembered by the URI they came from.
+ *
+ * A project has as many source files as it has files, and a generation names
+ * them once per fact: parsing a `file:` URI and relativising it is the same
+ * answer every time, and on libuv it was asked six and a half million times
+ * for a thousand distinct files. The map is keyed by root as well, because a
+ * process may hold graphs for more than one checkout.
+ */
+const graphFiles = new Map<string, string>();
+
 function graphFile(root: string, source: string): string {
   if (source === "") return "";
+  const key = `${root}${String.fromCharCode(0)}${source}`;
+  const known = graphFiles.get(key);
+  if (known !== undefined) return known;
+  const answer = deriveGraphFile(root, source);
+  graphFiles.set(key, answer);
+  return answer;
+}
+
+function deriveGraphFile(root: string, source: string): string {
   assertSupportedSource(source);
   let absolute = source;
   if (source.startsWith("file:")) {
@@ -1267,7 +1287,19 @@ function externalGraphFile(source: string): string {
 }
 /* c8 ignore stop */
 
+/** Absolute host paths, remembered the same way and for the same reason. */
+const sourceFiles = new Map<string, string>();
+
 function sourceFile(root: string, source: string): string {
+  const key = `${root}${String.fromCharCode(0)}${source}`;
+  const known = sourceFiles.get(key);
+  if (known !== undefined) return known;
+  const answer = deriveSourceFile(root, source);
+  sourceFiles.set(key, answer);
+  return answer;
+}
+
+function deriveSourceFile(root: string, source: string): string {
   assertSupportedSource(source);
   if (source.startsWith("bundled:///")) return source;
   if (source.startsWith("file:")) {
@@ -1285,7 +1317,26 @@ function assertSupportedSource(source: string): void {
   }
 }
 
+/**
+ * Whether a producer's source string is one this consumer can place,
+ * remembered by the string itself.
+ *
+ * Every range on every fact is checked, and a translation unit's facts name
+ * the same few hundred files over and over: parsing a `file:` URI to find out
+ * whether it is absolute is the same answer every time, and it was six
+ * percent of a walk.
+ */
+const supportedSources = new Map<string, boolean>();
+
 function isSupportedSource(source: string): boolean {
+  const known = supportedSources.get(source);
+  if (known !== undefined) return known;
+  const answer = deriveSupportedSource(source);
+  supportedSources.set(source, answer);
+  return answer;
+}
+
+function deriveSupportedSource(source: string): boolean {
   if (source.startsWith("bundled:///")) {
     const relative = source.slice("bundled:///".length);
     return (

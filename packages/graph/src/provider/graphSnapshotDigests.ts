@@ -150,7 +150,28 @@ function canonicalInto(hash: Hash, value: unknown): void {
   hash.update("}");
 }
 
+/**
+ * One fact's canonical text, remembered against the fact itself.
+ *
+ * A generation's lanes hold the same objects the shards hold, and the content
+ * digest walks every one of them. Serializing a fact is a pure function of
+ * that fact, so it is done once and the text kept -- weakly, so remembering
+ * it holds nothing the generation has released.
+ */
+const remembered = new WeakMap<object, string>();
+
 function canonical(value: unknown): string {
+  if (value !== null && typeof value === "object") {
+    const known = remembered.get(value);
+    if (known !== undefined) return known;
+    const text = deriveCanonical(value);
+    remembered.set(value, text);
+    return text;
+  }
+  return deriveCanonical(value);
+}
+
+function deriveCanonical(value: unknown): string {
   if (value === undefined) return "null";
   if (value === null || typeof value !== "object") {
     return JSON.stringify(value);

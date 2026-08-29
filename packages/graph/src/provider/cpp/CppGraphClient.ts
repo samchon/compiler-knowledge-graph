@@ -233,7 +233,25 @@ export class CppGraphClient implements IBulkGraphSession {
         ) {
           throw error;
         }
-        if (error.code === CONTENT_MODIFIED) this.notifyInputChanges();
+        // Progress is not movement.
+        //
+        // The producer refuses with the same code whether its inputs moved
+        // or it is simply still indexing, and this treated both as movement:
+        // every refusal told the producer its inputs had changed and reset
+        // the backoff. Indexing a compilation database takes minutes, so that
+        // was eighteen notifications a second for the whole of it, and each
+        // one starts a fresh discovery pass. The pass could never drain, and
+        // a C run sat for twenty minutes being told that project changes were
+        // still being discovered -- by itself.
+        //
+        // A refusal that says the snapshot is not ready is the producer
+        // working. Anything else -- a stale cursor, a generation that moved
+        // between pages -- is the inputs moving, and that is worth saying.
+        const indexing = error.message.includes(
+          "graph snapshot is not ready",
+        );
+        if (error.code === CONTENT_MODIFIED && !indexing)
+          this.notifyInputChanges();
         // Say what is being waited on, once per distinct answer.
         //
         // The producer refuses until every translation unit the compilation
@@ -285,7 +303,7 @@ export class CppGraphClient implements IBulkGraphSession {
         // has already told it so, and an edit should not wait out a backoff
         // that a previous slow index inflated.
         backoff =
-          error.code === CONTENT_MODIFIED
+          error.code === CONTENT_MODIFIED && !indexing
             ? RETRY_DELAY_MS
             : Math.min(backoff * 2, MAX_RETRY_DELAY_MS);
       }

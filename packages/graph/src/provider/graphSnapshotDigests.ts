@@ -1,5 +1,6 @@
 import { createHash, Hash } from "node:crypto";
 
+import { canonicalFactText } from "./canonicalFactText";
 import { graphCoverageOf } from "./graphCoverageOf";
 import { graphUnresolvedOf } from "./graphUnresolvedOf";
 import { IBulkGraphSession } from "./IBulkGraphSession";
@@ -51,16 +52,16 @@ export namespace graphSnapshotDigests {
     // and the dump's provenance both compare exactly this value to decide
     // whether anything moved. A digest over part of the facts is not a weaker
     // proof of the whole; it is a proof of something else.
-    for (const node of snapshot.nodes) hash.update(`node\0${canonical(node)}\n`);
-    for (const edge of snapshot.edges) hash.update(`edge\0${canonical(edge)}\n`);
+    for (const node of snapshot.nodes) hash.update(`node\0${canonicalFactText(node)}\n`);
+    for (const edge of snapshot.edges) hash.update(`edge\0${canonicalFactText(edge)}\n`);
     for (const diagnostic of snapshot.diagnostics) {
-      hash.update(`diagnostic\0${canonical(diagnostic)}\n`);
+      hash.update(`diagnostic\0${canonicalFactText(diagnostic)}\n`);
     }
     for (const coverage of graphCoverageOf(snapshot)) {
-      hash.update(`coverage\0${canonical(coverage)}\n`);
+      hash.update(`coverage\0${canonicalFactText(coverage)}\n`);
     }
     for (const unresolved of graphUnresolvedOf(snapshot)) {
-      hash.update(`unresolved\0${canonical(unresolved)}\n`);
+      hash.update(`unresolved\0${canonicalFactText(unresolved)}\n`);
     }
     return hash.digest("hex");
   }
@@ -148,43 +149,6 @@ function canonicalInto(hash: Hash, value: unknown): void {
     canonicalInto(hash, entry);
   }
   hash.update("}");
-}
-
-/**
- * One fact's canonical text, remembered against the fact itself.
- *
- * A generation's lanes hold the same objects the shards hold, and the content
- * digest walks every one of them. Serializing a fact is a pure function of
- * that fact, so it is done once and the text kept -- weakly, so remembering
- * it holds nothing the generation has released.
- */
-const remembered = new WeakMap<object, string>();
-
-function canonical(value: unknown): string {
-  if (value !== null && typeof value === "object") {
-    const known = remembered.get(value);
-    if (known !== undefined) return known;
-    const text = deriveCanonical(value);
-    remembered.set(value, text);
-    return text;
-  }
-  return deriveCanonical(value);
-}
-
-function deriveCanonical(value: unknown): string {
-  if (value === undefined) return "null";
-  if (value === null || typeof value !== "object") {
-    return JSON.stringify(value);
-  }
-  if (Array.isArray(value)) {
-    return `[${value.map(canonical).join(",")}]`;
-  }
-  const entries = Object.entries(value as Record<string, unknown>)
-    .filter(([, entry]) => entry !== undefined)
-    .sort(([left], [right]) => compareOrdinal(left, right));
-  return `{${entries
-    .map(([key, entry]) => `${JSON.stringify(key)}:${canonical(entry)}`)
-    .join(",")}}`;
 }
 
 function compareOrdinal(left: string, right: string): number {

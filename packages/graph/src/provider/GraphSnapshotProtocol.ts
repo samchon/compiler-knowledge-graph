@@ -18,6 +18,7 @@ import { freezeDeep } from "../utils/freezeDeep";
 import { sealedMap } from "../utils/sealedMap";
 import { assertGraphSnapshotPayload } from "./assertGraphSnapshotPayload";
 import { IBulkGraphSession } from "./IBulkGraphSession";
+import { canonicalFactText } from "./canonicalFactText";
 
 /**
  * Versioned NDJSON producer contract for atomic, shard-based graph snapshots.
@@ -230,21 +231,6 @@ export namespace GraphSnapshotProtocol {
     return hash.digest("hex");
   }
 
-  /**
-   * One fact's canonical text, remembered against the fact itself.
-   *
-   * Shards share the entities they name -- a header's declaration is one
-   * object that four hundred shards point at -- so digesting a generation
-   * shard by shard walked the same objects once per naming. On libuv that was
-   * six and a half million serializations of thirty-eight thousand entities,
-   * and it cost more than the walk that produced them.
-   *
-   * Keyed by identity, so an entity that is genuinely rebuilt is a different
-   * key and gets its own text, and held weakly, so remembering it keeps
-   * nothing alive that the generation has let go.
-   */
-  const remembered = new WeakMap<object, string>();
-
   function canonicalInto(hash: Hash, value: unknown, depth = 0): void {
     if (value === null || typeof value !== "object") {
       hash.update(JSON.stringify(value));
@@ -254,14 +240,7 @@ export namespace GraphSnapshotProtocol {
     // named once and its text is the whole generation, which is the string
     // this deliberately never builds.
     if (depth >= 2) {
-      const known = remembered.get(value);
-      if (known !== undefined) {
-        hash.update(known);
-        return;
-      }
-      const text = canonical(value);
-      remembered.set(value, text);
-      hash.update(text);
+      hash.update(canonicalFactText(value));
       return;
     }
     if (Array.isArray(value)) {

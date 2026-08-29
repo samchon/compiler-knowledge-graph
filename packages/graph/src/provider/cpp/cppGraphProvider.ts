@@ -126,7 +126,17 @@ export const cppGraphProvider: IGraphProvider = {
     );
     const command = spawnableCommand.append(
       { ...props.command, args: [...props.command.args] },
-      ["--background-index", `-j=${String(workers)}`],
+      [
+        "--background-index",
+        `-j=${String(workers)}`,
+        // Only when somebody is reading. A producer that stops answering
+        // says why in its log and nowhere else, and a run that waited twenty
+        // minutes for one had nothing but request lines to show for it. The
+        // switch that passes the log through is the switch that asks for it.
+        ...(process.env["SAMCHON_GRAPH_LSP_SERVER_LOG"] === "1"
+          ? ["--log=verbose"]
+          : []),
+      ],
     );
     return new CppGraphClient({
       root: props.root,

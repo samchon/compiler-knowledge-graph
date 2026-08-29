@@ -231,12 +231,18 @@ async function assertProvider(root: string): Promise<void> {
   } finally {
     await session.close();
   }
+  // Asked to pass the server's log through, the provider also asks the server
+  // to write one. A producer that stops answering explains itself there and
+  // nowhere else, and a run that waited twenty minutes for one had nothing
+  // but its own request lines to show.
+  process.env.SAMCHON_GRAPH_LSP_SERVER_LOG = "1";
   const cppOnly = cppGraphProvider.open({
     root,
     command: resolved!,
     languages: ["cpp"],
     options: {},
   });
+  delete process.env.SAMCHON_GRAPH_LSP_SERVER_LOG;
   try {
     const selected = await cppOnly.refresh();
     TestValidator.predicate(

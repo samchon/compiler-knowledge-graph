@@ -5,6 +5,7 @@ import { createHash } from "node:crypto";
 
 import { compareOrdinal as compareText } from "@samchon/graph-sitter";
 
+import { appendAll } from "../../indexer/appendAll";
 import { LspClient } from "../../lsp/LspClient";
 import { LspResponseError } from "../../lsp/LspResponseError";
 import { GraphLanguage } from "../../typings";
@@ -779,14 +780,14 @@ function readGraphBody(
   };
   for (const file of rest) {
     const piece = read(file);
-    body.symbols.push(...piece.symbols);
-    body.occurrences.push(...piece.occurrences);
-    body.relations.push(...piece.relations);
-    body.macros.push(...piece.macros);
-    body.includes.push(...piece.includes);
-    body.missingIncludes.push(...piece.missingIncludes);
-    body.modules.push(...piece.modules);
-    body.diagnostics.push(...piece.diagnostics);
+    appendAll(body.symbols, piece.symbols);
+    appendAll(body.occurrences, piece.occurrences);
+    appendAll(body.relations, piece.relations);
+    appendAll(body.macros, piece.macros);
+    appendAll(body.includes, piece.includes);
+    appendAll(body.missingIncludes, piece.missingIncludes);
+    appendAll(body.modules, piece.modules);
+    appendAll(body.diagnostics, piece.diagnostics);
   }
   carried.graph = body;
 }

@@ -9,6 +9,7 @@ import {
   ISamchonGraphUnresolved,
 } from "../structures";
 import { GraphLanguage } from "../typings";
+import { appendAll } from "./appendAll";
 import { SamchonGraphSourceReader } from "../SamchonGraphSourceReader";
 import { assertGraphSnapshotContract } from "../provider/assertGraphSnapshotContract";
 import { dumpProvenanceOf } from "../provider/dumpProvenanceOf";
@@ -287,15 +288,15 @@ export function createResidentGraphSource(
             root,
           );
         }
-        strictNodes.push(...refresh.snapshot.nodes);
-        strictEdges.push(...refresh.snapshot.edges);
+        appendAll(strictNodes, refresh.snapshot.nodes);
+        appendAll(strictEdges, refresh.snapshot.edges);
         // Rebuilt from what the compiler says now, exactly like the nodes and
         // the edges, and for the same reason the LSP lane stopped carrying them
         // forward: a diagnostic belongs to the generation that produced it.
-        diagnostics.push(...refresh.snapshot.diagnostics);
-        coverage.push(...graphCoverageOf(refresh.snapshot));
-        unresolved.push(...graphUnresolvedOf(refresh.snapshot));
-        warnings.push(...refresh.snapshot.warnings);
+        appendAll(diagnostics, refresh.snapshot.diagnostics);
+        appendAll(coverage, graphCoverageOf(refresh.snapshot));
+        appendAll(unresolved, graphUnresolvedOf(refresh.snapshot));
+        appendAll(warnings, refresh.snapshot.warnings);
         provenance.push(dumpProvenanceOf(refresh.snapshot));
         modes.set(refresh.snapshot.provenance.provider, refresh.mode);
         continue;
@@ -310,11 +311,11 @@ export function createResidentGraphSource(
         signal,
       );
       assertOpen();
-      nodes.push(...result.nodes);
-      edges.push(...result.edges);
-      diagnostics.push(...result.diagnostics);
+      appendAll(nodes, result.nodes);
+      appendAll(edges, result.edges);
+      appendAll(diagnostics, result.diagnostics);
       coverage.push(...fallbackCoverage("@samchon/graph-lsp", [language]));
-      warnings.push(...result.warnings);
+      appendAll(warnings, result.warnings);
       for (const opened of session.opened.values()) {
         sources.set(opened.abs, opened.text);
       }
@@ -329,9 +330,9 @@ export function createResidentGraphSource(
         },
         filesForLanguages(selected, current.staticLanguages),
       );
-      nodes.push(...fallback.nodes);
-      edges.push(...fallback.edges);
-      warnings.push(...fallback.warnings);
+      appendAll(nodes, fallback.nodes);
+      appendAll(edges, fallback.edges);
+      appendAll(warnings, fallback.warnings);
       coverage.push(
         ...fallbackCoverage("@samchon/graph-sitter", fallback.languages),
       );

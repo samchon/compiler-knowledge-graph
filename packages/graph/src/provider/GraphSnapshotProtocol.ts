@@ -678,8 +678,10 @@ export namespace GraphSnapshotProtocol {
       for (const edge of shard.edges) foldEdge(edges, seenEdges, edge);
       for (const row of shard.diagnostics)
         foldDiagnostic(diagnostics, seenDiagnostics, row);
-      coverage.push(...shard.coverage);
-      unresolved.push(...shard.unresolved);
+      // Appended by loop. Spreading an array passes every element as a call
+      // argument, and a generation's lanes are longer than a call may be.
+      for (const row of shard.coverage) coverage.push(row);
+      for (const site of shard.unresolved) unresolved.push(site);
       for (const source of shard.sources) {
         const value = {
           checkerDigest: source.checkerDigest,

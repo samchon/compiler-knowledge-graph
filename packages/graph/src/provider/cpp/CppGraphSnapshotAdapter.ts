@@ -201,6 +201,13 @@ export class CppGraphSnapshotAdapter {
         ? new Map<string, GraphSnapshotProtocol.IShard>()
         : new Map(this.store.shards);
     const touched = new Set<string>();
+    // A shard carries the entities it derived, so a shard that goes away
+    // would take them with it -- and a header's declarations belong to
+    // whichever unit read them first, which may be the unit that was removed.
+    // No delta can do that: a shard owns the only configuration naming its
+    // own compile command, so losing one moves the universe, and a delta that
+    // admits the universe moved is refused and comes back whole. The two
+    // rules leave no delta that both passes validation and carries a delete.
     for (const key of envelope.deletes) {
       if (touched.has(key) || !nextRaw.delete(key)) {
         throw new Error(`C/C++ clang graph: invalid delete ${key}`);
@@ -812,7 +819,12 @@ function reuse(
   // shard tells the same story without any of them holding a second node.
   if (implementation !== undefined && node.implementation === undefined)
     node.implementation = implementation;
-  context.nodes.set(id, node);
+  // Not added to this shard. A shard lists the entities it derived, not every
+  // entity it saw: an entity belongs to the generation once, and the shard
+  // that first derived it is the one that carries it. Listing every naming
+  // instead made 469 shards carry six and a half million entries for the
+  // thirty-eight thousand entities a project has, which is what the walk
+  // spent its time building and the commit spent its time digesting.
   return id;
 }
 
@@ -1200,11 +1212,9 @@ function addEdge(
   // The same edge between the same two entities is drawn by every unit that
   // sees both, and after the first there is nothing new in it. Reusing the
   // instance the walk already made costs a lookup instead of an object.
-  const known = context.canonical.edges.get(key);
-  if (known !== undefined) {
-    context.edges.set(key, known);
-    return;
-  }
+  // Already drawn by an earlier shard, and carried by it. This one names the
+  // same relationship and adds nothing to it.
+  if (context.canonical.edges.has(key)) return;
   const edge: ISamchonGraphEdge = {
     from,
     to,

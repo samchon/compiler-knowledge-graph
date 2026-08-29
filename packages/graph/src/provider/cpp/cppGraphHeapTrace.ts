@@ -117,5 +117,18 @@ export namespace cppGraphHeapTrace {
      */
     nodes: number;
     nodesOffMain: number;
+
+    /**
+     * Distinct entities and relationships the walk has actually derived.
+     *
+     * `nodes` counts namings: every shard lists every entity it saw, so a
+     * header's declarations are counted once per including unit. These count
+     * what was made. The gap between the two is what sharing is worth, and if
+     * there is no gap then two units that read the same header are still
+     * arriving at two different entities -- a different problem than the one
+     * being solved, and one no amount of sharing would fix.
+     */
+    entities: number;
+    relationships: number;
   }
 }

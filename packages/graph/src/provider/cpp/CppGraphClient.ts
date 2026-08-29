@@ -343,6 +343,8 @@ export class CppGraphClient implements IBulkGraphSession {
       adaptMs: split.adaptMs,
       nodes: split.census.nodes,
       nodesOffMain: split.census.offMain,
+      entities: split.census.entities,
+      relationships: split.census.relationships,
     });
   }
 
@@ -389,7 +391,12 @@ export class CppGraphClient implements IBulkGraphSession {
       producerEncodeMs: 0,
       bodyMs: 0,
       adaptMs: 0,
-      census: { nodes: 0, offMain: 0 } as CppGraphSnapshotAdapter.ICensus,
+      census: {
+        nodes: 0,
+        offMain: 0,
+        entities: 0,
+        relationships: 0,
+      } as CppGraphSnapshotAdapter.ICensus,
     };
     let first: ICppGraphSnapshot | undefined;
     let settled: CppGraphSnapshotAdapter.IResult | undefined;

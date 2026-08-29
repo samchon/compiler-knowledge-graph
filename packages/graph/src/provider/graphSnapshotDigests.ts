@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, Hash } from "node:crypto";
 
 import { graphCoverageOf } from "./graphCoverageOf";
 import { graphUnresolvedOf } from "./graphUnresolvedOf";
@@ -78,22 +78,24 @@ export namespace graphSnapshotDigests {
     const sources = [...snapshot.sources]
       .sort(([left], [right]) => compareOrdinal(left, right))
       .map(([file, digest]) => ({ file, ...digest }));
-    return createHash("sha256")
-      .update(
-        canonical({
-          languages: snapshot.languages,
-          nodes: snapshot.nodes,
-          edges: snapshot.edges,
-          diagnostics: snapshot.diagnostics,
-          coverage: graphCoverageOf(snapshot),
-          unresolved: graphUnresolvedOf(snapshot),
-          sources,
-          provenance: snapshot.provenance,
-          protocol: snapshot.protocol,
-          warnings: snapshot.warnings,
-        }),
-      )
-      .digest("hex");
+    // Written into the hash rather than built as one string first. The value
+    // is every fact a generation publishes, and a project large enough makes
+    // that longer than a string is allowed to be -- a limit that has nothing
+    // to do with what is being proved. The bytes are the same either way.
+    const hash = createHash("sha256");
+    canonicalInto(hash, {
+      languages: snapshot.languages,
+      nodes: snapshot.nodes,
+      edges: snapshot.edges,
+      diagnostics: snapshot.diagnostics,
+      coverage: graphCoverageOf(snapshot),
+      unresolved: graphUnresolvedOf(snapshot),
+      sources,
+      provenance: snapshot.provenance,
+      protocol: snapshot.protocol,
+      warnings: snapshot.warnings,
+    });
+    return hash.digest("hex");
   }
 }
 
@@ -110,6 +112,44 @@ export namespace graphSnapshotDigests {
  * and it becomes `null` there for the reason `JSON` does the same: an array's
  * length is part of its meaning, so the hole must keep its place.
  */
+/**
+ * The same bytes {@link canonical} would produce, written into a hash.
+ *
+ * A digest over a whole generation is a digest over every fact in it, and on
+ * a project of any size the text of that is longer than a string may be. The
+ * length is a property of the runtime, not of the thing being proved, so the
+ * bytes go to the hash as they are made rather than being assembled first.
+ */
+function canonicalInto(hash: Hash, value: unknown): void {
+  // No `undefined` arm. This walks a snapshot, whose arrays have no holes and
+  // whose objects drop undefined-valued keys below, so the arm `canonical`
+  // carries for callers that hand it anything would be unreachable here.
+  if (value === null || typeof value !== "object") {
+    hash.update(JSON.stringify(value));
+    return;
+  }
+  if (Array.isArray(value)) {
+    hash.update("[");
+    for (let index = 0; index < value.length; ++index) {
+      if (index !== 0) hash.update(",");
+      canonicalInto(hash, value[index]);
+    }
+    hash.update("]");
+    return;
+  }
+  const entries = Object.entries(value as Record<string, unknown>)
+    .filter(([, entry]) => entry !== undefined)
+    .sort(([left], [right]) => compareOrdinal(left, right));
+  hash.update("{");
+  for (let index = 0; index < entries.length; ++index) {
+    if (index !== 0) hash.update(",");
+    const [key, entry] = entries[index]!;
+    hash.update(`${JSON.stringify(key)}:`);
+    canonicalInto(hash, entry);
+  }
+  hash.update("}");
+}
+
 function canonical(value: unknown): string {
   if (value === undefined) return "null";
   if (value === null || typeof value !== "object") {

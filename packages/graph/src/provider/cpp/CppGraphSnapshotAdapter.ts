@@ -214,7 +214,12 @@ export class CppGraphSnapshotAdapter {
     // so adaptation leaves it empty and `finish` fills it, which is what lets a
     // shard be adapted before the generation is complete.
     const pending = new Map<string, IPendingCoverage>();
-    const census: CppGraphSnapshotAdapter.ICensus = { nodes: 0, offMain: 0 };
+    const census: CppGraphSnapshotAdapter.ICensus = {
+      nodes: 0,
+      offMain: 0,
+      entities: 0,
+      relationships: 0,
+    };
     // One instance per node and per edge, for the whole walk.
     //
     // Shards name the same entity: a header's declarations belong to every
@@ -262,6 +267,8 @@ export class CppGraphSnapshotAdapter {
         census.nodes += adapted.nodes.length;
         for (const node of adapted.nodes)
           if (node.file !== main) census.offMain += 1;
+        census.entities = canonical.nodes.size;
+        census.relationships = canonical.edges.size;
         nextGraph.set(key, adapted);
         pending.set(key, {
           rows: shard.coverage,
@@ -452,6 +459,9 @@ export namespace CppGraphSnapshotAdapter {
   export interface ICensus {
     nodes: number;
     offMain: number;
+    /** Distinct entities and relationships the walk has derived so far. */
+    entities: number;
+    relationships: number;
   }
 
   export interface IResult {

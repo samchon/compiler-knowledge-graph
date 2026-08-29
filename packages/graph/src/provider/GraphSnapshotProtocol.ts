@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, Hash } from "node:crypto";
 import path from "node:path";
 
 import {
@@ -220,7 +220,40 @@ export namespace GraphSnapshotProtocol {
   }
 
   function digest(value: unknown): string {
-    return createHash("sha256").update(canonical(value)).digest("hex");
+    // Written into the hash as it is made. A generation's fact digest covers
+    // every node and edge in it, and on a project of any size the text of
+    // that is longer than a string is allowed to be -- a limit of the runtime
+    // rather than of the thing being proved. The bytes are the same either
+    // way, so the digests are the ones already published.
+    const hash = createHash("sha256");
+    canonicalInto(hash, value);
+    return hash.digest("hex");
+  }
+
+  function canonicalInto(hash: Hash, value: unknown): void {
+    if (value === null || typeof value !== "object") {
+      hash.update(JSON.stringify(value));
+      return;
+    }
+    if (Array.isArray(value)) {
+      hash.update("[");
+      for (let index = 0; index < value.length; ++index) {
+        if (index !== 0) hash.update(",");
+        canonicalInto(hash, value[index]);
+      }
+      hash.update("]");
+      return;
+    }
+    const object = value as Record<string, unknown>;
+    const keys = Object.keys(object).sort(compareText);
+    hash.update("{");
+    for (let index = 0; index < keys.length; ++index) {
+      if (index !== 0) hash.update(",");
+      const key = keys[index]!;
+      hash.update(`${JSON.stringify(key)}:`);
+      canonicalInto(hash, object[key]);
+    }
+    hash.update("}");
   }
 
   function canonical(value: unknown): string {

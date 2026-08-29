@@ -429,6 +429,10 @@ function graphShard(command) {
       range(sharedHeaderUri, 0, 0, 0, 12),
       true,
     );
+    // Owned by something the unit never declares, so every unit that reads
+    // the header names the same unresolved endpoint. The second one to name
+    // it must find the first one's, not make another.
+    shared.ownerUsr = "c:@N@fixture";
     if (definers.includes(mainFile))
       shared.definition = range(mainFileUri, 1, 0, 1, 12);
     // First, not last: the pieces are filed by file, so a body reassembled

@@ -223,9 +223,10 @@ export class CppGraphSnapshotAdapter {
     // walk then holds an array slot per naming rather than a whole node, and
     // a generation costs what the project declares instead of what its units
     // read.
-    const canonical = {
-      nodes: new Map<string, ISamchonGraphNode>(),
-      edges: new Map<string, ISamchonGraphEdge>(),
+    const canonical: ICanonical = {
+      nodes: new Map(),
+      edges: new Map(),
+      ids: new Map(),
     };
     let delivered = 0;
     return {
@@ -248,9 +249,11 @@ export class CppGraphSnapshotAdapter {
           pending.delete(key);
           return;
         }
-        const adapted = intern(
+        const adapted = adaptShard(
+          this.root,
+          envelope.universe.digest,
+          shard,
           canonical,
-          adaptShard(this.root, envelope.universe.digest, shard),
         );
         // A shard is one translation unit's view, so a node whose file is not
         // this unit's main file came from something it included -- and will
@@ -508,6 +511,24 @@ interface IContext {
   files: Map<string, string>;
   edges: Map<string, ISamchonGraphEdge>;
   unresolved: ISamchonGraphUnresolved[];
+  canonical: ICanonical;
+}
+
+/**
+ * What the whole walk has already made of an entity, rather than this shard.
+ *
+ * A node id is a digest of the coordinates the entity has -- and since those
+ * coordinates no longer include the unit that read it, a header's declaration
+ * hashes to the same id in every unit that includes it. Computing it again
+ * per unit was ninety-six percent of a C walk: four hundred and sixty-nine
+ * units named six and a half million nodes, and all but forty thousand of
+ * them were the same declarations seen again from the next unit.
+ */
+interface ICanonical {
+  nodes: Map<string, ISamchonGraphNode>;
+  edges: Map<string, ISamchonGraphEdge>;
+  /** Producer key to node id, for entities whose id does not depend on a unit. */
+  ids: Map<string, string>;
 }
 
 /**
@@ -587,61 +608,11 @@ interface IPendingCoverage {
   mainFileUri: string;
 }
 
-/**
- * Replace a shard's nodes and edges with the walk's canonical instances.
- *
- * Two units that include one header adapt its declarations into equal nodes.
- * Holding both is holding the same fact twice, and a project whose headers
- * are included everywhere holds it once per including unit -- which is what a
- * walk runs out of heap carrying. Keeping the first instance and pointing the
- * rest at it costs an array slot per naming instead of a node.
- *
- * The instance kept is the better informed one: the unit that compiled a
- * definition knows where the implementation is and the units that only
- * included the declaration do not. Shards adapted before it keep pointing at
- * the earlier instance, and the fold that assembles the generation settles
- * between them by the same rule.
- */
-function intern(
-  canonical: {
-    nodes: Map<string, ISamchonGraphNode>;
-    edges: Map<string, ISamchonGraphEdge>;
-  },
-  shard: GraphSnapshotProtocol.IShard,
-): GraphSnapshotProtocol.IShard {
-  shard.nodes = shard.nodes.map((node) => {
-    const prior = canonical.nodes.get(node.id);
-    if (prior === undefined) {
-      canonical.nodes.set(node.id, node);
-      return node;
-    }
-    // What one unit knows and another does not is merged into the instance
-    // they share, rather than kept as a second instance. A unit that compiled
-    // a definition knows where the implementation is; the units that only
-    // included the declaration do not, and they may have been adapted first.
-    // Adding it to the copy they already point at means every shard tells the
-    // same story, and the rule lives in one place instead of being repeated
-    // wherever a generation is assembled.
-    if (prior.implementation === undefined && node.implementation !== undefined)
-      prior.implementation = node.implementation;
-    return prior;
-  });
-  shard.edges = shard.edges.map((edge) => {
-    const key = [edge.kind, edge.from, edge.to].join(String.fromCharCode(0));
-    const prior = canonical.edges.get(key);
-    if (prior === undefined) {
-      canonical.edges.set(key, edge);
-      return edge;
-    }
-    return prior;
-  });
-  return shard;
-}
-
 function adaptShard(
   root: string,
   universe: string,
   shard: ICppGraphSnapshot.IShard,
+  canonical: ICanonical,
 ): GraphSnapshotProtocol.IShard {
   const graph = shard.graph;
   const language = graph.language as GraphLanguage;
@@ -657,6 +628,7 @@ function adaptShard(
     files: new Map(),
     edges: new Map(),
     unresolved: [],
+    canonical,
   };
   for (const source of graph.sources) fileNode(context, source.uri);
   for (const symbol of graph.symbols) symbolNode(context, symbol);
@@ -777,6 +749,67 @@ function scopeOf(
   };
 }
 
+/**
+ * The instance this walk already made for an entity, if it made one.
+ *
+ * A cached instance is reused whole: the id is a digest, and digesting the
+ * same coordinates again to arrive at the same string is the work this
+ * avoids. What one unit knows and the instance does not is merged into it
+ * rather than kept as a second node, so a unit that compiled a definition
+ * still contributes where the implementation is without anyone building a
+ * second copy of the entity.
+ */
+/**
+ * The key an entity is remembered under for the rest of the walk.
+ *
+ * It carries exactly the coordinates the node id is derived from, because
+ * anything the id separates the cache has to separate too. The same header
+ * compiled as C and as C++ declares two entities, not one, and a cache keyed
+ * on the producer's symbol alone would hand a C node to a C++ unit.
+ */
+function canonicalKey(
+  context: IContext,
+  lane: string,
+  file: string,
+  native: string,
+): string {
+  return [lane, context.language, context.graph.targetTriple, file, native].join(
+    String.fromCharCode(0),
+  );
+}
+
+function reuse(
+  context: IContext,
+  key: string | undefined,
+  implementation?: ISamchonGraphEvidence,
+): string | undefined {
+  if (key === undefined) return undefined;
+  const id = context.canonical.ids.get(key);
+  if (id === undefined) return undefined;
+  const node = context.canonical.nodes.get(id)!;
+  // What this unit knows and the instance does not is merged into it. The
+  // unit that compiled a definition knows where the implementation is and
+  // the units that only included the declaration do not, and any of them may
+  // have come first; adding it to the copy they all point at means every
+  // shard tells the same story without any of them holding a second node.
+  if (implementation !== undefined && node.implementation === undefined)
+    node.implementation = implementation;
+  context.nodes.set(id, node);
+  return id;
+}
+
+/** Remember an entity's instance for the units that name it next. */
+function remember(
+  context: IContext,
+  key: string | undefined,
+  id: string,
+  node: ISamchonGraphNode,
+): void {
+  if (key === undefined) return;
+  context.canonical.ids.set(key, id);
+  context.canonical.nodes.set(id, node);
+}
+
 function symbolNode(
   context: IContext,
   symbol: ICppGraphSnapshot.ISymbol,
@@ -796,6 +829,26 @@ function symbolNode(
   );
   const kind = nodeKind(symbol.kind);
   const display = symbol.qualifiedName || symbol.name;
+  // Cacheable when the id does not depend on which unit is speaking: the
+  // entity has a file of its own, and its linkage is not one that gives each
+  // unit a separate entity under the same name.
+  const key =
+    (symbol.declaration.file || symbol.definition.file) !== "" &&
+    !symbol.local &&
+    !symbol.internal &&
+    !symbol.anonymous
+      ? canonicalKey(context, "symbol", declared, symbol.id)
+      : undefined;
+  const implementation =
+    validRange(symbol.definition) &&
+    symbol.definition.file !== symbol.declaration.file
+      ? evidenceOf(context.root, symbol.definition)
+      : undefined;
+  const known = reuse(context, key, implementation);
+  if (known !== undefined) {
+    context.ids.set(symbol.id, known);
+    return known;
+  }
   const id = semanticGraphNodeId(
     {
       version: 2,
@@ -827,12 +880,8 @@ function symbolNode(
     ...(validRange(range) ? { evidence: evidenceOf(context.root, range) } : {}),
     // Where it is implemented, when that is somewhere other than where it is
     // declared. A unit that compiles a definition knows this and a unit that
-    // only included the declaration does not, and they publish the same node:
-    // saying it here is what lets the two be folded into the one that knows.
-    ...(validRange(symbol.definition) &&
-    symbol.definition.file !== symbol.declaration.file
-      ? { implementation: evidenceOf(context.root, symbol.definition) }
-      : {}),
+    // only included the declaration does not, and they publish the same node.
+    ...(implementation === undefined ? {} : { implementation }),
     ...(symbol.attributes.length === 0
       ? {}
       : {
@@ -844,19 +893,27 @@ function symbolNode(
   };
   context.ids.set(symbol.id, id);
   context.nodes.set(id, node);
+  remember(context, key, id, node);
   return id;
 }
 
 function macroNode(context: IContext, macro: ICppGraphSnapshot.IMacro): string {
   const found = context.ids.get(macro.id);
   if (found !== undefined) return found;
-  const file = graphFile(
-    context.root,
-    macro.definition.file ||
-      macro.spelling.file ||
-      macro.expansion.file ||
-      context.graph.mainFileUri,
-  );
+  const spelled =
+    macro.definition.file || macro.spelling.file || macro.expansion.file;
+  const file = graphFile(context.root, spelled || context.graph.mainFileUri);
+  // Cacheable when the macro has a file of its own. One that does not falls
+  // back to the unit's main file, and then its id is this unit's alone.
+  const key =
+    spelled === ""
+      ? undefined
+      : canonicalKey(context, "macro", file, macro.id);
+  const known = reuse(context, key);
+  if (known !== undefined) {
+    context.ids.set(macro.id, known);
+    return known;
+  }
   const id = semanticGraphNodeId(
     {
       version: 2,
@@ -869,8 +926,7 @@ function macroNode(context: IContext, macro: ICppGraphSnapshot.IMacro): string {
     },
     macro.name,
   );
-  context.ids.set(macro.id, id);
-  context.nodes.set(id, {
+  const node: ISamchonGraphNode = {
     id,
     kind: "variable",
     language: context.language,
@@ -880,7 +936,10 @@ function macroNode(context: IContext, macro: ICppGraphSnapshot.IMacro): string {
     ...(validRange(macro.definition)
       ? { evidence: evidenceOf(context.root, macro.definition) }
       : {}),
-  });
+  };
+  context.ids.set(macro.id, id);
+  context.nodes.set(id, node);
+  remember(context, key, id, node);
   return id;
 }
 
@@ -893,6 +952,17 @@ function moduleNode(
   const found = context.ids.get(raw);
   if (found !== undefined) return found;
   const file = graphFile(context.root, range.file || context.graph.mainFileUri);
+  // Cacheable when the evidence names a file. Without one the module is
+  // placed in whichever unit saw it, and that placement is not shared.
+  const key =
+    range.file === ""
+      ? undefined
+      : canonicalKey(context, "module", file, raw);
+  const known = reuse(context, key);
+  if (known !== undefined) {
+    context.ids.set(raw, known);
+    return known;
+  }
   const id = semanticGraphNodeId(
     {
       version: 2,
@@ -905,15 +975,17 @@ function moduleNode(
     },
     name,
   );
-  context.ids.set(raw, id);
-  context.nodes.set(id, {
+  const node: ISamchonGraphNode = {
     id,
     kind: "module",
     language: context.language,
     name,
     file,
     external: isExternal(file),
-  });
+  };
+  context.ids.set(raw, id);
+  context.nodes.set(id, node);
+  remember(context, key, id, node);
   return id;
 }
 
@@ -922,6 +994,14 @@ function fileNode(context: IContext, uri: string): string {
   const found = context.files.get(key);
   if (found !== undefined) return found;
   const file = graphFile(context.root, key);
+  // A file is the same file in every unit that read it, so its node is made
+  // once for the walk.
+  const shared = canonicalKey(context, "file", file, key);
+  const known = reuse(context, shared);
+  if (known !== undefined) {
+    context.files.set(key, known);
+    return known;
+  }
   const id = semanticGraphNodeId(
     {
       version: 2,
@@ -934,8 +1014,7 @@ function fileNode(context: IContext, uri: string): string {
     },
     file,
   );
-  context.files.set(key, id);
-  context.nodes.set(id, {
+  const node: ISamchonGraphNode = {
     id,
     kind: "file",
     language: context.language,
@@ -943,7 +1022,10 @@ function fileNode(context: IContext, uri: string): string {
     qualifiedName: file,
     file,
     external: isExternal(file),
-  });
+  };
+  context.files.set(key, id);
+  context.nodes.set(id, node);
+  remember(context, shared, id, node);
   return id;
 }
 
@@ -951,6 +1033,14 @@ function endpoint(context: IContext, raw: string): string {
   const found = context.ids.get(raw);
   if (found !== undefined) return found;
   const name = raw;
+  // An unresolved endpoint is named the same way by every unit that mentions
+  // it, and it carries no file, so nothing about it is this unit's.
+  const shared = canonicalKey(context, "external", "", raw);
+  const known = reuse(context, shared);
+  if (known !== undefined) {
+    context.ids.set(raw, known);
+    return known;
+  }
   const id = semanticGraphNodeId(
     {
       version: 2,
@@ -963,15 +1053,17 @@ function endpoint(context: IContext, raw: string): string {
     },
     name,
   );
-  context.ids.set(raw, id);
-  context.nodes.set(id, {
+  const node: ISamchonGraphNode = {
     id,
     kind: "external_symbol",
     language: context.language,
     name,
     file: "bundled:///clang/external",
     external: true,
-  });
+  };
+  context.ids.set(raw, id);
+  context.nodes.set(id, node);
+  remember(context, shared, id, node);
   return id;
 }
 
@@ -1080,14 +1172,24 @@ function addEdge(
   range: ICppGraphSnapshot.IRange,
 ): void {
   if (from === to) return;
-  const key = `${from}\0${to}\0${kind}`;
+  const key = [from, to, kind].join(String.fromCharCode(0));
   if (context.edges.has(key)) return;
-  context.edges.set(key, {
+  // The same edge between the same two entities is drawn by every unit that
+  // sees both, and after the first there is nothing new in it. Reusing the
+  // instance the walk already made costs a lookup instead of an object.
+  const known = context.canonical.edges.get(key);
+  if (known !== undefined) {
+    context.edges.set(key, known);
+    return;
+  }
+  const edge: ISamchonGraphEdge = {
     from,
     to,
     kind,
     ...(validRange(range) ? { evidence: evidenceOf(context.root, range) } : {}),
-  });
+  };
+  context.edges.set(key, edge);
+  context.canonical.edges.set(key, edge);
 }
 
 function preferredRange(

@@ -301,7 +301,9 @@ function assertCrossVolumeIdentity(
     diskDigest: sha256("foreign disk source"),
     flags: 0,
   });
-  graph.symbols[0]!.definition.file = foreignUri;
+  // The caller, by name: a fixture's symbol order is not this test's subject.
+  graph.symbols.find((symbol) => symbol.name === "caller")!.definition.file =
+    foreignUri;
   resealSnapshot(candidate);
   const snapshot = new CppGraphSnapshotAdapter(root, COMMIT).apply(
     candidate,
@@ -1393,6 +1395,12 @@ function nativeInterfaceFingerprint(graph: ICppGraphSnapshot.ITU): string {
       .map(
         (symbol) =>
           `${lengthPrefixed(symbol.id)}${lengthPrefixed(symbol.signature)}`,
+      )
+      // Ordered by bytes, as the producer does. An interface is what a unit
+      // exports, and a body published in pieces comes back in a different
+      // order than it left.
+      .sort((left, right) =>
+        Buffer.compare(Buffer.from(left, "utf8"), Buffer.from(right, "utf8")),
       )
       .join(""),
   );

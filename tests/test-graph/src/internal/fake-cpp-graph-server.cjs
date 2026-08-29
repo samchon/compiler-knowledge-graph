@@ -431,7 +431,11 @@ function graphShard(command) {
     );
     if (definers.includes(mainFile))
       shared.definition = range(mainFileUri, 1, 0, 1, 12);
-    symbols.push(shared);
+    // First, not last: the pieces are filed by file, so a body reassembled
+    // from them returns the header's symbols after the main file's. Putting
+    // this one where reassembly cannot leave it is what makes the fixture
+    // prove that the interface fingerprint does not depend on the order.
+    symbols.unshift(shared);
   }
   const graph = {
     producerFingerprint: producerFingerprint({
@@ -513,10 +517,16 @@ function graphShard(command) {
     });
   }
   const key = `${mainFileUri}#${commandDigest}`;
+  // Ordered by bytes, as the producer does: an interface is what a unit
+  // exports, and a body that was published in pieces comes back reassembled
+  // in a different order than it left.
   const interfaceFingerprint = digest(
     symbols
       .filter((entry) => entry.exported)
       .map((entry) => `${lengthPrefixed(entry.id)}${lengthPrefixed(entry.signature)}`)
+      .sort((left, right) =>
+        Buffer.compare(Buffer.from(left, "utf8"), Buffer.from(right, "utf8")),
+      )
       .join(""),
   );
   const shard = {

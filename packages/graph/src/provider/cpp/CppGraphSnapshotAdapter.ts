@@ -1801,11 +1801,19 @@ function graphField(value: string): string {
  * signature, in the order the translation unit published them.
  */
 function interfaceFingerprintOf(graph: ICppGraphSnapshot.ITU): string {
-  let material = "";
-  for (const symbol of graph.symbols) {
-    if (!symbol.exported) continue;
-    material += `${graphField(symbol.id)}${graphField(symbol.signature)}`;
-  }
+  // Ordered by id, because an interface is what a unit exports, not the
+  // sequence a compiler happened to walk it in. A body arrives reassembled
+  // from the pieces it was published as, and the pieces are filed by the file
+  // each fact was found in -- so the symbols come back in a different order
+  // than they left, and a fingerprint that depended on that order would
+  // reject every body the producer split.
+  const material = graph.symbols
+    .filter((symbol) => symbol.exported)
+    .map((symbol) => `${graphField(symbol.id)}${graphField(symbol.signature)}`)
+    .sort((left, right) =>
+      Buffer.compare(Buffer.from(left, "utf8"), Buffer.from(right, "utf8")),
+    )
+    .join("");
   return sha256(material);
 }
 

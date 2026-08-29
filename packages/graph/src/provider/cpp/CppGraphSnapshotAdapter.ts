@@ -394,14 +394,19 @@ export class CppGraphSnapshotAdapter {
             fullFrames.push({
               type: "upsertShard",
               digest: entry.digest,
-              // `Store.apply` deep-clones every shard it retains, so a copy
-              // here is a copy the store immediately copies again.
               shard: nextGraph.get(entry.key)!,
             });
           }
           fullFrames.push(commit);
+          // Adopted, like the store that keeps the result. This one exists to
+          // prove the delta rebuilds what a full load would and is dropped on
+          // the next line, so the generation it holds is the same one already
+          // in hand -- copying it deeply meant deserializing a second whole
+          // graph beside the first, which is where a delta ran out of heap
+          // after a walk that had finished.
           new GraphSnapshotProtocol.Store(this.root).apply(fullFrames, {
             validate,
+            adopt: true,
           });
         }
         // Adopted, not copied. `nextGraph` is built here and released as

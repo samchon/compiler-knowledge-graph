@@ -736,12 +736,15 @@ function adaptShard(
  * it could commit a generation.
  *
  * So the coordinates are the ones the entity actually has -- the target it is
- * built for and the file it is written in. Entities that are genuinely
- * distinct stay distinct: `native.key` carries the producer's own id, which
- * already adds a declaring-file or owner coordinate wherever a raw USR can
- * collide, and an entity that is per-unit by definition -- one with internal
- * linkage, or no linkage at all -- keeps the unit in its scope, because two
- * units that include it really do have two of them.
+ * built for and the file it is written in. Entities that share a file are
+ * separated by `native.key`, the producer's own symbol id, which already adds
+ * a declaring-file or owner coordinate wherever a raw USR would collide.
+ *
+ * Only an entity with no file at all keeps the unit in its scope, because
+ * nothing else places it. Linkage is not the test: the parameters and members
+ * a header declares have no linkage and are still one declaration, and making
+ * them per-unit gave libuv six and a half million nodes for a project that
+ * declares a small fraction of that.
  */
 function scopeOf(
   context: IContext,
@@ -839,16 +842,25 @@ function symbolNode(
   );
   const kind = nodeKind(symbol.kind);
   const display = symbol.qualifiedName || symbol.name;
-  // Cacheable when the id does not depend on which unit is speaking: the
-  // entity has a file of its own, and its linkage is not one that gives each
-  // unit a separate entity under the same name.
+  // An entity with a file of its own is that file's, not the reading unit's.
+  //
+  // Linkage was the rule here before, and it was the wrong one: the
+  // parameters and members a header declares have no linkage, so every unit
+  // that included the header got its own copy of each. On libuv that was six
+  // and a half million nodes for a project that declares a small fraction of
+  // that, and it is why a walk cost minutes and a generation could not be
+  // serialized at all.
+  //
+  // What separates two entities that share a file is the producer's own
+  // symbol id, which already adds a declaring-file or owner coordinate
+  // wherever a raw USR would collide -- so the file and that id are the
+  // coordinates, and the unit is not one of them. Only an entity with no file
+  // at all falls back to the unit that saw it, because nothing else places
+  // it.
   const key =
-    (symbol.declaration.file || symbol.definition.file) !== "" &&
-    !symbol.local &&
-    !symbol.internal &&
-    !symbol.anonymous
-      ? canonicalKey(context, "symbol", declared, symbol.id)
-      : undefined;
+    (symbol.declaration.file || symbol.definition.file) === ""
+      ? undefined
+      : canonicalKey(context, "symbol", declared, symbol.id);
   const implementation =
     validRange(symbol.definition) &&
     symbol.definition.file !== symbol.declaration.file
@@ -866,11 +878,7 @@ function symbolNode(
       symbol: symbol.id,
       role: kind,
       native: { key: symbol.id, stability: "semantic" },
-      scope: scopeOf(
-        context,
-        declared,
-        symbol.local || symbol.internal || symbol.anonymous,
-      ),
+      scope: scopeOf(context, declared, key === undefined),
       stability: "persistent",
     },
     display,

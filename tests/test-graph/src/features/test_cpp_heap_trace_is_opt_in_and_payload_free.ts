@@ -50,6 +50,8 @@ export const test_cpp_heap_trace_is_opt_in_and_payload_free = async () => {
     adaptMs: 150,
     nodes: 900,
     nodesOffMain: 810,
+    entities: 240,
+    relationships: 310,
   });
   trace.stage("paged", 242, {
     elapsedMs: 1_500,
@@ -60,6 +62,8 @@ export const test_cpp_heap_trace_is_opt_in_and_payload_free = async () => {
     adaptMs: 300,
     nodes: 3_400,
     nodesOffMain: 3_060,
+    entities: 760,
+    relationships: 980,
   });
   trace.stage("committed", 242, {
     elapsedMs: 90_250.7,
@@ -70,6 +74,8 @@ export const test_cpp_heap_trace_is_opt_in_and_payload_free = async () => {
     adaptMs: 88_000.4,
     nodes: 3_400,
     nodesOffMain: 3_060,
+    entities: 760,
+    relationships: 980,
   });
   TestValidator.equals(
     "each stage reports counts and megabytes, and nothing that names code",
@@ -77,15 +83,15 @@ export const test_cpp_heap_trace_is_opt_in_and_payload_free = async () => {
     [
       "@samchon/graph: cpp-heap stage=walking shards=64 elapsedMs=900 " +
         "producerMs=700 producerFetchMs=610 producerEncodeMs=90 " +
-        "bodyMs=40 adaptMs=150 nodes=900 nodesOffMain=810 " +
+        "bodyMs=40 adaptMs=150 nodes=900 nodesOffMain=810 entities=240 relationships=310 " +
         "heapUsedMiB=1 heapTotalMiB=2 rssMiB=3\n",
       "@samchon/graph: cpp-heap stage=paged shards=242 elapsedMs=1500 " +
         "producerMs=1100 producerFetchMs=940 producerEncodeMs=160 " +
-        "bodyMs=70 adaptMs=300 nodes=3400 nodesOffMain=3060 " +
+        "bodyMs=70 adaptMs=300 nodes=3400 nodesOffMain=3060 entities=760 relationships=980 " +
         "heapUsedMiB=1 heapTotalMiB=2 rssMiB=3\n",
       "@samchon/graph: cpp-heap stage=committed shards=242 elapsedMs=90251 " +
         "producerMs=1100 producerFetchMs=940 producerEncodeMs=160 " +
-        "bodyMs=70 adaptMs=88000 nodes=3400 nodesOffMain=3060 " +
+        "bodyMs=70 adaptMs=88000 nodes=3400 nodesOffMain=3060 entities=760 relationships=980 " +
         "heapUsedMiB=1 heapTotalMiB=2 rssMiB=3\n",
     ],
   );
@@ -111,6 +117,8 @@ export const test_cpp_heap_trace_is_opt_in_and_payload_free = async () => {
     adaptMs: 0,
     nodes: 0,
     nodesOffMain: 0,
+    entities: 760,
+    relationships: 980,
   });
   TestValidator.equals(
     "a failed heap sink is reached, contained, and emits nothing",
@@ -135,6 +143,8 @@ export const test_cpp_heap_trace_is_opt_in_and_payload_free = async () => {
     adaptMs: 0,
     nodes: 0,
     nodesOffMain: 0,
+    entities: 760,
+    relationships: 980,
   }),
     undefined,
   );
@@ -158,7 +168,7 @@ export const test_cpp_heap_trace_is_opt_in_and_payload_free = async () => {
       "    undefined,",
       "    () => ({ rss: 7340032, heapTotal: 5242880, heapUsed: 4194304, external: 0, arrayBuffers: 0 }),",
       "  );",
-      "  trace.stage('committed', 5, { elapsedMs: 12, producerMs: 3, producerFetchMs: 2, producerEncodeMs: 1, bodyMs: 2, adaptMs: 4, nodes: 7, nodesOffMain: 5 });",
+      "  trace.stage('committed', 5, { elapsedMs: 12, producerMs: 3, producerFetchMs: 2, producerEncodeMs: 1, bodyMs: 2, adaptMs: 4, nodes: 7, nodesOffMain: 5, entities: 4, relationships: 6 });",
       "})().catch((error) => { throw error; });",
     ].join("\n"),
     { eval: true, stderr: true },
@@ -185,6 +195,7 @@ export const test_cpp_heap_trace_is_opt_in_and_payload_free = async () => {
       "@samchon/graph: cpp-heap stage=committed shards=5 elapsedMs=12 " +
         "producerMs=3 producerFetchMs=2 producerEncodeMs=1 " +
         "bodyMs=2 adaptMs=4 nodes=7 nodesOffMain=5 " +
+        "entities=4 relationships=6 " +
         "heapUsedMiB=4 heapTotalMiB=5 rssMiB=7\n",
     ],
   );

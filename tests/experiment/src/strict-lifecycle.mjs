@@ -70,7 +70,7 @@ export const runStrictLifecycle = async (experiment, pinnedRoot) => {
       mode,
       elapsedMs,
       changed: dump !== next,
-      outputBytes: Buffer.byteLength(JSON.stringify(next), "utf8"),
+      outputBytes: jsonBytes(next),
       manifest: provenance.manifest,
       content: provenance.content,
       universe: provenance.universe,
@@ -716,3 +716,48 @@ function normalizedPublicationPlane(dump, plane) {
 const SEPARATOR = String.fromCharCode(0);
 
 const CHANGED_MODES = ["reload", "incremental", "rebuild"];
+
+/**
+ * How many bytes `JSON.stringify` would produce, without producing them.
+ *
+ * A snapshot of a real project is longer than a string is allowed to be, and
+ * measuring it by building it killed a run that had otherwise finished. The
+ * count is the same; only the string is not made.
+ */
+function jsonBytes(value) {
+  let total = 0;
+  const add = (text) => {
+    total += Buffer.byteLength(text, "utf8");
+  };
+  const walk = (entry) => {
+    if (entry === null || typeof entry !== "object") {
+      add(JSON.stringify(entry) ?? "null");
+      return;
+    }
+    if (Array.isArray(entry)) {
+      add("[");
+      entry.forEach((item, index) => {
+        if (index !== 0) add(",");
+        walk(item);
+      });
+      add("]");
+      return;
+    }
+    if (entry instanceof Map) {
+      walk(Object.fromEntries(entry));
+      return;
+    }
+    const keys = Object.keys(entry).filter(
+      (key) => entry[key] !== undefined && typeof entry[key] !== "function",
+    );
+    add("{");
+    keys.forEach((key, index) => {
+      if (index !== 0) add(",");
+      add(`${JSON.stringify(key)}:`);
+      walk(entry[key]);
+    });
+    add("}");
+  };
+  walk(value);
+  return total;
+}

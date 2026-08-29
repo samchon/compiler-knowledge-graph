@@ -47,6 +47,8 @@ export function cppGraphHeapTrace(
             ` adaptMs=${ms(split.adaptMs)}` +
             ` nodes=${String(split.nodes)}` +
             ` nodesOffMain=${String(split.nodesOffMain)}` +
+            ` entities=${String(split.entities)}` +
+            ` relationships=${String(split.relationships)}` +
             ` heapUsedMiB=${mib(memory.heapUsed)}` +
             ` heapTotalMiB=${mib(memory.heapTotal)}` +
             ` rssMiB=${mib(memory.rss)}\n`,

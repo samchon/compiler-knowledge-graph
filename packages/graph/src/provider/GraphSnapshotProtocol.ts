@@ -581,7 +581,7 @@ export namespace GraphSnapshotProtocol {
     const edges: ISamchonGraphEdge[] = [];
     const diagnostics: ISamchonGraphDiagnostic[] = [];
     const seenNodes = new Set<string>();
-    const seenEdges = new Set<string>();
+    const seenEdges = new Map<string, Map<string, Set<string>>>();
     const seenDiagnostics = new Set<string>();
     for (const shard of shards) {
       for (const node of shard.nodes) foldNode(nodes, seenNodes, node);
@@ -621,12 +621,25 @@ export namespace GraphSnapshotProtocol {
   /** Keep one edge per endpoint pair and kind, for the same reason. */
   function foldEdge(
     edges: ISamchonGraphEdge[],
-    seen: Set<string>,
+    seen: Map<string, Map<string, Set<string>>>,
     edge: ISamchonGraphEdge,
   ): void {
-    const key = [edge.kind, edge.from, edge.to].join(String.fromCharCode(0));
-    if (seen.has(key)) return;
-    seen.add(key);
+    // Nested rather than keyed by a joined string. An endpoint id is a
+    // hundred characters and a generation has hundreds of thousands of
+    // relationships, so joining three of them to ask whether a pair has been
+    // seen allocated more than the answer was worth.
+    let byTo = seen.get(edge.from);
+    if (byTo === undefined) {
+      byTo = new Map();
+      seen.set(edge.from, byTo);
+    }
+    let kinds = byTo.get(edge.to);
+    if (kinds === undefined) {
+      kinds = new Set();
+      byTo.set(edge.to, kinds);
+    }
+    if (kinds.has(edge.kind)) return;
+    kinds.add(edge.kind);
     edges.push(edge);
   }
 
@@ -670,7 +683,7 @@ export namespace GraphSnapshotProtocol {
     const unresolved: ISamchonGraphUnresolved[] = [];
     const sources = new Map<string, IBulkGraphSession.ISourceDigest>();
     const seenNodes = new Set<string>();
-    const seenEdges = new Set<string>();
+    const seenEdges = new Map<string, Map<string, Set<string>>>();
     const seenDiagnostics = new Set<string>();
     for (const entry of manifest) {
       const shard = shards.get(entry.key)!.shard;

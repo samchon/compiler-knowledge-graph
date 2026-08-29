@@ -238,6 +238,7 @@ export class CppGraphSnapshotAdapter {
     const canonical: ICanonical = {
       nodes: new Map(),
       edges: new Map(),
+      drawn: { count: 0 },
       ids: new Map(),
     };
     let delivered = 0;
@@ -275,7 +276,7 @@ export class CppGraphSnapshotAdapter {
         for (const node of adapted.nodes)
           if (node.file !== main) census.offMain += 1;
         census.entities = canonical.nodes.size;
-        census.relationships = canonical.edges.size;
+        census.relationships = canonical.drawn.count;
         nextGraph.set(key, adapted);
         pending.set(key, {
           rows: shard.coverage,
@@ -531,7 +532,7 @@ interface IContext {
   nodes: Map<string, ISamchonGraphNode>;
   ids: Map<string, string>;
   files: Map<string, string>;
-  edges: Map<string, ISamchonGraphEdge>;
+  edges: ISamchonGraphEdge[];
   unresolved: ISamchonGraphUnresolved[];
   canonical: ICanonical;
 }
@@ -548,7 +549,11 @@ interface IContext {
  */
 interface ICanonical {
   nodes: Map<string, ISamchonGraphNode>;
-  edges: Map<string, ISamchonGraphEdge>;
+  edges: Map<string, Map<string, Set<GraphEdgeKind>>>;
+  /** How many distinct relationships the walk has drawn. The edge map is
+   * nested by endpoint, so its size counts subjects rather than edges. */
+  drawn: { count: number };
+
   /** Producer key to node id, for entities whose id does not depend on a unit. */
   ids: Map<string, string>;
 }
@@ -648,7 +653,7 @@ function adaptShard(
     nodes: new Map(),
     ids: new Map(),
     files: new Map(),
-    edges: new Map(),
+    edges: [],
     unresolved: [],
     canonical,
   };
@@ -725,7 +730,7 @@ function adaptShard(
     nodes: [...context.nodes.values()].sort((left, right) =>
       compareText(left.id, right.id),
     ),
-    edges: [...context.edges.values()].sort(compareEdge),
+    edges: context.edges.sort(compareEdge),
     diagnostics,
     coverage,
     unresolved: context.unresolved,
@@ -1207,22 +1212,33 @@ function addEdge(
   range: ICppGraphSnapshot.IRange,
 ): void {
   if (from === to) return;
-  const key = [from, to, kind].join(String.fromCharCode(0));
-  if (context.edges.has(key)) return;
-  // The same edge between the same two entities is drawn by every unit that
-  // sees both, and after the first there is nothing new in it. Reusing the
-  // instance the walk already made costs a lookup instead of an object.
-  // Already drawn by an earlier shard, and carried by it. This one names the
-  // same relationship and adds nothing to it.
-  if (context.canonical.edges.has(key)) return;
-  const edge: ISamchonGraphEdge = {
+  // Remembered as a pair rather than under a joined key. An endpoint id is a
+  // hundred characters and a unit draws one edge per occurrence it saw, so
+  // building a three-hundred-character string to ask whether a relationship
+  // is already known cost more than the answer.
+  //
+  // The same relationship between the same two entities is drawn by every
+  // unit that sees both; after the first there is nothing new in it, and the
+  // shard that drew it is the one that carries it.
+  let byTo = context.canonical.edges.get(from);
+  if (byTo === undefined) {
+    byTo = new Map();
+    context.canonical.edges.set(from, byTo);
+  }
+  let kinds = byTo.get(to);
+  if (kinds === undefined) {
+    kinds = new Set();
+    byTo.set(to, kinds);
+  }
+  if (kinds.has(kind)) return;
+  kinds.add(kind);
+  context.canonical.drawn.count += 1;
+  context.edges.push({
     from,
     to,
     kind,
     ...(validRange(range) ? { evidence: evidenceOf(context.root, range) } : {}),
-  };
-  context.edges.set(key, edge);
-  context.canonical.edges.set(key, edge);
+  });
 }
 
 function preferredRange(

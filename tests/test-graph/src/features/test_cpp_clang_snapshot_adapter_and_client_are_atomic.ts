@@ -882,6 +882,36 @@ async function assertClientReadsPublishedBodies(root: string): Promise<void> {
       // the split had bought nothing.
       [true, true, 7, true],
     );
+    // The same generation out of a cache that keeps nothing.
+    //
+    // Pieces are kept parsed only to save reading them again, and a walk over
+    // a real compilation database is the only thing that reaches the budget
+    // where the oldest start being dropped. A budget of one byte reaches it
+    // on the first piece, so every naming reads the file again -- and what
+    // comes out has to be the same generation, or the cache is not a cache,
+    // it is part of the answer.
+    const frugal = cppClient(root, [`--body-root=${bodyRoot}`], {
+      pieceBudgetBytes: 1,
+    });
+    try {
+      const spare = await frugal.refresh();
+      TestValidator.equals(
+        "a cache that keeps nothing publishes the generation a cache that keeps everything does",
+        [
+          spare.snapshot.nodes.length,
+          spare.snapshot.edges.length,
+          spare.snapshot.sources.size,
+        ],
+        [
+          refreshed.snapshot.nodes.length,
+          refreshed.snapshot.edges.length,
+          refreshed.snapshot.sources.size,
+        ],
+      );
+    } finally {
+      await frugal.close();
+    }
+
     // A body read from a file is still a body the digest chain answers for:
     // `assertShard` rebuilds that chain from what it was handed, so bytes
     // swapped underneath a published name are refused rather than adapted.
@@ -1331,6 +1361,7 @@ function cppClient(
   options: {
     initializationOptions?: unknown;
     readyTimeoutMs?: number;
+    pieceBudgetBytes?: number;
     validate?: () => void;
   } = {},
 ): CppGraphClient {
@@ -1343,6 +1374,9 @@ function cppClient(
     initializationOptions: options.initializationOptions,
     requestTimeoutMs: 5_000,
     readyTimeoutMs: options.readyTimeoutMs ?? 10_000,
+    ...(options.pieceBudgetBytes === undefined
+      ? {}
+      : { pieceBudgetBytes: options.pieceBudgetBytes }),
     validate: options.validate,
   });
 }

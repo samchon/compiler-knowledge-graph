@@ -19,6 +19,16 @@ const GRAPH_METHOD = "samchon/graphSnapshot";
 const SERVER_CANCELLED = -32802;
 const CONTENT_MODIFIED = -32801;
 const DEFAULT_READY_TIMEOUT_MS = 300_000;
+/**
+ * How much published-body text this consumer keeps parsed at once.
+ *
+ * A piece is kept only to save reading it again, and a walk names the same
+ * headers over and over -- which is the whole reason bodies are split by
+ * file. But one C++ unit's facts run to hundreds of megabytes, and keeping
+ * every piece a project ever published is a second copy of the project
+ * standing beside the graph being built from it.
+ */
+const PIECE_BUDGET_BYTES = 256 * 1024 * 1024;
 const RETRY_DELAY_MS = 50;
 const MAX_RETRY_DELAY_MS = 5_000;
 // A page size balances two costs that pull against each other, and the first
@@ -71,6 +81,7 @@ export class CppGraphClient implements IBulkGraphSession {
   private readonly initializationOptions: unknown;
   private readonly requestTimeoutMs: number | undefined;
   private readonly readyTimeoutMs: number;
+  private readonly pieceBudgetBytes: number;
   private readonly lifecycleAbort = new AbortController();
   private queue: Promise<void> = Promise.resolve();
   private initialized: Promise<void> | undefined;
@@ -91,6 +102,7 @@ export class CppGraphClient implements IBulkGraphSession {
     this.initializationOptions = options.initializationOptions;
     this.requestTimeoutMs = options.requestTimeoutMs;
     this.readyTimeoutMs = options.readyTimeoutMs ?? DEFAULT_READY_TIMEOUT_MS;
+    this.pieceBudgetBytes = options.pieceBudgetBytes ?? PIECE_BUDGET_BYTES;
     this.lsp = new LspClient(
       options.command,
       options.args ?? [],
@@ -403,6 +415,8 @@ export class CppGraphClient implements IBulkGraphSession {
     // header's piece is named by every unit that includes it, and reading it
     // once is the whole reason bodies are split before they are published.
     const pieces = new Map<string, ICppGraphSnapshot.ITU>();
+    const pieceBytes = new Map<string, number>();
+    const pieceBudget = { held: 0, limit: this.pieceBudgetBytes };
     const split = {
       startedAt,
       producerMs: 0,
@@ -480,7 +494,8 @@ export class CppGraphClient implements IBulkGraphSession {
       // a `json::Value` tree of the body, serializing it, and reading the body
       // off disk only to put the same bytes back through a socket.
       const readAt = performance.now();
-      for (const shard of page.upserts) readGraphBody(shard, pieces);
+      for (const shard of page.upserts)
+        readGraphBody(shard, pieces, pieceBytes, pieceBudget);
       split.bodyMs += performance.now() - readAt;
       const adaptedAt = performance.now();
       for (const shard of page.upserts) ingest?.shard(shard);
@@ -573,6 +588,14 @@ export namespace CppGraphClient {
     initializationOptions?: unknown;
     requestTimeoutMs?: number;
     readyTimeoutMs?: number;
+
+    /**
+     * How much published-body text to keep parsed at once.
+     *
+     * Only a walk over a real compilation database reaches the default, so a
+     * fixture that has to prove what happens past it says so here.
+     */
+    pieceBudgetBytes?: number;
     maxMessageBytes?: number;
     windowsVerbatimArguments?: boolean;
     validate?: (snapshot: IBulkGraphSession.ISnapshot) => void;
@@ -734,6 +757,8 @@ const PIECE_LISTS = [
 function readGraphBody(
   shard: ICppGraphSnapshot.IShard,
   pieces: Map<string, ICppGraphSnapshot.ITU>,
+  bytes: Map<string, number>,
+  budget: { held: number; limit: number },
 ): void {
   // A page's shards arrive from `JSON.parse`, so `graph` is absent in fact
   // whenever the producer published paths instead -- the declared type is
@@ -747,7 +772,14 @@ function readGraphBody(
   }
   const read = (file: string): ICppGraphSnapshot.ITU => {
     const known = pieces.get(file);
-    if (known !== undefined) return known;
+    if (known !== undefined) {
+      // Moved to the end of the map, so what is dropped when the budget is
+      // reached is what has gone longest without being named. A header the
+      // whole project includes is named constantly and never leaves.
+      pieces.delete(file);
+      pieces.set(file, known);
+      return known;
+    }
     let text: string;
     try {
       text = fs.readFileSync(file, "utf8");
@@ -776,6 +808,25 @@ function readGraphBody(
         );
       }
     pieces.set(file, piece);
+    // Bounded, because a piece is only kept to save reading it again.
+    //
+    // A walk names the same headers over and over, which is why keeping them
+    // parsed is worth anything at all; but one C++ unit's facts run to
+    // hundreds of megabytes, and keeping every piece a whole project ever
+    // published is a second copy of the project in memory beside the graph
+    // being built from it. Past the budget the least recently named pieces
+    // are dropped: reading one again costs a file read, and holding one that
+    // nothing is naming costs the run.
+    // Recorded before anything is dropped, so the two maps are never out of
+    // step and a size is never missing for a piece that is present.
+    bytes.set(file, text.length);
+    budget.held += text.length;
+    while (budget.held > budget.limit && pieces.size > 1) {
+      const oldest = pieces.keys().next().value!;
+      budget.held -= bytes.get(oldest)!;
+      bytes.delete(oldest);
+      pieces.delete(oldest);
+    }
     return piece;
   };
   // The first piece is the main file's, which carries the unit's identity and

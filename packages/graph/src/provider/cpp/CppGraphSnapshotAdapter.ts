@@ -1478,7 +1478,7 @@ function factsOf(
     edges: folded.edges,
     diagnostics: folded.diagnostics,
     coverage: shards.flatMap((shard) => shard.coverage),
-    unresolved: shards.flatMap((shard) => shard.unresolved),
+    unresolved: folded.unresolved,
     provenance: {
       provider: hello.provider,
       authority: hello.authority,

@@ -555,20 +555,25 @@ export namespace GraphSnapshotProtocol {
     nodes: ISamchonGraphNode[];
     edges: ISamchonGraphEdge[];
     diagnostics: ISamchonGraphDiagnostic[];
+    unresolved: ISamchonGraphUnresolved[];
   } {
     const nodes: ISamchonGraphNode[] = [];
     const edges: ISamchonGraphEdge[] = [];
     const diagnostics: ISamchonGraphDiagnostic[] = [];
+    const unresolved: ISamchonGraphUnresolved[] = [];
     const seenNodes = new Set<string>();
     const seenEdges = new Map<string, Map<string, Set<string>>>();
     const seenDiagnostics = new Set<string>();
+    const seenUnresolved = new Set<string>();
     for (const shard of shards) {
       for (const node of shard.nodes) foldNode(nodes, seenNodes, node);
       for (const edge of shard.edges) foldEdge(edges, seenEdges, edge);
       for (const row of shard.diagnostics)
         foldDiagnostic(diagnostics, seenDiagnostics, row);
+      for (const site of shard.unresolved)
+        foldUnresolved(unresolved, seenUnresolved, site);
     }
-    return { nodes, edges, diagnostics };
+    return { nodes, edges, diagnostics, unresolved };
   }
 
   /**
@@ -595,6 +600,25 @@ export namespace GraphSnapshotProtocol {
     nodes.push(node);
     // Kept, not compared: a provider that publishes the same node from two
     // shards publishes the same node.
+  }
+
+  /**
+   * Keep one unresolved site per description.
+   *
+   * A site says a provider could not resolve something, where, and what it
+   * might have been. Two occurrences that fail the same way at the same place
+   * say it once between them, and a generation that carried both is a
+   * generation that reports one gap twice.
+   */
+  function foldUnresolved(
+    unresolved: ISamchonGraphUnresolved[],
+    seen: Set<string>,
+    site: ISamchonGraphUnresolved,
+  ): void {
+    const key = canonicalFactText(site);
+    if (seen.has(key)) return;
+    seen.add(key);
+    unresolved.push(site);
   }
 
   /** Keep one edge per endpoint pair and kind, for the same reason. */
@@ -664,6 +688,7 @@ export namespace GraphSnapshotProtocol {
     const seenNodes = new Set<string>();
     const seenEdges = new Map<string, Map<string, Set<string>>>();
     const seenDiagnostics = new Set<string>();
+    const seenUnresolved = new Set<string>();
     for (const entry of manifest) {
       const shard = shards.get(entry.key)!.shard;
       for (const node of shard.nodes) foldNode(nodes, seenNodes, node);
@@ -673,7 +698,8 @@ export namespace GraphSnapshotProtocol {
       // Appended by loop. Spreading an array passes every element as a call
       // argument, and a generation's lanes are longer than a call may be.
       for (const row of shard.coverage) coverage.push(row);
-      for (const site of shard.unresolved) unresolved.push(site);
+      for (const site of shard.unresolved)
+        foldUnresolved(unresolved, seenUnresolved, site);
       for (const source of shard.sources) {
         const value = {
           checkerDigest: source.checkerDigest,
@@ -928,7 +954,6 @@ export namespace GraphSnapshotProtocol {
             );
           }
         }
-    const unresolvedKeys = new Set<string>();
     const unresolvedCoverage = new Set<string>();
     for (const site of snapshot.unresolved!) {
       if (!UNRESOLVED_REASONS.has(site.reason)) {
@@ -955,12 +980,10 @@ export namespace GraphSnapshotProtocol {
           "graph snapshot protocol: unresolved site lacks partial coverage",
         );
       }
+      // Uniqueness is not checked. The assembled lane comes from `fold`,
+      // which keeps one site per description by construction, so a check for
+      // duplicates could only ever pass.
       unresolvedCoverage.add(coverageKey(site));
-      const key = canonical(site);
-      if (unresolvedKeys.has(key)) {
-        throw new Error("graph snapshot protocol: duplicate unresolved site");
-      }
-      unresolvedKeys.add(key);
     }
     for (const [key, row] of rows) {
       if (row.state === "partial" && !unresolvedCoverage.has(key)) {

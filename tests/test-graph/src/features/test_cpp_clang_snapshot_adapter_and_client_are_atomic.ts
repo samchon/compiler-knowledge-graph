@@ -64,7 +64,11 @@ export const test_cpp_clang_snapshot_adapter_and_client_are_atomic = async () =>
       GRAPH_EDGE_KINDS.length * 4,
       true,
       CPP_CLANG_PROVIDER,
-      2,
+      // The two sources the units read, and the compilation database that
+      // says what those units are. No unit consumes the database, so no
+      // producer reports it -- and a generation that left it out could not
+      // say that a project's commands had been rewritten.
+      3,
       true,
     ],
   );
@@ -135,6 +139,7 @@ export const test_cpp_clang_snapshot_adapter_and_client_are_atomic = async () =>
   );
   assertCrossVolumeIdentity(root, raw);
   assertUnicodeManifestOrdering();
+  assertMissingDatabaseStillPublishesItsFacts();
   assertNativeRefusals(root, raw);
   await assertProvider(root);
   await assertClientLifecycle(root);
@@ -328,6 +333,30 @@ function assertCrossVolumeIdentity(
   );
 }
 
+/**
+ * A generation whose compilation database has since gone still publishes.
+ *
+ * The database is carried as an input because it decides what every unit is,
+ * and a project that has one always will. But the facts are the producer's,
+ * already made, and a database that vanished between the walk and the
+ * assembly is a missing input rather than a reason to withhold what was
+ * measured.
+ */
+function assertMissingDatabaseStillPublishesItsFacts(): void {
+  const root = fixtureRoot();
+  const raw = nativeSnapshot(root);
+  fs.rmSync(path.join(root, "compile_commands.json"));
+  const snapshot = new CppGraphSnapshotAdapter(root, COMMIT).apply(
+    raw,
+    () => undefined,
+  ).snapshot;
+  TestValidator.equals(
+    "a generation outlives the compilation database that named its units",
+    [snapshot.sources.size, snapshot.nodes.length > 0],
+    [2, true],
+  );
+}
+
 function assertUnicodeManifestOrdering(): void {
   const root = GraphPaths.createTempDirectory("samchon-graph-cpp-unicode-");
   const supplementary = "\u{10000}.cpp";
@@ -355,7 +384,8 @@ function assertUnicodeManifestOrdering(): void {
       raw.upserts.map((shard) => path.basename(shard.source)),
       snapshot.sources.size,
     ],
-    [[privateUse, supplementary], 2],
+    // Two units and the compilation database that names them.
+    [[privateUse, supplementary], 3],
   );
 }
 
@@ -1060,7 +1090,9 @@ async function assertClientPagination(): Promise<void> {
       // first opens the generation and every later one carries the cursor it
       // was given. The count follows the page size, and the two facts beside it
       // -- one opener, and that opener declaring nothing -- do not.
-      [35, 35, 9, [4], 1, "undefined"],
+      // Thirty-six sources for thirty-five units: each unit's own file, and
+      // the compilation database that says what they are.
+      [36, 35, 9, [4], 1, "undefined"],
     );
     for (const [corruption, message] of [
       ["generation", "malformed paged generation"],

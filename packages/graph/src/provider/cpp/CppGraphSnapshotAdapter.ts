@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -235,6 +236,9 @@ export class CppGraphSnapshotAdapter {
     // walk then holds an array slot per naming rather than a whole node, and
     // a generation costs what the project declares instead of what its units
     // read.
+    // Read once for the walk, so every shard agrees on it: the protocol
+    // refuses a generation whose shards disagree about a source.
+    const database = compilationDatabaseSource(this.root);
     const canonical: ICanonical = {
       nodes: new Map(),
       edges: new Map(),
@@ -267,6 +271,7 @@ export class CppGraphSnapshotAdapter {
           envelope.universe.digest,
           shard,
           canonical,
+          database,
         );
         // A shard is one translation unit's view, so a node whose file is not
         // this unit's main file came from something it included -- and will
@@ -667,11 +672,44 @@ interface IPendingCoverage {
   mainFileUri: string;
 }
 
+/**
+ * The compilation database, as an input every unit in a generation depends on.
+ *
+ * It is not a source any translation unit consumes, so no producer reports it
+ * among a unit's files -- and yet it is the file that decides what every unit
+ * is: which commands exist, with which flags, for which targets. A project
+ * whose database is rewritten is a project that may build differently, and a
+ * generation that does not carry it cannot say so. Every other language's
+ * build file is already in its manifest for the same reason.
+ *
+ * Read once per walk, so every shard agrees on it -- the protocol refuses a
+ * generation whose shards disagree about a source.
+ */
+function compilationDatabaseSource(
+  root: string,
+): IBulkGraphSession.ISourceDigest & { file: string } | undefined {
+  for (const candidate of [
+    path.join(root, "compile_commands.json"),
+    path.join(root, "build", "compile_commands.json"),
+  ]) {
+    let bytes: Buffer;
+    try {
+      bytes = fs.readFileSync(candidate);
+    } catch {
+      continue;
+    }
+    const digest = createHash("sha256").update(bytes).digest("hex");
+    return { file: path.normalize(candidate), checkerDigest: digest, diskDigest: digest };
+  }
+  return undefined;
+}
+
 function adaptShard(
   root: string,
   universe: string,
   shard: ICppGraphSnapshot.IShard,
   canonical: ICanonical,
+  database: (IBulkGraphSession.ISourceDigest & { file: string }) | undefined,
 ): GraphSnapshotProtocol.IShard {
   const graph = shard.graph;
   const language = graph.language as GraphLanguage;
@@ -766,11 +804,17 @@ function adaptShard(
     diagnostics,
     coverage,
     unresolved: context.unresolved,
-    sources: graph.sources.map((source) => ({
-      file: sourceFile(root, source.uri),
-      checkerDigest: source.digest,
-      diskDigest: source.diskDigest,
-    })),
+    sources: [
+      ...graph.sources.map((source) => ({
+        file: sourceFile(root, source.uri),
+        checkerDigest: source.digest,
+        diskDigest: source.diskDigest,
+      })),
+      // The file that says what this unit is. No producer reports it among a
+      // unit's sources because no unit consumes it, and a generation that
+      // leaves it out cannot say that a project's commands were rewritten.
+      ...(database === undefined ? [] : [database]),
+    ],
   };
 }
 

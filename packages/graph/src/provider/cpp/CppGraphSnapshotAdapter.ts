@@ -315,14 +315,31 @@ export class CppGraphSnapshotAdapter {
         const universeChanged =
           prior !== undefined &&
           envelope.universe.digest !== prior.provenance.universe;
-        const requiresReload = languagesChanged || universeChanged;
+        // A database that moved cannot be carried by a delta either.
+        //
+        // Every shard names it, and a delta keeps the shards it was not sent
+        // -- which still name the digest the last walk read. One generation
+        // cannot hold two answers about one file, and the shards that would
+        // have to be corrected are exactly the ones the producer did not
+        // send. A database that moved is also when the set of units may have
+        // moved, so a whole generation is the honest answer rather than an
+        // expensive one.
+        const databaseMoved =
+          prior !== undefined &&
+          database !== undefined &&
+          prior.sources.get(database.file)?.checkerDigest !==
+            database.checkerDigest;
+        const requiresReload =
+          languagesChanged || universeChanged || databaseMoved;
         if (requiresReload && envelope.baseGeneration !== null) {
           // Nothing has been assigned yet, so refusing here leaves this adapter
           // exactly as it was and the caller free to ask again.
           throw new CppGraphReloadRequired(
             languagesChanged
               ? "the served languages moved"
-              : "the universe moved",
+              : universeChanged
+                ? "the universe moved"
+                : "the compilation database moved",
           );
         }
         for (const [key, source] of pending) {

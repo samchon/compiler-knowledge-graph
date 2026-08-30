@@ -141,6 +141,7 @@ export const test_cpp_clang_snapshot_adapter_and_client_are_atomic = async () =>
   assertUnicodeManifestOrdering();
   assertMissingDatabaseStillPublishesItsFacts();
   assertMalformedDatabaseIsRefused();
+  assertReformattedDatabaseCannotBeServedByADelta();
   assertNativeRefusals(root, raw);
   await assertProvider(root);
   await assertClientLifecycle(root);
@@ -351,6 +352,45 @@ function assertCrossVolumeIdentity(
  * built on that answer would describe a checkout nobody has -- and the only
  * side that reads the file is this one.
  */
+/**
+ * A database rewritten to the same commands still cannot be served by a delta.
+ *
+ * Every shard names the database, and a delta keeps the shards it was not
+ * sent -- which still name the digest the last walk read. One generation
+ * cannot hold two answers about one file, and the shards that would have to
+ * be corrected are exactly the ones the producer did not send.
+ *
+ * The universe does not move here: the commands are the same, so every
+ * configuration digest is what it was. Only the bytes moved.
+ */
+function assertReformattedDatabaseCannotBeServedByADelta(): void {
+  const root = fixtureRoot();
+  const adapter = new CppGraphSnapshotAdapter(root, COMMIT);
+  const base = nativeSnapshot(root);
+  adapter.apply(structuredClone(base), () => undefined);
+  const database = path.join(root, "compile_commands.json");
+  fs.writeFileSync(database, `${fs.readFileSync(database, "utf8")}
+`);
+  const delta = structuredClone(base);
+  delta.baseGeneration = base.generation;
+  delta.upserts = [delta.upserts[0]!];
+  delta.page = { offset: 0, count: 1, total: 1, nextCursor: null };
+  TestValidator.predicate(
+    "a compilation database rewritten to the same commands cannot be served by a delta",
+    () => {
+      try {
+        adapter.apply(delta, () => undefined);
+        return false;
+      } catch (error) {
+        return (
+          error instanceof Error &&
+          error.message.includes("the compilation database moved")
+        );
+      }
+    },
+  );
+}
+
 function assertMalformedDatabaseIsRefused(): void {
   const root = fixtureRoot();
   const raw = nativeSnapshot(root);

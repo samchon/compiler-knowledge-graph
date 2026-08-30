@@ -132,8 +132,8 @@ export class CppGraphClient implements IBulkGraphSession {
     return this.enqueue(async () => {
       const signal = combineSignals(options.signal, this.lifecycleAbort.signal);
       await this.initialize(signal);
-      this.notifyInputChanges();
-      const result = await this.applySnapshot(signal);
+      const moved = this.notifyInputChanges();
+      const result = await this.applySnapshot(signal, moved);
       this.commitSnapshotInputs(result.snapshot);
       if (!result.changed) {
         return {
@@ -199,7 +199,17 @@ export class CppGraphClient implements IBulkGraphSession {
     this.watchedInputs = inputs;
   }
 
-  private notifyInputChanges(): void {
+  /**
+   * Tell the producer which watched inputs moved, and say whether any did.
+   *
+   * The answer decides whether this client will accept being told nothing
+   * changed. A compilation database rewritten to the same commands leaves the
+   * producer's generation identical and it says so -- truthfully, about its
+   * own facts. But the file a project is built from is an input, and a
+   * consumer that watched it move and then published the previous generation
+   * unchanged would be reporting on a checkout it no longer describes.
+   */
+  private notifyInputChanges(): boolean {
     const current = inputDigests(this.root, this.current);
     const files = new Set([...this.watchedInputs.keys(), ...current.keys()]);
     const changes: Array<{ uri: string; type: 1 | 2 | 3 }> = [];
@@ -214,6 +224,7 @@ export class CppGraphClient implements IBulkGraphSession {
       this.lsp.notify("workspace/didChangeWatchedFiles", { changes });
     }
     this.watchedInputs = current;
+    return changes.length !== 0;
   }
 
   private commitSnapshotInputs(snapshot: IBulkGraphSession.ISnapshot): void {
@@ -230,6 +241,7 @@ export class CppGraphClient implements IBulkGraphSession {
 
   private async requestSnapshot(
     signal: AbortSignal,
+    moved: boolean,
   ): Promise<CppGraphSnapshotAdapter.IResult> {
     const deadline = performance.now() + this.readyTimeoutMs;
     let backoff = RETRY_DELAY_MS;
@@ -237,7 +249,17 @@ export class CppGraphClient implements IBulkGraphSession {
     for (;;) {
       throwIfAborted(signal);
       try {
-        return await this.requestSnapshotPages(signal);
+        const result = await this.requestSnapshotPages(signal, false);
+        // A producer that says nothing changed is answering about its own
+        // facts, and it is right: a compilation database rewritten to the
+        // same commands leaves every fact where it was. But the file a
+        // project is built from is an input this client watches, and
+        // republishing the previous generation unchanged would describe a
+        // checkout that has moved. Asked again without a generation to
+        // build on, the producer sends the whole thing and this side
+        // publishes it as the reload it is.
+        if (!moved || result.mode !== "unchanged") return result;
+        return await this.requestSnapshotPages(signal, true);
       } catch (error) {
         if (
           !(error instanceof LspResponseError) ||
@@ -335,13 +357,14 @@ export class CppGraphClient implements IBulkGraphSession {
    */
   private async applySnapshot(
     signal: AbortSignal,
+    moved: boolean,
   ): Promise<CppGraphSnapshotAdapter.IResult> {
     try {
-      return await this.requestSnapshot(signal);
+      return await this.requestSnapshot(signal, moved);
     } catch (error) {
       if (!(error instanceof CppGraphReloadRequired)) throw error;
       this.adapter.forget();
-      return await this.requestSnapshot(signal);
+      return await this.requestSnapshot(signal, false);
     }
   }
 
@@ -402,8 +425,9 @@ export class CppGraphClient implements IBulkGraphSession {
    */
   private async requestSnapshotPages(
     signal: AbortSignal,
+    whole: boolean,
   ): Promise<CppGraphSnapshotAdapter.IResult> {
-    const knownGeneration = this.adapter.generation;
+    const knownGeneration = whole ? undefined : this.adapter.generation;
     let cursor: string | undefined;
     let expectedOffset = 0;
     let expectedTotal: number | undefined;

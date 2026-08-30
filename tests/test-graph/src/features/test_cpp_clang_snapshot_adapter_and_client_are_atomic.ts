@@ -140,6 +140,7 @@ export const test_cpp_clang_snapshot_adapter_and_client_are_atomic = async () =>
   assertCrossVolumeIdentity(root, raw);
   assertUnicodeManifestOrdering();
   assertMissingDatabaseStillPublishesItsFacts();
+  assertMalformedDatabaseIsRefused();
   assertNativeRefusals(root, raw);
   await assertProvider(root);
   await assertClientLifecycle(root);
@@ -342,6 +343,49 @@ function assertCrossVolumeIdentity(
  * assembly is a missing input rather than a reason to withhold what was
  * measured.
  */
+/**
+ * A compilation database that is not one is refused, not published around.
+ *
+ * The commands are what every unit is. A producer holding the last database
+ * that parsed will keep answering from it quite happily, so a generation
+ * built on that answer would describe a checkout nobody has -- and the only
+ * side that reads the file is this one.
+ */
+function assertMalformedDatabaseIsRefused(): void {
+  const root = fixtureRoot();
+  const raw = nativeSnapshot(root);
+  const database = path.join(root, "compile_commands.json");
+  fs.writeFileSync(database, "[ not json");
+  TestValidator.predicate(
+    "a compilation database that cannot be parsed is refused",
+    () => {
+      try {
+        new CppGraphSnapshotAdapter(root, COMMIT).apply(
+          structuredClone(raw),
+          () => undefined,
+        );
+        return false;
+      } catch (error) {
+        return (
+          error instanceof Error &&
+          error.message.includes("not valid JSON")
+        );
+      }
+    },
+  );
+  // A file that parses but is not a list of commands is not this project's
+  // database, and the generation is published without one rather than
+  // withheld: the next candidate path may hold the real one.
+  fs.writeFileSync(database, '{ "commands": [] }');
+  TestValidator.equals(
+    "a file that is not a list of commands is not this project's database",
+    new CppGraphSnapshotAdapter(root, COMMIT).apply(structuredClone(raw), () =>
+      undefined,
+    ).snapshot.sources.size,
+    2,
+  );
+}
+
 function assertMissingDatabaseStillPublishesItsFacts(): void {
   const root = fixtureRoot();
   const raw = nativeSnapshot(root);

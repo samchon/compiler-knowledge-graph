@@ -698,6 +698,26 @@ function compilationDatabaseSource(
     } catch {
       continue;
     }
+    // Refused rather than digested when it is not a database.
+    //
+    // A project whose build file cannot be read is a project this provider
+    // cannot describe: the commands are what every unit is, and a generation
+    // published from the last ones that parsed would describe a checkout
+    // nobody has. The producer would keep serving those commands quite
+    // happily -- it is holding what it last loaded -- so the refusal has to
+    // come from the side that reads the file.
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(bytes.toString("utf8")) as unknown;
+    } catch {
+      throw new Error(
+        `C/C++ clang graph: compilation database is not valid JSON: ${candidate}`,
+      );
+    }
+    // A file that parses but is not a list of commands is not this project's
+    // database at all, and the next candidate may be: that is how the client
+    // that watches these paths already reads them.
+    if (!Array.isArray(parsed)) continue;
     const digest = createHash("sha256").update(bytes).digest("hex");
     return { file: path.normalize(candidate), checkerDigest: digest, diskDigest: digest };
   }

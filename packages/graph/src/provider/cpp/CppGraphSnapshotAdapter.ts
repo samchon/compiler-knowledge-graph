@@ -391,6 +391,33 @@ export class CppGraphSnapshotAdapter {
         // the graph it built. On libuv that is three copies of 469 shards, and
         // the initial walk -- the one case where the replay proves nothing --
         // is where the consumer runs out of heap.
+        // A delta whose surviving shards name an entity nobody carries any
+        // more must be answered with a whole generation, not with an error.
+        //
+        // A shard carries the entities it derived, and which shard that is
+        // settles per walk. A unit that stops including a header stops
+        // deriving what it declared, and a unit that did not change still
+        // names it -- so the generation is short an entity its own edges
+        // point at. Nothing in a delta can re-derive it, because only the
+        // changed units are sent. Refusing is right; refusing in a way the
+        // client cannot answer is not, and this adapter already has the
+        // answer: forget the base and ask for the whole thing.
+        const whole = (task: () => void): void => {
+          try {
+            task();
+          } catch (error) {
+            if (
+              begin.baseGeneration === undefined ||
+              !(error instanceof Error) ||
+              !error.message.includes("absent endpoint")
+            ) {
+              throw error;
+            }
+            throw new CppGraphReloadRequired(
+              "a delta lost an entity its surviving shards still name",
+            );
+          }
+        };
         if (begin.baseGeneration !== undefined) {
           const fullBegin: GraphSnapshotProtocol.IBegin = {
             ...begin,
@@ -412,9 +439,11 @@ export class CppGraphSnapshotAdapter {
           // in hand -- copying it deeply meant deserializing a second whole
           // graph beside the first, which is where a delta ran out of heap
           // after a walk that had finished.
-          new GraphSnapshotProtocol.Store(this.root).apply(fullFrames, {
-            validate,
-            adopt: true,
+          whole(() => {
+            new GraphSnapshotProtocol.Store(this.root).apply(fullFrames, {
+              validate,
+              adopt: true,
+            });
           });
         }
         // Adopted, not copied. `nextGraph` is built here and released as
@@ -424,7 +453,10 @@ export class CppGraphSnapshotAdapter {
         // a reference that no longer exists. On libuv that copy is what the
         // commit ran out of heap for, immediately after a walk that finally
         // finished.
-        const snapshot = this.store.apply(frames, { validate, adopt: true });
+        let snapshot!: IBulkGraphSession.ISnapshot;
+        whole(() => {
+          snapshot = this.store.apply(frames, { validate, adopt: true });
+        });
         this.rawShards = nextRaw;
         this.rawGeneration = envelope.generation;
         return {

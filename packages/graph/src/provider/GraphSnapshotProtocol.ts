@@ -332,7 +332,11 @@ export namespace GraphSnapshotProtocol {
      * with this one.
      */
     public get shards(): ReadonlyMap<string, IShard> {
-      return this.published;
+      // A copy of the map, not the map. `ReadonlyMap` is a compile-time
+      // promise and nothing else: handing out the store's own map lets a
+      // caller delete from the published generation, and the seal this store
+      // puts on what it publishes reaches the facts, not the containers.
+      return new Map(this.published);
     }
 
     /**

@@ -244,13 +244,17 @@ function assembled(
   const edges: ISamchonGraphEdge[] = [];
   const coverage: ISamchonGraphCoverage[] = [];
   const unresolved: ISamchonGraphUnresolved[] = [];
-  for (const entry of manifest) {
-    const shard = shards.get(entry.key)!;
-    nodes.push(...shard.nodes);
-    edges.push(...shard.edges);
-    coverage.push(...shard.coverage);
-    unresolved.push(...shard.unresolved);
-  }
+  // Folded, not concatenated, because the store folds when it assembles. A
+  // generation whose shards name one fact twice -- two units emitting the same
+  // relation from a symbol they share -- would be digested here over both
+  // copies and there over one, and the commit refused for a disagreement this
+  // function invented.
+  const ordered = manifest.map((entry) => shards.get(entry.key)!);
+  const folded = GraphSnapshotProtocol.fold(ordered);
+  nodes.push(...folded.nodes);
+  edges.push(...folded.edges);
+  unresolved.push(...folded.unresolved);
+  for (const shard of ordered) coverage.push(...shard.coverage);
   return {
     languages: [...hello.languages],
     nodes,

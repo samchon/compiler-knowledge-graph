@@ -472,13 +472,19 @@ function assembledSnapshot(
   shards: readonly [string, GraphSnapshotProtocol.IShard][],
 ): Parameters<typeof GraphSnapshotProtocol.factDigest>[0] {
   const values = shards.map(([, shard]) => shard);
+  // Folded, not concatenated, because the store folds when it assembles: a
+  // fact two shards both legitimately own -- a tsconfig diagnostic belonging
+  // to the config shard and to the source shard that reads it -- would be
+  // digested here over both copies and there over one, and the commit refused
+  // for a disagreement this function invented.
+  const folded = GraphSnapshotProtocol.fold(values);
   return {
     languages: [...hello.languages],
-    nodes: values.flatMap((shard) => shard.nodes),
-    edges: values.flatMap((shard) => shard.edges),
-    diagnostics: values.flatMap((shard) => shard.diagnostics),
+    nodes: folded.nodes,
+    edges: folded.edges,
+    diagnostics: folded.diagnostics,
     coverage: values.flatMap((shard) => shard.coverage),
-    unresolved: values.flatMap((shard) => shard.unresolved),
+    unresolved: folded.unresolved,
     provenance: {
       provider: hello.provider,
       authority: hello.authority,

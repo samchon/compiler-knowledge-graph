@@ -664,13 +664,18 @@ function factsOf(
   | "provenance"
 > {
   const ordered = manifest.map((entry) => shards.get(entry.key)!);
+  // Folded, not concatenated. The store folds when it assembles, so a
+  // generation whose shards name one fact twice would be digested here over
+  // both copies and there over one, and the commit would be refused for a
+  // disagreement that is this function's alone.
+  const folded = GraphSnapshotProtocol.fold(ordered);
   return {
     languages: ["rust"],
-    nodes: ordered.flatMap((shard) => shard.nodes),
-    edges: ordered.flatMap((shard) => shard.edges),
-    diagnostics: ordered.flatMap((shard) => shard.diagnostics),
+    nodes: folded.nodes,
+    edges: folded.edges,
+    diagnostics: folded.diagnostics,
     coverage: ordered.flatMap((shard) => shard.coverage),
-    unresolved: ordered.flatMap((shard) => shard.unresolved),
+    unresolved: folded.unresolved,
     provenance: {
       provider: hello.provider,
       authority: hello.authority,

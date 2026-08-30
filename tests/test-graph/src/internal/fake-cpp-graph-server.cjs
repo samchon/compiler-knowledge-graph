@@ -384,6 +384,7 @@ function graphShard(command) {
   const header = path.join(directory, "include", "fixture.h");
   let includes = [];
   let sharedHeaderUri;
+  let sharedSymbol;
   try {
     const headerUri = pathToFileURL(header).href;
     const headerDigest = digest(fs.readFileSync(header));
@@ -435,11 +436,13 @@ function graphShard(command) {
     shared.ownerUsr = "c:@N@fixture";
     if (definers.includes(mainFile))
       shared.definition = range(mainFileUri, 1, 0, 1, 12);
+
     // First, not last: the pieces are filed by file, so a body reassembled
     // from them returns the header's symbols after the main file's. Putting
     // this one where reassembly cannot leave it is what makes the fixture
     // prove that the interface fingerprint does not depend on the order.
     symbols.unshift(shared);
+    sharedSymbol = shared;
   }
   const graph = {
     producerFingerprint: producerFingerprint({
@@ -503,6 +506,19 @@ function graphShard(command) {
       range: sourceRange,
     }],
   };
+  // Named from this unit's own caller, so the edge that records the use
+  // belongs to this unit while the entity it points at belongs to whichever
+  // unit derived the header first. That pairing is what a delta can break.
+  if (sharedSymbol !== undefined)
+    graph.occurrences.push(
+      occurrence(
+        sharedSymbol.id,
+        caller.id,
+        (1 << 2) | (1 << 5),
+        13,
+        sourceRange,
+      ),
+    );
   if (edgeCases) applyEdgeCases(graph, sourceRange, caller, callee, base, derived, constructor);
   if (invalidSourceUri) {
     graph.sources.push({

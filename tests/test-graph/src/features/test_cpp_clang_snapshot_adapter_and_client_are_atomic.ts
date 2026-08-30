@@ -141,6 +141,7 @@ export const test_cpp_clang_snapshot_adapter_and_client_are_atomic = async () =>
   await assertClientInputShapes();
   await assertClientReportsItsOwnSize();
   await assertClientReadsPublishedBodies(publishedFixtureRoot());
+  assertDeltaThatLosesAnOwnerAsksForTheWhole(publishedFixtureRoot());
   await assertClientPagination();
   await assertClientFailures(fixtureRoot());
 };
@@ -832,6 +833,62 @@ async function assertClientReportsItsOwnSize(): Promise<void> {
  * written once and parsed once; the unit that compiles the definition knows
  * something they do not and gets its own.
  */
+/**
+ * A delta that leaves an entity nobody carries must ask for a whole
+ * generation, not fail.
+ *
+ * A shard carries the entities it derived, and which shard that is settles
+ * per walk: the unit that reads a header first carries what it declares, and
+ * the units after it only record their own use of it. Let the first unit stop
+ * declaring it and the others still point at it -- the generation is short an
+ * entity its own edges name, and nothing in a delta can re-derive it, because
+ * only the changed units are sent.
+ *
+ * Refusing is right. Refusing in a way the client cannot answer is not: the
+ * adapter forgets its base and the producer, which still holds every shard,
+ * sends a whole one.
+ */
+function assertDeltaThatLosesAnOwnerAsksForTheWhole(root: string): void {
+  const adapter = new CppGraphSnapshotAdapter(root, COMMIT);
+  const base = nativeSnapshot(root);
+  adapter.apply(structuredClone(base), () => undefined);
+  const delta = structuredClone(base);
+  delta.baseGeneration = base.generation;
+  // The shard the manifest names first is the one that derived the header's
+  // declarations; every other unit resolved to what it made.
+  const owner = delta.upserts.find(
+    (shard) => shard.key === delta.manifest[0]!.key,
+  )!;
+  owner.graph.symbols = owner.graph.symbols.filter(
+    (symbol) => symbol.name !== "shared",
+  );
+  owner.graph.occurrences = owner.graph.occurrences.filter(
+    (occurrence) => !occurrence.id.includes("shared"),
+  );
+  delta.upserts = [owner];
+  delta.page = { offset: 0, count: 1, total: 1, nextCursor: null };
+  resealSnapshot(delta);
+  delta.manifest = base.manifest.map((entry) =>
+    entry.key === owner.key
+      ? { key: entry.key, digest: owner.digest }
+      : entry,
+  );
+  delta.generation = nativeGeneration(delta.universe.digest, delta.manifest);
+  TestValidator.predicate(
+    "a delta that loses an entity its survivors name asks for a whole generation",
+    () => {
+      try {
+        adapter.apply(delta, () => undefined);
+        return false;
+      } catch (error) {
+        // Named by its own name rather than by identity, because the class is
+        // this provider's internal signal to its client and is not exported.
+        return error instanceof Error && error.name === "CppGraphReloadRequired";
+      }
+    },
+  );
+}
+
 function publishedFixtureRoot(): string {
   const root = GraphPaths.createTempDirectory("samchon-graph-cpp-published-");
   fs.mkdirSync(path.join(root, "include"));

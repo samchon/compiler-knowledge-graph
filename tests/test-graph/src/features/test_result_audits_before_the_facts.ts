@@ -19,7 +19,7 @@ export const test_result_audits_before_the_facts = async () => {
   TestValidator.equals(
     "audit leads, then where it leaves the question, then the facts",
     Object.keys(overview),
-    ["audit", "next", "result"],
+    ["audit", "coverage", "unresolved", "next", "result"],
   );
   TestValidator.equals("the overview is the whole answer", overview.next.action, "answer");
 

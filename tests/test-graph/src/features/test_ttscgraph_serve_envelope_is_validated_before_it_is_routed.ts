@@ -32,8 +32,8 @@ export const test_ttscgraph_serve_envelope_is_validated_before_it_is_routed =
     });
     TestValidator.equals("an unchanged frame keeps its reported mode", unchanged.mode, "unchanged");
     TestValidator.equals(
-      "an unchanged frame carries no dump",
-      unchanged.dump,
+      "an unchanged frame carries no shard transaction",
+      unchanged.snapshot,
       undefined,
     );
     TestValidator.equals(
@@ -46,7 +46,7 @@ export const test_ttscgraph_serve_envelope_is_validated_before_it_is_routed =
       ...base,
       mode: "rebuild",
       changed: true,
-      dump: { any: "body" },
+      snapshot: { any: "body" },
     });
     TestValidator.equals(
       "a changed frame keeps the compiler's own word for what it did",
@@ -54,8 +54,8 @@ export const test_ttscgraph_serve_envelope_is_validated_before_it_is_routed =
       "rebuild",
     );
     TestValidator.equals(
-      "a changed frame hands its dump on untouched, for the adapter to judge",
-      changed.dump,
+      "a changed frame hands its shard transaction on untouched, for the store to judge",
+      changed.snapshot,
       { any: "body" },
     );
 
@@ -180,25 +180,34 @@ export const test_ttscgraph_serve_envelope_is_validated_before_it_is_routed =
       dump: {},
     });
 
-    // `changed` decides whether a dump rides along. The producer stakes its
-    // atomicity claim on that pairing, so a broken one is refused here rather
-    // than surfacing later as an absent dump nobody expected.
-    rejects("a changed frame with no dump", {
+    // `changed` decides whether a shard transaction rides along. The producer
+    // stakes its atomicity claim on that pairing, so a broken one is refused
+    // here rather than surfacing later as absent state.
+    rejects("a changed frame with no shard transaction", {
       ...base,
       mode: "initial",
       changed: true,
     });
-    rejects("an unchanged frame carrying a dump anyway", {
+    // Exactly what ttsc up to 0.23.0 answers. The envelope is correct in every
+    // other respect, including the protocol version, so nothing but the body
+    // can tell this producer apart from a compatible one.
+    rejects("a complete legacy dump where the transaction belongs", {
+      ...base,
+      mode: "initial",
+      changed: true,
+      dump: { project: "/tmp/project", nodes: [], edges: [] },
+    });
+    rejects("an unchanged frame carrying a shard transaction anyway", {
       ...base,
       mode: "unchanged",
       changed: false,
-      dump: {},
+      snapshot: {},
     });
     rejects("an unchanged mode that claims the graph moved", {
       ...base,
       mode: "unchanged",
       changed: true,
-      dump: {},
+      snapshot: {},
     });
     rejects("a rebuild mode that claims nothing moved", {
       ...base,

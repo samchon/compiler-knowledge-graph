@@ -1279,7 +1279,16 @@ function testIndexCellIsolationContract() {
       workflow.includes("--project=${{ matrix.project }}") &&
       workflow.includes('SAMCHON_GRAPH_BENCH_TIMEOUT_MS: "1800000"') &&
       !workflow.includes('SAMCHON_GRAPH_BENCH_TIMEOUT_MS: "3600000"') &&
-      workflow.includes("timeout-minutes: 120") &&
+      // Two budgets, and which one a row gets is decided by whether it
+      // provisions a compiler built from source. The literal 120 that used to
+      // stand here was the whole cap, and it killed the two rows that spend an
+      // hour and three quarters compiling clangd before they had measured
+      // anything. Both numbers are asserted, and so is the condition that
+      // separates them, because a cap that applied to every row again would
+      // still contain the string "120".
+      workflow.includes(
+        "timeout-minutes: ${{ (matrix.language == 'c' || matrix.language == 'cpp') && 210 || 120 }}",
+      ) &&
       !workflow.includes("timeout-minutes: 150") &&
       workflow.includes("--timeout-ms=300000") &&
       workflow.includes("timeout-minutes: 10"),

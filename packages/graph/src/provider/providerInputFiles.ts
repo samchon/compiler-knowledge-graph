@@ -103,6 +103,9 @@ function visitBuildInputs(
 }
 
 function compareOrdinal(left: string, right: string): number {
-  /* c8 ignore next 2 -- callers sort distinct directory entries or paths. */
-  return left < right ? -1 : left > right ? 1 : 0;
+  // Two-way: callers sort distinct directory entries or paths, so the equal arm
+  // cannot run, and an ignore directive over it would take the two reachable
+  // arms out of the coverage gate with it -- which is how a reversed ordering
+  // stops being a failing test.
+  return left < right ? -1 : 1;
 }

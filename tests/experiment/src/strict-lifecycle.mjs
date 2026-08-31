@@ -70,7 +70,7 @@ export const runStrictLifecycle = async (experiment, pinnedRoot) => {
       mode,
       elapsedMs,
       changed: dump !== next,
-      outputBytes: Buffer.byteLength(JSON.stringify(next), "utf8"),
+      outputBytes: jsonBytes(next),
       manifest: provenance.manifest,
       content: provenance.content,
       universe: provenance.universe,
@@ -251,9 +251,10 @@ export const runStrictLifecycle = async (experiment, pinnedRoot) => {
       // itself, and so would asserting that provenance moved: this step edits a
       // declared build input, so the build universe cannot help but move. What
       // is worth proving is the precise claim the catalog makes about upstream —
-      // that the producer ignored the input completely. The universe moves, the
-      // facts and the source manifest do not, and the row publishes all three so
-      // a reader can see which one carried the change.
+      // it tolerates the invalid input without an observable publication-plane
+      // change. The universe moves, the facts and source manifest do not, and
+      // the row publishes all three so a reader can see which one carried the
+      // change.
       if (
         typeof fixture.failureLimitation !== "string" ||
         fixture.failureLimitation === ""
@@ -288,37 +289,24 @@ export const runStrictLifecycle = async (experiment, pinnedRoot) => {
           `${experiment.language}: the malformed input did not move the build universe, so this step compared a generation to itself`,
         );
       }
-      // The claim itself. Content and manifest cover the facts and the source
-      // evidence; capabilities and this provider's warnings are the rest of what
-      // a reader can observe, and neither digest carries them. A producer that
-      // quietly gave up a capability, or started explaining itself, has not
-      // ignored the input.
-      const spoken = (report) =>
-        (report.warnings ?? [])
-          .filter((warning) => warning.startsWith(`${experiment.strictProvider}:`))
-          .sort()
-          .join(SEPARATOR);
-      if (
-        provenance.content !== prior.content ||
-        provenance.manifest !== prior.manifest ||
-        [...provenance.capabilities].sort().join(",") !==
-          [...prior.capabilities].sort().join(",") ||
-        spoken(tolerated) !== spoken(priorDump)
-      ) {
+      // Compare the observable publication planes directly. The aggregate
+      // content digest is not independent evidence here: legacy coverage rows
+      // use the build-universe digest as their target, so content necessarily
+      // moves whenever the build input above moves even if every semantic fact
+      // remains byte-identical.
+      const changed = publicationChanges(
+        prior,
+        provenance,
+        priorDump,
+        tolerated,
+        experiment.strictProvider,
+      );
+      if (changed.length !== 0) {
         throw new Error(
-          `${experiment.language}: the catalog records this input as ignored, but the published facts, source manifest, capabilities, or provider warnings changed with it`,
+          `${experiment.language}: the catalog records this input as a tolerated unchanged publication, but these publication planes moved: ${changed.join(", ")}`,
         );
       }
-      // The other half of the catalog's claim, as a delta rather than an
-      // absolute: diagnostics this corpus already had are not evidence about
-      // this input, and the dump carries every lane's diagnostics, not only
-      // this provider's slice.
       const diagnosticCount = tolerated.diagnostics?.length ?? 0;
-      if (diagnosticCount !== previousDiagnostics) {
-        throw new Error(
-          `${experiment.language}: the catalog records this producer as reporting nothing about a malformed build input, but diagnostics moved from ${String(previousDiagnostics)} to ${String(diagnosticCount)}`,
-        );
-      }
       dump = tolerated;
       previousIdentity = [
         provenance.manifest,
@@ -379,8 +367,22 @@ export const runStrictLifecycle = async (experiment, pinnedRoot) => {
         experiment.strictProvider,
       );
       if (changed.length === 0) {
+        // Say what was compared, not only that it matched. A row claiming a
+        // degraded publication is claiming the producer behaves a particular
+        // way when its configuration breaks, and a bare refusal leaves the
+        // next reader unable to tell an untrue claim from a producer that
+        // stopped behaving that way — which is two runs of guessing before
+        // anyone learns which counts stayed equal.
         throw new Error(
-          `${experiment.language}: the catalog records a degraded publication, but only the declared build input changed`,
+          `${experiment.language}: the catalog records a degraded publication, but only the declared build input changed: ` +
+            [
+              `manifest ${prior.manifest === provenance.manifest ? "equal" : "moved"}`,
+              `content ${prior.content === provenance.content ? "equal" : "moved"}`,
+              ...["nodes", "edges", "coverage", "unresolved", "diagnostics"].map(
+                (plane) =>
+                  `${plane} ${(priorDump[plane] ?? []).length}/${(published[plane] ?? []).length}`,
+              ),
+            ].join("; "),
         );
       }
       dump = published;
@@ -504,12 +506,14 @@ export const runStrictLifecycle = async (experiment, pinnedRoot) => {
     const reproduced = reproducedManifest && reproducedContent;
     const limitation = experiment.regenerationLimitation;
     if (!reproduced && limitation === undefined) {
+      const difference = firstGenerationDifference(cold, retried);
       throw new Error(
         `${experiment.language}: restoring the original sources did not reproduce the generation ` +
           `(manifest ${reproducedManifest ? "unchanged" : "moved"}, ` +
           `facts ${reproducedContent ? "unchanged" : "moved"}; ` +
           `cold ${String(cold.nodes.length)} nodes/${String(cold.edges.length)} edges, ` +
-          `retry ${String(retried.nodes.length)} nodes/${String(retried.edges.length)} edges)`,
+          `retry ${String(retried.nodes.length)} nodes/${String(retried.edges.length)} edges; ` +
+          `first difference: ${difference})`,
       );
     }
     rows.push({
@@ -546,6 +550,53 @@ function strictProvenance(dump, experiment) {
   return provenance;
 }
 
+function firstGenerationDifference(left, right) {
+  for (const plane of [
+    "languages",
+    "nodes",
+    "edges",
+    "diagnostics",
+    "coverage",
+    "unresolved",
+  ]) {
+    const before = left[plane] ?? [];
+    const after = right[plane] ?? [];
+    if (before.length !== after.length) {
+      return `${plane}.length ${String(before.length)} -> ${String(after.length)}`;
+    }
+    for (let index = 0; index < before.length; index++) {
+      const prior = canonicalGenerationValue(before[index]);
+      const next = canonicalGenerationValue(after[index]);
+      if (prior !== next) {
+        return `${plane}[${String(index)}] ${boundedDifference(prior)} -> ${boundedDifference(next)}`;
+      }
+    }
+  }
+  return "normalized dump fact planes are equal; the strict slice moved before merge";
+}
+
+function canonicalGenerationValue(value) {
+  if (value === undefined) return "undefined";
+  if (value === null || typeof value !== "object") {
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map(canonicalGenerationValue).join(",")}]`;
+  }
+  return `{${Object.entries(value)
+    .filter(([, nested]) => nested !== undefined)
+    .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
+    .map(
+      ([key, nested]) =>
+        `${JSON.stringify(key)}:${canonicalGenerationValue(nested)}`,
+    )
+    .join(",")}}`;
+}
+
+function boundedDifference(value) {
+  return value.length <= 320 ? value : `${value.slice(0, 317)}...`;
+}
+
 function assertCreatedSymbol(
   dump,
   language,
@@ -556,8 +607,21 @@ function assertCreatedSymbol(
     (node) => node.name === expectedSymbol,
   );
   if (created === undefined || created.file !== expectedFile) {
+    // Say which of the two it was, and what the file did publish. A producer
+    // that never compiled the new source and one that named its declaration
+    // differently are different defects, and the sentence used to cover both
+    // — which costs a CI round to tell apart every time it fires.
+    const fromFile = dump.nodes
+      .filter((node) => node.file === expectedFile)
+      .map((node) => `${node.name}:${node.kind}`)
+      .sort();
     throw new Error(
-      `${language}: lifecycle declaration ${expectedSymbol} was not published from ${expectedFile}`,
+      `${language}: lifecycle declaration ${expectedSymbol} was not published from ${expectedFile}: ` +
+        (created === undefined
+          ? fromFile.length === 0
+            ? "that file published no declaration at all"
+            : `that file published ${fromFile.join(", ")}`
+          : `it was published from ${created.file} instead`),
     );
   }
 }
@@ -604,7 +668,17 @@ function publicationChanges(
 ) {
   const changed = [];
   if (prior.manifest !== next.manifest) changed.push("manifest");
-  if (prior.content !== next.content) changed.push("content");
+  for (const plane of [
+    "nodes",
+    "edges",
+    "coverage",
+    "unresolved",
+    "diagnostics",
+  ]) {
+    const before = normalizedPublicationPlane(priorDump, plane);
+    const after = normalizedPublicationPlane(nextDump, plane);
+    if (before !== after) changed.push(plane);
+  }
   if (
     [...prior.capabilities].sort().join(",") !==
     [...next.capabilities].sort().join(",")
@@ -617,16 +691,73 @@ function publicationChanges(
       .sort()
       .join(SEPARATOR);
   if (spoken(priorDump) !== spoken(nextDump)) changed.push("warnings");
-  if (
-    (priorDump.diagnostics?.length ?? 0) !==
-    (nextDump.diagnostics?.length ?? 0)
-  ) {
-    changed.push("diagnostics");
-  }
   return changed;
+}
+
+function normalizedPublicationPlane(dump, plane) {
+  const rows = (dump[plane] ?? []).map((row) => {
+    if (
+      row === null ||
+      typeof row !== "object" ||
+      (plane !== "coverage" && plane !== "unresolved")
+    ) {
+      return row;
+    }
+    // These are generation coordinates, not an independently changed fact.
+    // The branch already proves the build universe moved. Compare the coverage
+    // state and unresolved evidence without counting that same movement twice.
+    const { target: _target, universe: _universe, ...fact } = row;
+    return fact;
+  });
+  return canonicalGenerationValue(rows);
 }
 
 /** A separator no warning can contain, so two lists cannot collide. */
 const SEPARATOR = String.fromCharCode(0);
 
 const CHANGED_MODES = ["reload", "incremental", "rebuild"];
+
+/**
+ * How many bytes `JSON.stringify` would produce, without producing them.
+ *
+ * A snapshot of a real project is longer than a string is allowed to be, and
+ * measuring it by building it killed a run that had otherwise finished. The
+ * count is the same; only the string is not made.
+ */
+function jsonBytes(value) {
+  let total = 0;
+  const add = (text) => {
+    total += Buffer.byteLength(text, "utf8");
+  };
+  const walk = (entry) => {
+    if (entry === null || typeof entry !== "object") {
+      add(JSON.stringify(entry) ?? "null");
+      return;
+    }
+    if (Array.isArray(entry)) {
+      add("[");
+      entry.forEach((item, index) => {
+        if (index !== 0) add(",");
+        walk(item);
+      });
+      add("]");
+      return;
+    }
+    if (entry instanceof Map) {
+      walk(Object.fromEntries(entry));
+      return;
+    }
+    const keys = Object.keys(entry).filter(
+      (key) => entry[key] !== undefined && typeof entry[key] !== "function",
+    );
+    add("{");
+    keys.forEach((key, index) => {
+      if (index !== 0) add(",");
+      add(`${JSON.stringify(key)}:`);
+      walk(entry[key]);
+    });
+    add("}");
+  };
+  walk(value);
+  return total;
+}

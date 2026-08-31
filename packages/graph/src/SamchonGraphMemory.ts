@@ -9,8 +9,10 @@ import {
   ISamchonGraphDump,
   ISamchonGraphEdge,
   ISamchonGraphEvidence,
+  ISamchonGraphCoverage,
   ISamchonGraphNode,
   ISamchonGraphSpan,
+  ISamchonGraphUnresolved,
 } from "./structures";
 import { GraphLanguage } from "./typings";
 import { basename } from "./utils/path";
@@ -40,6 +42,8 @@ export class SamchonGraphMemory {
   public readonly languages: readonly string[];
   /** Which indexing strategy produced the graph. */
   public readonly indexer: ISamchonGraphDump["indexer"];
+  /** Complete coordinator input generation for cross-plane compatibility. */
+  public readonly inputGeneration: string | undefined;
   /** Every node, raw plus synthesized (file containers). */
   public readonly nodes: readonly ISamchonGraphNode[];
   /** Every edge, raw plus synthesized containment. */
@@ -48,6 +52,12 @@ export class SamchonGraphMemory {
   public readonly diagnostics: readonly ISamchonGraphDiagnostic[];
   /** Non-fatal problems encountered while building the graph. */
   public readonly warnings: readonly string[];
+  /** Strict-provider provenance retained from the exact dump generation. */
+  public readonly provenance: readonly ISamchonGraphDump.IProvenance[];
+  /** Machine-readable completeness of every strict relationship family. */
+  public readonly coverage: readonly ISamchonGraphCoverage[];
+  /** Exact sites whose relationships remain unresolved. */
+  public readonly unresolved: readonly ISamchonGraphUnresolved[];
   /** Provenance-gated source display facts owned by this exact snapshot. */
   public readonly source: SamchonGraphSourceReader;
 
@@ -60,10 +70,14 @@ export class SamchonGraphMemory {
     this.project = dump.project;
     this.languages = dump.languages;
     this.indexer = dump.indexer;
+    this.inputGeneration = dump.generation?.input;
     this.nodes = nodes;
     this.edges = edges;
     this.diagnostics = dump.diagnostics ?? [];
     this.warnings = dump.warnings ?? [];
+    this.provenance = dump.provenance ?? [];
+    this.coverage = dump.coverage ?? [];
+    this.unresolved = dump.unresolved ?? [];
     this.source = source;
 
     this.byId = indexNodesById(nodes);

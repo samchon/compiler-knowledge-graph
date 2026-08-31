@@ -321,34 +321,57 @@ export const test_provider_commands_and_inputs_respect_project_boundaries =
         expectedCommand(goCommand, ["--project", path.resolve(root)]),
       );
       fs.rmSync(goCommand, { force: true });
-      const bundledGo = goGraphProvider.resolve(root, process.env);
-      TestValidator.predicate(
-        "the packaged Go source sidecar runs through the available toolchain",
-        bundledGo !== undefined &&
-          bundledGo.args.includes("-C") &&
-          bundledGo.args.slice(-4).join(" ") ===
-            `run . --project ${path.resolve(root)}`,
+
+      const hostGo = goGraphProvider.resolve(root, process.env);
+      if (hostGo !== undefined) {
+        TestValidator.predicate(
+          "an available host Go runs the packaged source sidecar",
+          hostGo.args.includes("-C") &&
+            hostGo.args.slice(-4).join(" ") ===
+              `run . --project ${path.resolve(root)}`,
+        );
+      }
+
+      const bundledSource = path.join(
+        GraphPaths.graphPackageRoot,
+        "sidecars",
+        "go",
       );
-      if (bundledGo === undefined) {
-        throw new Error("the packaged Go source sidecar was not resolved");
-      }
-      const sourceFlag = bundledGo.args.indexOf("-C");
-      const bundledSource = bundledGo.args[sourceFlag + 1];
-      if (sourceFlag < 0 || bundledSource === undefined) {
-        throw new Error("the packaged Go source directory was not resolved");
-      }
+      const sourceGo = platformExecutable(privateBin, "go");
+      writeExecutable(sourceGo);
+      const sourceRunner = goGraphProvider.resolve(root, {
+        ...emptyPath,
+        SAMCHON_GRAPH_GO_TOOLCHAIN: sourceGo,
+      });
+      TestValidator.equals(
+        "a deterministically present Go runs the packaged source sidecar",
+        sourceRunner,
+        spawnableCommand.append(expectedCommand(sourceGo), [
+          "-C",
+          bundledSource,
+          "run",
+          ".",
+          "--project",
+          path.resolve(root),
+        ]),
+      );
+
       const bundledManifest = path.join(bundledSource, "go.mod");
       const hiddenManifest = `${bundledManifest}.test-hidden`;
       fs.renameSync(bundledManifest, hiddenManifest);
       try {
         TestValidator.equals(
           "a malformed package without its Go source sidecar declines cleanly",
-          goGraphProvider.resolve(root, process.env),
+          goGraphProvider.resolve(root, {
+            ...emptyPath,
+            SAMCHON_GRAPH_GO_TOOLCHAIN: sourceGo,
+          }),
           undefined,
         );
       } finally {
         fs.renameSync(hiddenManifest, bundledManifest);
       }
+      fs.rmSync(sourceGo, { force: true });
       TestValidator.equals(
         "the packaged Go source sidecar declines without a Go toolchain",
         goGraphProvider.resolve(root, emptyPath),

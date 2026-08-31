@@ -5,13 +5,18 @@ import {
   type GraphEdgeKind,
   type IBulkGraphSession,
   type IGraphProvider,
+  RUST_GRAPH_PRODUCER_COMMIT,
+  CPP_CLANG_PRODUCER_COMMIT,
+  cppGraphProvider,
+  javaGraphProvider,
   goGraphProvider,
   luaGraphProvider,
-  rustScipProvider,
+  rustGraphProvider,
   standardScipProviders,
   standardSidecarProviders,
 } from "@samchon/graph";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -923,8 +928,16 @@ function assertFixtureRegistryCoverage(): void {
     ttscGraphProvider,
     goGraphProvider,
     luaGraphProvider,
-    rustScipProvider,
-    ...standardScipProviders,
+    rustGraphProvider,
+    cppGraphProvider,
+    javaGraphProvider,
+    // The two SCIP entries a strict route owns as its fallback tier. They are
+    // exercised by the loop above, but the registry does not list them as
+    // owners, so the ledger must not either.
+    ...standardScipProviders.filter(
+      (provider) =>
+        provider.name !== "scip-clang" && provider.name !== "scip-java",
+    ),
     ...standardSidecarProviders,
   ]
     .map((provider) => provider.name)
@@ -1011,6 +1024,7 @@ async function assertHeuristicTwinFails(
   provider: IGraphProvider,
   command: IGraphProvider.ICommand,
   root: string,
+  relationship: GraphEdgeKind = "references",
 ): Promise<void> {
   const prior = process.env.SAMCHON_GRAPH_FIXTURE_MODE;
   process.env.SAMCHON_GRAPH_FIXTURE_MODE = "heuristic";
@@ -1025,7 +1039,7 @@ async function assertHeuristicTwinFails(
     const refreshed = await session.refresh();
     const failures = Conformance.check(
       refreshed.snapshot,
-      expectationsForProvider(root, provider),
+      expectationsForProvider(root, provider, relationship),
     ).failures;
     TestValidator.predicate(
       `${provider.name} rejects only the common comment-only semantic negative twin`,
@@ -1113,8 +1127,9 @@ function expectationsOf(
 function expectationsForProvider(
   root: string,
   provider: IGraphProvider,
+  relationship: GraphEdgeKind = "references",
 ): readonly Conformance.IExpectation[] {
-  return expectationsOf(root, provider.languages).filter(
+  return expectationsOf(root, provider.languages, relationship).filter(
     (expectation) =>
       !("edge" in expectation) ||
       provider.facts.includes(expectation.edge.kind),
@@ -1225,6 +1240,15 @@ async function assertRemainingRegisteredFixtures(root: string): Promise<void> {
   await assertRegisteredFixture(goGraphProvider, goCommand, root);
   await assertHeuristicTwinFails(goGraphProvider, goCommand, root);
 
+  const cppCommand: IGraphProvider.ICommand = {
+    command: process.execPath,
+    args: [
+      GraphPaths.fakeCppGraphServer,
+      `--commit=${CPP_CLANG_PRODUCER_COMMIT}`,
+    ],
+  };
+  await assertRegisteredFixture(cppGraphProvider, cppCommand, root, "calls");
+
   // Lua's producer is the language server itself, driven through its `--doc`
   // export with our exporter injected, so the fixture stands in for the server
   // rather than for a binary of ours. `prepare` writes the config that carries
@@ -1238,23 +1262,26 @@ async function assertRemainingRegisteredFixtures(root: string): Promise<void> {
   };
   await assertRegisteredFixture(luaGraphProvider, luaCommand, root);
 
-  // The arguments `resolveRustScipCommand` puts in front of the session's own,
-  // not an invocation that skips them. A synthetic command without them opens
-  // the same session against a producer that was never asked the way the
-  // provider asks it, which is how a wrong subcommand would go unnoticed here
-  // and be found only by a real lane.
+  // The HIR fixture speaks the same resident snapshot protocol as the pinned
+  // fork and carries the shared positive/negative semantic corpus.
   const rustCommand: IGraphProvider.ICommand = {
     command: process.execPath,
     args: [
-      GraphPaths.fakeStandardProvider,
-      "--producer=rust-analyzer",
-      "scip",
-      ".",
-      "--exclude-vendored-libraries",
+      GraphPaths.fakeRustGraphServer,
+      `--commit=${RUST_GRAPH_PRODUCER_COMMIT}`,
+      "--conformance",
     ],
   };
-  await assertRegisteredFixture(rustScipProvider, rustCommand, root);
-  await assertHeuristicTwinFails(rustScipProvider, rustCommand, root);
+  await assertRegisteredFixture(rustGraphProvider, rustCommand, root, "calls");
+  await assertHeuristicTwinFails(
+    rustGraphProvider,
+    {
+      ...rustCommand,
+      args: [...rustCommand.args, "--conformance-heuristic"],
+    },
+    root,
+    "calls",
+  );
 }
 
 async function assertRegisteredFixture(
@@ -1278,6 +1305,14 @@ async function assertRegisteredFixture(
         "the Rust fixture publishes only its fixed compiler and Cargo oracles",
         refreshed.snapshot.provenance.compilerVersion,
         "rustc=rustc v1.0.0; cargo=cargo v1.0.0",
+      );
+    }
+    if (provider.name === "samchon-rust-analyzer-hir") {
+      const source = path.join(root, "src/lib.rs");
+      TestValidator.equals(
+        "the Rust HIR source digest binds analyzer facts to the coordinator's disk generation",
+        refreshed.snapshot.sources.get(source)?.diskDigest,
+        createHash("sha256").update(fs.readFileSync(source)).digest("hex"),
       );
     }
     // Compared rather than reduced to a predicate: a conformance report names
@@ -1474,8 +1509,18 @@ function emptyPath(): NodeJS.ProcessEnv {
  * row it emits is labelled after the command rather than the provider — and a
  * test that assumed the two were the same name was asserting a coincidence.
  */
+/**
+ * The executable a registry entry actually runs.
+ *
+ * Two entries do not run a program named after themselves: `scip-dart` invokes
+ * pub's `scip_dart`, and the Kotlin lane is a plugin inside the same
+ * `scip-java` launcher the Java lane uses. The configuration row names the
+ * command, so the fixture has to as well.
+ */
 function producerOf(provider: string): string {
-  return provider === "scip-dart" ? "scip_dart" : provider;
+  if (provider === "scip-dart") return "scip_dart";
+  if (provider === "scip-kotlinc") return "scip-java";
+  return provider;
 }
 
 function producerRowOf(provider: string): string {
@@ -1486,6 +1531,7 @@ function toolchainRowsOf(provider: string): string[] {
   const toolchains: Record<string, readonly string[]> = {
     "scip-clang": ["cc", "clang"],
     "scip-java": ["java"],
+    "scip-kotlinc": ["java"],
     "scip-dotnet": ["dotnet"],
     "scip-python": ["python3"],
     "scip-ruby": ["ruby"],
@@ -1500,8 +1546,10 @@ function toolchainRowsOf(provider: string): string[] {
 }
 
 function expectedCompilerVersion(provider: IGraphProvider): string {
-  return provider.name === "scip-java" &&
-    provider.languages.includes("kotlin")
+  // The launcher is a JVM program and the JVM is not Kotlin's compiler, so the
+  // Kotlin lane publishes no compiler row rather than the runtime that started
+  // it. The Java lane's launcher and compiler genuinely are the same JVM.
+  return provider.name === "scip-kotlinc"
     ? ""
     : toolchainRowsOf(provider.name).join("; ");
 }

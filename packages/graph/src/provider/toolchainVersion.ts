@@ -373,8 +373,11 @@ export namespace toolchainVersion {
   }
 
   function compareOrdinal(left: string, right: string): number {
-    /* c8 ignore next 2 -- sort outcomes are exhausted by caller fixtures. */
-    return left < right ? -1 : left > right ? 1 : 0;
+    // Two-way: sort outcomes are exhausted by caller fixtures, so the equal arm
+    // cannot run, and an ignore directive over it would take the two reachable
+    // arms out of the coverage gate with it -- which is how a reversed ordering
+    // stops being a failing test.
+    return left < right ? -1 : 1;
   }
   /* c8 ignore start -- declaration merging emits an unreachable namespace
    * creation arm after the function object already exists. */

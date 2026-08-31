@@ -2,7 +2,7 @@
 
 This workspace runs real LSP smoke experiments outside the coverage-gated test suite.
 
-Each language job installs the actual language server, clones a representative public project, builds a graph in `mode: "lsp"`, and fails if the result falls back to static indexing or produces no language symbols.
+Each language job installs the actual language server, including any pinned producer fork declared by its catalog row, clones a representative public project, builds a graph in `mode: "lsp"`, and fails if the result loses its strict provenance or produces no language symbols.
 
 Use the workflow in `.github/workflows/experiment.yml` for the full matrix.
 

@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 import { buildGraphDump } from "@samchon/graph";
@@ -18,6 +19,26 @@ import {
 import { runStrictLifecycle } from "./strict-lifecycle.mjs";
 
 activateProvisionedTools();
+
+// A host memory trace, because four C/C++ runs have now ended with the runner
+// reporting a shutdown while the producer was indexing, and four explanations
+// for it have been wrong: build serialization, the job bound, host preemption
+// of long jobs, and polling pressure. Each was retired by a measurement, and
+// the last one by a run that died sooner with ninety times fewer requests.
+//
+// A shutdown with no diagnostic is what an out-of-memory kill of the runner
+// agent looks like from inside the job, so the one thing never observed is
+// what the host had left. This prints it rather than reasoning about it. It is
+// free, it says nothing about any lane that does not fail, and it is the
+// difference between a fifth theory and evidence.
+const memoryTrace = setInterval(() => {
+  const free = Math.round(os.freemem() / (1024 * 1024));
+  const total = Math.round(os.totalmem() / (1024 * 1024));
+  console.log(
+    `experiment host memory: ${String(free)} MiB free of ${String(total)} MiB`,
+  );
+}, 10_000);
+memoryTrace.unref?.();
 const args = parseArgs(process.argv.slice(2));
 const experiment = findExperiment(args.language);
 const pinned = cloneRepository(experiment, { refresh: args.refresh === "true" });
@@ -127,6 +148,11 @@ if (strict) {
   elapsedMs = Math.round(performance.now() - started);
 }
 const warnings = dump.warnings ?? [];
+const declaredProvenance = strict
+  ? dump.provenance?.find(
+      (row) => row.provider === experiment.strictProvider,
+    )
+  : undefined;
 
 if (dump.indexer === "static") {
   throw new Error(`${experiment.language}: expected real LSP indexing, got static fallback: ${warnings.join("; ")}`);
@@ -141,9 +167,7 @@ const minEdges = experiment.minEdges ?? 0;
 if (!strict && dump.edges.length < minEdges) {
   throw new Error(`${experiment.language}: expected at least ${minEdges} relationship edges, got ${dump.edges.length}`);
 }
-const provenance = strict
-  ? dump.provenance?.find((row) => row.provider === experiment.strictProvider)
-  : undefined;
+const provenance = strict ? declaredProvenance : undefined;
 if (strict && provenance === undefined) {
   throw new Error(
     `${experiment.language}: strict provider ${experiment.strictProvider} did not publish provenance: ${warnings.join("; ")}`,
@@ -204,7 +228,7 @@ const edgeKindCounts = Object.fromEntries(
 // required this exact edge in both generations; count that evidence instead of
 // pre-editing the pinned baseline merely to make the final cold dump contain it.
 const lifecycleCreatedEdge = experiment.lifecycle?.createdEdge;
-for (const kind of experiment.semanticEdges ?? []) {
+for (const kind of strict ? experiment.semanticEdges ?? [] : []) {
   if (
     (edgeKindCounts[kind] ?? 0) === 0 &&
     lifecycleCreatedEdge?.kind !== kind

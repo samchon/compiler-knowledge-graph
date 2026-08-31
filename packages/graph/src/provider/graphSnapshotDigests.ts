@@ -1,5 +1,8 @@
-import { createHash } from "node:crypto";
+import { createHash, Hash } from "node:crypto";
 
+import { canonicalFactText } from "./canonicalFactText";
+import { graphCoverageOf } from "./graphCoverageOf";
+import { graphUnresolvedOf } from "./graphUnresolvedOf";
 import { IBulkGraphSession } from "./IBulkGraphSession";
 
 /**
@@ -49,10 +52,16 @@ export namespace graphSnapshotDigests {
     // and the dump's provenance both compare exactly this value to decide
     // whether anything moved. A digest over part of the facts is not a weaker
     // proof of the whole; it is a proof of something else.
-    for (const node of snapshot.nodes) hash.update(`node\0${canonical(node)}\n`);
-    for (const edge of snapshot.edges) hash.update(`edge\0${canonical(edge)}\n`);
+    for (const node of snapshot.nodes) hash.update(`node\0${canonicalFactText(node)}\n`);
+    for (const edge of snapshot.edges) hash.update(`edge\0${canonicalFactText(edge)}\n`);
     for (const diagnostic of snapshot.diagnostics) {
-      hash.update(`diagnostic\0${canonical(diagnostic)}\n`);
+      hash.update(`diagnostic\0${canonicalFactText(diagnostic)}\n`);
+    }
+    for (const coverage of graphCoverageOf(snapshot)) {
+      hash.update(`coverage\0${canonicalFactText(coverage)}\n`);
+    }
+    for (const unresolved of graphUnresolvedOf(snapshot)) {
+      hash.update(`unresolved\0${canonicalFactText(unresolved)}\n`);
     }
     return hash.digest("hex");
   }
@@ -70,19 +79,24 @@ export namespace graphSnapshotDigests {
     const sources = [...snapshot.sources]
       .sort(([left], [right]) => compareOrdinal(left, right))
       .map(([file, digest]) => ({ file, ...digest }));
-    return createHash("sha256")
-      .update(
-        canonical({
-          languages: snapshot.languages,
-          nodes: snapshot.nodes,
-          edges: snapshot.edges,
-          diagnostics: snapshot.diagnostics,
-          sources,
-          provenance: snapshot.provenance,
-          warnings: snapshot.warnings,
-        }),
-      )
-      .digest("hex");
+    // Written into the hash rather than built as one string first. The value
+    // is every fact a generation publishes, and a project large enough makes
+    // that longer than a string is allowed to be -- a limit that has nothing
+    // to do with what is being proved. The bytes are the same either way.
+    const hash = createHash("sha256");
+    canonicalInto(hash, {
+      languages: snapshot.languages,
+      nodes: snapshot.nodes,
+      edges: snapshot.edges,
+      diagnostics: snapshot.diagnostics,
+      coverage: graphCoverageOf(snapshot),
+      unresolved: graphUnresolvedOf(snapshot),
+      sources,
+      provenance: snapshot.provenance,
+      protocol: snapshot.protocol,
+      warnings: snapshot.warnings,
+    });
+    return hash.digest("hex");
   }
 }
 
@@ -99,23 +113,48 @@ export namespace graphSnapshotDigests {
  * and it becomes `null` there for the reason `JSON` does the same: an array's
  * length is part of its meaning, so the hole must keep its place.
  */
-function canonical(value: unknown): string {
-  if (value === undefined) return "null";
+/**
+ * The same bytes {@link canonical} would produce, written into a hash.
+ *
+ * A digest over a whole generation is a digest over every fact in it, and on
+ * a project of any size the text of that is longer than a string may be. The
+ * length is a property of the runtime, not of the thing being proved, so the
+ * bytes go to the hash as they are made rather than being assembled first.
+ */
+function canonicalInto(hash: Hash, value: unknown): void {
+  // No `undefined` arm. This walks a snapshot, whose arrays have no holes and
+  // whose objects drop undefined-valued keys below, so the arm `canonical`
+  // carries for callers that hand it anything would be unreachable here.
   if (value === null || typeof value !== "object") {
-    return JSON.stringify(value);
+    hash.update(JSON.stringify(value));
+    return;
   }
   if (Array.isArray(value)) {
-    return `[${value.map(canonical).join(",")}]`;
+    hash.update("[");
+    for (let index = 0; index < value.length; ++index) {
+      if (index !== 0) hash.update(",");
+      canonicalInto(hash, value[index]);
+    }
+    hash.update("]");
+    return;
   }
   const entries = Object.entries(value as Record<string, unknown>)
     .filter(([, entry]) => entry !== undefined)
     .sort(([left], [right]) => compareOrdinal(left, right));
-  return `{${entries
-    .map(([key, entry]) => `${JSON.stringify(key)}:${canonical(entry)}`)
-    .join(",")}}`;
+  hash.update("{");
+  for (let index = 0; index < entries.length; ++index) {
+    if (index !== 0) hash.update(",");
+    const [key, entry] = entries[index]!;
+    hash.update(`${JSON.stringify(key)}:`);
+    canonicalInto(hash, entry);
+  }
+  hash.update("}");
 }
 
 function compareOrdinal(left: string, right: string): number {
-  /* c8 ignore next 2 -- sort keys are distinct file identities or object keys. */
-  return left < right ? -1 : left > right ? 1 : 0;
+  // Two-way: sort keys are distinct file identities or object keys, so the
+  // equal arm cannot run, and an ignore directive over it would take the two
+  // reachable arms out of the coverage gate with it -- which is how a reversed
+  // ordering stops being a failing test.
+  return left < right ? -1 : 1;
 }

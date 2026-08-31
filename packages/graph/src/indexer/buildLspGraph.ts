@@ -8,7 +8,9 @@ import {
   ISamchonGraphDiagnostic,
   ISamchonGraphDump,
   ISamchonGraphEdge,
+  ISamchonGraphCoverage,
   ISamchonGraphNode,
+  ISamchonGraphUnresolved,
 } from "../structures";
 import { GraphLanguage } from "../typings";
 import { projectRelative, readText } from "../utils/fs";
@@ -16,6 +18,9 @@ import { fileFromUri, fileUri, isSubPath } from "../utils/path";
 import { spawnableCommand } from "../utils/spawnableCommand";
 import { assertGraphSnapshotContract } from "../provider/assertGraphSnapshotContract";
 import { dumpProvenanceOf } from "../provider/dumpProvenanceOf";
+import { fallbackCoverage } from "../provider/fallbackCoverage";
+import { graphCoverageOf } from "../provider/graphCoverageOf";
+import { graphUnresolvedOf } from "../provider/graphUnresolvedOf";
 import { IBulkGraphSession } from "../provider/IBulkGraphSession";
 import { isBulkGraphSession } from "../provider/isBulkGraphSession";
 import { mergeGraphSlices } from "../provider/mergeGraphSlices";
@@ -84,6 +89,10 @@ export async function buildLspGraph(
         ? []
         : closeKeptSessions(result.sessions),
   );
+  committed.dump = {
+    ...committed.dump,
+    generation: { input: committed.inputGeneration! },
+  };
   if (options.keepAlive) {
     const { providerSourceDigests: _providerSourceDigests, ...result } =
       committed;
@@ -112,6 +121,8 @@ async function buildLspGraphAttempt(
   const strictNodes: ISamchonGraphNode[] = [];
   const strictEdges: ISamchonGraphEdge[] = [];
   const diagnostics: ISamchonGraphDiagnostic[] = [];
+  const coverage: ISamchonGraphCoverage[] = [];
+  const unresolved: ISamchonGraphUnresolved[] = [];
   const warnings: string[] = [];
   const staticFallbackLanguages: GraphLanguage[] = [];
   const sessions = new Map<GraphLanguage, ILspSession | IBulkGraphSession>();
@@ -161,93 +172,100 @@ async function buildLspGraphAttempt(
     // empty log three times over: no provider named, no reason recorded, and no
     // way to tell a slow strict indexer from a slow fallback.
     announceProviderSelection(selection.candidates, selection.warnings);
-    for (const candidate of selection.candidates) {
-      try {
-        const { refresh, session } =
-          await resolvedDependencies.collectProviderGraph(
-            root,
-            candidate,
-            options,
-          );
-        const snapshot = refresh.snapshot;
+    for (const selectedCandidate of selection.candidates) {
+      const attempts = [selectedCandidate, ...selectedCandidate.fallbacks];
+      for (const [routeIndex, candidate] of attempts.entries()) {
         try {
-          assertGraphSnapshotContract(
-            snapshot,
-            candidate.provider,
-            candidate.languages,
-            root,
-          );
-          // Closing a one-shot session is part of accepting its candidate. A
-          // close failure declines it before its manifest or facts can enter
-          // the aggregate. Resident candidates stay live only after the same
-          // collision gate admits their source evidence.
-          if (!options.keepAlive) await session.close();
-          mergeProviderSourceDigests(strictDigests, snapshot.sources);
-        } catch (error) {
-          // `collectProviderGraph` has handed this live session to the
-          // coordinator, but a rejected snapshot never enters `sessions`.
-          // Close it here: otherwise a resident build falls through to the
-          // generic lane while the invalid provider's child remains orphaned.
+          const { refresh, session } =
+            await resolvedDependencies.collectProviderGraph(
+              root,
+              candidate,
+              options,
+            );
+          const snapshot = refresh.snapshot;
           try {
-            await session.close();
-          } catch (closeError) {
-            throw new AggregateError(
-              [error, closeError],
-              "@samchon/graph: strict provider snapshot was refused and its unpublished session could not close",
+            assertGraphSnapshotContract(
+              snapshot,
+              candidate.provider,
+              candidate.languages,
+              root,
+            );
+            // Closing a one-shot session is part of accepting its candidate. A
+            // close failure declines it before its manifest or facts can enter
+            // the aggregate. Resident candidates stay live only after the same
+            // collision gate admits their source evidence.
+            if (!options.keepAlive) await session.close();
+            mergeProviderSourceDigests(strictDigests, snapshot.sources);
+          } catch (error) {
+            // `collectProviderGraph` has handed this live session to the
+            // coordinator, but a rejected snapshot never enters `sessions`.
+            // Close it here: otherwise a resident build falls through to the
+            // generic lane while the invalid provider's child remains orphaned.
+            try {
+              await session.close();
+            } catch (closeError) {
+              throw new AggregateError(
+                [error, closeError],
+                "@samchon/graph: strict provider snapshot was refused and its unpublished session could not close",
+              );
+            }
+            throw error;
+          }
+          appendAll(strictNodes, snapshot.nodes);
+          appendAll(strictEdges, snapshot.edges);
+          appendAll(diagnostics, snapshot.diagnostics);
+          appendAll(coverage, graphCoverageOf(snapshot));
+          appendAll(unresolved, graphUnresolvedOf(snapshot));
+          appendAll(warnings, snapshot.warnings);
+          // The manifest names the files, and the provider owns the fact that it
+          // does. Nothing reads their text here: the strict lane's facts are
+          // already resolved, and the only thing the generic lane wanted text for
+          // — deriving export edges — is work this provider has already done
+          // against the real checker.
+          provenance.push(dumpProvenanceOf(snapshot));
+          modes.set(candidate.provider.name, refresh.mode);
+          // A complete strict slice can legitimately contain no declarations.
+          // The provider still answered for its languages, with provenance,
+          // diagnostics, and an exact manifest. Counting nodes as proof that it
+          // answered relabelled that valid empty slice as static fallback and
+          // let a later resident generation change lane authority underneath the
+          // same kept session.
+          semanticSliceCount += 1;
+          // A candidate may own more languages than its snapshot published — a
+          // Clang provider asked for C and C++ can answer with only the
+          // translation units it found. Whatever it did not publish falls to the
+          // generic lane, and that has to be said: a caller who selected a
+          // compiler-owned provider for C would otherwise be handed navigation
+          // facts for it with nothing to distinguish them.
+          const published = new Set(snapshot.languages);
+          const unpublished = candidate.languages.filter(
+            (language) => !published.has(language),
+          );
+          if (unpublished.length > 0) {
+            warnings.push(
+              `${unpublished.join(", ")}: the ${candidate.provider.name} ${candidate.provider.authority} provider owns these languages but published no slice for them, so they fall through to the generic language-server lane.`,
             );
           }
-          throw error;
-        }
-        appendAll(strictNodes, snapshot.nodes);
-        appendAll(strictEdges, snapshot.edges);
-        appendAll(diagnostics, snapshot.diagnostics);
-        appendAll(warnings, snapshot.warnings);
-        // The manifest names the files, and the provider owns the fact that it
-        // does. Nothing reads their text here: the strict lane's facts are
-        // already resolved, and the only thing the generic lane wanted text for
-        // — deriving export edges — is work this provider has already done
-        // against the real checker.
-        provenance.push(dumpProvenanceOf(snapshot));
-        modes.set(candidate.provider.name, refresh.mode);
-        // A complete strict slice can legitimately contain no declarations.
-        // The provider still answered for its languages, with provenance,
-        // diagnostics, and an exact manifest. Counting nodes as proof that it
-        // answered relabelled that valid empty slice as static fallback and
-        // let a later resident generation change lane authority underneath the
-        // same kept session.
-        semanticSliceCount += 1;
-        // A candidate may own more languages than its snapshot published — a
-        // Clang provider asked for C and C++ can answer with only the
-        // translation units it found. Whatever it did not publish falls to the
-        // generic lane, and that has to be said: a caller who selected a
-        // compiler-owned provider for C would otherwise be handed navigation
-        // facts for it with nothing to distinguish them.
-        const published = new Set(snapshot.languages);
-        const unpublished = candidate.languages.filter(
-          (language) => !published.has(language),
-        );
-        if (unpublished.length > 0) {
+          for (const language of snapshot.languages) {
+            strictLanguages.add(language);
+            servedLanguages.add(language);
+            // A multi-language provider is one session under several keys. The
+            // map stays keyed by language because every consumer asks it a
+            // language question; deduplication is the consumers' job and they do
+            // it by session identity, not by key.
+            if (options.keepAlive) {
+              sessions.set(language, session);
+              providers.set(language, candidate.provider);
+            }
+          }
+          break;
+        } catch (error) {
+          if (options.signal?.aborted) throw error;
+          const next = attempts[routeIndex + 1];
           warnings.push(
-            `${unpublished.join(", ")}: the ${candidate.provider.name} ${candidate.provider.authority} provider owns these languages but published no slice for them, so they fall through to the generic language-server lane.`,
+            `${candidate.languages.join(", ")}: the ${candidate.provider.name} ${candidate.provider.authority} provider failed, so these languages fall through to ${next === undefined ? "the generic language-server lane" : `the ${next.provider.name} ${next.provider.authority} provider`}: ${(error as Error).message}`,
           );
         }
-        for (const language of snapshot.languages) {
-          strictLanguages.add(language);
-          servedLanguages.add(language);
-          // A multi-language provider is one session under several keys. The
-          // map stays keyed by language because every consumer asks it a
-          // language question; deduplication is the consumers' job and they do
-          // it by session identity, not by key.
-          if (options.keepAlive) {
-            sessions.set(language, session);
-            providers.set(language, candidate.provider);
-          }
-        }
-      } catch (error) {
-        if (options.signal?.aborted) throw error;
-        warnings.push(
-          `${candidate.languages.join(", ")}: the ${candidate.provider.name} ${candidate.provider.authority} provider failed, so these languages fall through to the generic language-server lane: ${(error as Error).message}`,
-        );
       }
     }
 
@@ -334,6 +352,7 @@ async function buildLspGraphAttempt(
           appendAll(nodes, result.nodes);
           appendAll(edges, result.edges);
           appendAll(diagnostics, result.diagnostics);
+          appendAll(coverage, fallbackCoverage("@samchon/graph-lsp", [language]));
           appendAll(warnings, result.warnings);
           semanticSliceCount += 1;
           servedLanguages.add(language);
@@ -375,6 +394,10 @@ async function buildLspGraphAttempt(
       }
       appendAll(nodes, fallback.nodes);
       appendAll(edges, fallback.edges);
+      appendAll(
+        coverage,
+        fallbackCoverage("@samchon/graph-sitter", fallback.languages),
+      );
       appendAll(warnings, fallback.warnings);
     }
 
@@ -413,6 +436,8 @@ async function buildLspGraphAttempt(
         nodes: wireNodes(finalized.nodes),
         edges: wireEdges(finalized.edges, finalized.nodes),
         diagnostics,
+        coverage,
+        unresolved,
         warnings,
         ...dumpProvenanceOf.fieldOf(provenance),
       },
@@ -477,7 +502,7 @@ async function closeKeptSessions(
  */
 async function collectProviderGraph(
   root: string,
-  candidate: selectGraphProviders.ICandidate,
+  candidate: selectGraphProviders.IRouteCandidate,
   options: IBuildGraphOptions,
 ): Promise<{
   refresh: IBulkGraphSession.IRefresh;
@@ -519,7 +544,7 @@ async function collectProviderGraph(
 /** A provider may not widen or move the candidate the registry selected. */
 function assertBulkSessionContract(
   root: string,
-  candidate: selectGraphProviders.ICandidate,
+  candidate: selectGraphProviders.IRouteCandidate,
   session: IBulkGraphSession,
 ): void {
   const label = `@samchon/graph: provider "${candidate.provider.name}"`;
@@ -552,8 +577,11 @@ function samePath(left: string, right: string): boolean {
 }
 
 function compareOrdinal(left: string, right: string): number {
-  /* c8 ignore next 2 -- compared language names are distinct set members. */
-  return left < right ? -1 : left > right ? 1 : 0;
+  // Two-way: compared language names are distinct set members, so the equal arm
+  // cannot run, and an ignore directive over it would take the two reachable
+  // arms out of the coverage gate with it -- which is how a reversed ordering
+  // stops being a failing test.
+  return left < right ? -1 : 1;
 }
 
 /** Every language fell back to the static parser: the dump is that parse. */
@@ -577,6 +605,8 @@ function staticDump(
     project: parts.root,
     languages: parts.languages,
     indexer: "static",
+    coverage: fallbackCoverage("@samchon/graph-sitter", parts.languages),
+    unresolved: [],
     nodes: wireNodes(nodes),
     edges: wireEdges(dedupeEdges(finalized.edges), nodes),
     warnings: [...parts.warnings, ...warnings, ...dedupeWarnings],

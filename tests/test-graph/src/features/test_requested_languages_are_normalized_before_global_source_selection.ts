@@ -32,6 +32,7 @@ export const test_requested_languages_are_normalized_before_global_source_select
   await assertUnsupportedExplicitLanguageFailsBeforeIndexing(root);
   await assertEmptyStrictSliceRemainsStrict(root);
   await assertSessionCannotWidenItsCandidate(root);
+  await assertSessionMayNameItsCandidateInAnyOrder(root);
   await assertInitialBuildInputFence();
 };
 
@@ -222,6 +223,50 @@ async function assertEmptyStrictSliceRemainsStrict(root: string): Promise<void> 
       result.sessions?.get("typescript") === session,
   );
   await session.close();
+}
+
+async function assertSessionMayNameItsCandidateInAnyOrder(
+  root: string,
+): Promise<void> {
+  // The contract compares what a session opened for against what the registry
+  // selected, and both are sets: `[typescript, go]` and `[go, typescript]` are
+  // one route named twice. Every earlier case here opens for a single language,
+  // so the comparison never had to order anything, and a contract that happened
+  // to compare the two lists positionally would have passed all of them.
+  const reordering = ProviderFixtures.session({
+    root,
+    languages: ["typescript", "go"],
+    snapshots: [
+      ProviderFixtures.snapshot({
+        provider: "reordering",
+        languages: ["go", "typescript"],
+      }),
+    ],
+  });
+  const result = await buildLspGraph(
+    { cwd: root, languages: ["go", "typescript"], keepAlive: true },
+    {
+      providers: [
+        ProviderFixtures.provider({
+          name: "reordering",
+          languages: ["go", "typescript"],
+          open: () => reordering,
+        }),
+      ],
+    },
+  );
+  TestValidator.equals(
+    "a session that names the selected languages in another order is accepted",
+    [
+      result.dump.indexer,
+      [...result.dump.languages].sort(),
+      result.sessions?.get("go") === reordering,
+      result.sessions?.get("typescript") === reordering,
+      result.warnings.some((warning) => warning.includes("opened a session for")),
+    ],
+    ["lsp", ["go", "typescript"], true, true, false],
+  );
+  await reordering.close();
 }
 
 async function assertSessionCannotWidenItsCandidate(root: string): Promise<void> {

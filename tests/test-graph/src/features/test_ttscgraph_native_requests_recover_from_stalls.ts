@@ -102,7 +102,7 @@ export const test_ttscgraph_native_requests_recover_from_stalls = async () => {
   const queuedAbortClient = create(
     queuedAbortRoot,
     path.join(queuedAbortRoot, "first-child.txt"),
-    5_000,
+    15_000,
     queuedAbortLog,
   );
   const active = queuedAbortClient.refresh();
@@ -395,14 +395,25 @@ const delay = (milliseconds: number): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, milliseconds));
 
 const waitForFile = async (file: string): Promise<void> => {
-  const deadline = Date.now() + 5_000;
-  while (!fs.existsSync(file)) {
+  // c8 instruments the whole package before this Windows Job child starts.
+  // This is fixture-readiness time, not the native request deadline asserted
+  // above, so keep enough headroom for an instrumented cold process launch.
+  const deadline = Date.now() + 15_000;
+  while (!hasContents(file)) {
     if (Date.now() >= deadline) {
       throw new Error(`timed out waiting for ${file}`);
     }
     await delay(10);
   }
 };
+
+function hasContents(file: string): boolean {
+  try {
+    return fs.statSync(file).size > 0;
+  } catch {
+    return false;
+  }
+}
 
 const isProcessAlive = (pid: number): boolean => {
   try {

@@ -19,7 +19,18 @@ interface ILspClient {
 }
 
 interface ILspClientInternals {
-  pending: Map<number, unknown>;
+  pending: Map<
+    number,
+    {
+      resolve(value: unknown): void;
+      reject(error: Error): void;
+      timer: NodeJS.Timeout | undefined;
+      signal?: AbortSignal;
+      abort?: () => void;
+    }
+  >;
+  handleMessage(message: unknown): void;
+  write(payload: unknown): void;
   process: {
     stdin: {
       destroy(error?: Error): void;
@@ -77,6 +88,7 @@ type LspClientConstructor = new (
   maxMessageBytes?: number,
   windowsVerbatimArguments?: boolean,
   requestObserver?: (event: LspRequestTrace) => void,
+  serverRequestHandler?: (method: string, params: unknown) => unknown,
 ) => ILspClient;
 
 /** `LspClient` is internal transport, reached through the shipped artifact. */
@@ -85,11 +97,76 @@ const importLib = <T>(relative: string): Promise<T> =>
     pathToFileURL(path.join(GraphPaths.graphPackageRoot, "lib", relative)).href
   ) as Promise<T>;
 
+/**
+ * A language server that misbehaves during teardown leaves nothing behind in
+ * the graph, so no result-shaped assertion can notice it; the evidence is a
+ * process that outlives its session, or wall clock nobody can account for.
+ *
+ * The two servers below break the handshake in opposite directions, and each
+ * inline comment states its own case. What is worth saying once, here, is why
+ * both are needed: the correct response to one is escalation and to the other
+ * is refusing to escalate, so a client that handled only the first would still
+ * pass a suite that only asked about leaks.
+ *
+ * The case then continues into the rest of the client's process and transport
+ * surface.
+ */
 export const test_lsp_client_closes_servers_that_break_the_shutdown_handshake =
   async () => {
     const { LspClient } = await importLib<{
       LspClient: LspClientConstructor;
     }>("lsp/LspClient.js");
+
+    // A frame larger than a pipe's chunk, delivered in pieces.
+    //
+    // This transport carries graph snapshot pages, which are tens of megabytes,
+    // and the operating system hands those over in chunks of about sixty-four
+    // kibibytes. Joining the accumulation with every chunk is quadratic in the
+    // frame: five hundred chunks copy the whole of it five hundred times, which
+    // was most of what paging a real C project cost. Chunks now accumulate
+    // unjoined until the frame the header declared has arrived.
+    //
+    // The server below writes its header and then dribbles the body out in
+    // pieces, so the client has to hold an incomplete frame across many reads
+    // and assemble it byte-exact. A body that arrives in one chunk would prove
+    // none of that.
+    const SIZE = 2 * 1024 * 1024;
+    const pieces = new LspClient(process.execPath, [
+      "-e",
+      [
+        "let buf = Buffer.alloc(0);",
+        "process.stdin.on('data', (d) => {",
+        "  buf = Buffer.concat([buf, d]);",
+        "  for (;;) {",
+        "    const head = buf.indexOf('\\r\\n\\r\\n');",
+        "    if (head < 0) return;",
+        "    const len = Number(/Content-Length: (\\d+)/.exec(buf.slice(0, head).toString())[1]);",
+        "    if (buf.length < head + 4 + len) return;",
+        "    const msg = JSON.parse(buf.slice(head + 4, head + 4 + len).toString());",
+        "    buf = buf.slice(head + 4 + len);",
+        "    if (msg.id === undefined) continue;",
+        `    const body = Buffer.from(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: { blob: 'x'.repeat(${SIZE}) } }));`,
+        "    process.stdout.write('Content-Length: ' + body.length + '\\r\\n\\r\\n');",
+        "    for (let i = 0; i < body.length; i += 65536)",
+        "      process.stdout.write(body.subarray(i, i + 65536));",
+        "  }",
+        "});",
+      ].join("\n"),
+    ]);
+    try {
+      const assembled = await pieces.request<{ blob: string }>(
+        "initialize",
+        {},
+        30_000,
+      );
+      TestValidator.equals(
+        "a frame delivered in pieces is assembled byte-exact",
+        [assembled.blob.length, assembled.blob === "x".repeat(SIZE)],
+        [SIZE, true],
+      );
+    } finally {
+      await pieces.close();
+    }
 
     // A language server that acknowledges `shutdown` and then ignores `exit` is
     // the leak this teardown exists to prevent: nothing else ends that process,
@@ -158,6 +235,8 @@ export const test_lsp_client_closes_servers_that_break_the_shutdown_handshake =
     await assertOversizedHeadersTerminateTransport(LspClient);
     await assertRequestTracing(LspClient);
     await assertRequestTraceFormatting();
+    await assertServerRequestFailureAndBareResponse(LspClient);
+    await assertServerLogIsPassedThroughWhenAsked(LspClient);
 
     // An already-cancelled request never enters the wire or waits for the
     // otherwise-unlimited default deadline. The client still owns its child and
@@ -179,6 +258,153 @@ export const test_lsp_client_closes_servers_that_break_the_shutdown_handshake =
     );
     await cancelled.close();
   };
+
+/**
+ * A stalled language server's only witness is its own log.
+ *
+ * A producer that spends twenty minutes saying it is still discovering
+ * changes has said nothing a consumer can act on, and the words that would
+ * explain it go to stderr, which this client drops by default because a
+ * healthy server's log is noise. The switch passes them through; a sink that
+ * throws must not end the session it was only watching.
+ */
+const assertServerLogIsPassedThroughWhenAsked = async (
+  LspClient: LspClientConstructor,
+): Promise<void> => {
+  const CRLF2 = "String.fromCharCode(13, 10, 13, 10)";
+  const server = [
+    "const eol = String.fromCharCode(13, 10);",
+    "process.stderr.write('background index: 3 files' + String.fromCharCode(10));",
+    "let buf = Buffer.alloc(0);",
+    "process.stdin.on('data', (d) => {",
+    "  buf = Buffer.concat([buf, d]);",
+    "  for (;;) {",
+    `    const head = buf.indexOf(${CRLF2});`,
+    "    if (head < 0) return;",
+    "    const header = buf.slice(0, head).toString();",
+    "    const at = header.toLowerCase().indexOf('content-length:');",
+    "    const len = Number(header.slice(at + 15).trim().split(eol)[0]);",
+    "    if (buf.length < head + 4 + len) return;",
+    "    const msg = JSON.parse(buf.slice(head + 4, head + 4 + len).toString());",
+    "    buf = buf.slice(head + 4 + len);",
+    "    if (msg.id === undefined) continue;",
+    "    process.stderr.write('answered ' + msg.method + String.fromCharCode(10));",
+    "    const body = Buffer.from(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: {} }));",
+    `    process.stdout.write('Content-Length: ' + body.length + ${CRLF2});`,
+    "    process.stdout.write(body);",
+    "  }",
+    "});",
+  ].join(String.fromCharCode(10));
+  const captured: string[] = [];
+  const original = process.stderr.write.bind(process.stderr);
+  let sink: (text: string) => void = (text) => void captured.push(text);
+  (process.stderr as { write: unknown }).write = (chunk: unknown): boolean => {
+    sink(String(chunk));
+    return true;
+  };
+  process.env.SAMCHON_GRAPH_LSP_SERVER_LOG = "1";
+  const client = new LspClient(process.execPath, ["-e", server]);
+  try {
+    await client.request("initialize", {}, 30_000);
+    while (!captured.some((line) => line.includes("background index")))
+      await new Promise<void>((resolve) => setTimeout(resolve, 10));
+    // A sink that throws is still a sink this client must survive.
+    sink = () => {
+      throw new Error("fixture stderr sink is gone");
+    };
+    const answered = await client.request("fixture/again", {}, 30_000);
+    sink = (text) => void captured.push(text);
+    TestValidator.equals(
+      "a server's log reaches the run that asked for it, and a sink that fails does not end it",
+      [
+        captured.some((line) => line.includes("background index: 3 files")),
+        captured.every((line) => line.startsWith(`[${process.execPath}] `)),
+        answered,
+      ],
+      [true, true, {}],
+    );
+  } finally {
+    delete process.env.SAMCHON_GRAPH_LSP_SERVER_LOG;
+    (process.stderr as { write: unknown }).write = original;
+    await client.close();
+  }
+};
+
+const assertServerRequestFailureAndBareResponse = async (
+  LspClient: LspClientConstructor,
+): Promise<void> => {
+  const client = new LspClient(
+    process.execPath,
+    [GraphPaths.fakeLspServer],
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    (method) => {
+      if (method === "fixture/failure") {
+        throw "fixture server-request failure";
+      }
+      return undefined;
+    },
+  );
+  const internals = client as unknown as ILspClientInternals;
+  const written: unknown[] = [];
+  const originalWrite = internals.write.bind(client);
+  try {
+    internals.write = (payload) => void written.push(payload);
+    internals.handleMessage({
+      jsonrpc: "2.0",
+      id: 7001,
+      method: "fixture/failure",
+      params: {},
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    TestValidator.equals(
+      "a rejected server-request handler returns a normalized JSON-RPC error",
+      written,
+      [
+        {
+          jsonrpc: "2.0",
+          id: 7001,
+          error: {
+            code: -32603,
+            message: "fixture server-request failure",
+          },
+        },
+      ],
+    );
+
+    internals.handleMessage({
+      jsonrpc: "2.0",
+      id: 7002,
+      method: "fixture/undefined",
+      params: {},
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    TestValidator.equals(
+      "an undefined server-request handler result remains valid JSON-RPC",
+      written[1],
+      { jsonrpc: "2.0", id: 7002, result: null },
+    );
+
+    let bare: Error & { code?: number } | undefined;
+    internals.pending.set(7003, {
+      resolve: () => undefined,
+      reject: (error) => void (bare = error as Error & { code?: number }),
+      timer: undefined,
+    });
+    internals.handleMessage({ jsonrpc: "2.0", id: 7003, error: {} });
+    TestValidator.equals(
+      "a bare LSP response error receives the protocol defaults",
+      [bare?.name, bare?.code, bare?.message],
+      ["LspResponseError", -32603, "LSP request failed."],
+    );
+  } finally {
+    internals.write = originalWrite;
+    await client.close();
+  }
+};
 
 const assertRequestTracing = async (
   LspClient: LspClientConstructor,

@@ -11,6 +11,11 @@ import { parseGraphDump } from "../indexer/parseGraphDump";
 import { SamchonGraphMemory } from "../SamchonGraphMemory";
 import { SamchonGraphSourceReader } from "../SamchonGraphSourceReader";
 import { GraphLanguage } from "../typings";
+import {
+  createResidentRepositoryContextMemorySource,
+  createResidentRepositoryContextSource,
+} from "../repository";
+import { createCompositeResidentClose } from "./createCompositeResidentClose";
 import { createResidentCloseHandler } from "./createResidentCloseHandler";
 import { createResidentGraphMemorySource } from "./createResidentGraphMemorySource";
 import { createServer } from "./createServer";
@@ -54,7 +59,15 @@ export async function startServer(
     );
     languages = dump.languages;
     source = once(() =>
-      SamchonGraphMemory.from(dump, SamchonGraphSourceReader.none(dump.project)),
+      // A graph file proves the generation it was built from, but this static
+      // server never revalidates that token against the current checkout.
+      // Preserve the graph facts while withholding cross-plane compatibility:
+      // otherwise a current topology model could join to arbitrarily stale
+      // code merely because two reads returned the same memoized object.
+      SamchonGraphMemory.from(
+        { ...dump, generation: undefined },
+        SamchonGraphSourceReader.none(dump.project),
+      ),
     );
   } else {
     const root = path.resolve(options.cwd ?? process.cwd());
@@ -65,7 +78,15 @@ export async function startServer(
     resident = opened;
     source = createResidentGraphMemorySource(opened);
   }
-  const server = createServer(source, options.version, languages);
+  const topologyResident = createResidentRepositoryContextSource(
+    options.graphFile === undefined
+      ? path.resolve(options.cwd ?? process.cwd())
+      : (await source()).project,
+  );
+  const topology = createResidentRepositoryContextMemorySource(
+    topologyResident,
+  );
+  const server = createServer(source, options.version, languages, topology);
   const transport = new StdioServerTransport();
   // The resident source holds a live language-server process per language, and
   // nothing else is going to end them: a client that disconnects closes the
@@ -73,7 +94,9 @@ export async function startServer(
   // goes with it — an orphaned language server outliving the MCP server that
   // spawned it would hold the process's event loop open and keep a whole Gradle
   // or solution load resident behind a session nobody is talking to.
-  const close = createResidentCloseHandler(resident);
+  const close = createResidentCloseHandler(
+    createCompositeResidentClose([resident, topologyResident]),
+  );
   // These two bodies run only when the MCP transport is torn down gracefully --
   // a client that closes the transport, or a client exit that ends our stdin.
   // The deterministic harness disconnects by killing the spawned server

@@ -7,6 +7,7 @@ export * from "./operations/RESULT_AUDIT_DETAILS";
 export * from "./operations/RESULT_AUDIT_SELECTION";
 export * from "./operations/RESULT_AUDIT_ESCAPE";
 export * from "./provider";
+export * from "./repository";
 export * from "./SamchonGraphMemory";
 export * from "./SamchonGraphSourceReader";
 export * from "./runGraph";

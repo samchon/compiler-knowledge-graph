@@ -14,6 +14,15 @@ import { resolveProviderCommand } from "../resolveProviderCommand";
 import { toolchainVersion } from "../toolchainVersion";
 import { scipProvider } from "./scipProvider";
 
+const SCIP_DECODER = Object.freeze({
+  command: "scip",
+  override: "SAMCHON_GRAPH_SCIP",
+});
+const COMPILATION_DATABASE_INPUTS: readonly string[] = Object.freeze([
+  "compile_commands.json",
+  "build/compile_commands.json",
+]);
+
 const clangScipProvider = createScipProvider({
   name: "scip-clang",
   // scip-clang 0.4.0 writes occurrence range/symbol/roles only. Its
@@ -26,7 +35,11 @@ const clangScipProvider = createScipProvider({
   // even though its compilation database was exactly what the indexer consumes.
   // What the index means is decided by the driver each translation unit was
   // actually compiled with, and the database records that per entry.
-  toolchain: { label: "cc", fromProject: compilationDatabaseCompilers },
+  toolchain: {
+    label: "cc",
+    fromProject: compilationDatabaseCompilers,
+    sources: COMPILATION_DATABASE_INPUTS,
+  },
   languages: ["c", "cpp"],
   command: "scip-clang",
   override: "SAMCHON_GRAPH_SCIP_CLANG",
@@ -98,21 +111,32 @@ const clangScipProvider = createScipProvider({
   ],
 });
 
-const jvmScipProvider = createScipProvider({
-  name: "scip-java",
-  // scip-java 0.13.1 sets enclosing ranges in both the javac and kotlinc
-  // producers and enclosing_symbol for javac locals, but no producer sets a
-  // type-definition relationship.
+/**
+ * The scip-java lanes, split so Java and Kotlin can move independently.
+ *
+ * One launcher drives two compiler plugins, and until now one registry entry
+ * claimed both languages. That was accurate while nothing beat it, and it stops
+ * being viable the moment a Java-only producer exists: a fallback must own the
+ * same atomic languages as the route it backs, so a Java strict route could
+ * only take this entry as its fallback by taking Kotlin's ownership with it.
+ *
+ * The names follow the producers rather than the launcher. `scip-java`'s javac
+ * plugin makes the Java facts and keeps the name; the Kotlin facts come from
+ * the kotlinc plugin the same launcher ships, and naming that lane for it is
+ * what lets the row state a Kotlin compiler version once the producer reports
+ * one. Today it reports none, which is why the field is empty rather than
+ * filled with the JVM that launched the tool.
+ */
+const jvmScipProps: Omit<
+  IStandardScipProvider,
+  "name" | "languages" | "compilerVersion"
+> = {
   omitFacts: ["type_ref"],
   toolchain: {
     label: "java",
     aliases: ["java"],
     override: "SAMCHON_GRAPH_JAVA_TOOLCHAIN",
   },
-  // Upstream calls this a Java and Kotlin indexer and ships only javac and
-  // kotlinc producers. Claiming Scala made an installed scip-java displace the
-  // Scala language-server lane with a tool that cannot index the language.
-  languages: ["java", "kotlin"],
   command: "scip-java",
   override: "SAMCHON_GRAPH_SCIP_JAVA",
   buildFiles: [
@@ -146,14 +170,30 @@ const jvmScipProvider = createScipProvider({
   // default command; choosing by the root is therefore part of the provider
   // contract rather than a fixture-specific Gradle property change.
   indexArgs: jvmScipIndexArgs,
-  // Java is both the runtime that launches scip-java and the compiler for a
-  // Java-only slice. It is not Kotlin's compiler. Until the producer exposes
-  // the Kotlin compiler revision it drove, a Kotlin-containing slice leaves
-  // the compiler field empty instead of misnaming the JVM.
-  compilerVersion: (languages, configuration) =>
-    languages.includes("kotlin")
-      ? ""
-      : standardCompilerVersion("scip-java", configuration),
+};
+
+const javaScipProvider = createScipProvider({
+  ...jvmScipProps,
+  name: "scip-java",
+  // Upstream calls this a Java and Kotlin indexer and ships only javac and
+  // kotlinc producers. Claiming Scala made an installed scip-java displace the
+  // Scala language-server lane with a tool that cannot index the language.
+  languages: ["java"],
+  // Java is both the runtime that launches scip-java and the compiler for the
+  // slice this entry owns, so the JVM's version is the right answer here and
+  // only here.
+  compilerVersion: (_languages, configuration) =>
+    standardCompilerVersion("scip-java", configuration),
+});
+
+const kotlinScipProvider = createScipProvider({
+  ...jvmScipProps,
+  name: "scip-kotlinc",
+  languages: ["kotlin"],
+  // The launcher is a JVM program and the JVM is not Kotlin's compiler. Until
+  // the producer exposes the kotlinc revision it drove, this row leaves the
+  // compiler field empty instead of misnaming the runtime that started it.
+  compilerVersion: () => "",
 });
 
 function jvmScipIndexArgs(artifact: string, root: string): string[] {
@@ -364,7 +404,8 @@ const phpScipProvider = createScipProvider({
 /** Standard SCIP producers in deterministic registry order. */
 export const standardScipProviders: readonly IGraphProvider[] = [
   clangScipProvider,
-  jvmScipProvider,
+  javaScipProvider,
+  kotlinScipProvider,
   dotnetScipProvider,
   pythonScipProvider,
   rubyScipProvider,
@@ -468,6 +509,7 @@ type IToolchain =
         env: NodeJS.ProcessEnv,
       ) => readonly string[];
       override?: never;
+      sources: readonly string[];
 
       /** What the rows call this toolchain when the project names none. */
       label: string;
@@ -483,8 +525,11 @@ function withDerived(
 }
 
 function compareInputPath(left: string, right: string): number {
-  /* c8 ignore next 2 -- merged input identities are distinct set members. */
-  return left < right ? -1 : left > right ? 1 : 0;
+  // Two-way: merged input identities are distinct set members, so the equal arm
+  // cannot run, and an ignore directive over it would take the two reachable
+  // arms out of the coverage gate with it -- which is how a reversed ordering
+  // stops being a failing test.
+  return left < right ? -1 : 1;
 }
 
 function createScipProvider(
@@ -492,115 +537,146 @@ function createScipProvider(
 ): IGraphProvider {
   const validateConfiguration = props.validateConfiguration;
   const producerConfiguration = props.producerConfiguration;
-  return scipProvider({
-    name: props.name,
-    languages: props.languages,
-    authority: "semantic-index",
-    omitFacts: props.omitFacts,
-    ...(props.preferFileLanguage === undefined
-      ? {}
-      : { preferFileLanguage: props.preferFileLanguage }),
-    buildInputs: (root) =>
-      withDerived(
-        providerInputFiles(root, [], props.buildFiles, props.buildExtensions),
-        props.derivedInputs?.(root),
-      ),
-    resolve: (root, env) => {
-      const indexer = resolveProviderCommand(root, env, {
-        command: props.command,
-        override: props.override,
-      });
-      const decoder = resolveScipDecoder(root, env);
-      // The toolchain is required, not merely reported. A snapshot states which
-      // language version resolved its facts, and a provider that cannot answer
-      // that would publish `unavailable` into the field a consumer degrades
-      // against — which is worse than declining, because a fallback at least
-      // says so. `rust-analyzer-scip` refuses without `rustc` and `cargo` for
-      // the same reason.
-      //
-      // What has to resolve is the toolchain the project actually uses, not one
-      // chosen name for it. Requiring `clang` declined every GCC or MSVC project
-      // whose compilation database scip-clang would have consumed, and requiring
-      // `python3` declined a Windows interpreter installed as `python`.
-      const toolchain = resolveToolchain(root, env, props.toolchain);
-      const resolvedArgs = props.resolveArgs?.(root);
-      if (
-        indexer === undefined ||
-        decoder === undefined ||
-        toolchain.some((tool) => tool.resolved === undefined) ||
-        (props.resolveArgs !== undefined && resolvedArgs === undefined)
-      ) {
-        return undefined;
-      }
-      const args = resolvedArgs ?? [];
-      return spawnableCommand.append(
-        { ...indexer, args: [...indexer.args] },
-        args,
-      );
-    },
-    decode: (root) => {
-      const decoder = resolveScipDecoder(root, process.env);
-      if (decoder === undefined) {
-        throw new Error(
-          `${props.name}: the SCIP decoder disappeared after provider selection`,
-        );
-      }
-      return spawnableCommand.append(
-        { ...decoder, args: [...decoder.args] },
-        ["print", "--json"],
-      );
-    },
-    indexArgs: props.indexArgs,
-    ...(props.artifactFrom === undefined
-      ? {}
-      : { artifactFrom: props.artifactFrom }),
-    inputs: (root, languages) =>
-      withDerived(
-        providerInputFiles(
-          root,
-          languages,
-          props.buildFiles,
-          props.buildExtensions,
-        ),
-        props.derivedInputs?.(root),
-      ),
-    ...(validateConfiguration === undefined
+  const resolution = Object.freeze({
+    commands: Object.freeze([
+      props.command,
+      SCIP_DECODER.command,
+      ...(props.toolchain.aliases ?? []),
+    ]),
+    environmentOverrides: Object.freeze([
+      props.override,
+      SCIP_DECODER.override,
+      ...(props.toolchain.override === undefined
+        ? []
+        : [props.toolchain.override]),
+    ]),
+    ...(props.toolchain.fromProject === undefined
       ? {}
       : {
-          validateConfiguration: (
-            root,
-            _languages,
-            configuration,
-          ) => validateConfiguration(root, configuration),
+          projectCommandSources: Object.freeze([
+            ...props.toolchain.sources,
+          ]),
         }),
-    configuration: (root, _languages, env = process.env) => {
-      const producerRow =
-        producerConfiguration === undefined
-          ? toolVersion(root, env, props.command, props.override)
-          : producerConfiguration(
+  }) satisfies IGraphProvider.IResolution;
+  return Object.assign(
+    scipProvider({
+      name: props.name,
+      languages: props.languages,
+      authority: "semantic-index",
+      omitFacts: props.omitFacts,
+      ...(props.preferFileLanguage === undefined
+        ? {}
+        : { preferFileLanguage: props.preferFileLanguage }),
+      buildInputs: (root) =>
+        withDerived(
+          providerInputFiles(root, [], props.buildFiles, props.buildExtensions),
+          props.derivedInputs?.(root),
+        ),
+      resolve: (root, env) => {
+        const indexer = resolveProviderCommand(root, env, {
+          command: props.command,
+          override: props.override,
+        });
+        const decoder = resolveScipDecoder(root, env);
+        // The toolchain is required, not merely reported. A snapshot states which
+        // language version resolved its facts, and a provider that cannot answer
+        // that would publish `unavailable` into the field a consumer degrades
+        // against — which is worse than declining, because a fallback at least
+        // says so. `rust-analyzer-scip` refuses without `rustc` and `cargo` for
+        // the same reason.
+        //
+        // What has to resolve is the toolchain the project actually uses, not one
+        // chosen name for it. Requiring `clang` declined every GCC or MSVC project
+        // whose compilation database scip-clang would have consumed, and requiring
+        // `python3` declined a Windows interpreter installed as `python`.
+        const toolchain = resolveToolchain(root, env, props.toolchain);
+        const resolvedArgs = props.resolveArgs?.(root);
+        if (
+          indexer === undefined ||
+          decoder === undefined ||
+          toolchain.some((tool) => tool.resolved === undefined) ||
+          (props.resolveArgs !== undefined && resolvedArgs === undefined)
+        ) {
+          return undefined;
+        }
+        const args = resolvedArgs ?? [];
+        return spawnableCommand.append(
+          { ...indexer, args: [...indexer.args] },
+          args,
+        );
+      },
+      decode: (root) => {
+        const decoder = resolveScipDecoder(root, process.env);
+        if (decoder === undefined) {
+          throw new Error(
+            `${props.name}: the SCIP decoder disappeared after provider selection`,
+          );
+        }
+        return spawnableCommand.append(
+          { ...decoder, args: [...decoder.args] },
+          ["print", "--json"],
+        );
+      },
+      indexArgs: props.indexArgs,
+      ...(props.artifactFrom === undefined
+        ? {}
+        : { artifactFrom: props.artifactFrom }),
+      inputs: (root, languages) =>
+        withDerived(
+          providerInputFiles(
+            root,
+            languages,
+            props.buildFiles,
+            props.buildExtensions,
+          ),
+          props.derivedInputs?.(root),
+        ),
+      ...(validateConfiguration === undefined
+        ? {}
+        : {
+            validateConfiguration: (
               root,
-              env,
-              resolveProviderCommand.attempt(root, env, {
-                command: props.command,
-                override: props.override,
-              }),
-            );
-      return toolchainVersion.derive([
-        producerRow,
-        toolVersion(root, env, "scip", "SAMCHON_GRAPH_SCIP"),
-        ...toolchainVersions(root, env, props.toolchain),
-      ]);
+              _languages,
+              configuration,
+            ) => validateConfiguration(root, configuration),
+          }),
+      configuration: (root, _languages, env = process.env) => {
+        const producerRow =
+          producerConfiguration === undefined
+            ? toolVersion(root, env, props.command, props.override)
+            : producerConfiguration(
+                root,
+                env,
+                resolveProviderCommand.attempt(root, env, {
+                  command: props.command,
+                  override: props.override,
+                }),
+              );
+        return toolchainVersion.derive([
+          producerRow,
+          toolVersion(
+            root,
+            env,
+            SCIP_DECODER.command,
+            SCIP_DECODER.override,
+          ),
+          ...toolchainVersions(root, env, props.toolchain),
+        ]);
+      },
+      // Selected from the configuration rather than re-derived, so the
+      // published compiler is the one this universe was computed from. Labelled
+      // rather than positional: the indexer and the decoder are named exactly,
+      // and whatever remains is the toolchain.
+      compilerVersion: (_root, selectedLanguages, configuration) =>
+        props.compilerVersion?.(selectedLanguages, configuration) ??
+        standardCompilerVersion(props.command, configuration),
+      sourceText: true,
+      languageOf,
+    }),
+    {
+      resolution,
     },
-    // Selected from the configuration rather than re-derived, so the
-    // published compiler is the one this universe was computed from. Labelled
-    // rather than positional: the indexer and the decoder are named exactly,
-    // and whatever remains is the toolchain.
-    compilerVersion: (_root, selectedLanguages, configuration) =>
-      props.compilerVersion?.(selectedLanguages, configuration) ??
-      standardCompilerVersion(props.command, configuration),
-    sourceText: true,
-    languageOf,
-  });
+  );
 }
 
 /**
@@ -1683,17 +1759,15 @@ const WINDOWS_EXECUTABLE_SUFFIX = /\.(?:com|exe|cmd|bat)$/i;
 
 /** A separator no path can contain. */
 const SEPARATOR = String.fromCharCode(0);
-const COMPILATION_DATABASE_INPUTS: readonly string[] = [
-  "compile_commands.json",
-  "build/compile_commands.json",
-];
-
 const compilationDatabases =
   new BoundedMap<ICompilationDatabaseCommand[]>(64);
 
 function compareOrdinal(left: string, right: string): number {
-  /* c8 ignore next 2 -- driver names are distinct set members. */
-  return left < right ? -1 : left > right ? 1 : 0;
+  // Two-way: driver names are distinct set members, so the equal arm cannot
+  // run, and an ignore directive over it would take the two reachable arms out
+  // of the coverage gate with it -- which is how a reversed ordering stops
+  // being a failing test.
+  return left < right ? -1 : 1;
 }
 
 const VERSION_ARGS: readonly string[] = ["--version"];
@@ -1703,8 +1777,8 @@ function resolveScipDecoder(
   env: NodeJS.ProcessEnv,
 ): IGraphProvider.ICommand | undefined {
   return resolveProviderCommand(root, env, {
-    command: "scip",
-    override: "SAMCHON_GRAPH_SCIP",
+    command: SCIP_DECODER.command,
+    override: SCIP_DECODER.override,
   });
 }
 

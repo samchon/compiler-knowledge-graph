@@ -9,8 +9,17 @@ import { TtscGraphClient } from "../../../../packages/graph/src/provider/ttscgra
 import { resolveTtscGraphCommand } from "../../../../packages/graph/src/provider/ttscgraph/resolveTtscGraphCommand";
 import { ttscGraphProvider } from "../../../../packages/graph/src/provider/ttscgraph/ttscGraphProvider";
 import { ISamchonGraphDump } from "../../../../packages/graph/src/structures";
+import { GRAPH_EDGE_KINDS } from "../../../../packages/graph/src/typings/GRAPH_EDGE_KINDS";
 import { GraphPaths } from "../internal/GraphPaths";
 
+/**
+ * The reference TypeScript route must retain compiler evidence while applying
+ * native shard deltas as one common-protocol generation.
+ *
+ * 1. Publish a complete compiler-backed generation and reuse it unchanged.
+ * 2. Replace only the changed source-owned shards on an incremental response.
+ * 3. Verify normalized facts, provenance, coverage, reuse, and failure atomicity.
+ */
 export const test_ttscgraph_bulk_provider_reuses_and_atomically_replaces_snapshots =
   async () => {
     const root = GraphPaths.createTempDirectory(
@@ -49,8 +58,16 @@ export const test_ttscgraph_bulk_provider_reuses_and_atomically_replaces_snapsho
     });
 
     const initial = await client.refresh();
-    TestValidator.equals("the first full dump starts generation one", initial.generation, 1);
-    TestValidator.equals("the compiler language is added losslessly", initial.snapshot.nodes[0]?.language, "typescript");
+    TestValidator.equals(
+      "the first native transaction starts generation one",
+      initial.generation,
+      1,
+    );
+    TestValidator.equals(
+      "the compiler language is added losslessly",
+      initial.snapshot.nodes.find((node) => node.name === "first")?.language,
+      "typescript",
+    );
     TestValidator.equals("the module export surface folds onto its file", initial.snapshot.edges[0]?.from, "src/index.ts");
     TestValidator.equals("edge evidence keeps the module source file", initial.snapshot.edges[0]?.evidence?.file, "src/index.ts");
     TestValidator.predicate(
@@ -81,9 +98,12 @@ export const test_ttscgraph_bulk_provider_reuses_and_atomically_replaces_snapsho
     );
     TestValidator.predicate(
       "compiler flags and decorator literals survive adaptation",
-      initial.snapshot.nodes[0]?.ignored === true &&
-        initial.snapshot.nodes[0]?.closure === true &&
-        initial.snapshot.nodes[0]?.decorators?.[0]?.arguments[0]?.literal === 1,
+      initial.snapshot.nodes.find((node) => node.name === "first")?.ignored ===
+        true &&
+        initial.snapshot.nodes.find((node) => node.name === "first")
+          ?.closure === true &&
+        initial.snapshot.nodes.find((node) => node.name === "first")
+          ?.decorators?.[0]?.arguments[0]?.literal === 1,
     );
     TestValidator.equals(
       "the snapshot names its files by the digest the compiler read, not by their text",
@@ -107,6 +127,41 @@ export const test_ttscgraph_bulk_provider_reuses_and_atomically_replaces_snapsho
       "the snapshot reports the dump schema its facts obey",
       initial.snapshot.provenance.schemaVersion,
       6,
+    );
+    TestValidator.equals(
+      "the reference provider publishes one exhaustive protocol coverage matrix",
+      [
+        initial.snapshot.protocol?.sequence,
+        initial.snapshot.protocol?.targets,
+        initial.snapshot.coverage?.length,
+        initial.snapshot.coverage?.filter((row) => row.state === "complete")
+          .length,
+        initial.snapshot.coverage?.filter((row) => row.state === "partial")
+          .length,
+        initial.snapshot.coverage?.filter(
+          (row) => row.state === "unsupported",
+        ).length,
+        initial.snapshot.unresolved?.length,
+        initial.snapshot.unresolved?.every(
+          (site) => site.reason === "provider-gap",
+        ),
+      ],
+      [
+        1,
+        ["tsconfig.json"],
+        GRAPH_EDGE_KINDS.length,
+        0,
+        ttscGraphProvider.facts.length,
+        GRAPH_EDGE_KINDS.length - ttscGraphProvider.facts.length,
+        ttscGraphProvider.facts.length,
+        true,
+      ],
+    );
+    const initialShards = new Map(
+      initial.snapshot.protocol?.shards.map((shard) => [
+        shard.key,
+        shard.digest,
+      ]),
     );
     TestValidator.equals(
       "the first snapshot reports the compiler's own mode, not an inferred one",
@@ -143,16 +198,40 @@ export const test_ttscgraph_bulk_provider_reuses_and_atomically_replaces_snapsho
 
     const changed = await client.refresh();
     TestValidator.predicate(
-      "a validated full dump atomically replaces the snapshot",
+      "a validated shard transaction atomically replaces the snapshot",
       changed.changed &&
         changed.generation === 2 &&
         changed.snapshot !== initial.snapshot &&
-        changed.snapshot.nodes[0]?.name === "second",
+        changed.snapshot.nodes.some((node) => node.name === "second"),
     );
     TestValidator.equals(
       "a reused program is reported as incremental because the compiler said so",
       changed.mode,
       "incremental",
+    );
+    const changedShards = new Map(
+      changed.snapshot.protocol?.shards.map((shard) => [
+        shard.key,
+        shard.digest,
+      ]),
+    );
+    TestValidator.equals(
+      "the incremental generation is based on the prior commit and reuses unaffected file shards",
+      [
+        changed.snapshot.protocol?.baseSequence,
+        changed.snapshot.protocol?.baseGeneration,
+        [...changedShards].filter(
+          ([key, digest]) => initialShards.get(key) === digest,
+        ).length,
+        [...changedShards].filter(
+          ([key, digest]) =>
+            initialShards.has(key) && initialShards.get(key) !== digest,
+        ).length,
+      ],
+      // The edited source itself has a new content-addressed producer key, so
+      // it appears as delete+upsert. The one same-key digest replacement is
+      // the unchanged importer whose outgoing export edge was invalidated.
+      [1, initial.snapshot.protocol?.generation, 6, 1],
     );
     await rejects(client.refresh(), "serve errors are surfaced");
     TestValidator.predicate(

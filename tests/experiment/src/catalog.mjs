@@ -23,6 +23,8 @@ export const LANGUAGE_EXPERIMENTS = [
       "diskDigests",
       "diagnostics",
     ],
+    minNodes: 1,
+    minEdges: 1,
     prepare: "npm ci --ignore-scripts",
     lifecycle: {
       sourceFile: "src/app.service.ts",
@@ -75,11 +77,36 @@ export const LANGUAGE_EXPERIMENTS = [
     language: "rust",
     repository: "https://github.com/tokio-rs/mini-redis.git",
     commit: "3d93b42bc363220f85af4fc9e1bebd35b588a4a3",
-    strictProvider: "rust-analyzer-scip",
-    strictAuthority: "semantic-index",
-    strictTool: "rust-analyzer",
-    requiredCapabilities: ["universe", "diskDigests"],
-    semanticEdges: ["contains", "references"],
+    strictProvider: "samchon-rust-analyzer-hir",
+    strictAuthority: "analyzer",
+    strictTool: "samchon-rust-analyzer",
+    producerRepository: "https://github.com/samchon/rust-analyzer.git",
+    producerCommit: "2850ecba80311bebd4cdaa9fedc5321533b5b1e7",
+    requiredCapabilities: [
+      "coverage",
+      "diagnostics",
+      "diskDigests",
+      "incremental",
+      "sourceDigests",
+      "universe",
+      "unresolved",
+      "validatedConsumerCheckpoint",
+    ],
+    semanticEdges: [
+      "contains",
+      "exports",
+      "imports",
+      "calls",
+      "accesses",
+      "instantiates",
+      "type_ref",
+      "extends",
+      "implements",
+      "overrides",
+      "decorates",
+      "tests",
+      "references",
+    ],
     crossFileEdge: "references",
     lifecycle: {
       sourceFile: "src/lib.rs",
@@ -87,12 +114,17 @@ export const LANGUAGE_EXPERIMENTS = [
       createFile: "examples/samchon_graph_experiment.rs",
       renamedFile: "examples/samchon_graph_experiment_renamed.rs",
       createText:
-        'const samchonGraphExperiment: &str = "strict-lifecycle";\n\nfn main() { println!("{samchonGraphExperiment}"); }\n',
+        'const samchonGraphExperiment: &str = "strict-lifecycle";\n\ntrait SamchonGraphParent {}\ntrait SamchonGraphChild: SamchonGraphParent {}\n\nfn main() { println!("{samchonGraphExperiment}"); }\n',
       createdSymbol: "samchonGraphExperiment",
+      createdEdge: {
+        kind: "extends",
+        from: "SamchonGraphChild",
+        to: "SamchonGraphParent",
+      },
       buildFile: "Cargo.toml",
-      // Stock rust-analyzer's SCIP command recovers from malformed Rust and
-      // emits no diagnostics. A malformed Cargo manifest is the real strict
-      // failure boundary that the semantic-index authority can prove.
+      // A malformed Cargo manifest invalidates the producer's build universe,
+      // so the HIR snapshot must reject rather than mix an old database with
+      // new workspace inputs.
       failureFile: "Cargo.toml",
       failureSuffix: "\n[malformed",
       failurePolicy: "reject",
@@ -102,39 +134,77 @@ export const LANGUAGE_EXPERIMENTS = [
     language: "cpp",
     repository: "https://github.com/fmtlib/fmt.git",
     commit: "bcaa44d05579c75a83571821faee7acf6a9a0d55",
-    // Uncapped: scip-clang publishes a whole-workspace artifact and refuses a
-    // file cap, so a capped row is one it declines to serve.
+    // Uncapped: the native snapshot publishes a whole-compilation-database
+    // generation and refuses a file cap.
     //
-    // The compilation database is what scip-clang consumes and what a CMake
-    // project has to be configured to produce; nothing is compiled by this.
+    // The compilation database enumerates every native clangd graph view and
+    // is what a CMake project has to be configured to produce; preparation
+    // itself compiles nothing.
     prepare: "cmake -S . -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
-    strictProvider: "scip-clang",
-    strictAuthority: "semantic-index",
-    strictTool: "scip-clang",
-    requiredCapabilities: ["universe", "diskDigests"],
-    // Declarations only. scip-clang 0.4.0 writes range/symbol/roles on
-    // occurrences, no enclosing_range or enclosing_symbol, and no
-    // is_type_definition relationship. The common SCIP adapter therefore has
-    // no grounded origin or typed relationship for an edge.
-    semanticEdges: [],
-    semanticLimitation:
-      "scip-clang 0.4.0 emits no occurrence enclosing_range, SymbolInformation.enclosing_symbol, or type-definition relationship, so its semantic declarations carry no provable graph edge family",
-    // scip-clang 0.4.0's own CLI states both halves of this: `--deterministic`
-    // is documented as "Does not support deterministic work scheduling yet",
-    // and `--print-statistics-path` warns that "non-determinism may affect the
-    // number of files skipped by individual indexing jobs". The driver gives
-    // each well-behaved header to one translation unit, and which one wins
-    // depends on the schedule — so the file set moves, and the manifest with it.
+    strictProvider: "clangd-snapshot",
+    strictAuthority: "compiler",
+    strictTool: "samchon-clangd",
+    producerRepository: "https://github.com/samchon/llvm-project.git",
+    producerCommit: "e33d8f51552a523b5696691738f1ef95f8e3a730",
+    // A whole-compilation-database producer is not ready when it starts; it
+    // is ready when clangd has background-indexed every translation unit the
+    // database registers. The 180-second default expired on libuv with 62 of
+    // them still indexing, the routing layer fell back as it should, and the
+    // row lost the strict provenance it exists to prove.
     //
-    // Two ways of buying it back were tried and withdrawn. `--jobs=1` removed
-    // the variance by serializing the compiler and cost 39x on the redis
-    // corpus, which is not a trade a strict provider can make: the point of the
-    // lane is to be faster than the fallback. `--deterministic` alone then held
-    // this lane above forty-three minutes where it had run in under eleven, and
-    // its generations still did not reproduce. The limitation is declared
-    // instead.
-    regenerationLimitation:
-      "scip-clang 0.4.0 does not schedule its indexing jobs deterministically, so regenerating an unchanged project can skip a different set of headers; both the source manifest and the fact set can therefore move, because the manifest lists the files the producer reported",
+    // How long readiness actually takes has never been observed: no C or C++
+    // row has ever reached it. The only datum is a lower bound — 180 seconds
+    // was not enough, with 62 units left — and the rate it implies puts the
+    // remainder near two more minutes. Ten is that with room, not a measured
+    // requirement.
+    //
+    // These are per-refresh ceilings, and the strict lifecycle issues nine
+    // refreshes, so they do not bound the row: nine cold waits would exceed
+    // the job timeout on their own and be killed by it without a diagnosis.
+    // What makes that remote rather than likely is that only the first
+    // refresh indexes from nothing; the rest are incremental against a warm
+    // database. The numbers are chosen so one cold index fits comfortably and
+    // a producer that never becomes ready still fails its row rather than
+    // hanging it — not so that every pathological path stays inside the job.
+    // Readiness now covers more than indexing. The pinned producer publishes
+    // each completed body to disk while it is in hand, so a snapshot can name
+    // it instead of carrying it through the pipe -- and one libuv unit is 98
+    // MiB of it. That work used to happen when a page was requested, after
+    // this window had closed; it now happens inside it.
+    //
+    // Ten minutes was sized for a window covering indexing alone, and at two
+    // workers it left forty of libuv's 242 units unfinished once publishing
+    // joined them. Twenty is the same window sized for what it now contains.
+    // It is a ceiling on the wait, not a target -- the walk after it is what
+    // publishing exists to make cheap, and that is the number worth watching.
+    readyTimeoutMs: 1_200_000,
+    timeoutMs: 300_000,
+    requiredCapabilities: [
+      "coverage",
+      "diagnostics",
+      "diskDigests",
+      "incremental",
+      "sourceDigests",
+      "universe",
+      "unresolved",
+    ],
+    // Native Clang occurrences and relations retain their enclosing symbols,
+    // exact ranges and TU/configuration identity in one compiler pass.
+    semanticEdges: [
+      "contains",
+      "exports",
+      "imports",
+      "calls",
+      "accesses",
+      "type_ref",
+      "references",
+    ],
+    crossFileEdge: "references",
+    semanticLimitation:
+      "The native Clang lane retains exact TU/configuration facts, while calls, instantiation, exports, implements and dispatch stay explicitly partial and C/C++ have no decorates, renders or tests family.",
+    // Background jobs may finish in any order, but the native shard set,
+    // manifest and generation digest are canonical and publish only after all
+    // registered configurations agree on one complete source state.
     lifecycle: {
       sourceFile: "src/format.cc",
       editSuffix: "\n// samchon-graph lifecycle edit\n",
@@ -150,39 +220,86 @@ export const LANGUAGE_EXPERIMENTS = [
       compilationDatabase: "build/compile_commands.json",
       failureFile: "build/compile_commands.json",
       failureSuffix: "\n[ not json",
-      // A compilation database that will not parse makes scip-clang decline
-      // before publication. The resident records that reason and serves its
-      // documented fallback until the database is repaired.
-      failurePolicy: "fallback",
-      failureLimitation:
-        "a malformed compilation database makes scip-clang decline without provenance, so the resident publishes an explicitly warned generic/static fallback until the project input is repaired",
+      // A malformed compilation database invalidates the native universe, so
+      // the strict resident rejects publication until it is repaired.
+      failurePolicy: "reject",
     },
     minNodes: 1,
-    minEdges: 0,
+    minEdges: 1,
   },
   {
     language: "c",
     repository: "https://github.com/libuv/libuv.git",
     commit: "9d51562c10be60bc1126a3d71803b1038f4fbb7e",
-    // Uncapped: scip-clang publishes a whole-workspace artifact and refuses a
-    // file cap, so a capped row is one it declines to serve.
+    // Uncapped: the native snapshot publishes a whole-compilation-database
+    // generation and refuses a file cap.
     //
-    // The compilation database is what scip-clang consumes and what a CMake
-    // project has to be configured to produce; nothing is compiled by this.
+    // The compilation database enumerates every native clangd graph view and
+    // is what a CMake project has to be configured to produce; preparation
+    // itself compiles nothing.
     prepare: "cmake -S . -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
-    strictProvider: "scip-clang",
-    strictAuthority: "semantic-index",
-    strictTool: "scip-clang",
-    requiredCapabilities: ["universe", "diskDigests"],
-    // The same pinned producer contract as the C++ row: semantic declarations
-    // are real, but none of the common adapter's edge-grounding fields exists.
-    semanticEdges: [],
+    strictProvider: "clangd-snapshot",
+    strictAuthority: "compiler",
+    strictTool: "samchon-clangd",
+    producerRepository: "https://github.com/samchon/llvm-project.git",
+    producerCommit: "e33d8f51552a523b5696691738f1ef95f8e3a730",
+    // A whole-compilation-database producer is not ready when it starts; it
+    // is ready when clangd has background-indexed every translation unit the
+    // database registers. The 180-second default expired on libuv with 62 of
+    // them still indexing, the routing layer fell back as it should, and the
+    // row lost the strict provenance it exists to prove.
+    //
+    // How long readiness actually takes has never been observed: no C or C++
+    // row has ever reached it. The only datum is a lower bound — 180 seconds
+    // was not enough, with 62 units left — and the rate it implies puts the
+    // remainder near two more minutes. Ten is that with room, not a measured
+    // requirement.
+    //
+    // These are per-refresh ceilings, and the strict lifecycle issues nine
+    // refreshes, so they do not bound the row: nine cold waits would exceed
+    // the job timeout on their own and be killed by it without a diagnosis.
+    // What makes that remote rather than likely is that only the first
+    // refresh indexes from nothing; the rest are incremental against a warm
+    // database. The numbers are chosen so one cold index fits comfortably and
+    // a producer that never becomes ready still fails its row rather than
+    // hanging it — not so that every pathological path stays inside the job.
+    // Readiness now covers more than indexing. The pinned producer publishes
+    // each completed body to disk while it is in hand, so a snapshot can name
+    // it instead of carrying it through the pipe -- and one libuv unit is 98
+    // MiB of it. That work used to happen when a page was requested, after
+    // this window had closed; it now happens inside it.
+    //
+    // Ten minutes was sized for a window covering indexing alone, and at two
+    // workers it left forty of libuv's 242 units unfinished once publishing
+    // joined them. Twenty is the same window sized for what it now contains.
+    // It is a ceiling on the wait, not a target -- the walk after it is what
+    // publishing exists to make cheap, and that is the number worth watching.
+    readyTimeoutMs: 1_200_000,
+    timeoutMs: 300_000,
+    requiredCapabilities: [
+      "coverage",
+      "diagnostics",
+      "diskDigests",
+      "incremental",
+      "sourceDigests",
+      "universe",
+      "unresolved",
+    ],
+    // The same pinned producer contract as the C++ row retains semantic
+    // enclosing symbols, exact ranges and TU/configuration identity.
+    semanticEdges: [
+      "contains",
+      "exports",
+      "imports",
+      "calls",
+      "accesses",
+      "type_ref",
+      "references",
+    ],
+    crossFileEdge: "references",
     semanticLimitation:
-      "scip-clang 0.4.0 emits no occurrence enclosing_range, SymbolInformation.enclosing_symbol, or type-definition relationship, so its semantic declarations carry no provable graph edge family",
-    // The C and C++ slices share one producer, so they share its scheduling
-    // boundary as well; see the C++ row for the upstream wording.
-    regenerationLimitation:
-      "scip-clang 0.4.0 does not schedule its indexing jobs deterministically, so regenerating an unchanged project can skip a different set of headers; both the source manifest and the fact set can therefore move, because the manifest lists the files the producer reported",
+      "The native Clang lane retains exact TU/configuration facts, while calls, instantiation, exports, implements and dispatch stay explicitly partial and C/C++ have no decorates, renders or tests family.",
+    // C and C++ share the same atomic, canonical generation boundary.
     lifecycle: {
       sourceFile: "src/uv-common.c",
       editSuffix: "\n// samchon-graph lifecycle edit\n",
@@ -198,28 +315,57 @@ export const LANGUAGE_EXPERIMENTS = [
       compilationDatabase: "build/compile_commands.json",
       failureFile: "build/compile_commands.json",
       failureSuffix: "\n[ not json",
-      // The C and C++ slices share the same strict selection boundary.
-      failurePolicy: "fallback",
-      failureLimitation:
-        "a malformed compilation database makes scip-clang decline without provenance, so the resident publishes an explicitly warned generic/static fallback until the project input is repaired",
+      // The C and C++ slices share the same strict rejection boundary.
+      failurePolicy: "reject",
     },
     minNodes: 1,
-    minEdges: 0,
+    minEdges: 1,
   },
   {
     language: "java",
     // Conformance repeats a full compiler build for every lifecycle transition.
     // Use scip-java's own pinned Maven fixture for that contract; Gson remains
     // the separate large-corpus timing proof.
-    repository: "https://github.com/scip-code/scip-java.git",
-    commit: "a609ba1adaf630292df5a73ec4ba06c170caba93",
+    repository: "https://github.com/samchon/scip-java.git",
+    commit: "32eca214a413d1b8a375c481f666ff8a4ec96773",
     projectRoot: "scip-java/src/test/resources/fixtures/maven/basic",
-    strictProvider: "scip-java",
-    strictAuthority: "semantic-index",
-    strictTool: "scip-java",
-    requiredCapabilities: ["universe", "diskDigests"],
-    semanticEdges: ["references"],
-    crossFileEdge: "references",
+    // The producer and the corpus are one checkout on purpose. The fixture is
+    // the producer's own Maven project, so a pin that named a different
+    // revision for each would measure a plugin against a build it was never
+    // tested with.
+    producerRepository: "https://github.com/samchon/scip-java.git",
+    producerCommit: "32eca214a413d1b8a375c481f666ff8a4ec96773",
+    strictProvider: "javac-graph",
+    strictAuthority: "compiler",
+    // The launcher and the producer are two names. `scip-java` is the command
+    // this lane runs; the thing inside it that wrote the graph is the javac
+    // plugin, and the artifact identifies itself by that. Asserting the
+    // launcher's name here would go green for any future launcher that shipped
+    // a different writer under the same command.
+    strictTool: "scip-java-javac-graph",
+    requiredCapabilities: [
+      "coverage",
+      "diskDigests",
+      "incremental",
+      "sourceDigests",
+      "universe",
+      "unresolved",
+    ],
+    // The pinned fixture is two empty classes, so containment is the only
+    // family its cold generation can truthfully carry. The lifecycle below
+    // creates the one cross-file relationship this row proves, and the runner
+    // counts that transition rather than pre-editing the pinned baseline.
+    semanticEdges: ["contains", "instantiates"],
+    crossFileEdge: "instantiates",
+    // The producer cannot yet reproduce its own generation, and the exemption
+    // names the exact reason rather than accepting an unexplained difference.
+    // Restoring the original sources returns identical facts — five nodes and
+    // eight edges both times — and a different build universe, because the
+    // universe is digested from the raw javac invocation and that invocation
+    // names the temporary directory the launcher unpacked its compiler plugin
+    // into, which is new on every run. Filed at samchon/scip-java#1.
+    regenerationLimitation:
+      "scip-java 32eca214a413d1b8a375c481f666ff8a4ec96773 digests its build universe from the raw javac invocation, which names the per-run temporary directory its embedded plugin jar is unpacked into, so an unchanged checkout reproduces identical facts under a different universe",
     lifecycle: {
       sourceFile: "src/main/java/com/Example.java",
       editSuffix: "\n// samchon-graph lifecycle edit\n",
@@ -231,8 +377,12 @@ export const LANGUAGE_EXPERIMENTS = [
       renamedText:
         "package com;\n\npublic final class SamchonGraphExperimentRenamed {\n    public static Example samchonGraphExperiment() {\n        return new Example();\n    }\n}\n",
       createdSymbol: "samchonGraphExperiment",
+      // `new Example()` resolves to two facts javac owns: a call of the
+      // constructor and an instantiation of the class. The class is the
+      // endpoint declared in another file, so it is the one that proves the
+      // route crosses a compilation unit.
       createdEdge: {
-        kind: "references",
+        kind: "instantiates",
         from: "samchonGraphExperiment",
         to: "Example",
         crossFile: true,
@@ -302,7 +452,7 @@ export const LANGUAGE_EXPERIMENTS = [
     commit: "e940c1889767a81347387067a375320dc6f5d83e",
     projectRoot:
       "scip-java/src/test/resources/fixtures/gradle/kotlin2",
-    strictProvider: "scip-java",
+    strictProvider: "scip-kotlinc",
     strictAuthority: "semantic-index",
     strictTool: "scip-java",
     requiredCapabilities: ["universe", "diskDigests"],
@@ -399,12 +549,13 @@ export const LANGUAGE_EXPERIMENTS = [
       // `_attemptParseFile`, which retries the parse six times, logs
       // `Config file "..." could not be parsed`, and returns `undefined`.
       // Configuration then falls through to defaults and the index is written
-      // and published with exit code 0. The bundle constructs no SCIP
-      // `Diagnostic` either, so neither `reject` nor `diagnostic` describes
-      // this producer; claiming one would pin the harness to a fiction.
+      // and published with exit code 0. On the pinned Click fixture the
+      // normalized source and fact planes remain unchanged; only the declared
+      // configuration coordinate moves. This is tolerated upstream behavior,
+      // not rejection, a diagnostic, or proof of a changed analyzed program.
       failurePolicy: "tolerated",
       failureLimitation:
-        "scip-python 0.6.6 recovers from a malformed pyproject.toml and publishes an index; a broken Python build configuration is not a fail-closed boundary for this producer",
+        "scip-python 0.6.6 recovers from a malformed pyproject.toml by falling back to Pyright defaults and exits successfully; on the pinned Click fixture its normalized source and fact planes remain unchanged, so a broken Python build configuration is neither rejected nor diagnosed",
     },
   },
   {
@@ -514,12 +665,17 @@ export const LANGUAGE_EXPERIMENTS = [
       failureSuffix: "\n{ not json",
       // lua-language-server reads a malformed `.luarc.json`, logs it, and
       // carries on with defaults rather than refusing to start — so the export
-      // still lands and the provider still publishes. This corpus selects
-      // LuaJIT and a workspace library, so the default settings change the
-      // published generation rather than leaving it untouched.
-      failurePolicy: "published",
+      // still lands and the provider still publishes.
+      //
+      // This row used to claim the defaults changed that publication, on the
+      // reading that the corpus selects LuaJIT and a workspace library. The
+      // claim was wrong and it went red proving it: at 3.19.0, the release
+      // every green run of this lane used, the malformed configuration leaves
+      // every fact plane and the source manifest byte-identical and moves only
+      // the build universe. Tolerated is what that is.
+      failurePolicy: "tolerated",
       failureLimitation:
-        "lua-language-server recovers from a malformed .luarc.json with default settings and publishes a changed generation, so a broken Lua workspace configuration is not a fail-closed boundary for this producer",
+        "lua-language-server 3.19.0 recovers from a malformed .luarc.json with default settings and exits successfully; on the pinned lualine fixture its normalized source and fact planes remain unchanged, so a broken Lua workspace configuration is neither rejected nor diagnosed",
     },
     minNodes: 1,
     minEdges: 0,

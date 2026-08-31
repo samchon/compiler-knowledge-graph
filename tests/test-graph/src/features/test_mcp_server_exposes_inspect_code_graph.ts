@@ -59,12 +59,12 @@ const overview = async (args: string[]) => {
       "the result arrives as structured content",
       payload !== undefined,
     );
-    // `audit` serializes first, so what was checked precedes any fact a reader
-    // might second-guess; `next` says where the result leaves the question.
+    // `audit` serializes first, then the structured completeness evidence,
+    // before `next` says where the result leaves the question.
     TestValidator.equals(
       "audit leads, then where it leaves the question, then the facts",
       Object.keys(payload),
-      ["audit", "next", "result"],
+      ["audit", "coverage", "unresolved", "next", "result"],
     );
     return payload;
   } finally {
@@ -72,6 +72,16 @@ const overview = async (args: string[]) => {
   }
 };
 
+/**
+ * Everything else about the graph is tested through the TypeScript API, which
+ * cannot see the one boundary an agent actually uses: a spawned process, one
+ * registered tool, and a structured result arriving over stdio.
+ *
+ * It runs twice because there are two ways to reach that boundary, and only
+ * one of them indexes anything. The `--graph-file` server is held to the same
+ * node count as the lane that indexed the project, so a graph file served
+ * stale or in part is a failure rather than a smaller answer.
+ */
 export const test_mcp_server_exposes_inspect_code_graph = async () => {
   const root = GraphFixtures.createOrderFixture();
   const parsed = await overview(["--mode", "static", "--cwd", root]);

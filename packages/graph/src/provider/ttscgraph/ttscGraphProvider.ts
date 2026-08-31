@@ -2,6 +2,7 @@ import { IGraphProvider } from "../IGraphProvider";
 import { assertGraphSnapshotContract } from "../assertGraphSnapshotContract";
 import { adaptTtscGraphDump } from "./adaptTtscGraphDump";
 import { resolveTtscGraphCommand } from "./resolveTtscGraphCommand";
+import { ttscGraphResolution } from "./ttscGraphResolution";
 import { TtscGraphClient } from "./TtscGraphClient";
 import { ttscGraphStrictRefusal } from "./ttscGraphStrictRefusal";
 
@@ -24,6 +25,7 @@ export const ttscGraphProvider: IGraphProvider = {
   authority: "compiler",
 
   facts: adaptTtscGraphDump.EDGE_KINDS,
+  resolution: ttscGraphResolution,
 
   // A `tsconfig` change can add or drop whole files from the program, and a
   // `package.json` change can move the resolution roots those files import

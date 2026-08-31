@@ -27,6 +27,7 @@ export * from "./IStaticGraphParts";
 export * from "./LANGUAGE_SPECS";
 export * from "./languageIdOf";
 export * from "./languageOf";
+export * from "./languagesOf";
 export * from "./markClosures";
 export * from "./markIgnored";
 export * from "./normalizeRequestedLanguages";

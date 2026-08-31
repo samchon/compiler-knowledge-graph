@@ -1,5 +1,9 @@
 import { TestValidator } from "@nestia/e2e";
-import { LANGUAGE_SPECS } from "@samchon/graph";
+import {
+  CPP_CLANG_PRODUCER_COMMIT,
+  LANGUAGE_SPECS,
+  RUST_GRAPH_PRODUCER_COMMIT,
+} from "@samchon/graph";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -25,10 +29,16 @@ export const test_experiment_corpora_are_commit_pinned = () => {
     [...catalog.matchAll(/strictProvider:\s*"[^"]+"/g)].length,
     [...catalog.matchAll(/lifecycle:\s*\{/g)].length,
   );
+  const typescript = region(
+    catalog,
+    'language: "typescript"',
+    'language: "go"',
+  );
   const python = region(catalog, 'language: "python"', 'language: "ruby"');
   const java = region(catalog, 'language: "java"', 'language: "csharp"');
   const csharp = region(catalog, 'language: "csharp"', 'language: "kotlin"');
   const kotlin = region(catalog, 'language: "kotlin"', 'language: "swift"');
+  const rust = region(catalog, 'language: "rust"', 'language: "cpp"');
   const swift = region(catalog, 'language: "swift"', 'language: "scala"');
   const scala = region(catalog, 'language: "scala"', 'language: "zig"');
   const zig = region(catalog, 'language: "zig"', 'language: "python"');
@@ -38,16 +48,31 @@ export const test_experiment_corpora_are_commit_pinned = () => {
   const php = region(catalog, 'language: "php"', 'language: "lua"');
   const lua = region(catalog, 'language: "lua"', 'language: "dart"');
   const dart = region(catalog, 'language: "dart"', "\n];");
+  const luaSetup = region(setup, 'case "lua"', 'case "dart"');
   const javaSetup = region(setup, 'case "java"', 'case "csharp"');
   const kotlinSetup = region(setup, 'case "kotlin"', 'case "swift"');
+  const rustSetup = region(setup, 'case "rust"', 'case "cpp"');
+  const cppSetup = region(setup, 'case "cpp"', 'case "java"');
   TestValidator.equals(
     "every registered strict-provider language has a lifecycle row",
     [...catalog.matchAll(/strictProvider:\s*"[^"]+"/g)].length,
     13,
   );
   TestValidator.predicate(
+    "Rust builds and records the exact native HIR producer declared by the catalog",
+    rust.includes('producerRepository: "https://github.com/samchon/rust-analyzer.git"') &&
+      rust.includes(`producerCommit: "${RUST_GRAPH_PRODUCER_COMMIT}"`) &&
+      rustSetup.includes("--default-toolchain 1.95.0") &&
+      rustSetup.includes('"rust-src"') &&
+      rustSetup.includes('["fetch", "--depth=1", "origin", experiment.producerCommit]') &&
+      rustSetup.includes('["build", "--locked", "--release", "-p", "rust-analyzer"]') &&
+      rustSetup.includes('for (const command of ["samchon-rust-analyzer", "rust-analyzer"])') &&
+      rustSetup.includes("fs.linkSync(producerBinary, link)") &&
+      !rustSetup.includes("rustup component add rust-analyzer"),
+  );
+  TestValidator.predicate(
     "the remaining SCIP providers use isolated upstream lifecycle projects",
-    [java, kotlin, ruby, php, dart].every(
+    [kotlin, ruby, php, dart].every(
       (row) =>
         row.includes("projectRoot:") &&
         row.includes('strictAuthority: "semantic-index"') &&
@@ -90,10 +115,16 @@ export const test_experiment_corpora_are_commit_pinned = () => {
         "`${SCIP_JAVA_KOTLIN_COMMIT}+kotlin-${SCIP_JAVA_KOTLIN_VERSION}`",
       ) &&
       setup.includes('":scip-java:installDist"') &&
-      javaSetup.includes("await installScipJava()") &&
+      // Two rows build the same launcher from two revisions, so the builder is
+      // shared and the pin is the argument. The Java row builds the fork whose
+      // `index` writes a graph at all; a released binary installed beside it
+      // would only be shadowed under the same name and then recorded as though
+      // a run had used it.
       !javaSetup.includes("installScipJavaKotlinSnapshot") &&
+      javaSetup.includes("await installJavacGraphProducer(await installGradle())") &&
+      !setup.includes("installScipJava = ") &&
       kotlinSetup.includes("await installScipJavaKotlinSnapshot(gradle)") &&
-      !kotlinSetup.includes("await installScipJava();") &&
+      setup.includes("const installScipJavaSource = async (gradle, pin)") &&
       setup.includes('run(link, ["--version"])'),
   );
   TestValidator.predicate(
@@ -121,12 +152,21 @@ export const test_experiment_corpora_are_commit_pinned = () => {
       php.includes('renamedSymbol: "SamchonGraphExperimentRenamed"') &&
       lifecycle.includes("fixture.renamedSymbol ?? fixture.createdSymbol"),
   );
+  // A pinned fixture of two empty classes carries no relationship at all, so
+  // the row's cross-file claim is proved by the transition that creates one.
+  // The created edge therefore has to be the family the row declares, not
+  // merely some family: an edge kind that no longer matched would leave the
+  // claim asserted and never exercised.
   TestValidator.predicate(
     "isolated lifecycle edges can prove a pinned corpus relationship claim",
-    [java, kotlin].every(
-      (row) =>
-        row.includes('kind: "references"') &&
-        row.includes("crossFile: true"),
+    [
+      [java, "instantiates"],
+      [kotlin, "references"],
+    ].every(
+      ([row, kind]) =>
+        row!.includes(`crossFileEdge: "${kind}"`) &&
+        row!.includes(`kind: "${kind}"`) &&
+        row!.includes("crossFile: true"),
     ) &&
       lifecycle.includes("fixture.createdEdge.crossFile !== true") &&
       runner.includes("const lifecycleCreatedEdge") &&
@@ -150,72 +190,191 @@ export const test_experiment_corpora_are_commit_pinned = () => {
   );
   TestValidator.predicate(
     "every producer with no grounded edge family states that limitation explicitly",
-    [csharp, cpp, c].every(
-      (row) =>
-        row.includes("semanticEdges: []") &&
-        !row.includes("crossFileEdge:") &&
-        declares(row, "semanticLimitation"),
-    ) &&
+    csharp.includes("semanticEdges: []") &&
+      !csharp.includes("crossFileEdge:") &&
+      declares(csharp, "semanticLimitation") &&
       runner.includes("experiment.semanticEdges.length === 0") &&
       runner.includes("crossFileEdge !== undefined") &&
       runner.includes("semanticLimitation.trim() ==="),
   );
-  // scip-python 0.6.6 recovers from a malformed `pyproject.toml` and emits no
-  // SCIP diagnostics, so a row claiming either boundary would assert behaviour
-  // the pinned producer does not have. A tolerated row earns its place only by
-  // proving the exact upstream claim instead — the producer ignored the input,
-  // so the build universe moved and the published facts did not — and by saying
-  // what it gave up rather than leaving a reader to infer it from a green lane.
   TestValidator.predicate(
-    "a failure boundary the producer does not have is published as a limitation",
-    python.includes('failurePolicy: "tolerated"') &&
-      declares(python, "failureLimitation") &&
-      lifecycle.includes('fixture.failurePolicy === "tolerated"') &&
-      lifecycle.includes('fixture.failureLimitation === ""') &&
-      lifecycle.includes("provenance.universe === prior.universe") &&
-      lifecycle.includes("provenance.content !== prior.content") &&
-      lifecycle.includes("diagnosticCount !== previousDiagnostics"),
+    "the native C and C++ producer grounds cross-file graph families",
+    [cpp, c].every(
+      (row) =>
+        row.includes('strictProvider: "clangd-snapshot"') &&
+        row.includes(
+          'producerRepository: "https://github.com/samchon/llvm-project.git"',
+        ) &&
+        row.includes(`producerCommit: "${CPP_CLANG_PRODUCER_COMMIT}"`) &&
+        row.includes('crossFileEdge: "references"') &&
+        row.includes('"contains"') &&
+        row.includes('"references"') &&
+        !row.includes('"implements"') &&
+        !row.includes('"dispatches"') &&
+        !row.includes("semanticEdges: []"),
+    ) &&
+      !c.includes('"instantiates"') &&
+      !c.includes('"extends"') &&
+      !c.includes('"overrides"'),
   );
   TestValidator.predicate(
-    "a degraded publication is distinct from an input the producer ignored",
-    lua.includes('failurePolicy: "published"') &&
-      declares(lua, "failureLimitation") &&
+    "C and C++ build and record the exact campaign-owned native producer",
+    cppSetup.includes('apt(["clang", "cmake", "ninja-build", "bear"])') &&
+      cppSetup.includes("installClangGraphProducer()") &&
+      setup.includes(
+        '["fetch", "--depth=1", "origin", experiment.producerCommit]',
+      ) &&
+      setup.includes('["checkout", "--detach", "FETCH_HEAD"]') &&
+      setup.includes('["rev-parse", "HEAD"]') &&
+      setup.includes('"-DLLVM_ENABLE_PROJECTS=clang;clang-tools-extra"') &&
+      setup.includes('"--target",') &&
+      setup.includes('"clangd",') &&
+      setup.includes('for (const command of ["samchon-clangd", "clangd"])') &&
+      setup.includes("fs.linkSync(binary, link)") &&
+      setup.includes('path.join(build, "lib", "clang")') &&
+      setup.includes("fs.cpSync(builtResources, installedResources") &&
+      setup.includes('"include",') &&
+      setup.includes('"stddef.h",') &&
+      setup.includes("version.includes(experiment.producerCommit)") &&
+      setup.includes("installedVersion.includes(experiment.producerCommit)") &&
+      setup.includes('tool: "samchon-clangd"') &&
+      !cppSetup.includes('apt(["clangd"'),
+  );
+  // A fixed parallelism here already cost CI lanes, and the size of this build
+  // is the thing that has to stay correct, so pin the decision rather than its
+  // vocabulary. Naming `os.availableParallelism()` and `os.totalmem()` proves
+  // nothing on its own: a comment saying why they were abandoned contains both
+  // names, and a `const jobs = 2` under it would satisfy every such check.
+  // Comments are therefore stripped before anything is matched, and the
+  // binding is asserted end to end: the expression that computes the count,
+  // the argument that hands that same count to the build, and the log that
+  // makes it visible in a run.
+  //
+  // The configure call is inside this region too, and `-DLLVM_PARALLEL_*_JOBS`
+  // caps concurrency from there without touching `--build` at all. Watching
+  // only the build argv would leave that door open, so the region must set no
+  // such flag; if one is ever needed it has to be derived from `jobs` and this
+  // line has to change with it.
+  //
+  // This is a tripwire, not a proof. It refuses the regressions that have
+  // actually happened here and the nearest spellings of them; it cannot
+  // enumerate every way to reintroduce a constant.
+  const clangBuild = withoutLineComments(
+    region(setup, "const installClangGraphProducer", "const installScipPython"),
+  );
+  TestValidator.equals(
+    "the native Clang build is sized by the machine and bounded by its memory",
+    [
+      /const jobs = Math\.max\(\s*1,\s*Math\.min\(\s*os\.availableParallelism\(\),\s*Math\.floor\(os\.totalmem\(\) \/ \(2 \* 1024 \* 1024 \* 1024\)\),\s*\),\s*\);/u.test(
+        clangBuild,
+      ),
+      /"--parallel",\s*String\(jobs\),/u.test(clangBuild),
+      /"--parallel",\s*(?:"|`|'|\d)/u.test(clangBuild),
+      /LLVM_PARALLEL_[A-Z_]*JOBS/u.test(clangBuild),
+      /console\.log\([\s\S]*?String\(jobs\)/u.test(clangBuild),
+    ],
+    [true, true, false, false, true],
+  );
+  // A restored producer is untrusted input, and the whole point of restoring
+  // it is to skip the build that would otherwise have proved what it is. So
+  // reuse is admitted by the same evidence a fresh build must produce: both
+  // installed names report the pinned commit, and the resource headers the
+  // adapter resolves relative to the binary are present exactly once. Anything
+  // short of that — a missing file, an unreadable tree, an unexpected version,
+  // any thrown error — falls back to building, because reuse is an
+  // optimisation and may only be taken on complete evidence.
+  //
+  // Bounded to the predicate's own body. An unbounded `[\s\S]*?` would let a
+  // deleted check pass by matching the identical text in the build path below
+  // it, so the region is what makes a deletion visible.
+  const restoredProducer = withoutLineComments(
+    region(
+      setup,
+      "const installedClangGraphProducer",
+      "const installClangGraphProducer",
+    ),
+  );
+  TestValidator.equals(
+    "a restored native Clang producer is re-proved against the pin before reuse",
+    [
+      setup.includes("if (installedClangGraphProducer()) return;"),
+      cppSetup.includes("installClangGraphProducer()"),
+      /String\(reported\.stdout\)\.includes\(\s*experiment\.producerCommit,?\s*\)/u.test(
+        restoredProducer,
+      ),
+      restoredProducer.includes('"stddef.h"'),
+      restoredProducer.includes("versions.length !== 1"),
+      /\} catch \{\s*\n\s*return false;/u.test(restoredProducer),
+    ],
+    [true, true, true, true, true, true],
+  );
+  // scip-python 0.6.6 recovers from a malformed `pyproject.toml`, falls back to
+  // Pyright defaults and emits no SCIP diagnostics. On the pinned Click
+  // fixture, the source and semantic fact planes stay unchanged. The aggregate
+  // content digest is not evidence to the contrary because its legacy coverage
+  // target is the already-moved universe.
+  TestValidator.predicate(
+    "Python's malformed configuration is a tolerated unchanged publication",
+    python.includes('failurePolicy: "tolerated"') &&
+      declares(python, "failureLimitation") &&
+      python.includes("falling back to Pyright defaults") &&
+      lifecycle.includes('fixture.failurePolicy === "tolerated"') &&
+      lifecycle.includes("provenance.universe === prior.universe") &&
+      lifecycle.includes("publicationChanges(") &&
+      lifecycle.includes("changed.length !== 0") &&
+      lifecycle.includes("normalizedPublicationPlane(") &&
+      !lifecycle.includes("provenance.content !== prior.content"),
+  );
+  // Lua moved from `published` to `tolerated` on evidence rather than on
+  // preference. The row claimed a malformed `.luarc.json` changed the
+  // published generation because the corpus selects LuaJIT and a workspace
+  // library; at 3.19.0 — the release every green run of that lane used — every
+  // fact plane and the source manifest come back byte-identical and only the
+  // build universe moves. The claim, not the check, was what had to change.
+  TestValidator.predicate(
+    "a degraded publication is distinct from an unchanged tolerated one",
+    csharp.includes('failurePolicy: "published"') &&
+      declares(csharp, "failureLimitation") &&
+      [lua, python].every(
+        (row) =>
+          row.includes('failurePolicy: "tolerated"') &&
+          declares(row, "failureLimitation"),
+      ) &&
+      lifecycle.includes('status: "tolerated"') &&
       lifecycle.includes('fixture.failurePolicy === "published"') &&
       lifecycle.includes('status: "published-with-limitation"') &&
       lifecycle.includes("publicationChanges("),
   );
   TestValidator.predicate(
-    "a malformed compilation database proves strict decline and warned fallback",
-    [cpp, c].every(
-      (row) =>
-        row.includes('failurePolicy: "fallback"') &&
-        declares(row, "failureLimitation"),
-    ) &&
-      lifecycle.includes('fixture.failurePolicy === "fallback"') &&
-      lifecycle.includes('status: "fallback-with-limitation"') &&
-      lifecycle.includes("row.provider === experiment.strictProvider") &&
-      lifecycle.includes("warning.includes(experiment.strictProvider)") &&
-      !lifecycle.includes("JSON.stringify(fallback)") &&
-      lifecycle.includes('? ["initial", ...CHANGED_MODES]'),
+    "a regeneration failure names its first differing fact",
+    lifecycle.includes("firstGenerationDifference(cold, retried)") &&
+      lifecycle.includes("first difference:") &&
+      lifecycle.includes("normalized dump fact planes are equal"),
+  );
+  TestValidator.predicate(
+    "a malformed compilation database rejects the native generation",
+    [cpp, c].every((row) => row.includes('failurePolicy: "reject"')) &&
+      lifecycle.includes('fixture.failurePolicy === "reject"') &&
+      lifecycle.includes('status: "rejected"'),
   );
 
-  // Regenerating an unchanged project must reproduce it, and that assertion is
-  // the lifecycle's strongest. Exactly one registered producer cannot meet it:
-  // scip-clang 0.4.0 documents `--deterministic` as not scheduling work
-  // deterministically, and warns separately that non-determinism changes how
-  // many files each indexing job skips — which moves the source manifest as
-  // well as the facts, because the manifest lists the files it reported. The
-  // exemption is therefore a declared, explained property of those two rows
-  // rather than a relaxed default, and it covers one claim rather than two.
+  // Native C/C++ shards and manifests are canonical independently of
+  // background scheduling, so these rows keep the strongest reproduction
+  // assertion and carry no producer-specific exemption.
   TestValidator.predicate(
-    "an unreproducible producer is declared rather than serialized",
-    [cpp, c].every((row) => declares(row, "regenerationLimitation")) &&
-      // Counted over the whole catalog, not checked against a list of the rows
-      // that happen not to declare it. The exemption drops the lifecycle's
-      // strongest assertion for whichever row carries it, so a third one
-      // appearing has to be a reviewed edit here rather than eight words in a
-      // catalog nobody re-reads.
-      [...catalog.matchAll(/regenerationLimitation:/g)].length === 2 &&
+    "native C and C++ regeneration stays reproducible",
+    [cpp, c].every((row) => !declares(row, "regenerationLimitation")) &&
+      // Counted over the whole catalog so any reproduction exemption requires
+      // a reviewed contract change here. There is exactly one, and this is the
+      // review: scip-java digests its build universe from the raw javac
+      // invocation, and that invocation names the per-run temporary directory
+      // its embedded plugin jar is unpacked into. An unchanged checkout comes
+      // back with identical facts under a different universe — five nodes and
+      // eight edges both times — so the exemption is about the producer's
+      // universe rather than about its facts, and it says so.
+      [...catalog.matchAll(/regenerationLimitation:/g)].length === 1 &&
+      declares(java, "regenerationLimitation") &&
+      java.includes("temporary directory its embedded plugin jar") &&
       runner.includes("experiment.regenerationLimitation !== undefined") &&
       runner.includes("regenerationLimitation.trim() === \"\"") &&
       runner.includes(
@@ -297,6 +456,27 @@ export const test_experiment_corpora_are_commit_pinned = () => {
     catalogRows.map((row) => `${named(row)}: 1`),
   );
 
+  // A strict row's verdict is a claim about one producer build, and lua's used
+  // to take whichever LuaLS release was latest that hour. That was proposed as
+  // the reason its lane went red and turned out not to be — the lane fails on
+  // 3.19.0, the release every green run used — so the pin removes a variable
+  // rather than fixing a defect. It is still the shape a strict row needs: one
+  // that cannot say which build it measured cannot be debugged. The remaining
+  // `latestAsset` downloads are generic fallback servers, whose rows assert
+  // counts rather than a producer's exact publication behaviour.
+  TestValidator.equals(
+    "every strict producer is provisioned from an exact pinned artifact",
+    [
+      /const version = "3\.19\.0";/u.test(luaSetup),
+      /verifySha256\(\s*archive,\s*"[0-9a-f]{64}",\s*\)/u.test(luaSetup),
+      luaSetup.includes("latestAsset("),
+      [...setup.matchAll(/latestAsset\(\s*"([^"]+)"/gu)]
+        .map((match) => match[1]!)
+        .sort()
+        .join(","),
+    ],
+    [true, true, false, "fwcd/kotlin-language-server,zigtools/zls"],
+  );
   TestValidator.predicate(
     "the clone helper fetches and detaches the pinned revision",
     helpers.includes('["fetch", "--depth=1", "origin", experiment.commit]') &&
@@ -332,6 +512,35 @@ export const test_experiment_corpora_are_commit_pinned = () => {
       runner.includes("a strict row must state its expected") &&
       !runner.includes('experiment.strictAuthority ?? "compiler"') &&
       !runner.includes("experiment.strictTool ?? experiment.strictProvider"),
+  );
+  // Two producers on one lane prove nothing about either. Every corpus copy
+  // lives under `tests/experiment/.work`, so Node's upward lookup reaches this
+  // package's own `ttsc` before PATH is consulted, and a separately installed
+  // release is simply not the binary the lane measures. Provisioning the
+  // lockfile-resolved release is what makes the recorded version the one that
+  // answered — and its digest real, because the platform binary is an
+  // exact-versioned optional dependency rather than a mutable global install.
+  TestValidator.predicate(
+    "the TypeScript lane provisions the exact producer its corpus resolves",
+    !catalog.includes("strictReleaseBoundary") &&
+      !runner.includes("releaseBoundary") &&
+      typescript.includes('strictTool: "ttscgraph"') &&
+      setup.includes(
+        'const ttscPackage = createRequire(import.meta.url).resolve(',
+      ) &&
+      setup.includes('"ttsc/package.json",') &&
+      setup.includes(
+        "const platformPackage = `@ttsc/${process.platform}-${process.arch}`",
+      ) &&
+      setup.includes("createRequire(ttscPackage).resolve(") &&
+      setup.includes('digest: createHash("sha256")') &&
+      !setup.includes("npm install -g @ttsc/") &&
+      runner.includes(
+        "const strict = experiment.strictProvider !== undefined",
+      ) &&
+      runner.includes(
+        "lspReferenceLimit: experiment.referenceLimit ?? 250,",
+      ),
   );
   TestValidator.predicate(
     "the runner proves declared families are present and undeclared ones absent",
@@ -378,6 +587,22 @@ export const test_experiment_corpora_are_commit_pinned = () => {
       !setup.includes("npm install -g pyright"),
   );
 };
+
+/**
+ * One source region with its line comments removed.
+ *
+ * These files explain themselves at length, and every identifier an assertion
+ * looks for is also written in the prose around the code that uses it. Without
+ * this, `includes` and even a careful regex are satisfied by a comment
+ * describing the very thing that was deleted — which is how the first version
+ * of the parallelism pin passed against a hard-coded job count.
+ */
+function withoutLineComments(source: string): string {
+  return source
+    .split("\n")
+    .filter((line) => !/^\s*\/\//u.test(line))
+    .join("\n");
+}
 
 function experimentSource(file: string): string {
   return fs.readFileSync(

@@ -1,7 +1,9 @@
 import {
+  ISamchonGraphCoverage,
   ISamchonGraphDiagnostic,
   ISamchonGraphEdge,
   ISamchonGraphNode,
+  ISamchonGraphUnresolved,
 } from "../structures";
 import {
   GraphEdgeKind,
@@ -102,7 +104,50 @@ export namespace IBulkGraphSession {
     /** Which program produced everything above, and what it can prove. */
     provenance: IProvenance;
 
+    /**
+     * Exhaustive completeness rows for protocol-aware producers.
+     *
+     * Optional only while legacy strict producers migrate to Graph Snapshot
+     * Protocol v1. The coordinator normalizes an explicit partial/unsupported
+     * matrix for those producers so no current dump interprets missing edges as
+     * semantic absence.
+     */
+    coverage?: ISamchonGraphCoverage[];
+
+    /** Structured unresolved sites published by a protocol-aware producer. */
+    unresolved?: ISamchonGraphUnresolved[];
+
+    /** Validated protocol generation and content-addressed shard manifest. */
+    protocol?: IProtocolGeneration;
+
     warnings: string[];
+  }
+
+  /** Public identity of one committed Graph Snapshot Protocol generation. */
+  export interface IProtocolGeneration {
+    version: number;
+    /**
+     * Strictly increasing serial for this resident store.
+     *
+     * The serial makes a generation identity the bounded pair
+     * `(sequence, generation)`: stale ABA transactions can be rejected while
+     * the store retains only the current pair rather than every obsolete token.
+     */
+    sequence: number;
+    generation: string;
+    baseSequence?: number;
+    baseGeneration?: string;
+    /** Ordered source/configuration/dependency manifest digest. */
+    manifest: string;
+    targets: string[];
+    shards: IShard[];
+    factDigest: string;
+  }
+
+  /** One content-addressed shard retained by a committed generation. */
+  export interface IShard {
+    key: string;
+    digest: string;
   }
 
   /**

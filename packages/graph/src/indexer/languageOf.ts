@@ -1,17 +1,11 @@
-import path from "node:path";
 import { GraphLanguage } from "../typings";
-import { LANGUAGE_SPECS } from "./LANGUAGE_SPECS";
+import { languagesOf } from "./languagesOf";
 
 export function languageOf(file: string): GraphLanguage {
-  const exact = path.extname(file);
-  for (const spec of LANGUAGE_SPECS) {
-    if (spec.extensions.includes(exact)) return spec.language;
-  }
-  const folded = exact.toLowerCase();
-  if (folded !== exact) {
-    for (const spec of LANGUAGE_SPECS) {
-      if (spec.extensions.includes(folded)) return spec.language;
-    }
-  }
-  return "unknown";
+  const candidates = languagesOf(file);
+  // Compatibility surfaces with one language retain C as the default for a
+  // shared .h. Indexing uses languagesOf() and therefore never partitions the
+  // header away from C++ before semantic ownership can be resolved.
+  if (candidates.includes("c")) return "c";
+  return candidates[0] ?? "unknown";
 }

@@ -1,10 +1,37 @@
-import { SamchonGraphMemory, SamchonGraphApplication } from "@samchon/graph";
+import {
+  SamchonGraphMemory,
+  SamchonGraphApplication,
+  SamchonRepositoryContextMemory,
+} from "@samchon/graph";
 import type { ISamchonGraphApplication } from "@samchon/graph";
 
 import { GraphFixtures } from "./GraphFixtures";
 
-const createApplication = (): SamchonGraphApplication =>
-  new SamchonGraphApplication(SamchonGraphMemory.from(GraphFixtures.createContractFixture().dump));
+const createApplication = (): SamchonGraphApplication => {
+  const fixture = GraphFixtures.createContractFixture();
+  return new SamchonGraphApplication(
+    SamchonGraphMemory.from(fixture.dump),
+    () =>
+      new SamchonRepositoryContextMemory({
+        project: fixture.root,
+        schemaVersion: 1,
+        inputGeneration: "a".repeat(64),
+        generation: {
+          sequence: 1,
+          token: "b".repeat(64),
+          shards: [],
+          contentDigest: "c".repeat(64),
+        },
+        provenance: [],
+        coverage: [],
+        nodes: [],
+        edges: [],
+        files: [],
+        sources: [],
+        warnings: [],
+      }),
+  );
+};
 
 const call = (
   app: SamchonGraphApplication,

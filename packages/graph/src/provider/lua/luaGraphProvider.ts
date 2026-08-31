@@ -11,6 +11,20 @@ import { LuaGraphSession } from "./LuaGraphSession";
 
 const BUILD_FILES = [".luarc.json", ".luarc.jsonc"] as const;
 const BUILD_EXTENSIONS = [".rockspec"] as const;
+const LUA_GRAPH_TOOLS = Object.freeze({
+  server: Object.freeze({
+    command: "lua-language-server",
+    override: "SAMCHON_GRAPH_LUA",
+  }),
+  exporterOverride: "SAMCHON_GRAPH_LUA_EXPORTER",
+});
+const LUA_GRAPH_RESOLUTION = Object.freeze({
+  commands: Object.freeze([LUA_GRAPH_TOOLS.server.command]),
+  environmentOverrides: Object.freeze([
+    LUA_GRAPH_TOOLS.server.override,
+    LUA_GRAPH_TOOLS.exporterOverride,
+  ]),
+}) satisfies IGraphProvider.IResolution;
 
 /**
  * Lua, indexed by driving lua-language-server's own analysis engine.
@@ -30,6 +44,7 @@ export const luaGraphProvider: IGraphProvider = {
   languages: ["lua"],
   authority: "analyzer",
   facts: [...LuaGraphSession.FACTS],
+  resolution: LUA_GRAPH_RESOLUTION,
 
   buildInputs: (root) =>
     providerInputFiles(root, [], BUILD_FILES, BUILD_EXTENSIONS),
@@ -65,8 +80,7 @@ export const luaGraphProvider: IGraphProvider = {
   resolve: (root, env) => {
     if (inspectExporter(env).status !== "available") return undefined;
     return resolveProviderCommand(root, env, {
-      command: "lua-language-server",
-      override: "SAMCHON_GRAPH_LUA",
+      ...LUA_GRAPH_TOOLS.server,
     });
   },
 
@@ -140,8 +154,7 @@ function luaConfiguration(
     toolchainVersion.observe({
       root,
       env,
-      command: "lua-language-server",
-      override: "SAMCHON_GRAPH_LUA",
+      ...LUA_GRAPH_TOOLS.server,
       args: ["--version"],
       ...(resolved === undefined ? {} : { resolved }),
     }),
@@ -187,7 +200,7 @@ function luaExporterConfiguration(
  * tool look away.
  */
 function inspectExporter(env: NodeJS.ProcessEnv): IExporterInspection {
-  const named = env.SAMCHON_GRAPH_LUA_EXPORTER;
+  const named = env[LUA_GRAPH_TOOLS.exporterOverride];
   const script =
     named !== undefined && named !== ""
       ? path.resolve(named)

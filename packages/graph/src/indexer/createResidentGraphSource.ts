@@ -4,12 +4,18 @@ import {
   ISamchonGraphDiagnostic,
   ISamchonGraphDump,
   ISamchonGraphEdge,
+  ISamchonGraphCoverage,
   ISamchonGraphNode,
+  ISamchonGraphUnresolved,
 } from "../structures";
 import { GraphLanguage } from "../typings";
+import { appendAll } from "./appendAll";
 import { SamchonGraphSourceReader } from "../SamchonGraphSourceReader";
 import { assertGraphSnapshotContract } from "../provider/assertGraphSnapshotContract";
 import { dumpProvenanceOf } from "../provider/dumpProvenanceOf";
+import { fallbackCoverage } from "../provider/fallbackCoverage";
+import { graphCoverageOf } from "../provider/graphCoverageOf";
+import { graphUnresolvedOf } from "../provider/graphUnresolvedOf";
 import { IGraphProvider } from "../provider/IGraphProvider";
 import { GRAPH_PROVIDERS } from "../provider/GRAPH_PROVIDERS";
 import { IBulkGraphSession } from "../provider/IBulkGraphSession";
@@ -26,6 +32,7 @@ import { IBuildGraphOptions } from "./IBuildGraphOptions";
 import { ILspSession } from "./ILspSession";
 import { IResidentGraphSource } from "./IResidentGraphSource";
 import { languageOf } from "./languageOf";
+import { languagesOf as sourceLanguagesOf } from "./languagesOf";
 import { mergeProviderSourceDigests } from "./mergeProviderSourceDigests";
 import { movedConsumedSource } from "./movedConsumedSource";
 import { movedProviderSource } from "./movedProviderSource";
@@ -239,6 +246,8 @@ export function createResidentGraphSource(
     // dump whose own contract is that it is a function of its source (§6a). The
     // session holds them per file now, and a `didClose` drops the file's.
     const diagnostics: ISamchonGraphDiagnostic[] = [];
+    const coverage: ISamchonGraphCoverage[] = [];
+    const unresolved: ISamchonGraphUnresolved[] = [];
     const warnings: string[] = [];
     const sources = new Map<string, string>();
     const generations = new Map(current.generations);
@@ -279,13 +288,15 @@ export function createResidentGraphSource(
             root,
           );
         }
-        strictNodes.push(...refresh.snapshot.nodes);
-        strictEdges.push(...refresh.snapshot.edges);
+        appendAll(strictNodes, refresh.snapshot.nodes);
+        appendAll(strictEdges, refresh.snapshot.edges);
         // Rebuilt from what the compiler says now, exactly like the nodes and
         // the edges, and for the same reason the LSP lane stopped carrying them
         // forward: a diagnostic belongs to the generation that produced it.
-        diagnostics.push(...refresh.snapshot.diagnostics);
-        warnings.push(...refresh.snapshot.warnings);
+        appendAll(diagnostics, refresh.snapshot.diagnostics);
+        appendAll(coverage, graphCoverageOf(refresh.snapshot));
+        appendAll(unresolved, graphUnresolvedOf(refresh.snapshot));
+        appendAll(warnings, refresh.snapshot.warnings);
         provenance.push(dumpProvenanceOf(refresh.snapshot));
         modes.set(refresh.snapshot.provenance.provider, refresh.mode);
         continue;
@@ -300,10 +311,11 @@ export function createResidentGraphSource(
         signal,
       );
       assertOpen();
-      nodes.push(...result.nodes);
-      edges.push(...result.edges);
-      diagnostics.push(...result.diagnostics);
-      warnings.push(...result.warnings);
+      appendAll(nodes, result.nodes);
+      appendAll(edges, result.edges);
+      appendAll(diagnostics, result.diagnostics);
+      coverage.push(...fallbackCoverage("@samchon/graph-lsp", [language]));
+      appendAll(warnings, result.warnings);
       for (const opened of session.opened.values()) {
         sources.set(opened.abs, opened.text);
       }
@@ -318,9 +330,12 @@ export function createResidentGraphSource(
         },
         filesForLanguages(selected, current.staticLanguages),
       );
-      nodes.push(...fallback.nodes);
-      edges.push(...fallback.edges);
-      warnings.push(...fallback.warnings);
+      appendAll(nodes, fallback.nodes);
+      appendAll(edges, fallback.edges);
+      appendAll(warnings, fallback.warnings);
+      coverage.push(
+        ...fallbackCoverage("@samchon/graph-sitter", fallback.languages),
+      );
       for (const [file, text] of fallback.sources) sources.set(file, text);
     }
 
@@ -431,9 +446,12 @@ export function createResidentGraphSource(
       project: current.dump.project,
       languages: current.dump.languages,
       indexer: current.dump.indexer,
+      generation: { input: inputGeneration },
       nodes: wireNodes(finalized.nodes),
       edges: wireEdges(finalized.edges, finalized.nodes),
       diagnostics,
+      coverage,
+      unresolved,
       warnings,
       ...dumpProvenanceOf.fieldOf(provenance),
     };
@@ -958,10 +976,19 @@ function snapshotSources(
   options: IBuildGraphOptions,
   excludedLanguages: ReadonlySet<GraphLanguage> = new Set(),
 ): Map<string, string> {
-  const files = selectGraphSources(root, options).files;
+  const selected = selectGraphSources(root, options);
+  const activeLanguages = new Set(selected.languages);
   const snapshot = new Map<string, string>();
-  for (const abs of files) {
-    if (excludedLanguages.has(languageOf(abs))) continue;
+  for (const abs of selected.files) {
+    const owners = sourceLanguagesOf(abs).filter((language) =>
+      activeLanguages.has(language),
+    );
+    if (
+      owners.length > 0 &&
+      owners.every((language) => excludedLanguages.has(language))
+    ) {
+      continue;
+    }
     const text = readText(abs);
     // A file removed between the walk and the read is simply absent from the
     // snapshot, which itself is a difference the next comparison will catch.

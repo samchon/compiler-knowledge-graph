@@ -233,7 +233,9 @@ func TestScipBoundaryRejectsForeignAndMalformedArtifacts(t *testing.T) {
 		t.Fatal(err)
 	}
 	filtered, err := validateScipIndex(root, withExternalBody)
-	if err != nil || len(filtered.Documents) != 1 || filtered.Digest != artifact.Digest {
+	if err != nil ||
+		len(filtered.Documents) != 1 ||
+		filtered.Documents[0] != artifact.Documents[0] {
 		t.Fatalf("external SCIP cache document was not excluded canonically: artifact=%#v err=%v", filtered, err)
 	}
 	otherRoot := t.TempDir()
@@ -244,9 +246,8 @@ func TestScipBoundaryRejectsForeignAndMalformedArtifacts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	otherArtifact, err := validateScipIndex(otherRoot, otherBody)
-	if err != nil || artifact.Digest != otherArtifact.Digest {
-		t.Error("SCIP digest retained checkout or invocation paths")
+	if _, err := validateScipIndex(otherRoot, otherBody); err != nil {
+		t.Error("equivalent SCIP artifact failed in another checkout")
 	}
 	invalid := []*scip.Index{
 		{},
@@ -269,7 +270,7 @@ func TestScipBoundaryRejectsForeignAndMalformedArtifacts(t *testing.T) {
 	}
 }
 
-func TestScipDigestAndUniverseIgnoreCheckoutLocations(t *testing.T) {
+func TestScipBoundaryAndUniverseIgnoreCheckoutLocations(t *testing.T) {
 	left := copyFixture(t)
 	right := copyFixture(t)
 	leftSnapshot, err := buildSnapshot(context.Background(), left, fixtureScipIndexer{}, fixtureEnvironment(left))
@@ -282,6 +283,18 @@ func TestScipDigestAndUniverseIgnoreCheckoutLocations(t *testing.T) {
 	}
 	if leftSnapshot.Universe != rightSnapshot.Universe {
 		t.Error("equivalent checkouts produced location-dependent Go universes")
+	}
+	reorderedArtifactSnapshot, err := buildSnapshot(
+		context.Background(),
+		left,
+		fixtureScipIndexer{reverseDocuments: true},
+		fixtureEnvironment(left),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if leftSnapshot.Universe != reorderedArtifactSnapshot.Universe {
+		t.Error("derived SCIP artifact ordering changed the Go build universe")
 	}
 	if _, err := buildSnapshot(
 		context.Background(),
@@ -441,6 +454,42 @@ func TestSidecarRejectsConflictingNodesAndPreservesFileAuthorities(t *testing.T)
 		if err != nil || drive != filepath.Clean(`C:\workspace\main.go`) {
 			t.Fatalf("scip-go Windows drive URI was not normalized: %q %v", drive, err)
 		}
+	}
+}
+
+func TestSidecarCanonicalizesDuplicateEdgeEvidence(t *testing.T) {
+	earlier := edge{
+		From: "from", To: "to", Kind: "calls",
+		Evidence: &evidence{
+			File: "a.go", StartLine: 2, StartCol: 3, EndLine: 2, EndCol: 9,
+		},
+	}
+	later := edge{
+		From: "from", To: "to", Kind: "calls",
+		Evidence: &evidence{
+			File: "z.go", StartLine: 8, StartCol: 1, EndLine: 8, EndCol: 7,
+		},
+	}
+	withoutEvidence := edge{From: "from", To: "to", Kind: "calls"}
+	for name, values := range map[string][]edge{
+		"later-first":       {later, earlier, withoutEvidence},
+		"earlier-first":     {earlier, withoutEvidence, later},
+		"no-evidence-first": {withoutEvidence, later, earlier},
+	} {
+		t.Run(name, func(t *testing.T) {
+			graph := &collector{edges: map[string]edge{}}
+			for _, value := range values {
+				graph.addEdge(value)
+			}
+			if len(graph.edges) != 1 {
+				t.Fatalf("duplicate semantic relation produced %d edges", len(graph.edges))
+			}
+			for _, actual := range graph.edges {
+				if !reflect.DeepEqual(actual, earlier) {
+					t.Fatalf("duplicate relation retained non-canonical evidence: %#v", actual)
+				}
+			}
+		})
 	}
 }
 
@@ -613,7 +662,8 @@ func TestProjectBoundaryAllowsOnlySharedSymlinkPrefixes(t *testing.T) {
 }
 
 type fixtureScipIndexer struct {
-	version string
+	version          string
+	reverseDocuments bool
 }
 
 func (indexer fixtureScipIndexer) Version(context.Context) (string, error) {
@@ -623,8 +673,10 @@ func (indexer fixtureScipIndexer) Version(context.Context) (string, error) {
 	return "scip-go v0.2.7", nil
 }
 
-func (fixtureScipIndexer) Index(_ context.Context, moduleRoot string) (scipArtifact, error) {
-	var parts []string
+func (indexer fixtureScipIndexer) Index(
+	_ context.Context,
+	moduleRoot string,
+) (scipArtifact, error) {
 	var documents []string
 	definitions := map[string]int{}
 	err := filepath.WalkDir(moduleRoot, func(file string, entry os.DirEntry, walkErr error) error {
@@ -632,15 +684,6 @@ func (fixtureScipIndexer) Index(_ context.Context, moduleRoot string) (scipArtif
 			return walkErr
 		}
 		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".go") {
-			body, err := os.ReadFile(file)
-			if err != nil {
-				return err
-			}
-			relative, err := filepath.Rel(moduleRoot, file)
-			if err != nil {
-				return err
-			}
-			parts = append(parts, filepath.ToSlash(relative), digestBytes(body))
 			documents = append(documents, file)
 			definitions[pathKey(file)] = 1
 		}
@@ -649,11 +692,13 @@ func (fixtureScipIndexer) Index(_ context.Context, moduleRoot string) (scipArtif
 	if err != nil {
 		return scipArtifact{}, err
 	}
-	sort.Strings(parts)
 	sort.Strings(documents)
-	return scipArtifact{
-		Digest: digestStrings(parts...), Documents: documents, Definitions: definitions,
-	}, nil
+	if indexer.reverseDocuments {
+		for left, right := 0, len(documents)-1; left < right; left, right = left+1, right-1 {
+			documents[left], documents[right] = documents[right], documents[left]
+		}
+	}
+	return scipArtifact{Documents: documents, Definitions: definitions}, nil
 }
 
 type missingScipDocumentIndexer struct{ fixtureScipIndexer }

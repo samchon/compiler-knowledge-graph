@@ -1443,6 +1443,9 @@ function compareOccurrence(
 }
 
 function compareText(left: string, right: string): number {
-  /* c8 ignore next 2 -- callers compare distinct set or map identities. */
-  return left < right ? -1 : left > right ? 1 : 0;
+  // Two-way: callers compare distinct set or map identities, so the equal arm
+  // cannot run, and an ignore directive over it would take the two reachable
+  // arms out of the coverage gate with it -- which is how a reversed ordering
+  // stops being a failing test.
+  return left < right ? -1 : 1;
 }

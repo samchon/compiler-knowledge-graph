@@ -1,7 +1,9 @@
 import { IGraphProvider } from "./IGraphProvider";
+import { cppGraphProvider } from "./cpp/cppGraphProvider";
 import { goGraphProvider } from "./go/goGraphProvider";
+import { javaGraphProvider } from "./java/javaGraphProvider";
 import { luaGraphProvider } from "./lua/luaGraphProvider";
-import { rustScipProvider } from "./rust/rustScipProvider";
+import { rustGraphProvider } from "./rust/rustGraphProvider";
 import { standardScipProviders } from "./scip/standardScipProviders";
 import { standardSidecarProviders } from "./sidecar/standardSidecarProviders";
 import { ttscGraphProvider } from "./ttscgraph/ttscGraphProvider";
@@ -25,7 +27,14 @@ export const GRAPH_PROVIDERS: readonly IGraphProvider[] = [
   ttscGraphProvider,
   goGraphProvider,
   luaGraphProvider,
-  rustScipProvider,
-  ...standardScipProviders,
+  rustGraphProvider,
+  cppGraphProvider,
+  javaGraphProvider,
+  // Both entries are owned by a strict route as its fallback tier, so the
+  // registry must not also list them as owners: one language cannot have two.
+  ...standardScipProviders.filter(
+    (provider) =>
+      provider.name !== "scip-clang" && provider.name !== "scip-java",
+  ),
   ...standardSidecarProviders,
 ];

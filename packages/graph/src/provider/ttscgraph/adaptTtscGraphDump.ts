@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import fs from "node:fs";
 import path from "node:path";
 import { compareOrdinal } from "@samchon/graph-sitter";
 
@@ -27,12 +28,24 @@ import { ITtscGraphSnapshot } from "./ITtscGraphSnapshot";
  * version of the frame that carried it.
  */
 interface IAdaptedDump {
+  target: string;
   nodes: ISamchonGraphNode[];
   edges: ISamchonGraphEdge[];
   diagnostics: ISamchonGraphDiagnostic[];
   sources: Map<string, IBulkGraphSession.ISourceDigest>;
   provenance: Omit<IBulkGraphSession.IProvenance, "protocolVersion">;
   warnings: string[];
+}
+
+/** Metadata and source evidence validated once for one native generation. */
+interface ITtscGraphDumpContext {
+  target: string;
+  capabilities: string[];
+  manifest: ReadonlyMap<string, IBulkGraphSession.ISourceDigest>;
+  sources: Map<string, IBulkGraphSession.ISourceDigest>;
+  provenance: Omit<IBulkGraphSession.IProvenance, "protocolVersion">;
+  warnings: string[];
+  adapt: (input: unknown) => IAdaptedDump;
 }
 
 /**
@@ -56,32 +69,18 @@ export function adaptTtscGraphDump(
   input: unknown,
   expectedRoot: string,
 ): IAdaptedDump {
+  return prepareTtscGraphDumpContext(input, expectedRoot).adapt(input);
+}
+
+function adaptTtscGraphDumpWithContext(
+  input: unknown,
+  context: ITtscGraphDumpContext,
+): IAdaptedDump {
   const dump = objectOf(input, "dump");
-  const rawProvenance = objectOf(dump.provenance, "dump.provenance");
-  const schemaVersion = rawProvenance.schemaVersion;
-  if (
-    !Number.isSafeInteger(schemaVersion) ||
-    !ITtscGraphSnapshot.SUPPORTED_DUMP_SCHEMA_VERSIONS.includes(
-      schemaVersion as number,
-    )
-  ) {
-    throw new Error(
-      `ttscgraph: dump is schema ${
-        Number.isSafeInteger(schemaVersion)
-          ? `v${String(schemaVersion)}`
-          : "unknown"
-      }, this client reads ${ITtscGraphSnapshot.SUPPORTED_DUMP_SCHEMA_VERSIONS.map(
-        (version) => `v${String(version)}`,
-      ).join(" and ")}. Install a matching ttsc (the binary resolves from the target project, or from TTSC_GRAPH_BINARY).`,
-    );
-  }
-  const warnings: string[] = [];
-  const project = stringOf(dump.project, "dump.project");
-  if (!samePath(project, expectedRoot)) {
-    throw new Error(
-      `ttscgraph: response project ${project} does not match ${expectedRoot}`,
-    );
-  }
+  const warnings = [...context.warnings];
+  const target = context.target;
+  const capabilities = context.capabilities;
+  const manifest = context.manifest;
   const rawNodes = arrayOf(dump.nodes, "dump.nodes");
   const rawEdges = arrayOf(dump.edges, "dump.edges");
   const moduleIds = new Map<string, string>();
@@ -236,12 +235,6 @@ export function adaptTtscGraphDump(
     edges.push(edge);
   }
 
-  const capabilities = stringArrayOf(
-    objectOf(dump.provenance, "dump.provenance").capabilities,
-    "dump.provenance.capabilities",
-  );
-  const manifest = manifestOf(dump.provenance);
-  mergeConfigurationSources(manifest, dump.provenance, capabilities);
   for (const file of [...factFiles].sort(compareOrdinal)) {
     if (!manifest.has(file)) {
       throw new Error(
@@ -249,6 +242,62 @@ export function adaptTtscGraphDump(
       );
     }
   }
+
+  const diagnostics = capabilities.includes(
+    ITtscGraphSnapshot.CAPABILITY_DIAGNOSTICS,
+  )
+    ? diagnosticsOf(dump.diagnostics, manifest)
+    : refuseDiagnostics(dump.diagnostics, warnings);
+
+  return {
+    target,
+    nodes,
+    edges,
+    diagnostics,
+    sources: context.sources,
+    provenance: context.provenance,
+    warnings,
+  };
+}
+
+/** Validate the generation-wide coordinates and source manifest once. */
+function prepareTtscGraphDumpContext(
+  input: unknown,
+  expectedRoot: string,
+): ITtscGraphDumpContext {
+  const dump = objectOf(input, "dump");
+  const rawProvenance = objectOf(dump.provenance, "dump.provenance");
+  const schemaVersion = rawProvenance.schemaVersion;
+  if (
+    !Number.isSafeInteger(schemaVersion) ||
+    !ITtscGraphSnapshot.SUPPORTED_DUMP_SCHEMA_VERSIONS.includes(
+      schemaVersion as number,
+    )
+  ) {
+    throw new Error(
+      `ttscgraph: dump is schema ${
+        Number.isSafeInteger(schemaVersion)
+          ? `v${String(schemaVersion)}`
+          : "unknown"
+      }, this client reads ${ITtscGraphSnapshot.SUPPORTED_DUMP_SCHEMA_VERSIONS.map(
+        (version) => `v${String(version)}`,
+      ).join(" and ")}. Install a matching ttsc (the binary resolves from the target project, or from TTSC_GRAPH_BINARY).`,
+    );
+  }
+  const project = stringOf(dump.project, "dump.project");
+  if (!samePath(project, expectedRoot)) {
+    throw new Error(
+      `ttscgraph: response project ${project} does not match ${expectedRoot}`,
+    );
+  }
+  const target = stringOf(dump.tsconfig, "dump.tsconfig");
+  validateGraphFile(target, "dump.tsconfig");
+  const capabilities = stringArrayOf(
+    rawProvenance.capabilities,
+    "dump.provenance.capabilities",
+  );
+  const manifest = manifestOf(dump.provenance);
+  mergeConfigurationSources(manifest, dump.provenance, capabilities);
   const sources = new Map<string, IBulkGraphSession.ISourceDigest>();
   // Preserve the complete compiler-owned manifest. Relative identities become
   // absolute keys for the bulk-session contract; identities that are already
@@ -260,24 +309,21 @@ export function adaptTtscGraphDump(
     sources.set(sourceManifestKey(expectedRoot, file), digest);
   }
 
-  const diagnostics = capabilities.includes(
-    ITtscGraphSnapshot.CAPABILITY_DIAGNOSTICS,
-  )
-    ? diagnosticsOf(dump.diagnostics, manifest)
-    : refuseDiagnostics(dump.diagnostics, warnings);
-
-  return {
-    nodes,
-    edges,
-    diagnostics,
+  const context: ITtscGraphDumpContext = {
+    target,
+    capabilities,
+    manifest,
     sources,
     provenance: provenanceOf(
       dump.provenance,
       schemaVersion as number,
       capabilities,
+      target,
     ),
-    warnings,
+    warnings: [],
+    adapt: (facts) => adaptTtscGraphDumpWithContext(facts, context),
   };
+  return context;
 }
 
 /**
@@ -352,7 +398,7 @@ function manifestOf(
  * would fingerprint identically, and a universe change that reshuffled exactly
  * that way would look like no change at all.
  */
-function universeOf(value: unknown): string {
+function universeOf(value: unknown, target: string): string {
   const universe = objectOf(value, "dump.provenance.universe");
   const hash = createHash("sha256");
   const push = (text: string): void => {
@@ -388,6 +434,11 @@ function universeOf(value: unknown): string {
       ),
     );
   }
+  if (!configFiles.has(target)) {
+    throw new Error(
+      `ttscgraph: dump.tsconfig names an unknown build-universe config: ${target}`,
+    );
+  }
   const roots = arrayOf(universe.roots, "dump.provenance.universe.roots");
   push("roots");
   const rootsByConfig = new Map<string, Set<string>>();
@@ -421,6 +472,7 @@ function provenanceOf(
   value: unknown,
   schemaVersion: number,
   capabilities: string[],
+  target: string,
 ): Omit<IBulkGraphSession.IProvenance, "protocolVersion"> {
   const provenance = objectOf(value, "dump.provenance");
   // Read the universe even though only the fingerprint is kept: skipping the
@@ -448,8 +500,8 @@ function provenanceOf(
       producer.typescript,
       "dump.provenance.producer.typescript",
     ),
-    universe: universeOf(provenance.universe),
-    capabilities,
+    universe: universeOf(provenance.universe, target),
+    capabilities: [...new Set(capabilities)].sort(compareOrdinal),
   };
 }
 
@@ -548,6 +600,9 @@ const NODE_KINDS = new Set<GraphNodeKind>([
  * cannot run: the function declaration above it is always evaluated first.
  * The constants inside run unconditionally, so nothing testable is hidden. */
 export namespace adaptTtscGraphDump {
+  /** Reuse generation-wide validation while adapting native shard deltas. */
+  export const prepareContext = prepareTtscGraphDumpContext;
+
   /** The registry identity every `ttscgraph` snapshot is published under. */
   export const PROVIDER = "ttscgraph";
 
@@ -923,11 +978,28 @@ function validateNodeId(id: string, file: string, kind: GraphNodeKind): void {
 }
 
 function samePath(left: string, right: string): boolean {
-  const normalizedLeft = path.resolve(left);
-  const normalizedRight = path.resolve(right);
+  const normalizedLeft = physicalPath(left);
+  const normalizedRight = physicalPath(right);
   // Only one arm of this comparison runs on a given operating system.
   /* c8 ignore next 3 */
   return process.platform === "win32"
     ? normalizedLeft.toLowerCase() === normalizedRight.toLowerCase()
     : normalizedLeft === normalizedRight;
+}
+
+/** Resolve aliases through the longest existing ancestor, including missing leaves. */
+function physicalPath(location: string): string {
+  let candidate = path.resolve(location);
+  const suffix: string[] = [];
+  for (;;) {
+    try {
+      return path.join(fs.realpathSync.native(candidate), ...suffix.reverse());
+    } catch {
+      const parent = path.dirname(candidate);
+      /* c8 ignore next -- every supported platform has an existing filesystem root. */
+      if (parent === candidate) return path.resolve(location);
+      suffix.push(path.basename(candidate));
+      candidate = parent;
+    }
+  }
 }

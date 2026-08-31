@@ -7,3 +7,4 @@ export * from "./IRange";
 export * from "./ISymbolInformation";
 export * from "./isDocumentSymbol";
 export * from "./LspClient";
+export * from "./LspResponseError";

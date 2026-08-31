@@ -74,7 +74,21 @@ jobs:
     if: ${{ needs.latest_update.outputs.run == 'true' }}
     name: ${{ matrix.language }} LSP
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    # Fourteen rows install a released producer and finish in minutes; the
+    # ninety-minute bound is theirs and stays exactly where it is. C and C++
+    # build a compiler from source, and that is a property of the row rather
+    # than a defect inside it. Measured: three minutes of checkout, install and
+    # package build, then 56 minutes to a linked `clangd` on one runner and 107
+    # on another in the same workflow, then the real-corpus lifecycle run.
+    # Ninety did not fit. 150 covers the fast runner comfortably and the slow
+    # one barely, and it is still a bound, so a lane that hangs is caught. Only
+    # the two rows that build a compiler get it.
+    #
+    # The restore below is what should keep an ordinary push away from that
+    # cost, and it is an expectation rather than a property: Actions caches are
+    # branch-scoped and evicted, so a first push on a fresh branch still pays
+    # the whole build, on whichever runner it draws.
+    timeout-minutes: ${{ (matrix.language == 'c' || matrix.language == 'cpp') && 150 || 90 }}
     strategy:
       fail-fast: false
       matrix:
@@ -138,15 +152,111 @@ jobs:
         if: ${{ github.event_name != 'workflow_dispatch' || inputs.language == 'all' || inputs.language == matrix.language }}
         run: pnpm build
 
+      # C and C++ are the only rows whose producer is built rather than
+      # downloaded, and it is a pinned commit: the same bytes, reproduced from
+      # scratch, on every push. Restoring them instead is not a shortcut around
+      # the build but a removal of work that had no reason to happen twice.
+      #
+      # The key hashes every file the built bytes depend on. `catalog.mjs` is
+      # the one `setup` actually reads its commit from, so it has to be here —
+      # keying on the adapter's constant alone would leave the two bound only
+      # by a text assertion in a different workflow, and a divergence would hit
+      # the key, fail the `--version` check, rebuild, and then not re-save,
+      # because an exact hit has nothing to write. That is silent, permanent,
+      # full-cost rebuilding, so the binding is made structural instead.
+      #
+      # Restore and save are split so the save runs even when a later step
+      # fails. A campaign iterating on these lanes is exactly the case where
+      # the producer builds and the experiment does not, and `cache`'s combined
+      # form would discard an hour or more of correct build because a corpus
+      # assertion afterwards went red.
+      - name: Restore the pinned Clang producer
+        id: clang_producer
+        if: ${{ (matrix.language == 'c' || matrix.language == 'cpp') && (github.event_name != 'workflow_dispatch' || inputs.language == 'all' || inputs.language == matrix.language) }}
+        uses: actions/cache/restore@v6
+        with:
+          path: tests/experiment/.work/tools
+          key: clang-producer-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('packages/graph/src/provider/cpp/CPP_CLANG_PRODUCER_COMMIT.ts', 'tests/experiment/src/catalog.mjs', 'tests/experiment/src/setup-language.mjs') }}
+
       - name: Install language server
         if: ${{ github.event_name != 'workflow_dispatch' || inputs.language == 'all' || inputs.language == matrix.language }}
         run: pnpm --filter @samchon/graph-experiment run setup -- --language ${{ matrix.language }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      # Saved before the experiment runs, not after it, and only on a miss.
+      # The producer is proved by this point — `setup` refuses to finish unless
+      # the installed binary reports the pinned commit — and what follows is a
+      # corpus run whose failure says nothing about the compiler that was
+      # built. Waiting until the end would tie a correct build's survival to an
+      # unrelated assertion.
+      - name: Save the pinned Clang producer
+        if: ${{ (matrix.language == 'c' || matrix.language == 'cpp') && steps.clang_producer.outputs.cache-hit != 'true' && (github.event_name != 'workflow_dispatch' || inputs.language == 'all' || inputs.language == matrix.language) }}
+        uses: actions/cache/save@v6
+        with:
+          path: tests/experiment/.work/tools
+          key: ${{ steps.clang_producer.outputs.cache-primary-key }}
+
+      # Node sizes its old space from a heuristic, not from the runner, and on
+      # these 16 GiB hosts it settles near 4 GiB, which a real C project's
+      # graph outgrows. Ten was too generous in the other direction: the C lane
+      # grew into the space clangd needed and the *host* died, which takes the
+      # job log with it -- twice the reading that would have explained a run
+      # did not exist, because GitHub never received it. Six leaves the
+      # producer its half and makes the consumer fail with a number instead of
+      # taking the machine down.
+      #
+      # Six was still not low enough. The C lane died again with no job log at
+      # all, and the last trace before it explains why: Node's own resident set
+      # was six gibibytes while the host had one hundred and forty-one
+      # megabytes left, so the other nine were the producer's. A ceiling bounds
+      # old space, not resident set, and a consumer that reaches its ceiling
+      # has already taken more than that from the machine.
+      #
+      # Four was chosen to lose, and it did its job: it kept the runs legible
+      # long enough to find that most of the consumer's memory was garbage
+      # from a transport that copied every response once per chunk, and that
+      # the initial generation was committing three copies of itself where one
+      # was proof and the others were a tautology.
+      #
+      # Eight, and ten was tried. The C walk finishes and reports what it
+      # holds -- 6,930 MiB of heap, 7,562 of resident set at the last of 469
+      # shards -- and the commit after it failed at both ceilings with
+      # `Ineffective mark-compacts near heap limit`. That message is the
+      # finding: the heap is nearly all *live*, so no ceiling helps, and at ten
+      # the host itself was down to 400 MiB with the producer's measured 4.9
+      # GiB beside it.
+      #
+      # Seven gibibytes of live graph for one 242 translation-unit C project is
+      # a property of the representation -- a header's symbols are materialised
+      # once per translation unit that includes it -- and not something a
+      # ceiling can be chosen around. Eight is where the consumer fails first,
+      # cleanly, and leaves the host its margin, which keeps the log that says
+      # so.
       - name: Run LSP experiment
         if: ${{ github.event_name != 'workflow_dispatch' || inputs.language == 'all' || inputs.language == matrix.language }}
         run: pnpm --filter @samchon/graph-experiment start -- --language ${{ matrix.language }}
+        env:
+          # Twelve gibibytes of a sixteen gibibyte host, because the producer
+          # no longer wants the rest. Bodies are published as they are built
+          # and shards record where they are, so what clangd holds is its own
+          # index rather than a copy of every unit's facts.
+          #
+          # The consumer is what needs the room. fmt is 52 units and 1.4
+          # million relationships, and at eight gibibytes the live set sat at
+          # 5.5 -- close enough that every major collection walked all of it.
+          # A walk that had taken 314 seconds took 6,503, with the producer
+          # answering in a hundred milliseconds throughout.
+          NODE_OPTIONS: --max-old-space-size=12288
+          # What the consumer holds when a whole producer generation has been
+          # parsed, and again once it has been adapted and committed. The
+          # difference between the two is what decides whether a page can be
+          # adapted as it arrives or the shape has to change.
+          SAMCHON_GRAPH_CPP_HEAP_TRACE: "1"
+          # The language server's own words. A run that stalls waiting for a
+          # producer has exactly one witness, and it writes to stderr.
+          SAMCHON_GRAPH_LSP_SERVER_LOG: "1"
+          SAMCHON_GRAPH_RUST_ANALYZER_HIR: ${{ github.workspace }}/tests/experiment/.work/tools/bin/samchon-rust-analyzer
 
       - name: Upload result
         if: ${{ always() && (github.event_name != 'workflow_dispatch' || inputs.language == 'all' || inputs.language == matrix.language) }}

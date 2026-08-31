@@ -2,6 +2,7 @@ import { ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
 
 import { ownedProcess } from "../utils/ownedProcess";
+import { LspResponseError } from "./LspResponseError";
 
 const SHUTDOWN_GRACE_MS = 1_000;
 const DEFAULT_MAX_MESSAGE_BYTES = 256 * 1024 * 1024;
@@ -22,6 +23,13 @@ export class LspClient {
   private readonly events = new EventEmitter();
   private readonly maxMessageBytes: number;
   private buffer = Buffer.alloc(0);
+  // Chunks that have arrived since `buffer` was last joined, and how many
+  // bytes they hold. See `onData`.
+  private chunks: Buffer[] = [];
+  private chunkBytes = 0;
+  // Total bytes the frame being read needs, header included, or zero when the
+  // next header has not been parsed yet.
+  private needed = 0;
   private nextId = 1;
   private exited = false;
   private failure: Error | undefined;
@@ -36,6 +44,7 @@ export class LspClient {
     maxMessageBytes = DEFAULT_MAX_MESSAGE_BYTES,
     windowsVerbatimArguments?: boolean,
     private readonly requestObserver?: LspClient.IRequestObserver,
+    private readonly serverRequestHandler?: LspClient.IServerRequestHandler,
   ) {
     if (!Number.isSafeInteger(maxMessageBytes) || maxMessageBytes < 1) {
       throw new TypeError(
@@ -58,8 +67,20 @@ export class LspClient {
     ownedProcess.start(this.process, owned);
     this.exit = ownedProcess.exit(this.process);
     this.process.stdout.on("data", (chunk: Buffer) => this.onData(chunk));
-    this.process.stderr.on("data", () => {
-      // Language servers often log noisy progress to stderr.
+    // Language servers log to stderr, and a server that is busy says so
+    // there and nowhere else. It is dropped by default because the log of a
+    // healthy run is noise -- but a run that stalls has exactly one witness,
+    // and dropping it left a producer that spent twenty minutes 'discovering
+    // changes' with nothing to say for itself. The same switch that turns on
+    // this consumer's own trace passes the server's words through.
+    const echo = process.env["SAMCHON_GRAPH_LSP_SERVER_LOG"] === "1";
+    this.process.stderr.on("data", (chunk: Buffer) => {
+      if (!echo) return;
+      try {
+        process.stderr.write(`[${owned.command}] ${chunk.toString("utf8")}`);
+      } catch {
+        // A trace must never end a session it was only watching.
+      }
     });
     /* c8 ignore start -- direct POSIX spawn failures are exercised on POSIX.
      * Windows starts a stable Job Object supervisor first and reports a nested
@@ -233,8 +254,44 @@ export class LspClient {
     }
   }
 
+  /**
+   * Take one stdout chunk, and join only when a frame can be read.
+   *
+   * Concatenating the accumulated buffer with every chunk is quadratic in the
+   * size of a frame, and this transport carries frames that are tens of
+   * megabytes: a graph snapshot page. Node hands stdout over in chunks of
+   * about sixty-four kibibytes, so a thirty megabyte response arrives in some
+   * five hundred of them and the naive form copies the whole accumulation five
+   * hundred times -- gigabytes of memcpy, and gigabytes of garbage, to move
+   * thirty megabytes.
+   *
+   * That was most of the cost of paging a real C project. The producer
+   * accounted for sixteen per cent of what the client spent waiting on it; the
+   * rest was here, in this line, and it grew as the heap it churned did.
+   *
+   * So chunks accumulate unjoined. Once a header has been read the frame's
+   * total size is known, and until that many bytes have arrived there is
+   * nothing to look at -- the arithmetic is two integers. When the frame is
+   * complete the chunks are joined once. One copy per frame instead of one per
+   * chunk.
+   */
   private onData(chunk: Buffer): void {
-    this.buffer = Buffer.concat([this.buffer, chunk]);
+    this.chunks.push(chunk);
+    this.chunkBytes += chunk.length;
+    if (
+      this.needed !== 0 &&
+      this.buffer.length + this.chunkBytes < this.needed
+    ) {
+      return;
+    }
+    if (this.chunks.length !== 0) {
+      this.buffer = Buffer.concat(
+        [this.buffer, ...this.chunks],
+        this.buffer.length + this.chunkBytes,
+      );
+      this.chunks = [];
+      this.chunkBytes = 0;
+    }
     for (;;) {
       const headerEnd = this.buffer.indexOf("\r\n\r\n");
       if (headerEnd < 0) {
@@ -244,7 +301,7 @@ export class LspClient {
               `Language server exceeded the ${String(MAX_HEADER_BYTES)} byte LSP header limit.`,
             ),
           );
-          this.buffer = Buffer.alloc(0);
+          this.reset();
         }
         return;
       }
@@ -254,7 +311,7 @@ export class LspClient {
             `Language server exceeded the ${String(MAX_HEADER_BYTES)} byte LSP header limit.`,
           ),
         );
-        this.buffer = Buffer.alloc(0);
+        this.reset();
         return;
       }
       const header = this.buffer.slice(0, headerEnd).toString("ascii");
@@ -274,12 +331,18 @@ export class LspClient {
             `Language server declared an invalid or oversized LSP frame (${String(length)} bytes; limit ${String(this.maxMessageBytes)}).`,
           ),
         );
-        this.buffer = Buffer.alloc(0);
+        this.reset();
         return;
       }
       const bodyStart = headerEnd + 4;
       const bodyEnd = bodyStart + length;
-      if (this.buffer.length < bodyEnd) return;
+      if (this.buffer.length < bodyEnd) {
+        // Remember what the rest of this frame costs, so the chunks that carry
+        // it accumulate without being joined or searched again.
+        this.needed = bodyEnd;
+        return;
+      }
+      this.needed = 0;
       const body = this.buffer.slice(bodyStart, bodyEnd).toString("utf8");
       this.buffer = this.buffer.slice(bodyEnd);
       // A malformed frame must not throw out of the stdout `data` listener as an
@@ -291,7 +354,7 @@ export class LspClient {
           method?: string;
           params?: unknown;
           result?: unknown;
-          error?: { message?: string };
+          error?: { code?: number; message?: string; data?: unknown };
         };
       } catch {
         continue;
@@ -300,19 +363,42 @@ export class LspClient {
     }
   }
 
+  /** Drop everything buffered, joined or not, after a transport failure. */
+  private reset(): void {
+    this.buffer = Buffer.alloc(0);
+    this.chunks = [];
+    this.chunkBytes = 0;
+    this.needed = 0;
+  }
+
   private handleMessage(message: {
     id?: number;
     method?: string;
     params?: unknown;
     result?: unknown;
-    error?: { message?: string };
+    error?: { code?: number; message?: string; data?: unknown };
   }): void {
     // A server-initiated request carries both an id and a method. It must be
     // answered or some servers block: gopls, for instance, withholds
     // documentSymbol until its `window/workDoneProgress/create` request is
     // acknowledged. A null result satisfies the acknowledgements we advertise.
     if (message.id !== undefined && message.method !== undefined) {
-      this.write({ jsonrpc: "2.0", id: message.id, result: null });
+      if (this.serverRequestHandler === undefined) {
+        this.write({ jsonrpc: "2.0", id: message.id, result: null });
+        return;
+      }
+      void Promise.resolve()
+        .then(() => this.serverRequestHandler!(message.method!, message.params))
+        .then((result) =>
+          this.write({ jsonrpc: "2.0", id: message.id, result: result ?? null }),
+        )
+        .catch((error: unknown) =>
+          this.write({
+            jsonrpc: "2.0",
+            id: message.id,
+            error: { code: -32603, message: asError(error).message },
+          }),
+        );
       return;
     }
     if (message.id !== undefined) {
@@ -321,7 +407,11 @@ export class LspClient {
       this.deletePending(message.id, pending);
       if (message.error !== undefined) {
         pending.reject(
-          new Error(message.error.message ?? "LSP request failed."),
+          new LspResponseError(
+            message.error.code ?? -32603,
+            message.error.message ?? "LSP request failed.",
+            message.error.data,
+          ),
         );
       } else {
         pending.resolve(message.result);
@@ -388,6 +478,10 @@ export class LspClient {
 
 export namespace LspClient {
   export type IRequestObserver = (event: IRequestTrace) => void;
+  export type IServerRequestHandler = (
+    method: string,
+    params: unknown,
+  ) => unknown;
 
   export type IRequestTrace =
     | {

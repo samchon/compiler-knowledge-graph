@@ -8,10 +8,16 @@ import { GraphPaths } from "../internal/GraphPaths";
 
 const fakeCmake = [process.execPath, GraphPaths.fakeCmake];
 
+/** Proves generated compilation databases live for exactly their LSP session. */
 export const test_ensure_compile_commands_wires_into_lsp_build = async () => {
   const root = GraphFixtures.createCmakeFixture();
   fs.mkdirSync(path.join(root, "src"));
+  fs.mkdirSync(path.join(root, "include"));
   fs.writeFileSync(path.join(root, "src", "main.cc"), "int main() { return 0; }\n");
+  fs.writeFileSync(
+    path.join(root, "include", "shared.h"),
+    "class SharedHeader {};\n",
+  );
 
   const argsFile = path.join(root, "fake-lsp-args.json");
   const previousArgsFile = process.env.SAMCHON_GRAPH_FAKE_LSP_ARGS_FILE;
@@ -26,6 +32,12 @@ export const test_ensure_compile_commands_wires_into_lsp_build = async () => {
       cmakeCommand: fakeCmake,
     });
     TestValidator.equals("cpp LSP build still succeeds", dump.indexer, "lsp");
+    TestValidator.predicate(
+      "generic C++ LSP discovery opens a shared .h before semantic ownership resolution",
+      dump.nodes.some(
+        (node) => node.language === "cpp" && node.file.endsWith("shared.h"),
+      ),
+    );
     const args = JSON.parse(fs.readFileSync(argsFile, "utf8")) as string[];
     TestValidator.predicate(
       "the resolved compile_commands.json directory is passed to the server",

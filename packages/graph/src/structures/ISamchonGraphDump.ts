@@ -3,8 +3,10 @@ import { GraphLanguage } from "../typings/GraphLanguage";
 import { GraphProviderAuthority } from "../typings/GraphProviderAuthority";
 import { ISamchonGraphDiagnostic } from "./ISamchonGraphDiagnostic";
 import { ISamchonGraphEdge } from "./ISamchonGraphEdge";
+import { ISamchonGraphCoverage } from "./ISamchonGraphCoverage";
 import { ISamchonGraphNode } from "./ISamchonGraphNode";
 import { ISamchonGraphSpan } from "./ISamchonGraphSpan";
+import { ISamchonGraphUnresolved } from "./ISamchonGraphUnresolved";
 
 /**
  * The whole-graph export `samchon-graph dump` writes and the MCP server loads —
@@ -39,8 +41,29 @@ export interface ISamchonGraphDump {
   /** Which indexing strategy produced the graph. */
   indexer: "lsp" | "static" | "hybrid";
 
+  /**
+   * Complete coordinator input generation used to fence code/topology joins.
+   *
+   * Absent only on dumps written before cross-plane generation fencing.
+   */
+  generation?: {
+    input: string;
+  };
+
   /** What each strict provider proved about the slice it contributed, one row per provider, ordered by provider name so an unchanged checkout stays byte-identical. Absent when no strict provider served the build, and absent from dumps written before this field existed. Computation mode is deliberately not here: it belongs to one refresh rather than to the facts, so recording it would make two dumps of the same unedited checkout differ. */
   provenance?: ISamchonGraphDump.IProvenance[];
+
+  /**
+   * Exhaustive per-provider, language, target and relationship-family
+   * completeness rows. Absent only on dumps written before protocol version 1.
+   */
+  coverage?: ISamchonGraphCoverage[];
+
+  /**
+   * Structured relationship sites that a producer could not resolve exactly.
+   * An empty list is meaningful only together with exhaustive coverage.
+   */
+  unresolved?: ISamchonGraphUnresolved[];
 
   /** Every node the build recorded. */
   nodes: ISamchonGraphDump.INode[];

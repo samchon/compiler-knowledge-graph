@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import { createHash } from "node:crypto";
 import https from "node:https";
+import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 
@@ -318,15 +319,6 @@ const installScipRuby = () =>
 // and it has to be measured rather than assumed. Kotlin support is upstream's
 // own "less mature" than Java's, and Maven cannot index Kotlin at all; koin is
 // Gradle, so it is on the supported path.
-const installScipJava = () =>
-  installPinnedBinary({
-    tool: "scip-java",
-    version: "v0.13.1",
-    url: "https://github.com/scip-code/scip-java/releases/download/v0.13.1/scip-java-v0.13.1",
-    digest:
-      "a694cae143c32c5b6226362fb4bd268a8d13d3cd9b482819b3b0029a9a97b8fe",
-  });
-
 // scip-java v0.13.1 predates Kotlin 2.3's CompilerPluginRegistrar.pluginId
 // contract, so it cannot index current Koin. Compiler plugins are also coupled
 // to the compiler minor that loads them: #973's merged 2.4.0 tree builds but
@@ -337,22 +329,22 @@ const installScipJava = () =>
 const SCIP_JAVA_KOTLIN_COMMIT =
   "e940c1889767a81347387067a375320dc6f5d83e";
 const SCIP_JAVA_KOTLIN_VERSION = "2.3.20";
-const installScipJavaKotlinSnapshot = async (gradle) => {
-  const url =
-    `https://codeload.github.com/scip-code/scip-java/tar.gz/${SCIP_JAVA_KOTLIN_COMMIT}`;
-  const archive = path.join(
-    toolsRoot,
-    `scip-java-${SCIP_JAVA_KOTLIN_COMMIT}.tar.gz`,
-  );
-  const source = path.join(
-    toolsRoot,
-    `scip-java-${SCIP_JAVA_KOTLIN_COMMIT}`,
-  );
+
+/**
+ * Build one exact `scip-java` source revision and install its launcher.
+ *
+ * Two rows need this and they need different revisions: Kotlin needs the
+ * upstream commit that completed the 2.3.20 plugin port, and Java needs the
+ * fork whose `index` command writes a graph artifact at all. The revision, its
+ * archive digest and the version string a run records are therefore arguments
+ * rather than constants — one builder, two pins, and no local patch on either.
+ */
+const installScipJavaSource = async (gradle, pin) => {
+  const url = `https://codeload.github.com/${pin.repository}/tar.gz/${pin.commit}`;
+  const archive = path.join(toolsRoot, `scip-java-${pin.commit}.tar.gz`);
+  const source = path.join(toolsRoot, `scip-java-${pin.commit}`);
   await downloadFile(url, archive);
-  verifySha256(
-    archive,
-    "985eb03ef165864dbae3db4453d4566e699f78761bace3e4614bf67d38ce76cf",
-  );
+  verifySha256(archive, pin.digest);
   fs.rmSync(source, { force: true, recursive: true });
   ensureDir(source);
   run(
@@ -379,12 +371,61 @@ const installScipJavaKotlinSnapshot = async (gradle) => {
   run(link, ["--version"]);
   record({
     tool: "scip-java",
-    version:
-      `${SCIP_JAVA_KOTLIN_COMMIT}+kotlin-${SCIP_JAVA_KOTLIN_VERSION}`,
+    version: pin.version,
     source: url,
-    digest:
-      "sha256:985eb03ef165864dbae3db4453d4566e699f78761bace3e4614bf67d38ce76cf",
+    digest: `sha256:${pin.digest}`,
   });
+  return link;
+};
+
+const installScipJavaKotlinSnapshot = (gradle) =>
+  installScipJavaSource(gradle, {
+    repository: "scip-code/scip-java",
+    commit: SCIP_JAVA_KOTLIN_COMMIT,
+    version: `${SCIP_JAVA_KOTLIN_COMMIT}+kotlin-${SCIP_JAVA_KOTLIN_VERSION}`,
+    digest:
+      "985eb03ef165864dbae3db4453d4566e699f78761bace3e4614bf67d38ce76cf",
+  });
+
+/**
+ * The javac graph producer, built from the exact fork revision the consumer
+ * pins.
+ *
+ * No released `scip-java` carries `--graph-output`, and the strict route
+ * declines a launcher that does not publish it — so a released install here
+ * would prove the decline rather than the route. The catalog names the exact
+ * revision so the corpus fixture and the plugin indexing it come from one
+ * checkout, and the launcher is then asked, as a condition of installation,
+ * to show the option this row exists to exercise.
+ */
+const installJavacGraphProducer = async (gradle) => {
+  if (
+    typeof experiment.producerRepository !== "string" ||
+    typeof experiment.producerCommit !== "string"
+  ) {
+    throw new Error(
+      "java: the javac graph setup requires an exact producer repository and commit",
+    );
+  }
+  const repository = experiment.producerRepository
+    .replace(/^https:\/\/github\.com\//u, "")
+    .replace(/\.git$/u, "");
+  const link = await installScipJavaSource(gradle, {
+    repository,
+    commit: experiment.producerCommit,
+    version: experiment.producerCommit,
+    digest:
+      "3ef45fedc5ad60ca6af0200a9b3fe7e978eadc8df63dda0a9dcba677f50b1417",
+  });
+  const help = String(
+    run(link, ["index", "--help"], { stdio: "pipe" }).stdout,
+  );
+  if (!help.includes("--graph-output")) {
+    throw new Error(
+      `java: the installed scip-java does not publish --graph-output:
+${help}`,
+    );
+  }
 };
 
 // Needs a compilation database, which is why the provider carries
@@ -398,6 +439,249 @@ const installScipClang = () =>
     digest:
       "06fd18c576f979a726c651594644ec4a35db4f471f2160b3f72eb89fa6001784",
   });
+
+/**
+ * Accept an already-installed pinned producer, or report that there is none.
+ *
+ * Deliberately total: any missing file, any unreadable resource tree, any
+ * version string that does not name the pinned commit, and any error at all
+ * means "build it". Reuse is an optimisation, so it may only ever be taken
+ * when the evidence for it is complete.
+ */
+const installedClangGraphProducer = () => {
+  try {
+    const installed = path.join(binRoot, "samchon-clangd");
+    const alias = path.join(binRoot, "clangd");
+    if (
+      !fs.statSync(installed, { throwIfNoEntry: false })?.isFile() ||
+      !fs.statSync(alias, { throwIfNoEntry: false })?.isFile()
+    ) {
+      return false;
+    }
+    const resources = path.join(toolsRoot, "lib", "clang");
+    const versions = fs
+      .readdirSync(resources, { withFileTypes: true })
+      .filter(
+        (entry) =>
+          entry.isDirectory() &&
+          fs
+            .statSync(path.join(resources, entry.name, "include", "stddef.h"), {
+              throwIfNoEntry: false,
+            })
+            ?.isFile(),
+      );
+    if (versions.length !== 1) return false;
+    for (const binary of [installed, alias]) {
+      const reported = run(binary, ["--version"], { stdio: "pipe" });
+      if (!String(reported.stdout).includes(experiment.producerCommit)) {
+        return false;
+      }
+    }
+  } catch {
+    return false;
+  }
+  record({
+    tool: "samchon-clangd",
+    version: experiment.producerCommit,
+    source: `${experiment.producerRepository}@${experiment.producerCommit}`,
+    digest: `git:${experiment.producerCommit}`,
+  });
+  record({
+    tool: "clangd",
+    version: experiment.producerCommit,
+    source: "alias of samchon-clangd",
+    digest: `git:${experiment.producerCommit}`,
+  });
+  return true;
+};
+
+const installClangGraphProducer = () => {
+  if (
+    typeof experiment.producerRepository !== "string" ||
+    typeof experiment.producerCommit !== "string"
+  ) {
+    throw new Error(
+      `${experiment.language}: native Clang setup requires an exact producer repository and commit`,
+    );
+  }
+  // The producer is a pinned commit, so its binary is a pure function of that
+  // commit and this toolchain. Rebuilding it on every push was the actual
+  // waste: roughly two CPU-hours per workflow to reproduce bytes that cannot
+  // have changed. A restored install is therefore reused rather than rebuilt —
+  // but only after it says, itself, that it is the pinned producer. A cache is
+  // untrusted input, and the same `--version` check the fresh build has to
+  // pass is what admits a restored one, so a stale or foreign artifact fails
+  // closed here instead of quietly indexing a corpus with the wrong compiler.
+  if (installedClangGraphProducer()) return;
+  const source = path.join(toolsRoot, "samchon-clangd-source");
+  const build = path.join(source, "build");
+  fs.rmSync(source, { force: true, recursive: true });
+  ensureDir(source);
+  run("git", ["init", "--quiet"], { cwd: source });
+  run("git", ["remote", "add", "origin", experiment.producerRepository], {
+    cwd: source,
+  });
+  run(
+    "git",
+    ["fetch", "--depth=1", "origin", experiment.producerCommit],
+    { cwd: source },
+  );
+  run("git", ["checkout", "--detach", "FETCH_HEAD"], { cwd: source });
+  const revision = String(
+    run("git", ["rev-parse", "HEAD"], {
+      cwd: source,
+      stdio: "pipe",
+    }).stdout,
+  ).trim();
+  if (revision !== experiment.producerCommit) {
+    throw new Error(
+      `${experiment.language}: checked out native Clang ${revision}, expected ${experiment.producerCommit}`,
+    );
+  }
+  run("cmake", [
+    "-S",
+    path.join(source, "llvm"),
+    "-B",
+    build,
+    "-G",
+    "Ninja",
+    "-DCMAKE_BUILD_TYPE=Release",
+    "-DCMAKE_C_COMPILER=clang",
+    "-DCMAKE_CXX_COMPILER=clang++",
+    "-DLLVM_ENABLE_PROJECTS=clang;clang-tools-extra",
+    "-DLLVM_TARGETS_TO_BUILD=Native",
+    "-DLLVM_ENABLE_ASSERTIONS=ON",
+    "-DLLVM_INCLUDE_TESTS=OFF",
+    "-DCLANG_INCLUDE_TESTS=OFF",
+    "-DLLVM_INCLUDE_BENCHMARKS=OFF",
+    "-DLLVM_INCLUDE_EXAMPLES=OFF",
+    `-DLLVM_FORCE_VC_REVISION=${experiment.producerCommit}`,
+    `-DLLVM_FORCE_VC_REPOSITORY=${experiment.producerRepository}`,
+  ]);
+  // Build with the machine, not with a number. Note what that is and is not
+  // claiming, because two earlier versions of this comment claimed more.
+  //
+  // Every recorded build of this producer, all at the advertised job count
+  // except the first: 2,431 of 3,125 steps in 85 minutes and killed unfinished
+  // at a fixed `2`; 2,431 steps in 81.2 minutes; a complete build in 56.1; a
+  // complete build in 107. The last two are the same commit and the same job
+  // count, in one workflow, on two runners. Hosted-runner performance varies
+  // by roughly a factor of two, which swamps the difference this line makes
+  // and leaves no clean two-against-four comparison in the data at all.
+  //
+  // So the reason for sizing by the machine is the principle, not a measured
+  // speedup: a constant that leaves half a runner idle is wrong wherever it
+  // runs, and the effect size here is unmeasured. An earlier comment reported
+  // "roughly half" and another "barely five percent"; both read a difference
+  // out of numbers that could not support one.
+  //
+  // Also bounded by installed memory, which is a machine-class bound and not
+  // an out-of-memory guard — worth being exact about, because the two are easy
+  // to confuse and only the first is what this computes. It reads total rather
+  // than free memory, so it says "this machine should not run more than N
+  // concurrent compiles", not "this machine has room right now". It bounds
+  // compile concurrency only; the `clangd` link is a single build edge that
+  // runs whatever this number is, and LLVM's own controls for that
+  // (`LLVM_PARALLEL_LINK_JOBS` and friends) are deliberately not set here
+  // because the runs that reached the link reached it without trouble, so
+  // there is nothing yet to size them against. Two GiB per compile
+  // job is this repository's figure, chosen as a conventional one; it is not
+  // quoted from LLVM.
+  //
+  // Logged because it is otherwise invisible. Ninja does not print its job
+  // count and `run` does not echo argv, so a machine whose memory quietly
+  // halves the count would look exactly like a slow build, which is the
+  // confusion that cost this lane two CI runs already.
+  const jobs = Math.max(
+    1,
+    Math.min(
+      os.availableParallelism(),
+      Math.floor(os.totalmem() / (2 * 1024 * 1024 * 1024)),
+    ),
+  );
+  console.log(
+    `${experiment.language}: building the pinned Clang producer with ${String(jobs)} jobs ` +
+      `(cores ${String(os.availableParallelism())}, ` +
+      `memory ${String(Math.round(os.totalmem() / (1024 * 1024 * 1024)))} GiB)`,
+  );
+  run("cmake", [
+    "--build",
+    build,
+    "--parallel",
+    String(jobs),
+    "--target",
+    "clangd",
+  ]);
+  const binary = path.join(build, "bin", "clangd");
+  const version = String(
+    run(binary, ["--version"], { stdio: "pipe" }).stdout,
+  );
+  if (!version.includes(experiment.producerCommit)) {
+    throw new Error(
+      `${experiment.language}: native Clang version omits ${experiment.producerCommit}:\n${version}`,
+    );
+  }
+  const builtResources = path.join(build, "lib", "clang");
+  const resourceVersions = fs
+    .readdirSync(builtResources, { withFileTypes: true })
+    .filter(
+      (entry) =>
+        entry.isDirectory() &&
+        fs.statSync(
+          path.join(builtResources, entry.name, "include"),
+          { throwIfNoEntry: false },
+        )?.isDirectory(),
+    )
+    .map((entry) => entry.name);
+  if (resourceVersions.length !== 1) {
+    throw new Error(
+      `${experiment.language}: native Clang produced ${resourceVersions.length} resource-header trees`,
+    );
+  }
+  const installedResources = path.join(toolsRoot, "lib", "clang");
+  fs.rmSync(installedResources, { force: true, recursive: true });
+  ensureDir(path.dirname(installedResources));
+  fs.cpSync(builtResources, installedResources, { recursive: true });
+  const installedStddef = path.join(
+    installedResources,
+    resourceVersions[0],
+    "include",
+    "stddef.h",
+  );
+  if (!fs.statSync(installedStddef, { throwIfNoEntry: false })?.isFile()) {
+    throw new Error(
+      `${experiment.language}: native Clang resource headers were not installed at ${installedStddef}`,
+    );
+  }
+  for (const command of ["samchon-clangd", "clangd"]) {
+    const link = path.join(binRoot, command);
+    fs.rmSync(link, { force: true });
+    fs.linkSync(binary, link);
+  }
+  const installedVersion = String(
+    run(path.join(binRoot, "samchon-clangd"), ["--version"], {
+      stdio: "pipe",
+    }).stdout,
+  );
+  if (!installedVersion.includes(experiment.producerCommit)) {
+    throw new Error(
+      `${experiment.language}: installed native Clang omits ${experiment.producerCommit}:\n${installedVersion}`,
+    );
+  }
+  record({
+    tool: "samchon-clangd",
+    version: experiment.producerCommit,
+    source: `${experiment.producerRepository}@${experiment.producerCommit}`,
+    digest: `git:${experiment.producerCommit}`,
+  });
+  record({
+    tool: "clangd",
+    version: experiment.producerCommit,
+    source: "alias of samchon-clangd",
+    digest: `git:${experiment.producerCommit}`,
+  });
+  fs.rmSync(source, { force: true, recursive: true });
+};
 
 // The published tarball is a webpack bundle whose only runtime `require`s are
 // Node built-ins, so extracting the integrity-verified archive installs exactly
@@ -461,38 +745,43 @@ switch (experiment.language) {
     // in 2.8 s read as the compiler-owned provider being fast when the
     // best-effort syntax reader had produced it.
     //
-    // `resolveTtscGraphCommand` prefers the indexed project's own `ttsc`
-    // installation, then a `ttscserver` beside it, and only then `ttscgraph` on
-    // PATH. A corpus fixture on stock TypeScript has neither of the first two,
-    // so the PATH fallback is the only route — and the binary lives inside the
-    // platform package rather than in `@ttsc/graph`, whose npm `bin` publishes
-    // `ttsc-graph` and not this.
-    const ttscVersion = "0.22.0";
-    shell(`npm install -g @ttsc/linux-x64@${ttscVersion}`);
-    const globalRoot = shell("npm root -g", {
-      stdio: ["ignore", "pipe", "inherit"],
-    })
-      .stdout.toString()
-      .trim();
-    const ttscGraph = path.join(
-      globalRoot,
-      "@ttsc",
-      "linux-x64",
-      "bin",
-      "ttscgraph",
+    // The producer is the release this workspace's lockfile already resolves,
+    // not a separately installed one. `resolveTtscGraphCommand` prefers the
+    // indexed project's own `ttsc` installation over PATH, and every corpus
+    // copy lives under this package's work directory — so Node's upward
+    // lookup reaches `tests/experiment/node_modules/ttsc` before PATH is ever
+    // consulted. Provisioning a different release here puts two producers on
+    // one lane and proves whichever one resolution happened to reach: that is
+    // exactly how a lane pinned to 0.23.0 kept passing while the workspace
+    // moved to a release that speaks the native protocol.
+    //
+    // Reading the lockfile's release also makes the pin real. The platform
+    // binary is an exact-versioned optional dependency of `ttsc`, so its bytes
+    // are fixed by `pnpm-lock.yaml`'s integrity hash rather than by whatever a
+    // mutable global install channel serves that hour.
+    const ttscPackage = createRequire(import.meta.url).resolve(
+      "ttsc/package.json",
     );
-    if (!fs.existsSync(ttscGraph)) {
-      throw new Error(`ttscgraph not found after install at ${ttscGraph}`);
-    }
-    fs.chmodSync(ttscGraph, 0o755);
-    const link = path.join(binRoot, "ttscgraph");
+    const ttscVersion = JSON.parse(
+      fs.readFileSync(ttscPackage, "utf8"),
+    ).version;
+    const executable =
+      process.platform === "win32" ? "ttscgraph.exe" : "ttscgraph";
+    const platformPackage = `@ttsc/${process.platform}-${process.arch}`;
+    const ttscGraph = createRequire(ttscPackage).resolve(
+      `${platformPackage}/bin/${executable}`,
+    );
+    if (process.platform !== "win32") fs.chmodSync(ttscGraph, 0o755);
+    const link = path.join(binRoot, executable);
     fs.rmSync(link, { force: true });
     fs.symlinkSync(ttscGraph, link);
     record({
       tool: "ttscgraph",
       version: ttscVersion,
-      source: `npm install -g @ttsc/linux-x64@${ttscVersion}`,
-      digest: "unpinned",
+      source: `${platformPackage}@${ttscVersion} resolved from the workspace lockfile`,
+      digest: createHash("sha256")
+        .update(fs.readFileSync(ttscGraph))
+        .digest("hex"),
     });
     break;
   }
@@ -542,36 +831,115 @@ switch (experiment.language) {
     });
     break;
   }
-  case "rust":
+  case "rust": {
     // The installer script comes through the same hardened seam as every
     // other fetch. Piping curl into `sh` would be the one shape curl's own
     // manual tells us not to retry: a retried mid-body transfer is not
     // rewound in a pipe, so `sh` could read the partial prefix twice.
     await downloadFile("https://sh.rustup.rs", path.join(toolsRoot, "rustup-init.sh"));
-    shell(`sh "${path.join(toolsRoot, "rustup-init.sh")}" -y --profile minimal`);
-    appendGithubPath(path.join(os.homedir(), ".cargo", "bin"));
-    shell(`${path.join(os.homedir(), ".cargo", "bin", "rustup")} component add rust-analyzer`);
+    shell(
+      `sh "${path.join(toolsRoot, "rustup-init.sh")}" -y --profile minimal --default-toolchain 1.95.0`,
+    );
+    const cargoBin = path.join(os.homedir(), ".cargo", "bin");
+    appendGithubPath(cargoBin);
+    run(
+      path.join(
+        cargoBin,
+        process.platform === "win32" ? "rustup.exe" : "rustup",
+      ),
+      [
+        "component",
+        "add",
+        "rust-src",
+        "--toolchain",
+        "1.95.0",
+      ],
+    );
+    record({
+      tool: "rust-toolchain",
+      version: "1.95.0",
+      source: "rustup profile minimal with rust-src",
+      digest: "rustup:1.95.0",
+    });
+    const producerRoot = path.join(toolsRoot, "samchon-rust-analyzer-source");
+    fs.rmSync(producerRoot, { force: true, recursive: true });
+    ensureDir(producerRoot);
+    run("git", ["init"], { cwd: producerRoot });
+    run("git", ["remote", "add", "origin", experiment.producerRepository], {
+      cwd: producerRoot,
+    });
+    run(
+      "git",
+      ["fetch", "--depth=1", "origin", experiment.producerCommit],
+      { cwd: producerRoot },
+    );
+    run("git", ["checkout", "--detach", "FETCH_HEAD"], {
+      cwd: producerRoot,
+    });
+    const producerHead = String(
+      run("git", ["rev-parse", "HEAD"], {
+        cwd: producerRoot,
+        stdio: "pipe",
+      }).stdout,
+    ).trim();
+    if (producerHead !== experiment.producerCommit) {
+      throw new Error(
+        `rust producer checkout is ${producerHead}, not ${experiment.producerCommit}`,
+      );
+    }
+    run(
+      path.join(cargoBin, process.platform === "win32" ? "cargo.exe" : "cargo"),
+      ["build", "--locked", "--release", "-p", "rust-analyzer"],
+      { cwd: producerRoot },
+    );
+    const producerBinary = path.join(
+      producerRoot,
+      "target",
+      "release",
+      process.platform === "win32" ? "rust-analyzer.exe" : "rust-analyzer",
+    );
+    for (const command of ["samchon-rust-analyzer", "rust-analyzer"]) {
+      const link = path.join(
+        binRoot,
+        `${command}${process.platform === "win32" ? ".exe" : ""}`,
+      );
+      fs.rmSync(link, { force: true });
+      fs.linkSync(producerBinary, link);
+    }
+    recordProvisionedEnvironment(
+      "SAMCHON_GRAPH_RUST_ANALYZER_HIR",
+      path.join(
+        binRoot,
+        `samchon-rust-analyzer${process.platform === "win32" ? ".exe" : ""}`,
+      ),
+    );
+    record({
+      tool: "samchon-rust-analyzer",
+      version: experiment.producerCommit,
+      source: `${experiment.producerRepository}@${experiment.producerCommit}`,
+      digest: `git:${experiment.producerCommit}`,
+    });
     record({
       tool: "rust-analyzer",
-      version: "unpinned",
-      source: "rustup component add rust-analyzer",
-      digest: "unpinned",
+      version: experiment.producerCommit,
+      source: "alias of samchon-rust-analyzer",
+      digest: `git:${experiment.producerCommit}`,
     });
     await installScip();
     break;
+  }
   case "cpp":
   case "c":
-    // `bear` alongside clangd because scip-clang declines without a compilation
-    // database, and a Makefile project has no way to emit one — bear records
-    // the compiler invocations as the build runs. A CMake project needs nothing
-    // extra, since configure writes the database on its own.
-    apt(["clangd", "bear"]);
-    record({
-      tool: "clangd",
-      version: "unpinned",
-      source: "apt clangd",
-      digest: "unpinned",
-    });
+    // `clang`, `cmake` and `ninja-build` are what builds the pinned producer:
+    // this row's clangd is compiled from the fork below rather than installed,
+    // so the distribution's own clangd is deliberately absent from this list.
+    //
+    // `bear` is for a compilation database a configure step cannot write. Both
+    // pinned corpora are CMake and emit one themselves, so nothing here uses it
+    // today; it stays because the database is what makes this route selectable
+    // at all, and a Makefile corpus would otherwise be unable to produce one.
+    apt(["clang", "cmake", "ninja-build", "bear"]);
+    installClangGraphProducer();
     record({
       tool: "bear",
       version: "unpinned",
@@ -612,8 +980,13 @@ switch (experiment.language) {
         "https://download.eclipse.org/jdtls/snapshots/jdt-language-server-latest.tar.gz",
       digest: "unpinned",
     });
-    await installScipJava();
+    // One launcher, built from the pinned fork. It serves both the strict
+    // javac route and the SCIP lane behind it, so installing the released
+    // binary first only downloaded a `scip-java` the source build then
+    // shadowed under the same name — and recorded it in the tool manifest as
+    // though a run had used it.
     await installScip();
+    await installJavacGraphProducer(await installGradle());
     break;
   }
   case "csharp": {
@@ -758,19 +1131,39 @@ switch (experiment.language) {
     break;
 
   case "lua": {
-    const url = await latestAsset("LuaLS/lua-language-server", /linux-x64\.tar\.gz$/);
+    // Pinned, because this row's acceptance is a claim about one build's
+    // behaviour and it used to take whichever release was latest that hour.
+    //
+    // The pin was proposed as the cause of a red lane and is not: 3.19.0 is
+    // the release every green run used, and the lane fails on it too. So this
+    // removes a variable rather than fixing a defect, which is worth doing on
+    // its own terms — a row that cannot say which build it measured cannot be
+    // debugged — but the degraded-publication claim above it is still
+    // unexplained, and the refusal now prints what it compared.
+    //
+    // Moving this pin is a deliberate act with its own evidence. The two other
+    // `latestAsset` downloads stay latest on purpose: they provision generic
+    // language servers for the fallback arm, whose rows assert counts rather
+    // than a producer's exact publication behaviour.
+    const version = "3.19.0";
+    const url = `https://github.com/LuaLS/lua-language-server/releases/download/${version}/lua-language-server-${version}-linux-x64.tar.gz`;
     const archive = path.join(toolsRoot, "lua-language-server.tar.gz");
     const target = path.join(toolsRoot, "lua-language-server");
     await downloadFile(url, archive);
+    verifySha256(
+      archive,
+      "624ae8dd3bfbd5c2ee3ccf2f3547d33aeefa209971cce8c11d48f69fc1ec065a",
+    );
     fs.rmSync(target, { force: true, recursive: true });
     ensureDir(target);
     run("tar", ["-xzf", archive, "-C", target]);
     appendGithubPath(path.join(target, "bin"));
     record({
       tool: "lua-language-server",
-      version: "unpinned",
+      version,
       source: url,
-      digest: "unpinned",
+      digest:
+        "624ae8dd3bfbd5c2ee3ccf2f3547d33aeefa209971cce8c11d48f69fc1ec065a",
     });
     break;
   }

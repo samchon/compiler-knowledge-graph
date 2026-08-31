@@ -4,6 +4,7 @@ import { RESULT_AUDIT_DETAILS } from "./operations/RESULT_AUDIT_DETAILS";
 import { RESULT_AUDIT_SELECTION } from "./operations/RESULT_AUDIT_SELECTION";
 import { RESULT_AUDIT_ESCAPE } from "./operations/RESULT_AUDIT_ESCAPE";
 import { resultNext } from "./operations/resultNext";
+import { graphTrust } from "./operations/graphTrust";
 import { runDetails } from "./operations/runDetails";
 import { runEntrypoints } from "./operations/runEntrypoints";
 import { runLookup } from "./operations/runLookup";
@@ -11,6 +12,7 @@ import { runOverview } from "./operations/runOverview";
 import { runTour } from "./operations/runTour";
 import { runTrace } from "./operations/runTrace";
 import { SamchonGraphMemory } from "./SamchonGraphMemory";
+import { SamchonRepositoryContextMemory } from "./repository";
 import { ISamchonGraphApplication, ISamchonGraphEscape } from "./structures";
 
 /**
@@ -33,9 +35,20 @@ export class SamchonGraphApplication implements ISamchonGraphApplication {
   private readonly graph: () =>
     | SamchonGraphMemory
     | Promise<SamchonGraphMemory>;
+  private readonly topology:
+    | (() =>
+        | SamchonRepositoryContextMemory
+        | Promise<SamchonRepositoryContextMemory>)
+    | undefined;
 
-  public constructor(source: AsyncSamchonGraphSource) {
+  public constructor(
+    source: AsyncSamchonGraphSource,
+    topology?: () =>
+      | SamchonRepositoryContextMemory
+      | Promise<SamchonRepositoryContextMemory>,
+  ) {
     this.graph = typeof source === "function" ? source : () => source;
+    this.topology = topology;
   }
 
   public async inspect_code_graph(
@@ -62,6 +75,7 @@ export class SamchonGraphApplication implements ISamchonGraphApplication {
         const r = runEntrypoints(graph, props.request);
         return {
           audit: RESULT_AUDIT_SELECTION(graph.indexer),
+          ...graphTrust(graph, props.request.type),
           next: r.next,
           result: r.result,
         };
@@ -72,6 +86,7 @@ export class SamchonGraphApplication implements ISamchonGraphApplication {
         const r = runLookup(graph, props.request);
         return {
           audit: RESULT_AUDIT_SELECTION(graph.indexer),
+          ...graphTrust(graph, props.request.type),
           next: r.next,
           result: r.result,
         };
@@ -80,6 +95,7 @@ export class SamchonGraphApplication implements ISamchonGraphApplication {
         const r = runTrace(graph, props.request);
         return {
           audit: RESULT_AUDIT(graph.indexer),
+          ...graphTrust(graph, props.request.type),
           next: r.next,
           result: r.result,
         };
@@ -88,6 +104,7 @@ export class SamchonGraphApplication implements ISamchonGraphApplication {
         const r = runDetails(graph, props.request);
         return {
           audit: RESULT_AUDIT_DETAILS(graph.indexer, props.request.memberLimit),
+          ...graphTrust(graph, props.request.type),
           next: r.next,
           result: r.result,
         };
@@ -96,6 +113,7 @@ export class SamchonGraphApplication implements ISamchonGraphApplication {
         const r = runOverview(graph, props.request);
         return {
           audit: RESULT_AUDIT(graph.indexer),
+          ...graphTrust(graph, props.request.type),
           next: r.next,
           result: r.result,
         };
@@ -107,8 +125,99 @@ export class SamchonGraphApplication implements ISamchonGraphApplication {
         const r = runTour(graph, props.request, props.question);
         return {
           audit: RESULT_AUDIT_SELECTION(graph.indexer),
+          ...graphTrust(graph, props.request.type),
           next: r.next,
           result: r.result,
+        };
+      }
+      case "topology": {
+        if (this.topology === undefined) {
+          throw new Error(
+            "@samchon/graph: repository-context source is unavailable",
+          );
+        }
+        const topology = await this.topology();
+        const confirmed = await this.load();
+        const compatible =
+          graph.project === topology.dump.project &&
+          topology.dump.provenance.length !== 0 &&
+          graph.inputGeneration !== undefined &&
+          graph.inputGeneration === confirmed.inputGeneration;
+        const join = compatible
+          ? {
+              state: "compatible" as const,
+              topologyInputGeneration: topology.dump.inputGeneration,
+              codeInputGeneration: graph.inputGeneration!,
+            }
+          : {
+              state: "unavailable" as const,
+              topologyInputGeneration: topology.dump.inputGeneration,
+              ...(graph.inputGeneration !== undefined
+                ? { codeInputGeneration: graph.inputGeneration }
+                : {}),
+              // One reason per condition, because a reason is a claim like any
+              // other, and this is the field a reader consults precisely when
+              // the joins they expected are missing. Four conditions withhold
+              // joins and the code can tell all four apart, so merging any two
+              // of them reports a cause that did not happen.
+              //
+              // The generation-absent case is the one a static server takes on
+              // every call: `startServer` strips the token from a `--graph-file`
+              // dump on purpose, because nothing revalidates it against the
+              // current checkout. Folding that into "the generation moved"
+              // would tell every such caller about a race that cannot occur
+              // there, for a token that was withheld deliberately.
+              reason:
+                graph.project !== topology.dump.project
+                  ? "The code graph and the repository-context model describe different projects, so their file identities are not comparable."
+                  : topology.dump.provenance.length === 0
+                    ? "No repository-context provider produced a compatible current generation."
+                    : graph.inputGeneration === undefined
+                      ? "This code graph carries no input generation to fence against: a graph file served without revalidation withholds one, and dumps written before cross-plane fencing never had one."
+                      : "The code generation moved while topology was loading.",
+            };
+        const result = topology.inspect(
+          props.request,
+          join,
+          new Set(
+            graph.nodes
+              .filter((node) => node.kind === "file")
+              .map((node) => node.file),
+          ),
+        );
+        return {
+          audit:
+            "Repository topology is returned from declared or owning-tool models; file joins are included only when the code generation stayed stable across the topology load.",
+          // `answer` states that the result carries what the caller asked for
+          // and they should stop, so an empty one may not claim it. Which of
+          // the other two verdicts applies depends on why it is empty, and
+          // topology can tell: its query is exact equality against an id, a
+          // name or a coordinate, with no scoring and no near miss.
+          //
+          // So a query that matched nothing against a model that does hold
+          // nodes is `clarify` — the same call without it lists what exists,
+          // which is a restatement rather than an escape. Only a model with no
+          // nodes at all is `outside`, and then the repository plane really
+          // has nothing to say and the answer is elsewhere. Calling the first
+          // case `outside` would send a caller to read source over a spelling.
+          next:
+            result.nodes.length !== 0
+              ? resultNext(
+                  "answer",
+                  result.truncated
+                    ? "The requested repository orientation is present, and the result states that its configured bounds truncated additional facts."
+                    : "The requested repository orientation is present in this topology result.",
+                )
+              : topology.dump.nodes.length !== 0
+                ? resultNext(
+                    "clarify",
+                    "No repository topology node has that exact id, name or coordinate; this plane matches exactly, so restate the request or drop the query to list what it holds.",
+                  )
+                : resultNext(
+                    "outside",
+                    "No repository-context provider published any topology node for this project, so the repository plane has nothing to answer from.",
+                  ),
+          result,
         };
       }
       default:

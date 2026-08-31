@@ -426,6 +426,84 @@ export namespace ContractParity {
     Application: [
       {
         reason:
+          "#63 adds the operation-scoped coverage summary and provider-universe provenance to the public application output, so the application imports their public structures.",
+        from:
+          'import { ISamchonGraphOverview } from "./ISamchonGraphOverview";',
+        to: [
+          'import { ISamchonGraphOverview } from "./ISamchonGraphOverview";',
+          'import { ISamchonGraphCoverageSummary } from "./ISamchonGraphCoverageSummary";',
+          'import { ISamchonGraphDump } from "./ISamchonGraphDump";',
+        ].join("\n"),
+      },
+      {
+        reason:
+          "#63 adds the bounded unresolved summary to the same versioned application output.",
+        from: 'import { ISamchonGraphTrace } from "./ISamchonGraphTrace";',
+        to: [
+          'import { ISamchonGraphTrace } from "./ISamchonGraphTrace";',
+          'import { ISamchonGraphUnresolvedSummary } from "./ISamchonGraphUnresolvedSummary";',
+        ].join("\n"),
+      },
+      {
+        reason:
+          "#159 adds a typed repository-topology branch while keeping its fact plane separate from code-semantic structures.",
+        from: [
+          'import { ISamchonGraphTrace } from "./ISamchonGraphTrace";',
+          'import { ISamchonGraphUnresolvedSummary } from "./ISamchonGraphUnresolvedSummary";',
+        ].join("\n"),
+        to: [
+          'import { ISamchonGraphTrace } from "./ISamchonGraphTrace";',
+          'import { ISamchonGraphTopology } from "./ISamchonGraphTopology";',
+          'import { ISamchonGraphUnresolvedSummary } from "./ISamchonGraphUnresolvedSummary";',
+        ].join("\n"),
+      },
+      {
+        reason:
+          "#159 documents topology as the request for declared or owning-tool repository orientation, distinct from symbol semantics.",
+        layer: "prose",
+        from:
+          "- `overview`: project layers and folder structure. - `escape`: the answer is outside the graph",
+        to:
+          "- `overview`: project layers and folder structure. - `topology`: workspace, package, target, task, source-root, entrypoint, and project-dependency orientation from declared or owning-tool models. - `escape`: the answer is outside the graph",
+      },
+      {
+        reason:
+          "#159 lists the new typed branch in the public method's operation guide.",
+        layer: "prose",
+        from:
+          "- `overview`: the project's layers and folder structure Every fact",
+        to:
+          "- `overview`: the project's layers and folder structure - `topology`: repository workspaces, packages, roots, targets, tasks, and dependencies Every fact",
+      },
+      {
+        reason:
+          "The method guide keeps the unchanged tour meaning within the MCP schema generator's description limit.",
+        layer: "prose",
+        from:
+          "- `tour`: architecture, the runtime flow from the public API to the code that does the work, nearby paths, and the tests to read — a whole orientation in one call - `trace`:",
+        to:
+          "- `tour`: architecture, runtime flow, nearby paths, and tests - `trace`:",
+      },
+      {
+        reason:
+          "#159 adds the versioned repository-topology request to the existing single MCP tool.",
+        from: "| ISamchonGraphEscape.IRequest;",
+        to: [
+          "| ISamchonGraphTopology.IRequest",
+          "| ISamchonGraphEscape.IRequest;",
+        ].join("\n"),
+      },
+      {
+        reason:
+          "#159 returns the typed repository-topology result beside the existing code-semantic result branches.",
+        from: "| ISamchonGraphEscape;",
+        to: [
+          "| ISamchonGraphTopology",
+          "| ISamchonGraphEscape;",
+        ].join("\n"),
+      },
+      {
+        reason:
           "The compiler resolves a fact and verifies it; the index checks it. The same guarantee, named for the authority that gives it.",
         layer: "prose",
         from: "is compiler-resolved and verified for the snapshot",
@@ -483,7 +561,7 @@ export namespace ContractParity {
           "There is no compiler to own the index; the repository's own program index answers the question.",
         layer: "prose",
         from: "Answer a __LANG__ question from the compiler's own index of this repository.",
-        to: "Answer a __LANG__ question from this repository's own program index.",
+        to: "Answer a __LANG__ question from the repository's program index.",
       },
       {
         reason:
@@ -494,10 +572,10 @@ export namespace ContractParity {
       },
       {
         reason:
-          "No authority: the sentence is reworded with no change of meaning (a comma becomes `or`, `in` becomes `inside`).",
+          "No authority: the sentence is shortened without changing the boundary between graph facts and source text.",
         layer: "prose",
         from: "Read a file for what the graph does not carry: a body, the text in a span.",
-        to: "Read a file for what the graph does not carry: a body or the text inside a span.",
+        to: "Read source only for a body or span text.",
       },
       {
         reason:
@@ -519,6 +597,46 @@ export namespace ContractParity {
         layer: "prose",
         from: "For the ranked operations (`lookup`, `entrypoints`, `tour`) it adds that the selection is heuristic — matched, scored, ranked, and limited against the question — so the facts are verified but the shortlist's coverage is the caller's to judge.",
         to: "For ranked operations (`lookup`, `entrypoints`, `tour`) it additionally says that selection was matched, scored, ranked, and limited against the question, so the facts are checked but shortlist coverage is yours to judge.",
+      },
+      {
+        reason:
+          "#63 replaces the compiler-completeness overclaim with the exact contract: returned facts are proved, while coverage and uncertainty say whether missing facts are meaningful.",
+        layer: "prose",
+        from:
+          "The graph holds every symbol, call, type, decorator and test, each with its file and line, resolved from the source on disk now. Submit exactly one request:",
+        to:
+          "The graph returns proved facts with coverage and uncertainty. Submit one request:",
+      },
+      {
+        reason:
+          "#63 version 1 adds provider/universe identity plus operation-scoped coverage and unresolved summaries beside `audit`; optionality preserves escape and legacy dump compatibility.",
+        from: "audit: string;",
+        to: [
+          "audit: string;",
+          "provenance?: ISamchonGraphDump.IProvenance[];",
+          "coverage?: ISamchonGraphCoverageSummary;",
+          "unresolved?: ISamchonGraphUnresolvedSummary;",
+        ].join("\n"),
+      },
+      {
+        reason:
+          "The structure rule above adds the versioned trust fields; this prose rule records their exact public semantics without hiding them behind the English audit.",
+        layer: "prose",
+        from: [
+          "audit: string;",
+          "provenance?: ISamchonGraphDump.IProvenance[];",
+          "coverage?: ISamchonGraphCoverageSummary;",
+          "unresolved?: ISamchonGraphUnresolvedSummary;",
+        ].join("\n"),
+        to: [
+          "audit: string;",
+          "/** Strict producer, authority, compiler and build-universe identity for the synchronized graph. Absent for `escape`, for `topology` whose facts come from the repository plane and carry their own provenance, and for a legacy or fallback-only dump with no strict producer. */",
+          "provenance?: ISamchonGraphDump.IProvenance[];",
+          "/** Machine-readable completeness for the relationship families relevant to this operation. Absent for `escape` and for `topology`, which reports its own relation coverage inside the result. */",
+          "coverage?: ISamchonGraphCoverageSummary;",
+          "/** Bounded structured uncertainty for the same operation-scoped families. Absent for `escape` and for `topology`, whose plane publishes none. */",
+          "unresolved?: ISamchonGraphUnresolvedSummary;",
+        ].join("\n"),
       },
     ],
     Details: [
@@ -599,6 +717,33 @@ export namespace ContractParity {
         to: [
           "languages: GraphLanguage[];",
           'indexer: "lsp" | "static" | "hybrid";',
+        ].join("\n"),
+      },
+      {
+        reason:
+          "#159 adds a deterministic code-input generation so an MCP request can fence a topology load between two code refreshes before admitting file joins.",
+        from: 'indexer: "lsp" | "static" | "hybrid";',
+        to: [
+          'indexer: "lsp" | "static" | "hybrid";',
+          "generation?: {",
+          "input: string;",
+          "};",
+        ].join("\n"),
+      },
+      {
+        reason:
+          "The generation shape above is structural; this prose rule records that it exists for cross-plane fencing and remains optional only for legacy dumps.",
+        layer: "prose",
+        from: [
+          "generation?: {",
+          "input: string;",
+          "};",
+        ].join("\n"),
+        to: [
+          "/** Complete coordinator input generation used to fence code/topology joins. Absent only on dumps written before cross-plane generation fencing. */",
+          "generation?: {",
+          "input: string;",
+          "};",
         ].join("\n"),
       },
       {
@@ -836,6 +981,51 @@ export namespace ContractParity {
         layer: "prose",
         from: "/** Expression span; its file is the one embedded in `from`. */",
         to: "/** Expression span; its file is the source node's declaration file. */",
+      },
+      {
+        reason:
+          "#63 makes normalized completeness part of the public dump contract.",
+        from: 'import { ISamchonGraphEdge } from "./ISamchonGraphEdge";',
+        to: [
+          'import { ISamchonGraphEdge } from "./ISamchonGraphEdge";',
+          'import { ISamchonGraphCoverage } from "./ISamchonGraphCoverage";',
+        ].join("\n"),
+      },
+      {
+        reason:
+          "#63 preserves structured unresolved sites in the public dump.",
+        from: 'import { ISamchonGraphSpan } from "./ISamchonGraphSpan";',
+        to: [
+          'import { ISamchonGraphSpan } from "./ISamchonGraphSpan";',
+          'import { ISamchonGraphUnresolved } from "./ISamchonGraphUnresolved";',
+        ].join("\n"),
+      },
+      {
+        reason:
+          "#63 adds additive optional coverage and unresolved fields after provider provenance so older dumps remain loadable during protocol migration.",
+        from: "provenance?: ISamchonGraphDump.IProvenance[];",
+        to: [
+          "provenance?: ISamchonGraphDump.IProvenance[];",
+          "coverage?: ISamchonGraphCoverage[];",
+          "unresolved?: ISamchonGraphUnresolved[];",
+        ].join("\n"),
+      },
+      {
+        reason:
+          "The structure rule above adds dump trust fields; their prose distinguishes migration absence from explicit empty uncertainty.",
+        layer: "prose",
+        from: [
+          "provenance?: ISamchonGraphDump.IProvenance[];",
+          "coverage?: ISamchonGraphCoverage[];",
+          "unresolved?: ISamchonGraphUnresolved[];",
+        ].join("\n"),
+        to: [
+          "provenance?: ISamchonGraphDump.IProvenance[];",
+          "/** Exhaustive per-provider, language, target and relationship-family completeness rows. Absent only on dumps written before protocol version 1. */",
+          "coverage?: ISamchonGraphCoverage[];",
+          "/** Structured relationship sites that a producer could not resolve exactly. An empty list is meaningful only together with exhaustive coverage. */",
+          "unresolved?: ISamchonGraphUnresolved[];",
+        ].join("\n"),
       },
     ],
     Edge: [

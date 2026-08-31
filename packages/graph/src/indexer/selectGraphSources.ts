@@ -3,7 +3,7 @@ import { walkSourceFiles } from "../utils/fs";
 import { allExtensions } from "./allExtensions";
 import { IBuildGraphOptions } from "./IBuildGraphOptions";
 import { IGraphSourceSelection } from "./IGraphSourceSelection";
-import { languageOf } from "./languageOf";
+import { languagesOf } from "./languagesOf";
 import { normalizeRequestedLanguages } from "./normalizeRequestedLanguages";
 
 /**
@@ -23,11 +23,14 @@ export function selectGraphSources(
     maxFiles: options.maxFiles,
   });
   const byLanguage = new Map<GraphLanguage, string[]>();
+  const allowed = requested === undefined ? undefined : new Set(requested);
   for (const file of files) {
-    const language = languageOf(file);
-    const partition = byLanguage.get(language);
-    if (partition === undefined) byLanguage.set(language, [file]);
-    else partition.push(file);
+    for (const language of languagesOf(file)) {
+      if (allowed !== undefined && !allowed.has(language)) continue;
+      const partition = byLanguage.get(language);
+      if (partition === undefined) byLanguage.set(language, [file]);
+      else partition.push(file);
+    }
   }
   const presentLanguages = [...byLanguage.keys()];
   return {

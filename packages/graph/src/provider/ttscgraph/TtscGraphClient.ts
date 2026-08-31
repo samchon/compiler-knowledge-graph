@@ -1,13 +1,14 @@
 import { ChildProcessWithoutNullStreams, spawn } from "node:child_process";
+import { compareOrdinal } from "@samchon/graph-sitter";
 
-import { freezeDeep } from "../../utils/freezeDeep";
-import { sealedMap } from "../../utils/sealedMap";
 import { ownedProcess } from "../../utils/ownedProcess";
 import { spawnableCommand } from "../../utils/spawnableCommand";
+import { GraphSnapshotProtocol } from "../GraphSnapshotProtocol";
 import { IBulkGraphSession } from "../IBulkGraphSession";
-import { adaptTtscGraphDump } from "./adaptTtscGraphDump";
 import { ITtscGraphSnapshot } from "./ITtscGraphSnapshot";
 import { parseTtscGraphSnapshot } from "./parseTtscGraphSnapshot";
+import { TtscGraphSnapshotStore } from "./TtscGraphSnapshotStore";
+import { ttscGraphPhaseTrace } from "./ttscGraphPhaseTrace";
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 300_000;
 const DEFAULT_MAX_RESPONSE_BYTES = 256 * 1024 * 1024;
@@ -18,6 +19,7 @@ interface NativeChild {
   stdoutChunks: string[];
   stdoutBytes: number;
   stderr: string;
+  phaseTraceBuffer: string;
   exit: Promise<void>;
 
   /** Resolves when every stream is finished, not merely when the child left. */
@@ -49,6 +51,9 @@ export class TtscGraphClient implements IBulkGraphSession {
   private readonly validate: (
     snapshot: IBulkGraphSession.ISnapshot,
   ) => void;
+  private readonly protocol: GraphSnapshotProtocol.Store;
+  private readonly nativeProtocol: TtscGraphSnapshotStore;
+  private readonly phaseTrace: ttscGraphPhaseTrace.ITrace | undefined;
   private child: NativeChild | undefined;
   private readonly ownedChildren = new Set<NativeChild>();
   private readonly pending = new Map<number, Pending>();
@@ -102,6 +107,9 @@ export class TtscGraphClient implements IBulkGraphSession {
     this.requestTimeoutMs = requestTimeoutMs;
     this.maxResponseBytes = maxResponseBytes;
     this.validate = options.validate ?? (() => undefined);
+    this.protocol = new GraphSnapshotProtocol.Store(this.root);
+    this.nativeProtocol = new TtscGraphSnapshotStore(this.root);
+    this.phaseTrace = ttscGraphPhaseTrace();
   }
 
   public get generation(): number {
@@ -120,8 +128,16 @@ export class TtscGraphClient implements IBulkGraphSession {
     }
     return this.enqueue(async () => {
       this.assertOpen();
+      const refreshStarted = performance.now();
       try {
+        const requestStarted = performance.now();
         const response = await this.request(options.signal);
+        this.trace(
+          response.id,
+          response.mode,
+          "producer-roundtrip",
+          requestStarted,
+        );
         if (response.mode === "error") {
           throw new Error(`ttscgraph: ${response.error}`);
         }
@@ -136,6 +152,7 @@ export class TtscGraphClient implements IBulkGraphSession {
             response.capabilities,
             this.snapshot.provenance.capabilities,
           );
+          this.trace(response.id, mode, "mcp-ready", refreshStarted);
           return {
             changed: false,
             generation: this.version,
@@ -144,36 +161,39 @@ export class TtscGraphClient implements IBulkGraphSession {
           };
         }
 
-        const adapted = adaptTtscGraphDump(response.dump, this.root);
-        const provenance: IBulkGraphSession.IProvenance = {
-          ...adapted.provenance,
-          protocolVersion: response.protocolVersion,
-        };
-        assertCapabilitiesMatch(response.capabilities, provenance.capabilities);
+        const nativeStarted = performance.now();
+        const prepared = this.nativeProtocol.prepare(response.snapshot, {
+          sequence: this.version + 1,
+          previous: this.snapshot,
+        });
+        this.trace(response.id, mode, "native-normalize", nativeStarted);
+        assertCapabilitiesMatch(
+          response.capabilities,
+          prepared.capabilities,
+        );
         if (
           mode === "incremental" &&
           this.snapshot !== undefined &&
-          this.snapshot.provenance.universe !== provenance.universe
+          this.snapshot.provenance.universe !== prepared.universe
         ) {
           throw new Error(
-            "ttscgraph: incremental snapshot reports a build universe that moved since the last generation, so its program cannot have been reused",
+            "ttscgraph: incremental snapshot reports a build universe that " +
+              "moved since the last generation, so its program cannot have " +
+              "been reused",
           );
         }
-        const next: IBulkGraphSession.ISnapshot = {
-          languages: ["typescript"],
-          nodes: adapted.nodes,
-          edges: adapted.edges,
-          diagnostics: adapted.diagnostics,
-          sources: adapted.sources,
-          provenance,
-          warnings: adapted.warnings,
-        };
-        next.sources = sealedMap(next.sources, "the ttscgraph snapshot");
-        freezeDeep(next, "the ttscgraph snapshot");
-        this.validate(next);
+        const commonStarted = performance.now();
+        const next = this.protocol.apply(prepared.frames, {
+          signal: options.signal,
+          warnings: prepared.warnings,
+          validate: this.validate,
+        });
+        prepared.commit();
         this.snapshot = next;
         this.childHasSnapshot = true;
         this.version += 1;
+        this.trace(response.id, mode, "common-commit", commonStarted);
+        this.trace(response.id, mode, "mcp-ready", refreshStarted);
         return {
           changed: true,
           generation: this.version,
@@ -200,6 +220,20 @@ export class TtscGraphClient implements IBulkGraphSession {
       [...this.ownedChildren].map((owned) => this.terminate(owned)),
     ).then(() => undefined);
     return this.closing;
+  }
+
+  private trace(
+    request: number,
+    mode: string,
+    phase: ttscGraphPhaseTrace.IEvent["phase"],
+    started: number,
+  ): void {
+    this.phaseTrace?.event({
+      request,
+      mode,
+      phase,
+      durationMs: performance.now() - started,
+    });
   }
 
   private request(signal?: AbortSignal): Promise<ITtscGraphSnapshot> {
@@ -236,12 +270,14 @@ export class TtscGraphClient implements IBulkGraphSession {
         pending.abort!();
         return;
       }
-      child.process.stdin.write(`${JSON.stringify({ id })}\n`, (error) => {
-        /* c8 ignore start -- Windows keeps the inherited named-pipe read
-         * handle until child exit. This callback-specific EPIPE path is
-         * POSIX-only and is exercised there. */
-        if (error === null || error === undefined) return;
-        if (this.pending.get(id) !== pending) return;
+      child.process.stdin.write(
+        `${JSON.stringify({ id, graphSnapshotVersion: ITtscGraphSnapshot.GRAPH_SNAPSHOT_VERSION })}\n`,
+        (error) => {
+          /* c8 ignore start -- Windows keeps the inherited named-pipe read
+           * handle until child exit. This callback-specific EPIPE path is
+           * POSIX-only and is exercised there. */
+          if (error === null || error === undefined) return;
+          if (this.pending.get(id) !== pending) return;
         // EPIPE says our end of the pipe closed, which is never the diagnosis:
         // the child exited before it could accept the request, and why it did
         // is whatever it printed on the way out. The timeout path beside this
@@ -263,17 +299,18 @@ export class TtscGraphClient implements IBulkGraphSession {
         // broken pipe does not prove a dead child: a producer that closes its
         // stdin and keeps running never fires `close`, and waiting for it would
         // hold the request until the timeout for a fault that is already known.
-        void drained(child).then(() => {
-          if (this.pending.get(id) !== pending) return;
-          this.failChild(
-            child,
-            new Error(
-              `ttscgraph: could not request snapshot: ${error.message}${TtscGraphClient.exitSuffix(child.process)}${stderrSuffix(child)}`,
-            ),
-          );
-        });
-        /* c8 ignore stop */
-      });
+          void drained(child).then(() => {
+            if (this.pending.get(id) !== pending) return;
+            this.failChild(
+              child,
+              new Error(
+                `ttscgraph: could not request snapshot: ${error.message}${TtscGraphClient.exitSuffix(child.process)}${stderrSuffix(child)}`,
+              ),
+            );
+          });
+          /* c8 ignore stop */
+        },
+      );
     });
   }
 
@@ -326,6 +363,7 @@ export class TtscGraphClient implements IBulkGraphSession {
       stdoutChunks: [],
       stdoutBytes: 0,
       stderr: "",
+      phaseTraceBuffer: "",
       exit: ownedProcess.exit(spawned),
       // `close` and not `exit`, which is the whole point. `ownedProcess.exit`
       // settles on whichever of error, exit or close arrives first, and exit
@@ -337,12 +375,19 @@ export class TtscGraphClient implements IBulkGraphSession {
     };
     this.child = child;
     this.childHasSnapshot = false;
+    this.nativeProtocol.reset();
     this.ownedChildren.add(child);
     spawned.stdout.setEncoding("utf8");
     spawned.stderr.setEncoding("utf8");
     spawned.stdout.on("data", (chunk: string) => this.consume(child, chunk));
     spawned.stderr.on("data", (chunk: string) => {
       child.stderr = (child.stderr + chunk).slice(-64 * 1024);
+      if (this.phaseTrace !== undefined) {
+        child.phaseTraceBuffer = this.phaseTrace.forwardProducer(
+          child.phaseTraceBuffer,
+          chunk,
+        );
+      }
     });
     /* c8 ignore start -- direct POSIX spawn failures are exercised on POSIX.
      * Windows starts a stable Job Object supervisor first and reports a nested
@@ -638,10 +683,8 @@ function assertCapabilitiesMatch(
   envelope: readonly string[],
   dump: readonly string[],
 ): void {
-  const compare = (left: string, right: string): number =>
-    left < right ? -1 : left > right ? 1 : 0;
-  const left = JSON.stringify([...envelope].sort(compare));
-  const right = JSON.stringify([...dump].sort(compare));
+  const left = JSON.stringify([...new Set(envelope)].sort(compareOrdinal));
+  const right = JSON.stringify([...new Set(dump)].sort(compareOrdinal));
   if (left !== right) {
     throw new Error(
       "ttscgraph: response capabilities disagree with the snapshot provenance",

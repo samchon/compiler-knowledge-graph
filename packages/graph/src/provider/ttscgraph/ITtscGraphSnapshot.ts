@@ -1,21 +1,19 @@
 /**
  * One response frame of the `ttscgraph serve` protocol, as this client pins it.
  *
- * Mirrored by hand from `serveResponse` in ttsc's
- * `packages/ttsc/cmd/ttscgraph/serve.go`, first published at tag `v0.19.2`
- * (`77192d97a`). There is no generator between the Go struct and this file, and
- * there cannot be one this repository owns: the producer lives in another
- * repository and ships as a prebuilt binary whose version the target project —
- * not this package — chooses. That is why {@link ITtscGraphSnapshot.PROTOCOL_VERSION}
- * exists, and why {@link parseTtscGraphSnapshot} validates every field on
- * arrival instead of casting.
+ * Mirrored by hand from `serveResponse` and `serveGraphSnapshot` in ttsc's
+ * `packages/ttsc/cmd/ttscgraph`. There is no generator between the Go structs
+ * and this file, and there cannot be one this repository owns: the producer
+ * lives in another repository and ships as a prebuilt binary whose version the
+ * target project — not this package — chooses. That is why the envelope and
+ * native transaction have independent version pins, and why every field is
+ * validated on arrival instead of cast.
  *
- * This is the envelope only. The `dump` it carries stays `unknown` here on
- * purpose: {@link adaptTtscGraphDump} validates the body field by field into
- * the product's own structures, so restating the body's wire shape would add a
- * second contract to keep in sync with the same Go struct — and it would be the
- * one the adapter never consults, which is the kind of duplicate that goes
- * stale without anything failing.
+ * This is the envelope only. The native `snapshot` stays `unknown` here on
+ * purpose: {@link TtscGraphSnapshotStore} validates its transaction and shard
+ * fields before adapting changed shards into the product protocol. Restating
+ * that wire shape as a trusted TypeScript type would add a duplicate contract
+ * that can drift without protecting the runtime boundary.
  */
 export type ITtscGraphSnapshot =
   | ITtscGraphSnapshot.IFailure
@@ -57,6 +55,7 @@ export namespace ITtscGraphSnapshot {
     error: string;
     changed: false;
     dump?: undefined;
+    snapshot?: undefined;
   }
 
   /** A request the producer answered, whether or not the graph moved. */
@@ -75,8 +74,11 @@ export namespace ITtscGraphSnapshot {
     /** Whether the graph moved since the last snapshot. */
     changed: boolean;
 
-    /** The snapshot body, present exactly when `changed` is true. */
-    dump?: unknown;
+    /** The native shard transaction, present exactly when `changed` is true. */
+    snapshot?: unknown;
+
+    /** Legacy full dumps are refused by this incremental client. */
+    dump?: undefined;
   }
   /**
    * The serve protocol version this client speaks.
@@ -96,8 +98,11 @@ export namespace ITtscGraphSnapshot {
    */
   export const PROTOCOL_VERSION = 1;
 
+  /** Native graph-shard transaction requested from compatible producers. */
+  export const GRAPH_SNAPSHOT_VERSION = 1;
+
   /**
-   * The version of the dump body this client adapts.
+   * The version of the compiler fact schema carried by native shards.
    *
    * Independent of {@link PROTOCOL_VERSION}: one versions the NDJSON envelope,
    * the other the graph document inside a changed frame. Keep this equal to

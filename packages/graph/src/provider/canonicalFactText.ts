@@ -25,12 +25,30 @@ export function canonicalFactText(value: unknown): string {
     return JSON.stringify(value);
   }
   if (Array.isArray(value)) {
-    return `[${value.map(canonicalFactText).join(",")}]`;
+    let text = "[";
+    for (let index = 0; index < value.length; ++index) {
+      if (index !== 0) text += ",";
+      text += canonicalFactText(value[index]);
+    }
+    return text + "]";
   }
-  const entries = Object.entries(value as Record<string, unknown>)
-    .filter(([, entry]) => entry !== undefined)
-    .sort(([left], [right]) => (left < right ? -1 : 1));
-  return `{${entries
-    .map(([key, entry]) => `${JSON.stringify(key)}:${canonicalFactText(entry)}`)
-    .join(",")}}`;
+  // Written by hand rather than through `entries`, `filter`, `sort` and
+  // `map`, which is the same text and three intermediate arrays per object.
+  // Every node and every edge of a generation passes through here, several
+  // times, and on a C++ project of 1.3 million relationships those arrays are
+  // most of what the collector spends the run on.
+  const keys = Object.keys(value as Record<string, unknown>).sort(
+    (left, right) => (left < right ? -1 : 1),
+  );
+  const record = value as Record<string, unknown>;
+  let text = "{";
+  let written = false;
+  for (const key of keys) {
+    const entry = record[key];
+    if (entry === undefined) continue;
+    if (written) text += ",";
+    text += `${JSON.stringify(key)}:${canonicalFactText(entry)}`;
+    written = true;
+  }
+  return text + "}";
 }

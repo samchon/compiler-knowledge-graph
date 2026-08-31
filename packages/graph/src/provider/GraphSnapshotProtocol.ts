@@ -178,6 +178,34 @@ export namespace GraphSnapshotProtocol {
    * Producer and consumer call this same function; a commit cannot substitute a
    * manifest whose shards happen to parse but reconstruct different facts.
    */
+  /**
+   * Record that this exact sealed generation digests to this value.
+   *
+   * A generation is digested where it is assembled, to prove the assembly
+   * matches the commit frame the producer sent, and again where it is
+   * published, to prove the slice a consumer receives is the one the protocol
+   * beside it describes. Both walks serialize every node and every edge; on a
+   * C++ project of 1.3 million relationships the second is minutes spent
+   * asking a question the first already answered about the same objects.
+   *
+   * The answer is kept against the generation itself. Not against each fact --
+   * that was tried, and a map holding millions of entries for facts that were
+   * already gone cost more than serializing them again -- but against the one
+   * object the whole slice hangs from: one entry per generation, released when
+   * the generation is.
+   *
+   * It is sound only because the generation is sealed first. What was digested
+   * cannot become something else while the answer stands, and a slice that is
+   * not frozen records nothing, so a caller that skips sealing gets the walk
+   * rather than a promise about a value that can still move.
+   */
+  export function proven(
+    snapshot: IBulkGraphSession.ISnapshot,
+    value: string,
+  ): void {
+    if (Object.isFrozen(snapshot)) PROVEN.set(snapshot, value);
+  }
+
   export function factDigest(
     snapshot: Pick<
       IBulkGraphSession.ISnapshot,
@@ -190,6 +218,8 @@ export namespace GraphSnapshotProtocol {
       | "provenance"
     >,
   ): string {
+    const known = PROVEN.get(snapshot as IBulkGraphSession.ISnapshot);
+    if (known !== undefined) return known;
     return digest({
       languages: snapshot.languages,
       nodes: snapshot.nodes,
@@ -219,6 +249,8 @@ export namespace GraphSnapshotProtocol {
       }
     });
   }
+
+  const PROVEN = new WeakMap<IBulkGraphSession.ISnapshot, string>();
 
   function digest(value: unknown): string {
     // Written into the hash as it is made. A generation's fact digest covers
@@ -530,6 +562,7 @@ export namespace GraphSnapshotProtocol {
       );
       throwIfAborted(options.signal);
       freezeDeep(assembled, "the graph snapshot protocol generation");
+      proven(assembled, commit.factDigest);
       options.validate?.(assembled);
       throwIfAborted(options.signal);
       this.committed = next;

@@ -6,25 +6,20 @@
  * provider's and a fallback's -- would render differently while describing the
  * same thing.
  *
- * The answer is remembered against the fact itself. A generation is sealed by
- * two digests computed in two places, and both walk every node and every edge:
- * serializing each fact once for the process rather than once per digest is
- * most of what sealing a large generation costs. The memory is keyed by
- * identity, so a fact that is genuinely rebuilt gets its own text, and held
- * weakly, so remembering it keeps nothing alive that the generation released.
+ * Nothing is remembered here, and that was measured rather than assumed. A
+ * generation is sealed by digests computed in several places, all walking the
+ * same facts, so keeping each fact's text against the fact looked free: on a
+ * small walk it was, and it took the seal from 36 seconds to 31.
+ *
+ * At the scale that matters it inverts. A C++ project of 52 units holds 1.3
+ * million relationships, a few generations pass through one process, and the
+ * weak map that remembers them ends up holding millions of entries for objects
+ * that are already gone. Looking a fact up in it became fifty-three percent of
+ * a whole run -- the lookup, not the serializing, which was one and a half.
+ * Writing the text again costs microseconds; asking whether it was already
+ * written cost more than writing it.
  */
 export function canonicalFactText(value: unknown): string {
-  if (value === null || typeof value !== "object") return derive(value);
-  const known = remembered.get(value);
-  if (known !== undefined) return known;
-  const text = derive(value);
-  remembered.set(value, text);
-  return text;
-}
-
-const remembered = new WeakMap<object, string>();
-
-function derive(value: unknown): string {
   if (value === undefined) return "null";
   if (value === null || typeof value !== "object") {
     return JSON.stringify(value);

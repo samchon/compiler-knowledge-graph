@@ -237,7 +237,17 @@ jobs:
         if: ${{ github.event_name != 'workflow_dispatch' || inputs.language == 'all' || inputs.language == matrix.language }}
         run: pnpm --filter @samchon/graph-experiment start -- --language ${{ matrix.language }}
         env:
-          NODE_OPTIONS: --max-old-space-size=8192
+          # Twelve gibibytes of a sixteen gibibyte host, because the producer
+          # no longer wants the rest. Bodies are published as they are built
+          # and shards record where they are, so what clangd holds is its own
+          # index rather than a copy of every unit's facts.
+          #
+          # The consumer is what needs the room. fmt is 52 units and 1.4
+          # million relationships, and at eight gibibytes the live set sat at
+          # 5.5 -- close enough that every major collection walked all of it.
+          # A walk that had taken 314 seconds took 6,503, with the producer
+          # answering in a hundred milliseconds throughout.
+          NODE_OPTIONS: --max-old-space-size=12288
           # What the consumer holds when a whole producer generation has been
           # parsed, and again once it has been adapted and committed. The
           # difference between the two is what decides whether a page can be

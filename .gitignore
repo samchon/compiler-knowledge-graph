@@ -40,3 +40,9 @@ packages/graph/sidecars/
 # Tarballs packed for release inspection. The published artifact is the one the
 # registry serves; these are the copies the preflight opened to check it.
 .release/
+
+# A sidecar built in place shadows the toolchain it was built with: a `go.exe`
+# beside the sources is what `go` resolves to when a test runs from that
+# directory, and Go refuses to run an executable it found there.
+sidecars/go/go
+sidecars/go/go.exe

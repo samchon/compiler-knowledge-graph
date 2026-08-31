@@ -47,8 +47,34 @@ export function canonicalFactText(value: unknown): string {
     const entry = record[key];
     if (entry === undefined) continue;
     if (written) text += ",";
-    text += `${JSON.stringify(key)}:${canonicalFactText(entry)}`;
+    text += `${quoted(key)}:${canonicalFactText(entry)}`;
     written = true;
   }
   return text + "}";
 }
+
+/**
+ * A property name as it appears in the text, encoded once per distinct name.
+ *
+ * The names are a schema's, not a payload's: a generation of 1.3 million
+ * relationships is written with a few dozen distinct keys, and encoding
+ * `"from"` a million times is a million calls whose answer never differs. So
+ * the answer is kept -- against the name, which is a string the caller already
+ * holds, not against the fact, which is the memory that had to be taken out
+ * for holding millions of entries nothing would ask for again.
+ *
+ * Bounded, because this is reached by a generic serializer and not only by the
+ * lanes: a payload that puts its data in its keys would otherwise turn a small
+ * table into an unbounded one, so past a few thousand names the table stops
+ * growing and the rest are encoded as they come.
+ */
+function quoted(key: string): string {
+  const known = QUOTED.get(key);
+  if (known !== undefined) return known;
+  const text = JSON.stringify(key);
+  if (QUOTED.size < QUOTED_LIMIT) QUOTED.set(key, text);
+  return text;
+}
+
+const QUOTED = new Map<string, string>();
+const QUOTED_LIMIT = 4096;

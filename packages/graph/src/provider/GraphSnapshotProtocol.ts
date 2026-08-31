@@ -259,41 +259,69 @@ export namespace GraphSnapshotProtocol {
     // rather than of the thing being proved. The bytes are the same either
     // way, so the digests are the ones already published.
     const hash = createHash("sha256");
-    canonicalInto(hash, value);
+    const sink: ISink = { hash, buffer: "" };
+    canonicalInto(sink, value);
+    if (sink.buffer !== "") hash.update(sink.buffer);
     return hash.digest("hex");
   }
 
-  function canonicalInto(hash: Hash, value: unknown, depth = 0): void {
+  /**
+   * The hash, and the text on its way there that has not been handed over yet.
+   *
+   * A generation's digest is written as a few dozen characters at a time --
+   * a brace, a key, one fact, a comma -- and handing each of those to the hash
+   * separately is a call per token, several million of them on a large C++
+   * project, for bytes that are identical either way. They are gathered into
+   * one string and handed over in blocks instead. Nothing is written that
+   * could split a surrogate pair across a block, because every piece written
+   * is a complete JSON text or an ASCII separator.
+   */
+  interface ISink {
+    hash: Hash;
+    buffer: string;
+  }
+
+  function write(sink: ISink, text: string): void {
+    sink.buffer += text;
+    if (sink.buffer.length >= BLOCK) {
+      sink.hash.update(sink.buffer);
+      sink.buffer = "";
+    }
+  }
+
+  const BLOCK = 1 << 16;
+
+  function canonicalInto(sink: ISink, value: unknown, depth = 0): void {
     if (value === null || typeof value !== "object") {
-      hash.update(JSON.stringify(value));
+      write(sink, JSON.stringify(value));
       return;
     }
     // Only inside a lane, never the shard or snapshot itself: the root is
     // named once and its text is the whole generation, which is the string
     // this deliberately never builds.
     if (depth >= 2) {
-      hash.update(canonicalFactText(value));
+      write(sink, canonicalFactText(value));
       return;
     }
     if (Array.isArray(value)) {
-      hash.update("[");
+      write(sink, "[");
       for (let index = 0; index < value.length; ++index) {
-        if (index !== 0) hash.update(",");
-        canonicalInto(hash, value[index], depth + 1);
+        if (index !== 0) write(sink, ",");
+        canonicalInto(sink, value[index], depth + 1);
       }
-      hash.update("]");
+      write(sink, "]");
       return;
     }
     const object = value as Record<string, unknown>;
     const keys = Object.keys(object).sort(compareText);
-    hash.update("{");
+    write(sink, "{");
     for (let index = 0; index < keys.length; ++index) {
-      if (index !== 0) hash.update(",");
+      if (index !== 0) write(sink, ",");
       const key = keys[index]!;
-      hash.update(`${JSON.stringify(key)}:`);
-      canonicalInto(hash, object[key], depth + 1);
+      write(sink, `${JSON.stringify(key)}:`);
+      canonicalInto(sink, object[key], depth + 1);
     }
-    hash.update("}");
+    write(sink, "}");
   }
 
   function canonical(value: unknown): string {

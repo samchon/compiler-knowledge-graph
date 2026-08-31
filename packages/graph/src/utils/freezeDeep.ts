@@ -26,6 +26,18 @@
  * costs one lookup instead of a second full traversal. Objects join that record
  * only after the whole walk succeeds, so a refused tree never leaves a partial
  * seal behind that a later call would trust.
+ *
+ * What joins it is the tree that was handed in and the values hanging directly
+ * off it, not every object underneath. A later walk arrives at sealed work
+ * through a reference somebody kept, and the references anybody keeps are the
+ * slice and its lanes: a republished generation is a fresh envelope around the
+ * same `nodes` and `edges`, so recording those two arrays skips both in full.
+ * Recording every object underneath skips the same walks and costs the process
+ * a weak record of millions of entries per generation, which the collector
+ * then carries for the rest of the run — on a C++ project of 1.3 million
+ * relationships that showed up as seals of nineteen seconds among seals of
+ * four hundred milliseconds, growing with each generation. Root and lanes is
+ * flat, and the republish it exists for still costs nothing.
  */
 export function freezeDeep<T>(value: T, subject: string): T {
   const walked = new Set<object>();
@@ -56,7 +68,15 @@ export function freezeDeep<T>(value: T, subject: string): T {
     }
     Object.freeze(target);
   }
-  for (const target of walked) SEALED.add(target);
+  if (typeof value === "object" && value !== null) {
+    SEALED.add(value);
+    // Read rather than described: the walk above already refused every own
+    // property that was not a plain value, so there is no getter here to run.
+    for (const key of Reflect.ownKeys(value)) {
+      const lane = (value as Record<PropertyKey, unknown>)[key];
+      if (typeof lane === "object" && lane !== null) SEALED.add(lane);
+    }
+  }
   return value;
 }
 

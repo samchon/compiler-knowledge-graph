@@ -87,6 +87,7 @@ export const LANGUAGE_EXPERIMENTS = [
     strictTool: "samchon-rust-analyzer",
     producerRepository: "https://github.com/samchon/rust-analyzer.git",
     producerCommit: "2850ecba80311bebd4cdaa9fedc5321533b5b1e7",
+    nativeBaseline: "samchon-rust-analyzer analysis-stats .",
     requiredCapabilities: [
       "coverage",
       "diagnostics",
@@ -114,7 +115,7 @@ export const LANGUAGE_EXPERIMENTS = [
     ],
     crossFileEdge: "references",
     lifecycle: {
-      sourceFile: "src/lib.rs",
+      sourceFile: "src/server.rs",
       editSuffix: "\n// samchon-graph lifecycle edit\n",
       createFile: "examples/samchon_graph_experiment.rs",
       renamedFile: "examples/samchon_graph_experiment_renamed.rs",
@@ -133,6 +134,14 @@ export const LANGUAGE_EXPERIMENTS = [
       failureFile: "Cargo.toml",
       failureSuffix: "\n[malformed",
       failurePolicy: "reject",
+      performance: {
+        noopSamples: 20,
+        editSamples: 20,
+        noopP95MaxMs: 250,
+        editP95MaxMs: 2_000,
+        editFind: "broadcast::channel(1)",
+        editReplacements: ["broadcast::channel(2)", "broadcast::channel(3)"],
+      },
     },
   },
   {

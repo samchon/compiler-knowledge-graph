@@ -35,6 +35,16 @@ export const runStrictLifecycle = async (experiment, pinnedRoot) => {
   const buildText = fs.readFileSync(buildFile, "utf8");
   const failureText = fs.readFileSync(failureFile, "utf8");
   const rows = [];
+  if (experiment.nativeBaseline !== undefined) {
+    const started = performance.now();
+    shell(experiment.nativeBaseline, { cwd: lifecycleRoot });
+    rows.push({
+      name: "native-baseline",
+      status: "passed",
+      command: experiment.nativeBaseline,
+      elapsedMs: Math.round(performance.now() - started),
+    });
+  }
   const resident = createResidentGraphSource({
     cwd: lifecycleRoot,
     mode: "lsp",
@@ -107,6 +117,123 @@ export const runStrictLifecycle = async (experiment, pinnedRoot) => {
       throw new Error(
         `${experiment.language}: unchanged resident load replaced dump identity`,
       );
+    }
+
+    if (fixture.performance !== undefined) {
+      const { noopSamples, editSamples, noopP95MaxMs, editP95MaxMs } =
+        fixture.performance;
+      for (const [name, value] of Object.entries({
+        noopSamples,
+        editSamples,
+        noopP95MaxMs,
+        editP95MaxMs,
+      })) {
+        if (!Number.isSafeInteger(value) || value < 1) {
+          throw new Error(
+            `${experiment.language}: lifecycle performance ${name} must be a positive integer`,
+          );
+        }
+      }
+      if (
+        typeof fixture.performance.editFind !== "string" ||
+        fixture.performance.editFind === "" ||
+        !Array.isArray(fixture.performance.editReplacements) ||
+        fixture.performance.editReplacements.length < 2 ||
+        fixture.performance.editReplacements.some(
+          (value) => typeof value !== "string" || value === "",
+        ) ||
+        !sourceText.includes(fixture.performance.editFind)
+      ) {
+        throw new Error(
+          `${experiment.language}: lifecycle performance requires two real body-edit replacements`,
+        );
+      }
+      const noops = [];
+      for (let index = 0; index < noopSamples; index++) {
+        const started = performance.now();
+        const next = await resident.load();
+        noops.push(Math.round(performance.now() - started));
+        if (
+          next !== dump ||
+          resident.modes().get(experiment.strictProvider) !== "unchanged"
+        ) {
+          throw new Error(
+            `${experiment.language}: performance no-op ${String(index + 1)} replaced the resident generation`,
+          );
+        }
+      }
+      const edits = [];
+      for (let index = 0; index < editSamples; index++) {
+        fs.writeFileSync(
+          sourceFile,
+          sourceText.replace(
+            fixture.performance.editFind,
+            fixture.performance.editReplacements[
+              index % fixture.performance.editReplacements.length
+            ],
+          ),
+        );
+        const started = performance.now();
+        const next = await resident.load();
+        edits.push(Math.round(performance.now() - started));
+        const mode = resident.modes().get(experiment.strictProvider);
+        if (!CHANGED_MODES.includes(mode) || next === dump) {
+          throw new Error(
+            `${experiment.language}: performance edit ${String(index + 1)} did not replace a strict generation`,
+          );
+        }
+        const provenance = strictProvenance(next, experiment);
+        const identity = [
+          provenance.manifest,
+          provenance.content,
+          provenance.universe,
+        ].join(":");
+        if (identity === previousIdentity) {
+          throw new Error(
+            `${experiment.language}: performance edit ${String(index + 1)} retained strict provenance`,
+          );
+        }
+        dump = next;
+        previousIdentity = identity;
+        previousProvenance = provenance;
+        previousDiagnostics = next.diagnostics?.length ?? 0;
+      }
+      fs.writeFileSync(sourceFile, sourceText);
+      const restored = await resident.load();
+      const restoredMode = resident.modes().get(experiment.strictProvider);
+      if (!CHANGED_MODES.includes(restoredMode) || restored === dump) {
+        throw new Error(
+          `${experiment.language}: performance sampling did not restore its source generation`,
+        );
+      }
+      const restoredProvenance = strictProvenance(restored, experiment);
+      dump = restored;
+      previousIdentity = [
+        restoredProvenance.manifest,
+        restoredProvenance.content,
+        restoredProvenance.universe,
+      ].join(":");
+      previousProvenance = restoredProvenance;
+      previousDiagnostics = restored.diagnostics?.length ?? 0;
+      const noopP95Ms = nearestRankP95(noops);
+      const editP95Ms = nearestRankP95(edits);
+      if (noopP95Ms >= noopP95MaxMs || editP95Ms >= editP95MaxMs) {
+        throw new Error(
+          `${experiment.language}: lifecycle performance missed its target: ` +
+            `no-op p95 ${String(noopP95Ms)}/${String(noopP95MaxMs)} ms, ` +
+            `edit p95 ${String(editP95Ms)}/${String(editP95MaxMs)} ms`,
+        );
+      }
+      rows.push({
+        name: "performance",
+        status: "passed",
+        noopSamples: noops,
+        editSamples: edits,
+        noopP95Ms,
+        editP95Ms,
+        noopP95MaxMs,
+        editP95MaxMs,
+      });
     }
 
     fs.writeFileSync(sourceFile, sourceText + fixture.editSuffix);
@@ -536,6 +663,14 @@ export const runStrictLifecycle = async (experiment, pinnedRoot) => {
     await resident.close();
   }
 };
+
+export function nearestRankP95(samples) {
+  if (samples.length === 0) {
+    throw new Error("nearestRankP95 requires at least one sample");
+  }
+  const sorted = [...samples].sort((left, right) => left - right);
+  return sorted[Math.ceil(sorted.length * 0.95) - 1];
+}
 
 function strictProvenance(dump, experiment) {
   const provenance = dump.provenance?.find(

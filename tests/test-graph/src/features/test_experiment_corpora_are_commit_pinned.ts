@@ -7,6 +7,7 @@ import {
 import fs from "node:fs";
 import path from "node:path";
 
+import { nearestRankP95 } from "../../../experiment/src/strict-lifecycle.mjs";
 import { GraphPaths } from "../internal/GraphPaths";
 
 /** Real-language experiments always check out one reviewable corpus revision. */
@@ -71,6 +72,31 @@ export const test_experiment_corpora_are_commit_pinned = () => {
       rustSetup.includes('for (const command of ["samchon-rust-analyzer", "rust-analyzer"])') &&
       rustSetup.includes("fs.linkSync(producerBinary, link)") &&
       !rustSetup.includes("rustup component add rust-analyzer"),
+  );
+  TestValidator.predicate(
+    "Rust separately measures its native baseline and resident p95 targets",
+    rust.includes(
+      'nativeBaseline: "samchon-rust-analyzer analysis-stats ."',
+    ) &&
+      rust.includes("noopSamples: 20") &&
+      rust.includes("editSamples: 20") &&
+      rust.includes("noopP95MaxMs: 250") &&
+      rust.includes("editP95MaxMs: 2_000") &&
+      rust.includes('editFind: "broadcast::channel(1)"') &&
+      rust.includes('"broadcast::channel(2)"') &&
+      rust.includes('"broadcast::channel(3)"') &&
+      lifecycle.includes('name: "native-baseline"') &&
+      lifecycle.includes('name: "performance"') &&
+      lifecycle.includes("performance no-op") &&
+      lifecycle.includes("performance edit"),
+  );
+  TestValidator.equals(
+    "nearest-rank p95 keeps singleton and exact twenty-sample boundaries",
+    [nearestRankP95([7]), nearestRankP95(Array.from({ length: 20 }, (_, i) => i + 1))],
+    [7, 19],
+  );
+  TestValidator.error("nearest-rank p95 rejects an empty sample", () =>
+    nearestRankP95([]),
   );
   TestValidator.predicate(
     "the remaining SCIP providers use isolated upstream lifecycle projects",

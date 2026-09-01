@@ -279,6 +279,8 @@ async function main() {
     producerRepository: CLANG_PRODUCER_REPOSITORY,
     producerCommit: CLANG_PRODUCER_COMMIT,
     record: () => undefined,
+    allowBuild:
+      process.env.SAMCHON_GRAPH_CLANG_PRODUCER_ALLOW_BUILD !== "0",
     prepareBuild: () => {
       shell("sudo apt-get update");
       shell(

@@ -127,16 +127,29 @@ jobs:
       - name: Provision the pinned Clang producer
         if: ${{ github.event_name != 'workflow_dispatch' || inputs.project == 'all' || inputs.project == 'redis' || inputs.project == 'leveldb' }}
         run: node tests/experiment/src/clang-producer.mjs
+        env:
+          SAMCHON_GRAPH_CLANG_PRODUCER_ALLOW_BUILD: ${{ steps.clang_producer.outputs.cache-hit != 'true' && '1' || '0' }}
 
       # The compiler is durable before either measured consumer starts. A
       # failed or timed-out cell cannot discard it, and redis/leveldb cannot
       # both build the same cold key in this workflow.
       - name: Save the pinned Clang producer
         if: ${{ steps.clang_producer.outputs.cache-hit != 'true' && (github.event_name != 'workflow_dispatch' || inputs.project == 'all' || inputs.project == 'redis' || inputs.project == 'leveldb') }}
+        continue-on-error: true
         uses: actions/cache/save@v6
         with:
           path: tests/experiment/.work/tools
           key: ${{ steps.clang_producer.outputs.cache-primary-key }}
+
+      - name: Upload the verified Clang producer
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.project == 'all' || inputs.project == 'redis' || inputs.project == 'leveldb' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: pinned-clang-producer
+          path: tests/experiment/.work/tools
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
 
   measure:
     needs: [latest_update, clang_producer]
@@ -219,16 +232,14 @@ jobs:
         if: ${{ github.event_name != 'workflow_dispatch' || inputs.project == 'all' || inputs.project == matrix.project }}
         run: pnpm build
 
-      # The producer job owns any cold build and saves it before measurements
-      # start. An exact miss therefore fails a consumer instead of letting
-      # redis and leveldb rebuild the same compiler concurrently.
-      - name: Restore the pinned Clang producer
+      # Same-run artifacts, not best-effort cache visibility, hand the verified
+      # producer to both measured consumers.
+      - name: Download the verified Clang producer
         if: ${{ (matrix.language == 'c' || matrix.language == 'cpp') && (github.event_name != 'workflow_dispatch' || inputs.project == 'all' || inputs.project == matrix.project) }}
-        uses: actions/cache/restore@v6
+        uses: actions/download-artifact@v8
         with:
+          name: pinned-clang-producer
           path: tests/experiment/.work/tools
-          key: clang-producer-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('packages/graph/src/provider/cpp/CPP_CLANG_PRODUCER_COMMIT.ts', 'tests/experiment/src/clang-producer.mjs') }}
-          fail-on-cache-miss: true
 
       # The same provisioning the experiment matrix uses. It appends each tool's
       # directory to GITHUB_PATH, so the benchmark's own child processes resolve

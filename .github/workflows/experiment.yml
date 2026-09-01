@@ -101,16 +101,34 @@ jobs:
       - name: Provision the pinned Clang producer
         if: ${{ github.event_name != 'workflow_dispatch' || inputs.language == 'all' || inputs.language == 'c' || inputs.language == 'cpp' }}
         run: node tests/experiment/src/clang-producer.mjs
+        env:
+          # An exact hit is immutable. If validation rejects it, rebuilding
+          # cannot repair that key, so refuse rather than claiming success.
+          SAMCHON_GRAPH_CLANG_PRODUCER_ALLOW_BUILD: ${{ steps.clang_producer.outputs.cache-hit != 'true' && '1' || '0' }}
 
       # This job owns the build and saves it before either corpus consumer can
       # start. A later C or C++ experiment failure cannot discard a successful
       # compiler build, and the two consumers cannot race on one cold key.
       - name: Save the pinned Clang producer
         if: ${{ steps.clang_producer.outputs.cache-hit != 'true' && (github.event_name != 'workflow_dispatch' || inputs.language == 'all' || inputs.language == 'c' || inputs.language == 'cpp') }}
+        continue-on-error: true
         uses: actions/cache/save@v6
         with:
           path: tests/experiment/.work/tools
           key: ${{ steps.clang_producer.outputs.cache-primary-key }}
+
+      # Cache writes are best-effort and immutable. The artifact is the
+      # guaranteed same-run handoff, including on a fork PR that cannot save a
+      # repository cache.
+      - name: Upload the verified Clang producer
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.language == 'all' || inputs.language == 'c' || inputs.language == 'cpp' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: pinned-clang-producer
+          path: tests/experiment/.work/tools
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
 
   experiment:
     needs: [latest_update, clang_producer]
@@ -184,16 +202,14 @@ jobs:
         if: ${{ github.event_name != 'workflow_dispatch' || inputs.language == 'all' || inputs.language == matrix.language }}
         run: pnpm build
 
-      # The producer job has already built and saved this exact generation.
-      # Consumers may verify and use it, but an exact miss fails here instead
-      # of silently making either matrix row a second build owner.
-      - name: Restore the pinned Clang producer
+      # The producer job uploads the exact tree it verified, independently of
+      # whether cross-run cache saving was permitted.
+      - name: Download the verified Clang producer
         if: ${{ (matrix.language == 'c' || matrix.language == 'cpp') && (github.event_name != 'workflow_dispatch' || inputs.language == 'all' || inputs.language == matrix.language) }}
-        uses: actions/cache/restore@v6
+        uses: actions/download-artifact@v8
         with:
+          name: pinned-clang-producer
           path: tests/experiment/.work/tools
-          key: clang-producer-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('packages/graph/src/provider/cpp/CPP_CLANG_PRODUCER_COMMIT.ts', 'tests/experiment/src/clang-producer.mjs') }}
-          fail-on-cache-miss: true
 
       - name: Install language server
         if: ${{ github.event_name != 'workflow_dispatch' || inputs.language == 'all' || inputs.language == matrix.language }}

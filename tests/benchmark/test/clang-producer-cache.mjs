@@ -115,7 +115,7 @@ function assertWorkflowOwnsOneBuild(workflowName) {
   );
   assert.match(
     ownerBlock,
-    /Restore the pinned Clang producer[\s\S]*Provision the pinned Clang producer[\s\S]*Save the pinned Clang producer/,
+    /Restore the pinned Clang producer[\s\S]*Provision the pinned Clang producer[\s\S]*Save the pinned Clang producer[\s\S]*Upload the verified Clang producer/,
   );
   assert.match(
     consumerBlock,
@@ -127,10 +127,20 @@ function assertWorkflowOwnsOneBuild(workflowName) {
     1,
     `${workflowName} must save only in the predecessor job`,
   );
-  assert.equal(
-    occurrences(consumerBlock, "fail-on-cache-miss: true"),
-    1,
-    `${workflowName} C-family consumers must require the owner's exact cache`,
+  assert.match(
+    ownerBlock,
+    /Save the pinned Clang producer[\s\S]*continue-on-error: true/,
+    `${workflowName} cache saving must not block the guaranteed artifact handoff`,
+  );
+  assert.match(
+    ownerBlock,
+    /SAMCHON_GRAPH_CLANG_PRODUCER_ALLOW_BUILD: \$\{\{ steps\.clang_producer\.outputs\.cache-hit != 'true' && '1' \|\| '0' \}\}/,
+    `${workflowName} must refuse an invalid immutable exact hit`,
+  );
+  assert.match(
+    consumerBlock,
+    /Download the verified Clang producer[\s\S]*uses: actions\/download-artifact@v8[\s\S]*name: pinned-clang-producer[\s\S]*path: tests\/experiment\/\.work\/tools/,
+    `${workflowName} consumers must receive the verified same-run artifact`,
   );
   assert.match(
     consumerBlock,
@@ -140,7 +150,7 @@ function assertWorkflowOwnsOneBuild(workflowName) {
 
   const expectedInputs = [...CLANG_PRODUCER_CACHE_INPUTS].sort();
   const hashCalls = [...workflow.matchAll(/hashFiles\(([^)]*)\)/gu)];
-  assert.equal(hashCalls.length, 2, `${workflowName} must key owner and consumer`);
+  assert.equal(hashCalls.length, 1, `${workflowName} must have one cache owner`);
   for (const call of hashCalls) {
     const actual = [...call[1].matchAll(/'([^']+)'/gu)]
       .map((match) => match[1])

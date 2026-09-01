@@ -3,6 +3,7 @@ export async function measureLifecyclePerformance(props) {
   validate(props);
   let currentDump = props.currentDump;
   let currentIdentity = props.currentIdentity;
+  const initialIdentity = props.currentIdentity;
   const noops = [];
   for (let index = 0; index < props.noopSamples; index++) {
     const sample = await props.load();
@@ -45,7 +46,8 @@ export async function measureLifecyclePerformance(props) {
   const restored = await props.load();
   if (
     !props.changedModes.includes(restored.mode) ||
-    restored.dump === currentDump
+    restored.dump === currentDump ||
+    restored.identity !== initialIdentity
   ) {
     throw new Error(
       `${props.language}: performance sampling did not restore its source generation`,

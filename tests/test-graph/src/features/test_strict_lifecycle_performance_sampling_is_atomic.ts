@@ -11,7 +11,17 @@ export const test_strict_lifecycle_performance_sampling_is_atomic = async () => 
   let edited = false;
   const writes: string[] = [];
   const load = async () => {
-    if (text === original && !edited) {
+    if (text === original) {
+      if (edited) {
+        current = { generation: "restored" };
+        identity = "initial";
+        return {
+          dump: current,
+          identity,
+          mode: "incremental",
+          elapsedMs: 20,
+        };
+      }
       return {
         dump: current,
         identity,
@@ -75,7 +85,50 @@ export const test_strict_lifecycle_performance_sampling_is_atomic = async () => 
   TestValidator.equals(
     "performance sampling returns the restored resident generation",
     [measured.dump, measured.identity, text],
-    [current, original, original],
+    [current, "initial", original],
+  );
+
+  let staleText = original;
+  let staleEdited = false;
+  const staleInitial = { generation: "stale-initial" };
+  await TestValidator.error(
+    "restoring source text refuses a stale edited provenance identity",
+    () =>
+      measureLifecyclePerformance({
+        language: "fixture",
+        sourceText: original,
+        editFind: "channel(1)",
+        editReplacements: ["channel(2)", "channel(3)"],
+        noopSamples: 1,
+        editSamples: 1,
+        noopP95MaxMs: 250,
+        editP95MaxMs: 2_000,
+        changedModes: ["incremental"],
+        currentDump: staleInitial,
+        currentIdentity: "stale-initial",
+        writeSource: (next: string) => {
+          staleText = next;
+        },
+        load: async () => {
+          if (!staleEdited) {
+            staleEdited = staleText !== original;
+            if (!staleEdited) {
+              return {
+                dump: staleInitial,
+                identity: "stale-initial",
+                mode: "unchanged",
+                elapsedMs: 5,
+              };
+            }
+          }
+          return {
+            dump: { generation: staleText },
+            identity: "edited-stale",
+            mode: "incremental",
+            elapsedMs: 10,
+          };
+        },
+      }),
   );
 
   text = original;

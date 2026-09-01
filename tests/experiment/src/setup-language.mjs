@@ -23,6 +23,7 @@ import {
   resetToolManifest,
   workRoot,
 } from "./process.mjs";
+import { verifyRustGraphProducer } from "./rust-producer.mjs";
 
 const args = parseArgs(process.argv.slice(2));
 const experiment = findExperiment(args.language);
@@ -648,11 +649,14 @@ switch (experiment.language) {
         `rust producer checkout is ${producerHead}, not ${experiment.producerCommit}`,
       );
     }
-    run(
-      path.join(cargoBin, process.platform === "win32" ? "cargo.exe" : "cargo"),
-      ["build", "--locked", "--release", "-p", "rust-analyzer"],
-      { cwd: producerRoot },
+    const cargo = path.join(
+      cargoBin,
+      process.platform === "win32" ? "cargo.exe" : "cargo",
     );
+    verifyRustGraphProducer({ cargo, producerRoot, run });
+    run(cargo, ["build", "--locked", "--release", "-p", "rust-analyzer"], {
+      cwd: producerRoot,
+    });
     const producerBinary = path.join(
       producerRoot,
       "target",

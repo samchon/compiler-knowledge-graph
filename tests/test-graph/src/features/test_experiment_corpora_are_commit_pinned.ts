@@ -8,6 +8,11 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { nearestRankP95 } from "../../../experiment/src/lifecycle-performance.mjs";
+import {
+  RUST_GRAPH_PRODUCER_SLOW_TEST,
+  RUST_GRAPH_PRODUCER_UNIT_TEST,
+  verifyRustGraphProducer,
+} from "../../../experiment/src/rust-producer.mjs";
 import { GraphPaths } from "../internal/GraphPaths";
 
 /** Real-language experiments always check out one reviewable corpus revision. */
@@ -69,6 +74,9 @@ export const test_experiment_corpora_are_commit_pinned = () => {
       rustSetup.includes("--default-toolchain 1.95.0") &&
       rustSetup.includes('"rust-src"') &&
       rustSetup.includes('["fetch", "--depth=1", "origin", experiment.producerCommit]') &&
+      rustSetup.includes("verifyRustGraphProducer({ cargo, producerRoot, run })") &&
+      rustSetup.indexOf("verifyRustGraphProducer({ cargo, producerRoot, run })") <
+        rustSetup.indexOf('["build", "--locked", "--release", "-p", "rust-analyzer"]') &&
       rustSetup.includes('["build", "--locked", "--release", "-p", "rust-analyzer"]') &&
       rustSetup.includes('for (const command of ["samchon-rust-analyzer", "rust-analyzer"])') &&
       rustSetup.includes("fs.linkSync(producerBinary, link)") &&
@@ -99,6 +107,85 @@ export const test_experiment_corpora_are_commit_pinned = () => {
   );
   TestValidator.error("nearest-rank p95 rejects an empty sample", () =>
     nearestRankP95([]),
+  );
+  const cargoCalls: Array<{
+    command: string;
+    args: string[];
+    options: { cwd: string; stdio: string; env?: Record<string, string> };
+  }> = [];
+  verifyRustGraphProducer({
+    cargo: "cargo",
+    producerRoot: "producer",
+    run: (command, args, options) => {
+      cargoCalls.push({ command, args, options });
+      return {
+        stdout:
+          "running 1 test\ntest fixture ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out\n",
+        stderr: "",
+      };
+    },
+    emit: () => undefined,
+  });
+  TestValidator.equals(
+    "Rust producer verification runs exact unit and slow fixtures",
+    cargoCalls,
+    [
+      {
+        command: "cargo",
+        args: [
+          "test",
+          "--locked",
+          "--release",
+          "-p",
+          "ide",
+          "--lib",
+          RUST_GRAPH_PRODUCER_UNIT_TEST,
+          "--",
+          "--exact",
+        ],
+        options: { cwd: "producer", stdio: "pipe" },
+      },
+      {
+        command: "cargo",
+        args: [
+          "test",
+          "--locked",
+          "--release",
+          "-p",
+          "rust-analyzer",
+          "--test",
+          "slow-tests",
+          RUST_GRAPH_PRODUCER_SLOW_TEST,
+          "--",
+          "--exact",
+        ],
+        options: {
+          cwd: "producer",
+          stdio: "pipe",
+          env: { RUN_SLOW_TESTS: "1" },
+        },
+      },
+    ],
+  );
+  let zeroTestError = "";
+  try {
+    verifyRustGraphProducer({
+      cargo: "cargo",
+      producerRoot: "producer",
+      run: () => ({
+        stdout:
+          "running 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out\n",
+        stderr: "",
+      }),
+      emit: () => undefined,
+    });
+  } catch (error) {
+    zeroTestError = error instanceof Error ? error.message : String(error);
+  }
+  TestValidator.equals(
+    "Rust producer verification rejects Cargo's successful zero-test result exactly",
+    zeroTestError,
+    "Rust HIR unit fixture did not run exactly one passing test at the pinned producer commit",
   );
   TestValidator.predicate(
     "the remaining SCIP providers use isolated upstream lifecycle projects",

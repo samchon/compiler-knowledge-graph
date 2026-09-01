@@ -101,9 +101,10 @@
       "facts": ["contains", "exports", "imports", "calls", "accesses", "instantiates", "type_ref", "extends", "implements", "overrides", "dispatches", "decorates", "tests", "references"],
       "commands": ["samchon-rust-analyzer", "rust-analyzer"],
       "environmentOverrides": ["SAMCHON_GRAPH_RUST_ANALYZER_HIR"],
-      "install": "Build the `samchon/rust-analyzer` graph-snapshot fork at commit `2850ecba80311bebd4cdaa9fedc5321533b5b1e7`; point `SAMCHON_GRAPH_RUST_ANALYZER_HIR` at that binary or install it as `samchon-rust-analyzer`.",
+      "install": "Build the `samchon/rust-analyzer` graph-snapshot fork at commit `9923b2c14b0b2a9bed6e8534c70b027e03a1d721`; point `SAMCHON_GRAPH_RUST_ANALYZER_HIR` at that binary or install it as `samchon-rust-analyzer`.",
       "installSources": [
-        {"label": "native HIR graph producer PR", "url": "https://github.com/samchon/rust-analyzer/pull/1"},
+        {"label": "pinned HIR producer commit", "url": "https://github.com/samchon/rust-analyzer/commit/9923b2c14b0b2a9bed6e8534c70b027e03a1d721"},
+        {"label": "initial native HIR producer PR", "url": "https://github.com/samchon/rust-analyzer/pull/1"},
         {"label": "rust-analyzer build instructions", "url": "https://rust-analyzer.github.io/book/contributing/"}
       ],
       "resolution": "Absolute `SAMCHON_GRAPH_RUST_ANALYZER_HIR`, then project/PATH `samchon-rust-analyzer`, then a project/PATH `rust-analyzer` only when its version reports the pinned producer commit.",
@@ -113,7 +114,7 @@
       "nativeAnalysis": "The pinned rust-analyzer fork owns one resident HIR database and exports declarations, semantic relationships, diagnostics, coverage and unresolved boundaries from that exact analysis revision.",
       "exportMerge": "Content-addressed source shards cross a versioned LSP transaction; the client verifies producer identity, universe, complete manifests, shard digests and graph invariants before atomic publication.",
       "reuseResident": "No-op requests reuse the resident snapshot; interface changes invalidate dependent shards, while a complete consumer checkpoint restores the same generation after process restart.",
-      "limitations": "The producer is currently available from the draft fork PR rather than a rust-analyzer release, and Rust has no `renders` relationship family.",
+      "limitations": "The pinned follow-up is available from the fork commit pending human-submitted review rather than a rust-analyzer release, and Rust has no `renders` relationship family.",
       "decline": "A missing pinned producer, incompatible commit/schema, malformed transaction, invalid checkpoint, unsupported bounded option or failed Cargo workspace load declines this route.",
       "fallback": "Stock `rust-analyzer-scip`, then generic rust-analyzer, then `@samchon/graph-sitter`.",
       "experimentLanguages": ["rust"],

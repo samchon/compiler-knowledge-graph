@@ -436,7 +436,7 @@ export class BatchGraphSession implements IBulkGraphSession {
               // diagnosis from a scraped stdout tail. The exit-code path keeps
               // its full text: a producer that chose to stop usually said why
               // once, and this one did not choose to stop at all.
-              failureDetail(boundedTail(stderr), stdout),
+              failureDetail(stderr, stdout),
             ),
           );
           return;
@@ -710,34 +710,42 @@ function combineSignals(
 /**
  * What the tool said about its own failure, wherever it said it.
  *
- * stderr first, because that is where a well-behaved tool puts diagnostics. But
- * a build wrapper is not one tool — `scip-java` runs the project's real Gradle
- * or Maven build, and Gradle reports failures on stdout. The benchmark's java
- * lane failed with `exited with code 1` and nothing else for exactly that
- * reason: the whole explanation had been captured and then dropped because it
- * arrived on the wrong stream.
+ * A build wrapper is not one tool. The JVM can announce `JAVA_TOOL_OPTIONS` on
+ * stderr while Maven prints the actual failure on stdout, so preferring either
+ * non-empty stream drops evidence the other one alone owns. Keep both tails
+ * attributed when both spoke.
  *
  * The tail rather than the head, since a build prints its failure last. Bounded
  * because stdout is the artifact channel for some providers, and an index is not
  * something to paste into an error message.
  */
 function failureDetail(stderr: string, stdout: string): string {
-  const detail = stderr.trim();
-  if (detail !== "") return `: ${detail}`;
-  const fallback = stdout.trim();
-  if (fallback === "") return "";
-  const tail = fallback.slice(-FAILURE_DETAIL_LIMIT);
-  return `: (no stderr; last of stdout) ${
-    tail.length < fallback.length ? `…${tail}` : tail
-  }`;
+  const error = stderr.trim();
+  const output = stdout.trim();
+  if (error === "" && output === "") return "";
+  if (error === "") {
+    return `: (no stderr; last of stdout) ${boundedTail(output)}`;
+  }
+  if (output === "") return `: ${boundedTail(error)}`;
+  const stderrLimit = Math.floor(FAILURE_DETAIL_LIMIT / 2);
+  return (
+    `: stderr tail: ${boundedTail(error, stderrLimit)}` +
+    `; stdout tail: ${boundedTail(
+      output,
+      FAILURE_DETAIL_LIMIT - stderrLimit,
+    )}`
+  );
 }
 
 /** Enough for a build tool's failure summary, short of an artifact. */
 const FAILURE_DETAIL_LIMIT = 2000;
 
 /** The end of a producer's output, which is where its last progress is. */
-function boundedTail(text: string): string {
+function boundedTail(
+  text: string,
+  limit: number = FAILURE_DETAIL_LIMIT,
+): string {
   const trimmed = text.trim();
-  if (trimmed.length <= FAILURE_DETAIL_LIMIT) return trimmed;
-  return `…${trimmed.slice(-FAILURE_DETAIL_LIMIT)}`;
+  if (trimmed.length <= limit) return trimmed;
+  return `…${trimmed.slice(-limit)}`;
 }

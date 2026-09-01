@@ -483,6 +483,23 @@ async function assertFailuresRetainTheGeneration(): Promise<void> {
     shortFailureMessage.endsWith("cannot open project") &&
       !shortFailureMessage.includes("…"),
   );
+  const splitFailure = sessionOf(root, { mode: "both-streams-fail" });
+  let splitFailureMessage = "";
+  try {
+    await splitFailure.refresh();
+  } catch (error) {
+    splitFailureMessage = (error as Error).message;
+  }
+  TestValidator.predicate(
+    "a benign stderr notice cannot hide the stdout build failure",
+    splitFailureMessage.includes("stderr tail: Picked up JAVA_TOOL_OPTIONS") &&
+      splitFailureMessage.includes("stdout tail: …") &&
+      splitFailureMessage.includes(
+        "FAILURE: Maven could not compile the project",
+      ) &&
+      !splitFailureMessage.includes("OPENING LINE") &&
+      splitFailureMessage.length < 2_200,
+  );
   TestValidator.predicate(
     "a silent non-zero exit has no invented stderr suffix",
     silentFailureMessage.endsWith("exited with code 3"),

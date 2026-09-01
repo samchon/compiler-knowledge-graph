@@ -67,6 +67,15 @@ if (mode === "stdout-fail") {
   process.exit(3);
 }
 
+if (mode === "both-streams-fail") {
+  // The Maven witness: the JVM writes an informational environment notice to
+  // stderr while the build tool writes the actionable failure to stdout.
+  process.stderr.write("Picked up JAVA_TOOL_OPTIONS: -Dfixture=true\n");
+  process.stdout.write(`OPENING LINE\n${"build progress\n".repeat(300)}`);
+  process.stdout.write("FAILURE: Maven could not compile the project\n");
+  process.exit(3);
+}
+
 if (mode === "silent") {
   // Exits cleanly having written nothing. The session must notice the missing
   // artifact rather than decoding whatever was there before.

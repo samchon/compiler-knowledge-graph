@@ -520,6 +520,16 @@ export const test_repository_context_adapters_preserve_authoritative_models =
           process.platform === "win32" ? "cargo.cmd" : "cargo",
         ),
       };
+      const tracedSession = pnpmRepositoryContextProvider.open({
+        root,
+        env: {
+          ...toolEnv,
+          FIXTURE_TOOL_MODEL: JSON.stringify(pnpmModel(root)),
+          SAMCHON_GRAPH_TOPOLOGY_TRACE: "1",
+        },
+      });
+      await tracedSession.refresh();
+      await tracedSession.close();
       assertNativeCargoResolution(root);
       TestValidator.predicate(
         "the pnpm process boundary accepts a valid resolved workspace model",
@@ -1927,7 +1937,7 @@ function assertTopologyPhaseTrace(): void {
     ],
     {
       encoding: "utf8",
-      env: { ...process.env, SAMCHON_GRAPH_TOPOLOGY_TRACE: "1" },
+      env: process.env,
       windowsHide: true,
     },
   );

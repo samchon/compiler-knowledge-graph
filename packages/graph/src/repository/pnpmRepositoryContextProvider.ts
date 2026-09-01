@@ -423,7 +423,8 @@ function executePnpm(
   root: string,
   env: NodeJS.ProcessEnv,
 ): IPnpmPackage[] {
-  const started = performance.now();
+  const tracing = env.SAMCHON_GRAPH_TOPOLOGY_TRACE === "1";
+  const started = tracing ? performance.now() : 0;
   try {
     /* c8 ignore next -- each coverage host has exactly one native shim suffix. */
     const command = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
@@ -451,12 +452,13 @@ function executePnpm(
     }
     return parsePnpmPackages(result.stdout);
   } finally {
-    topologyPhaseTrace(PROVIDER, "model-query", started);
+    if (tracing) topologyPhaseTrace(PROVIDER, "model-query", started);
   }
 }
 
 function detectPnpmVersion(root: string, env: NodeJS.ProcessEnv): string {
-  const started = performance.now();
+  const tracing = env.SAMCHON_GRAPH_TOPOLOGY_TRACE === "1";
+  const started = tracing ? performance.now() : 0;
   try {
     /* c8 ignore next -- each coverage host has exactly one native shim suffix. */
     const command = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
@@ -470,7 +472,7 @@ function detectPnpmVersion(root: string, env: NodeJS.ProcessEnv): string {
     });
     return result.status === 0 ? result.stdout.trim() : "";
   } finally {
-    topologyPhaseTrace(PROVIDER, "tool-startup", started);
+    if (tracing) topologyPhaseTrace(PROVIDER, "tool-startup", started);
   }
 }
 

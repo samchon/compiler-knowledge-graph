@@ -17,7 +17,7 @@ const INPUT_FILES = [
  */
 export const TOPOLOGY_ORIENTATION_ORACLE = {
   inputFiles: INPUT_FILES,
-  inputDigest: "2a5bcae8a79790512fd799d8d49d28fa63a3be07979fa5f85e7322eff578d14b",
+  inputDigest: "d9db1c54b7caf4dc9f40566b459ed35efd8147209218f89955a530adcbdf17ed",
   nodes: [
     workspaceNode(),
     packageNode("@samchon/graph-workspace", ".", "package.json"),

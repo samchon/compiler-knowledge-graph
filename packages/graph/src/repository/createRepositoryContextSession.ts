@@ -56,7 +56,8 @@ export function createRepositoryContextSession(
         }
 
         const collected = await collect({ ...props, signal: options.signal });
-        const normalizationStarted = performance.now();
+        const tracing = props.env.SAMCHON_GRAPH_TOPOLOGY_TRACE === "1";
+        const normalizationStarted = tracing ? performance.now() : 0;
         assertOpen();
         throwIfAborted(options.signal);
         const sources = collected.shards.flatMap((shard) => shard.sources);
@@ -160,15 +161,12 @@ export function createRepositoryContextSession(
           contentDigest: RepositoryContextProtocol.contentDigest(facts),
         });
         const snapshot = store.apply(frames, options);
-        topologyPhaseTrace(
-          provider.name,
-          "normalization",
-          normalizationStarted,
-          {
+        if (tracing) {
+          topologyPhaseTrace(provider.name, "normalization", normalizationStarted, {
             nodes: facts.nodes.length,
             edges: facts.edges.length,
-          },
-        );
+          });
+        }
         generation = sequence;
         currentWarnings = [...collected.warnings];
         inputState = createRepositoryContextSession.observeInputGeneration(

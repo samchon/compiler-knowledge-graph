@@ -5,7 +5,6 @@ export function topologyPhaseTrace(
   started: number,
   details: Record<string, unknown> = {},
 ): void {
-  if (process.env.SAMCHON_GRAPH_TOPOLOGY_TRACE !== "1") return;
   process.stderr.write(
     `@samchon/graph: topology-phase=${JSON.stringify({
       schemaVersion: 1,

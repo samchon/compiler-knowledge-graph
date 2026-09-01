@@ -138,8 +138,9 @@ export class SamchonGraphApplication implements ISamchonGraphApplication {
           );
         }
         const topology = await this.topology();
+        const tracing = process.env.SAMCHON_GRAPH_TOPOLOGY_TRACE === "1";
+        const joinStarted = tracing ? performance.now() : 0;
         const confirmed = await this.load();
-        const joinStarted = performance.now();
         const compatible =
           graph.project === topology.dump.project &&
           topology.dump.provenance.length !== 0 &&
@@ -178,21 +179,20 @@ export class SamchonGraphApplication implements ISamchonGraphApplication {
                       ? "This code graph carries no input generation to fence against: a graph file served without revalidation withholds one, and dumps written before cross-plane fencing never had one."
                       : "The code generation moved while topology was loading.",
             };
-        const result = topology.inspect(
-          props.request,
-          join,
-          new Set(
-            graph.nodes
-              .filter((node) => node.kind === "file")
-              .map((node) => node.file),
-          ),
+        const codeFiles = new Set(
+          graph.nodes
+            .filter((node) => node.kind === "file")
+            .map((node) => node.file),
         );
-        topologyPhaseTrace("repository-context", "join", joinStarted, {
-          codeFiles: graph.nodes.filter((node) => node.kind === "file").length,
-          nodes: result.nodes.length,
-          edges: result.edges.length,
-          compatible,
-        });
+        const result = topology.inspect(props.request, join, codeFiles);
+        if (tracing) {
+          topologyPhaseTrace("repository-context", "join", joinStarted, {
+            codeFiles: codeFiles.size,
+            nodes: result.nodes.length,
+            edges: result.edges.length,
+            compatible,
+          });
+        }
         return {
           audit:
             "Repository topology is returned from declared or owning-tool models; file joins are included only when the code generation stayed stable across the topology load.",

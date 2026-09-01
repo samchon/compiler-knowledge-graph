@@ -84,8 +84,7 @@ try {
   const coldStarted = performance.now();
   const cold = await callTopology(client, request);
   const coldMs = Math.round(performance.now() - coldStarted);
-  await new Promise((resolve) => setImmediate(resolve));
-  const phaseTrace = topologyPhaseRows(serverStderr);
+  const phaseTrace = await waitForTopologyPhases(() => serverStderr);
   const toolStartupPhase = onePhase(
     phaseTrace,
     "pnpm-workspace",
@@ -314,10 +313,41 @@ async function callTopology(client, request) {
 
 function topologyPhaseRows(stderr) {
   const prefix = "@samchon/graph: topology-phase=";
+  const lastNewline = stderr.lastIndexOf("\n");
+  if (lastNewline === -1) return [];
   return stderr
+    .slice(0, lastNewline + 1)
     .split(/\r?\n/)
     .filter((line) => line.startsWith(prefix))
     .map((line) => JSON.parse(line.slice(prefix.length)));
+}
+
+async function waitForTopologyPhases(read, timeoutMs = 5_000) {
+  const deadline = performance.now() + timeoutMs;
+  for (;;) {
+    const rows = topologyPhaseRows(read());
+    if (
+      [
+        ["pnpm-workspace", "model-query"],
+        ["pnpm-workspace", "tool-startup"],
+        ["pnpm-workspace", "normalization"],
+        ["repository-context", "join"],
+      ].every(
+        ([provider, phase]) =>
+          rows.filter(
+            (row) => row.provider === provider && row.phase === phase,
+          ).length === 1,
+      )
+    ) {
+      return rows;
+    }
+    if (performance.now() >= deadline) {
+      throw new Error(
+        `topology phase trace did not settle within ${String(timeoutMs)} ms: ${read()}`,
+      );
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
 }
 
 function onePhase(rows, provider, phase) {
@@ -342,7 +372,9 @@ function orientationInputDigest(root, files) {
   for (const file of files) {
     hash.update(file);
     hash.update("\0");
-    hash.update(fs.readFileSync(path.join(root, file)));
+    hash.update(
+      fs.readFileSync(path.join(root, file), "utf8").replace(/\r\n?/g, "\n"),
+    );
     hash.update("\0");
   }
   return hash.digest("hex");

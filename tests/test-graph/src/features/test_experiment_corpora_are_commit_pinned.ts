@@ -77,7 +77,7 @@ export const test_experiment_corpora_are_commit_pinned = () => {
   TestValidator.predicate(
     "Rust separately measures its native baseline and resident p95 targets",
     rust.includes(
-      'nativeBaseline: "samchon-rust-analyzer analysis-stats ."',
+      'nativeBaseline: "samchon-rust-analyzer prime-caches ."',
     ) &&
       rust.includes("noopSamples: 20") &&
       rust.includes("editSamples: 20") &&

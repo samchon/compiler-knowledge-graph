@@ -149,6 +149,11 @@ async function assertRetryBoundaries(root: string): Promise<void> {
     "--content-modified=1",
   ]);
   TestValidator.equals(
+    "an absent Rust readiness deadline is not replaced by a private ceiling",
+    readinessDeadlineOf(retrying),
+    undefined,
+  );
+  TestValidator.equals(
     "an undefined deadline retries ServerCancelled and ContentModified until the producer is ready",
     (await retrying.refresh()).changed,
     true,
@@ -498,6 +503,14 @@ function rustClient(
 
 function isolatedCache(): string {
   return GraphPaths.createTempDirectory("samchon-graph-rust-isolated-cache-");
+}
+
+function readinessDeadlineOf(client: RustGraphClient): number | undefined {
+  return (
+    client as unknown as {
+      readyTimeoutMs: number | undefined;
+    }
+  ).readyTimeoutMs;
 }
 
 function readRequests(file: string): Array<{

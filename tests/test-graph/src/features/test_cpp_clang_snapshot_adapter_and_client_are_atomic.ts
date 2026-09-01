@@ -1304,6 +1304,11 @@ async function assertClientInputShapes(): Promise<void> {
 async function assertClientFailures(root: string): Promise<void> {
   const retry = cppClient(root, ["--retry=1", "--content-modified=1"]);
   TestValidator.equals(
+    "an absent Clang readiness deadline is not replaced by a private ceiling",
+    readinessDeadlineOf(retry),
+    undefined,
+  );
+  TestValidator.equals(
     "retryable Clang readiness and movement errors are polled to success",
     (await retry.refresh()).changed,
     true,
@@ -1560,6 +1565,14 @@ function cppClient(
       : { pieceBudgetBytes: options.pieceBudgetBytes }),
     validate: options.validate,
   });
+}
+
+function readinessDeadlineOf(client: CppGraphClient): number | undefined {
+  return (
+    client as unknown as {
+      readyTimeoutMs: number | undefined;
+    }
+  ).readyTimeoutMs;
 }
 
 function nodeShim(

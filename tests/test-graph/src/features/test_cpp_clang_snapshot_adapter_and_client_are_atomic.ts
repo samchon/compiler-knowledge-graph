@@ -1304,13 +1304,8 @@ async function assertClientInputShapes(): Promise<void> {
 async function assertClientFailures(root: string): Promise<void> {
   const retry = cppClient(root, ["--retry=1", "--content-modified=1"]);
   TestValidator.equals(
-    "an absent Clang readiness deadline is not replaced by a private ceiling",
-    readinessDeadlineOf(retry),
-    undefined,
-  );
-  TestValidator.equals(
-    "retryable Clang readiness and movement errors are polled to success",
-    (await retry.refresh()).changed,
+    "an undefined deadline keeps retrying Clang after the former private ceiling",
+    (await beyondLegacyReadyDeadline(() => retry.refresh())).changed,
     true,
   );
   await retry.close();
@@ -1567,14 +1562,6 @@ function cppClient(
   });
 }
 
-function readinessDeadlineOf(client: CppGraphClient): number | undefined {
-  return (
-    client as unknown as {
-      readyTimeoutMs: number | undefined;
-    }
-  ).readyTimeoutMs;
-}
-
 function nodeShim(
   root: string,
   name: string,
@@ -1599,6 +1586,27 @@ function nodeShim(
   );
   if (process.platform !== "win32") fs.chmodSync(file, 0o755);
   return file;
+}
+
+async function beyondLegacyReadyDeadline<T>(operation: () => Promise<T>) {
+  const original = Object.getOwnPropertyDescriptor(performance, "now");
+  let first = true;
+  Object.defineProperty(performance, "now", {
+    configurable: true,
+    value: () => {
+      if (first) {
+        first = false;
+        return 0;
+      }
+      return 300_001;
+    },
+  });
+  try {
+    return await operation();
+  } finally {
+    if (original === undefined) delete (performance as { now?: unknown }).now;
+    else Object.defineProperty(performance, "now", original);
+  }
 }
 
 function readLines(file: string): Array<Record<string, any>> {

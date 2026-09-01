@@ -149,13 +149,8 @@ async function assertRetryBoundaries(root: string): Promise<void> {
     "--content-modified=1",
   ]);
   TestValidator.equals(
-    "an absent Rust readiness deadline is not replaced by a private ceiling",
-    readinessDeadlineOf(retrying),
-    undefined,
-  );
-  TestValidator.equals(
-    "an undefined deadline retries ServerCancelled and ContentModified until the producer is ready",
-    (await retrying.refresh()).changed,
+    "an undefined deadline keeps retrying after the former private ceiling",
+    (await beyondLegacyReadyDeadline(() => retrying.refresh())).changed,
     true,
   );
   await retrying.close();
@@ -505,14 +500,6 @@ function isolatedCache(): string {
   return GraphPaths.createTempDirectory("samchon-graph-rust-isolated-cache-");
 }
 
-function readinessDeadlineOf(client: RustGraphClient): number | undefined {
-  return (
-    client as unknown as {
-      readyTimeoutMs: number | undefined;
-    }
-  ).readyTimeoutMs;
-}
-
 function readRequests(file: string): Array<{
   knownGeneration?: string;
   checkpoint?: { generation?: string };
@@ -523,6 +510,27 @@ function readRequests(file: string): Array<{
     .split(/\r?\n/u)
     .filter((line) => line !== "")
     .map((line) => JSON.parse(line));
+}
+
+async function beyondLegacyReadyDeadline<T>(operation: () => Promise<T>) {
+  const original = Object.getOwnPropertyDescriptor(performance, "now");
+  let first = true;
+  Object.defineProperty(performance, "now", {
+    configurable: true,
+    value: () => {
+      if (first) {
+        first = false;
+        return 0;
+      }
+      return 300_001;
+    },
+  });
+  try {
+    return await operation();
+  } finally {
+    if (original === undefined) delete (performance as { now?: unknown }).now;
+    else Object.defineProperty(performance, "now", original);
+  }
 }
 
 function nodeShim(

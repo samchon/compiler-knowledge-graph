@@ -44,6 +44,11 @@ export const test_resident_static_mode_never_starts_an_lsp_build = async () => {
     staticBuilds,
     2,
   );
+  TestValidator.predicate(
+    "the initial static dump publishes the input generation its joins consume",
+    typeof dump.generation?.input === "string" &&
+      dump.generation.input.length === 64,
+  );
 
   let fallbackLspBuilds = 0;
   const fallback = createResidentGraphSource(
@@ -59,7 +64,11 @@ export const test_resident_static_mode_never_starts_an_lsp_build = async () => {
   await fallback.close();
   TestValidator.equals(
     "an omitted static dependency uses the canonical static builder",
-    [fallbackDump.indexer, fallbackLspBuilds],
-    ["static", 0],
+    [
+      fallbackDump.indexer,
+      fallbackLspBuilds,
+      fallbackDump.generation?.input.length,
+    ],
+    ["static", 0, 64],
   );
 };

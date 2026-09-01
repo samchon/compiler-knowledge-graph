@@ -3,6 +3,8 @@ import { execFileSync, spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
+import type { ISamchonGraphDump } from "@samchon/graph";
+import { routeSummary } from "../../../../packages/graph/src/routeSummary";
 import { GraphFixtures } from "../internal/GraphFixtures";
 import { GraphPaths } from "../internal/GraphPaths";
 
@@ -19,11 +21,67 @@ export const test_cli_dump_prints_graph_json = async () => {
   const dump = JSON.parse(output);
   TestValidator.equals("CLI dump indexer", dump.indexer, "static");
   TestValidator.predicate("CLI dump has nodes", dump.nodes.length > 0);
+  assertStructuredRouteProvenance(dump);
 
   assertTheDumpSaysWhatProducedIt(root);
   assertPrefixedWarningsRemainSingle();
   await assertTimedOutDumpRetiresItsLanguageServer();
 };
+
+function assertStructuredRouteProvenance(dump: Record<string, unknown>): void {
+  const digest = "a".repeat(64);
+  const enriched = {
+    ...dump,
+    provenance: [
+      {
+        provider: "fixture-provider",
+        languages: ["typescript"],
+        authority: "compiler",
+        facts: ["calls"],
+        capabilities: ["fixture"],
+        producer: {
+          tool: "fixture-compiler",
+          version: "1.2.3",
+          compiler: "TypeScript 6",
+          schemaVersion: 2,
+          protocolVersion: 1,
+        },
+        universe: digest,
+        manifest: digest,
+        content: digest,
+      },
+    ],
+  } as unknown as ISamchonGraphDump;
+  const route = JSON.parse(routeSummary(enriched));
+  TestValidator.equals(
+    "the route record keeps compact serving provenance",
+    route.provenance,
+    [
+      {
+        provider: "fixture-provider",
+        languages: ["typescript"],
+        authority: "compiler",
+        producer: {
+          tool: "fixture-compiler",
+          version: "1.2.3",
+          schemaVersion: 2,
+          protocolVersion: 1,
+        },
+      },
+    ],
+  );
+  enriched.provenance![0]!.producer.version = "x".repeat(17_000);
+  TestValidator.equals(
+    "an oversized route record drops unbounded evidence explicitly",
+    JSON.parse(routeSummary(enriched)),
+    {
+      schemaVersion: 1,
+      indexer: dump.indexer,
+      provenance: [],
+      truncated: true,
+    },
+  );
+}
 
 /**
  * A dump says which path produced it, and why the better ones did not.

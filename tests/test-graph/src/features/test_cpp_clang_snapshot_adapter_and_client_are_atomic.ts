@@ -1310,6 +1310,16 @@ async function assertClientFailures(root: string): Promise<void> {
   );
   await retry.close();
 
+  const boundedRetry = cppClient(root, ["--retry=1"], {
+    readyTimeoutMs: 10_000,
+  });
+  TestValidator.equals(
+    "a bounded readiness wait clamps its backoff and can still recover",
+    (await boundedRetry.refresh()).changed,
+    true,
+  );
+  await boundedRetry.close();
+
   const movementRoot = fixtureRoot();
   const movementWatchLog = path.join(movementRoot, "movement-watches.ndjson");
   const movement = cppClient(movementRoot, [

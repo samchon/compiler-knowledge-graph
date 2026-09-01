@@ -182,8 +182,25 @@ export function createResidentGraphSource(
         dependencies.providers ?? [],
         served,
       );
+      const inputGeneration =
+        result.inputGeneration ??
+        projectInputGeneration({
+          sourceFiles: selected.files,
+          buildInputFiles: buildInputs.map((input) =>
+            path.resolve(root, input),
+          ),
+          manifest: inputManifest,
+          consumedSources: texts,
+          providerSources: providerSourcesOf(providerSnapshots),
+          provenance:
+            result.dump.provenance ??
+            providerSnapshots.map(dumpProvenanceOf),
+        });
       return {
-        dump: result.dump,
+        dump:
+          result.dump.generation === undefined
+            ? { ...result.dump, generation: { input: inputGeneration } }
+            : result.dump,
         sessions,
         generations: bulkGenerationsOf(sessions),
         staticLanguages: staticLanguagesOf(result.dump, sessions),
@@ -196,20 +213,7 @@ export function createResidentGraphSource(
         modes: result.modes ?? new Map(),
         providers: result.providers ?? new Map(),
         inputManifest,
-        inputGeneration:
-          result.inputGeneration ??
-          projectInputGeneration({
-            sourceFiles: selected.files,
-            buildInputFiles: buildInputs.map((input) =>
-              path.resolve(root, input),
-            ),
-            manifest: inputManifest,
-            consumedSources: texts,
-            providerSources: providerSourcesOf(providerSnapshots),
-            provenance:
-              result.dump.provenance ??
-              providerSnapshots.map(dumpProvenanceOf),
-          }),
+        inputGeneration,
         buildInputs,
         providerTopology: providerTopology.serialize(availableTopology),
         providerTopologyRows: availableTopology,

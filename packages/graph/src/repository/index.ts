@@ -9,6 +9,7 @@ export * from "./pnpmRepositoryContextProvider";
 export * from "./REPOSITORY_CONTEXT_PROVIDERS";
 export * from "./repositoryContextFacts";
 export * from "./RepositoryContextProtocol";
+export * from "./resolveCargoCommand";
 export * from "./createResidentRepositoryContextSource";
 export * from "./createResidentRepositoryContextMemorySource";
 export * from "./SamchonRepositoryContextMemory";

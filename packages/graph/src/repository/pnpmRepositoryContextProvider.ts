@@ -3,10 +3,12 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { ISamchonRepositoryContextDump } from "../structures";
+import { isSubPath } from "../utils/isSubPath";
 import { spawnableCommand } from "../utils/spawnableCommand";
 import { IRepositoryContextProvider } from "./IRepositoryContextProvider";
 import { createRepositoryContextSession } from "./createRepositoryContextSession";
 import { repositoryContextFacts } from "./repositoryContextFacts";
+import { workspaceDiscoveryDirectories } from "./workspaceDiscoveryDirectories";
 
 const {
   compareRepositoryText,
@@ -139,7 +141,7 @@ function collectPnpmRepositoryContext(
       ecosystem: ECOSYSTEM,
       coordinate,
       configuration: "default",
-      external: false,
+      external: !isSubPath(props.root, absolute),
       evidence: repositoryContextEvidence(props.root, manifestFile),
     });
     edges.push({
@@ -158,13 +160,11 @@ function collectPnpmRepositoryContext(
       files,
     );
   }
-  for (const parent of new Set(
-    packages
-      .map((entry) => path.resolve(entry.path))
-      .filter((directory) => directory !== path.resolve(props.root))
-      .map((directory) => path.dirname(directory)),
+  for (const directory of workspaceDiscoveryDirectories(
+    props.root,
+    packages.map((entry) => path.resolve(entry.path)),
   )) {
-    sources.push(repositoryContextSource(props.root, parent));
+    sources.push(repositoryContextSource(props.root, directory));
   }
 
   for (const entry of packages) {
@@ -235,9 +235,10 @@ function appendManifestFacts(
     path.join(packageRoot, "package.json"),
   );
   for (const rootName of manifest.files ?? []) {
-    if (!isSimplePath(rootName)) continue;
-    const coordinate = `${repositoryContextFile(root, packageRoot)}/${rootName}`;
-    const generated = isGeneratedRoot(rootName);
+    const declared = declaredRoot(packageRoot, rootName);
+    if (declared === undefined) continue;
+    const coordinate = repositoryContextFile(root, declared.absolute);
+    const generated = declared.generated;
     const id = repositoryContextId(
       ECOSYSTEM,
       generated ? "generated-root" : "source-root",
@@ -251,8 +252,8 @@ function appendManifestFacts(
       ecosystem: ECOSYSTEM,
       coordinate,
       configuration: "default",
-      external: false,
-      root: repositoryContextFile(root, path.resolve(packageRoot, rootName)),
+      external: !isSubPath(root, declared.absolute),
+      root: repositoryContextFile(root, declared.absolute),
       evidence,
     });
     edges.push(
@@ -267,7 +268,8 @@ function appendManifestFacts(
       "entrypoint",
       coordinate,
     );
-    const file = repositoryContextFile(root, path.resolve(packageRoot, target));
+    const absoluteTarget = path.resolve(packageRoot, target);
+    const file = repositoryContextFile(root, absoluteTarget);
     files.add(file);
     nodes.push({
       id,
@@ -277,7 +279,7 @@ function appendManifestFacts(
       ecosystem: ECOSYSTEM,
       coordinate,
       configuration: "default",
-      external: false,
+      external: !isSubPath(root, absoluteTarget),
       file,
       evidence,
     });
@@ -363,7 +365,39 @@ function dependencyRows(entry: IPnpmPackage): IPnpmDependency[] {
 }
 
 function readManifest(file: string): IPackageManifest {
-  return JSON.parse(fs.readFileSync(file, "utf8")) as IPackageManifest;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(fs.readFileSync(file, "utf8"));
+  } catch (error) {
+    malformedManifest(file, String(error));
+  }
+  if (!isRecord(parsed)) malformedManifest(file, "root must be an object");
+  for (const field of ["name", "main", "module", "types", "typings"] as const) {
+    if (parsed[field] !== undefined && typeof parsed[field] !== "string") {
+      malformedManifest(file, `${field} must be a string`);
+    }
+  }
+  if (
+    parsed.files !== undefined &&
+    (!Array.isArray(parsed.files) ||
+      parsed.files.some((entry) => typeof entry !== "string"))
+  ) {
+    malformedManifest(file, "files must be a string array");
+  }
+  if (!optionalStringRecord(parsed.scripts)) {
+    malformedManifest(file, "scripts must be a string record");
+  }
+  if (
+    parsed.bin !== undefined &&
+    typeof parsed.bin !== "string" &&
+    !stringRecord(parsed.bin)
+  ) {
+    malformedManifest(file, "bin must be a string or string record");
+  }
+  if (!validExports(parsed.exports)) {
+    malformedManifest(file, "exports must contain only string, null, array, or object targets");
+  }
+  return parsed as IPackageManifest;
 }
 
 function workspaceInputs(root: string): string[] {
@@ -412,11 +446,7 @@ function executePnpm(
       `pnpm repository context failed: ${failure.trim()}`,
     );
   }
-  const parsed = JSON.parse(result.stdout) as IPnpmPackage[];
-  if (!Array.isArray(parsed) || parsed.some((entry) => !entry.path)) {
-    throw new Error("pnpm repository context returned a malformed package list");
-  }
-  return parsed;
+  return parsePnpmPackages(result.stdout);
 }
 
 function detectPnpmVersion(root: string, env: NodeJS.ProcessEnv): string {
@@ -453,8 +483,96 @@ function isSimplePath(value: string): boolean {
     value.trim() !== "" &&
     !value.includes("*") &&
     !value.startsWith("!") &&
-    !path.isAbsolute(value)
+    !path.isAbsolute(value) &&
+    path.win32.parse(value).root === "" &&
+    !value.replaceAll("\\", "/").split("/").includes("..")
   );
+}
+
+function declaredRoot(
+  packageRoot: string,
+  value: string,
+): { absolute: string; generated: boolean } | undefined {
+  if (!isSimplePath(value)) return undefined;
+  const absolute = path.resolve(packageRoot, value);
+  const generated = isGeneratedRoot(value);
+  const stat = fs.statSync(absolute, { throwIfNoEntry: false });
+  if (stat?.isDirectory() === true || (stat === undefined && generated)) {
+    return { absolute, generated };
+  }
+  return undefined;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function stringRecord(value: unknown): value is Record<string, string> {
+  return (
+    isRecord(value) &&
+    Object.values(value).every((entry) => typeof entry === "string")
+  );
+}
+
+function optionalStringRecord(value: unknown): boolean {
+  return value === undefined || stringRecord(value);
+}
+
+function parsePnpmPackages(text: string): IPnpmPackage[] {
+  const parsed: unknown = JSON.parse(text);
+  if (!Array.isArray(parsed)) malformedPnpmModel("root must be an array");
+  for (const [index, entry] of parsed.entries()) {
+    if (!isRecord(entry)) malformedPnpmModel(`[${index}] must be an object`);
+    if (typeof entry.path !== "string" || entry.path.trim() === "") {
+      malformedPnpmModel(`[${index}].path must be a nonempty string`);
+    }
+    for (const field of ["name", "version"] as const) {
+      if (entry[field] !== undefined && typeof entry[field] !== "string") {
+        malformedPnpmModel(`[${index}].${field} must be a string`);
+      }
+    }
+    if (entry.private !== undefined && typeof entry.private !== "boolean") {
+      malformedPnpmModel(`[${index}].private must be a boolean`);
+    }
+    for (const field of [
+      "dependencies",
+      "devDependencies",
+      "optionalDependencies",
+    ] as const) {
+      const dependencies = entry[field];
+      if (dependencies === undefined) continue;
+      if (!isRecord(dependencies)) {
+        malformedPnpmModel(`[${index}].${field} must be an object`);
+      }
+      for (const [name, dependency] of Object.entries(dependencies)) {
+        if (
+          !isRecord(dependency) ||
+          (dependency.path !== undefined && typeof dependency.path !== "string")
+        ) {
+          malformedPnpmModel(
+            `[${index}].${field}.${name} must be an object with an optional string path`,
+          );
+        }
+      }
+    }
+  }
+  return parsed as IPnpmPackage[];
+}
+
+function malformedPnpmModel(reason: string): never {
+  throw new Error(`pnpm repository context returned a malformed package list: ${reason}`);
+}
+
+function validExports(value: unknown): boolean {
+  if (value === undefined || value === null || typeof value === "string") {
+    return true;
+  }
+  if (Array.isArray(value)) return value.every(validExports);
+  return isRecord(value) && Object.values(value).every(validExports);
+}
+
+function malformedManifest(file: string, reason: string): never {
+  throw new Error(`pnpm package manifest ${file} is malformed: ${reason}`);
 }
 
 function isGeneratedRoot(value: string): boolean {

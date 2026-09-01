@@ -18,7 +18,6 @@ import { ICppGraphSnapshot } from "./ICppGraphSnapshot";
 const GRAPH_METHOD = "samchon/graphSnapshot";
 const SERVER_CANCELLED = -32802;
 const CONTENT_MODIFIED = -32801;
-const DEFAULT_READY_TIMEOUT_MS = 300_000;
 /**
  * How much published-body text this consumer keeps parsed at once.
  *
@@ -80,7 +79,7 @@ export class CppGraphClient implements IBulkGraphSession {
   ) => void;
   private readonly initializationOptions: unknown;
   private readonly requestTimeoutMs: number | undefined;
-  private readonly readyTimeoutMs: number;
+  private readonly readyTimeoutMs: number | undefined;
   private readonly pieceBudgetBytes: number;
   private readonly lifecycleAbort = new AbortController();
   private queue: Promise<void> = Promise.resolve();
@@ -101,7 +100,7 @@ export class CppGraphClient implements IBulkGraphSession {
     this.validate = options.validate ?? (() => undefined);
     this.initializationOptions = options.initializationOptions;
     this.requestTimeoutMs = options.requestTimeoutMs;
-    this.readyTimeoutMs = options.readyTimeoutMs ?? DEFAULT_READY_TIMEOUT_MS;
+    this.readyTimeoutMs = options.readyTimeoutMs;
     this.pieceBudgetBytes = options.pieceBudgetBytes ?? PIECE_BUDGET_BYTES;
     this.lsp = new LspClient(
       options.command,
@@ -243,7 +242,10 @@ export class CppGraphClient implements IBulkGraphSession {
     signal: AbortSignal,
     moved: boolean,
   ): Promise<CppGraphSnapshotAdapter.IResult> {
-    const deadline = performance.now() + this.readyTimeoutMs;
+    const deadline =
+      this.readyTimeoutMs === undefined
+        ? undefined
+        : performance.now() + this.readyTimeoutMs;
     let backoff = RETRY_DELAY_MS;
     let waiting: string | undefined;
     for (;;) {
@@ -304,7 +306,7 @@ export class CppGraphClient implements IBulkGraphSession {
             `@samchon/graph: c, cpp: waiting for the clang graph producer: ${waiting}\n`,
           );
         }
-        if (performance.now() >= deadline) {
+        if (deadline !== undefined && performance.now() >= deadline) {
           throw new Error(
             `C/C++ clang graph: producer did not become ready within ${String(this.readyTimeoutMs)} ms: ${error.message}`,
           );
@@ -315,7 +317,9 @@ export class CppGraphClient implements IBulkGraphSession {
         // bound quietly widened — the thing this provider keeps having to
         // correct elsewhere.
         await delay(
-          Math.min(backoff, Math.max(0, deadline - performance.now())),
+          deadline === undefined
+            ? backoff
+            : Math.min(backoff, Math.max(0, deadline - performance.now())),
           signal,
         );
         // Backing off, because polling twenty times a second for a condition

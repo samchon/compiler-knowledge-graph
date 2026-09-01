@@ -1552,7 +1552,9 @@ function cppClient(
     producerCommit: COMMIT,
     initializationOptions: options.initializationOptions,
     requestTimeoutMs: 5_000,
-    readyTimeoutMs: options.readyTimeoutMs ?? 10_000,
+    ...(options.readyTimeoutMs === undefined
+      ? {}
+      : { readyTimeoutMs: options.readyTimeoutMs }),
     ...(options.pieceBudgetBytes === undefined
       ? {}
       : { pieceBudgetBytes: options.pieceBudgetBytes }),

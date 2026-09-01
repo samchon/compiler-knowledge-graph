@@ -13,7 +13,6 @@ import { RustGraphSnapshotAdapter } from "./RustGraphSnapshotAdapter";
 const GRAPH_METHOD = "samchon/graphSnapshot";
 const SERVER_CANCELLED = -32802;
 const CONTENT_MODIFIED = -32801;
-const DEFAULT_READY_TIMEOUT_MS = 300_000;
 const RETRY_DELAY_MS = 50;
 const MAX_RETRY_DELAY_MS = 5_000;
 
@@ -31,7 +30,7 @@ export class RustGraphClient implements IBulkGraphSession {
   ) => void;
   private readonly initializationOptions: unknown;
   private readonly requestTimeoutMs: number | undefined;
-  private readonly readyTimeoutMs: number;
+  private readonly readyTimeoutMs: number | undefined;
   private readonly lifecycleAbort = new AbortController();
   private queue: Promise<void> = Promise.resolve();
   private initialized: Promise<void> | undefined;
@@ -73,7 +72,7 @@ export class RustGraphClient implements IBulkGraphSession {
     this.version = 0;
     this.initializationOptions = options.initializationOptions;
     this.requestTimeoutMs = options.requestTimeoutMs;
-    this.readyTimeoutMs = options.readyTimeoutMs ?? DEFAULT_READY_TIMEOUT_MS;
+    this.readyTimeoutMs = options.readyTimeoutMs;
     /* c8 ignore start -- production native binaries need no arguments; the
      * protocol fixture itself is a JavaScript file and therefore needs one. */
     const args = options.args ?? [];
@@ -190,7 +189,10 @@ export class RustGraphClient implements IBulkGraphSession {
   }
 
   private async requestSnapshot(signal: AbortSignal): Promise<IRustGraphSnapshot> {
-    const deadline = performance.now() + this.readyTimeoutMs;
+    const deadline =
+      this.readyTimeoutMs === undefined
+        ? undefined
+        : performance.now() + this.readyTimeoutMs;
     let checkpoint = this.checkpointPending
       ? this.adapter.persistedCheckpoint
       : undefined;
@@ -232,20 +234,22 @@ export class RustGraphClient implements IBulkGraphSession {
         ) {
           throw error;
         }
-        if (performance.now() >= deadline) {
+        if (deadline !== undefined && performance.now() >= deadline) {
           throw new Error(
             `rust HIR graph: producer did not become ready within ${String(this.readyTimeoutMs)} ms: ${error.message}`,
           );
         }
         await delay(
-          Math.min(backoff, Math.max(0, deadline - performance.now())),
+          deadline === undefined
+            ? backoff
+            : Math.min(backoff, Math.max(0, deadline - performance.now())),
           signal,
         );
         // Same backoff, same clamp and same reset as the Clang client, for the
         // same reasons written out there. This lane has never demonstrated the
         // problem — rust-analyzer becomes ready quickly on the pinned corpus,
-        // and its row runs on the default timeout — but the loop is the same
-        // shape, so it should not be the one left to find out on a larger
+        // whose experiment supplies its own deadline — but the loop is the
+        // same shape, so it should not be the one left to find out on a larger
         // workspace.
         backoff =
           error.code === CONTENT_MODIFIED

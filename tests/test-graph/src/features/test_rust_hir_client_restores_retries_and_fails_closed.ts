@@ -14,9 +14,10 @@ import { GraphPaths } from "../internal/GraphPaths.js";
  * A resident producer answers before it is ready and restarts underneath a live
  * session, and neither condition is an error the caller may see as a fallback.
  * This pins the client's side of that: a cancelled or content-modified response
- * is retried until the ready deadline rather than published, a no-op returns
- * the exact resident object rather than an equal copy, a rejected restart
- * checkpoint discards the persisted generation instead of reusing it, and a
+ * is retried until the caller's ready deadline when one exists rather than
+ * published, a no-op returns the exact resident object rather than an equal
+ * copy, a rejected restart checkpoint discards the persisted generation
+ * instead of reusing it, and a
  * checkpoint that cannot be written surfaces as a warning on the returned
  * snapshot rather than as a failed refresh.
  *
@@ -143,11 +144,12 @@ async function assertCheckpointRejectionRecovers(
 }
 
 async function assertRetryBoundaries(root: string): Promise<void> {
-  const retrying = rustClient(root, isolatedCache(), ["--retry=1", "--content-modified=1"], undefined, {
-    readyTimeoutMs: 1_000,
-  });
+  const retrying = rustClient(root, isolatedCache(), [
+    "--retry=1",
+    "--content-modified=1",
+  ]);
   TestValidator.equals(
-    "ServerCancelled and ContentModified are retried until the producer is ready",
+    "an undefined deadline retries ServerCancelled and ContentModified until the producer is ready",
     (await retrying.refresh()).changed,
     true,
   );

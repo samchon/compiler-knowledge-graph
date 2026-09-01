@@ -141,12 +141,16 @@ jobs:
           path: tests/experiment/.work/tools
           key: ${{ steps.clang_producer.outputs.cache-primary-key }}
 
+      - name: Pack the verified Clang producer
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.project == 'all' || inputs.project == 'redis' || inputs.project == 'leveldb' }}
+        run: tar -C tests/experiment/.work/tools -cf pinned-clang-producer.tar .
+
       - name: Upload the verified Clang producer
         if: ${{ github.event_name != 'workflow_dispatch' || inputs.project == 'all' || inputs.project == 'redis' || inputs.project == 'leveldb' }}
         uses: actions/upload-artifact@v7
         with:
           name: pinned-clang-producer
-          path: tests/experiment/.work/tools
+          path: pinned-clang-producer.tar
           if-no-files-found: error
           retention-days: 1
           compression-level: 0
@@ -239,7 +243,13 @@ jobs:
         uses: actions/download-artifact@v8
         with:
           name: pinned-clang-producer
-          path: tests/experiment/.work/tools
+          path: tests/experiment/.work/clang-producer-artifact
+
+      - name: Unpack the verified Clang producer
+        if: ${{ (matrix.language == 'c' || matrix.language == 'cpp') && (github.event_name != 'workflow_dispatch' || inputs.project == 'all' || inputs.project == matrix.project) }}
+        run: |
+          mkdir -p tests/experiment/.work/tools
+          tar -C tests/experiment/.work/tools -xf tests/experiment/.work/clang-producer-artifact/pinned-clang-producer.tar
 
       # The same provisioning the experiment matrix uses. It appends each tool's
       # directory to GITHUB_PATH, so the benchmark's own child processes resolve

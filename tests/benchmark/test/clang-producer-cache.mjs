@@ -115,7 +115,7 @@ function assertWorkflowOwnsOneBuild(workflowName) {
   );
   assert.match(
     ownerBlock,
-    /Restore the pinned Clang producer[\s\S]*Provision the pinned Clang producer[\s\S]*Save the pinned Clang producer[\s\S]*Upload the verified Clang producer/,
+    /Restore the pinned Clang producer[\s\S]*Provision the pinned Clang producer[\s\S]*Save the pinned Clang producer[\s\S]*Pack the verified Clang producer[\s\S]*Upload the verified Clang producer/,
   );
   assert.match(
     consumerBlock,
@@ -139,8 +139,13 @@ function assertWorkflowOwnsOneBuild(workflowName) {
   );
   assert.match(
     consumerBlock,
-    /Download the verified Clang producer[\s\S]*uses: actions\/download-artifact@v8[\s\S]*name: pinned-clang-producer[\s\S]*path: tests\/experiment\/\.work\/tools/,
+    /Download the verified Clang producer[\s\S]*uses: actions\/download-artifact@v8[\s\S]*name: pinned-clang-producer[\s\S]*Unpack the verified Clang producer[\s\S]*tar -C tests\/experiment\/\.work\/tools -xf tests\/experiment\/\.work\/clang-producer-artifact\/pinned-clang-producer\.tar/,
     `${workflowName} consumers must receive the verified same-run artifact`,
+  );
+  assert.match(
+    ownerBlock,
+    /tar -C tests\/experiment\/\.work\/tools -cf pinned-clang-producer\.tar \.[\s\S]*uses: actions\/upload-artifact@v7[\s\S]*path: pinned-clang-producer\.tar/,
+    `${workflowName} must preserve executable bits inside the artifact`,
   );
   assert.match(
     consumerBlock,

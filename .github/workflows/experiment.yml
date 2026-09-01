@@ -117,6 +117,12 @@ jobs:
           path: tests/experiment/.work/tools
           key: ${{ steps.clang_producer.outputs.cache-primary-key }}
 
+      # GitHub artifacts restore ordinary files as 0644. Pack first so the
+      # executable bits on clangd survive the same-run handoff.
+      - name: Pack the verified Clang producer
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.language == 'all' || inputs.language == 'c' || inputs.language == 'cpp' }}
+        run: tar -C tests/experiment/.work/tools -cf pinned-clang-producer.tar .
+
       # Cache writes are best-effort and immutable. The artifact is the
       # guaranteed same-run handoff, including on a fork PR that cannot save a
       # repository cache.
@@ -125,7 +131,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: pinned-clang-producer
-          path: tests/experiment/.work/tools
+          path: pinned-clang-producer.tar
           if-no-files-found: error
           retention-days: 1
           compression-level: 0
@@ -209,7 +215,13 @@ jobs:
         uses: actions/download-artifact@v8
         with:
           name: pinned-clang-producer
-          path: tests/experiment/.work/tools
+          path: tests/experiment/.work/clang-producer-artifact
+
+      - name: Unpack the verified Clang producer
+        if: ${{ (matrix.language == 'c' || matrix.language == 'cpp') && (github.event_name != 'workflow_dispatch' || inputs.language == 'all' || inputs.language == matrix.language) }}
+        run: |
+          mkdir -p tests/experiment/.work/tools
+          tar -C tests/experiment/.work/tools -xf tests/experiment/.work/clang-producer-artifact/pinned-clang-producer.tar
 
       - name: Install language server
         if: ${{ github.event_name != 'workflow_dispatch' || inputs.language == 'all' || inputs.language == matrix.language }}

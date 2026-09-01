@@ -180,8 +180,14 @@ export const test_workflows_use_current_core_action_runtimes = () => {
   const producerUpload = producerSteps.find((step) =>
     step.body.includes("uses: actions/upload-artifact@v7"),
   );
+  const producerPack = producerSteps.find(
+    (step) => step.name === "Pack the verified Clang producer",
+  );
   const consumerDownload = consumerSteps.find((step) =>
     step.body.includes("uses: actions/download-artifact@v8"),
+  );
+  const consumerUnpack = consumerSteps.find(
+    (step) => step.name === "Unpack the verified Clang producer",
   );
   const install = consumerSteps.find(
     (step) => step.name === "Install language server",
@@ -198,12 +204,16 @@ export const test_workflows_use_current_core_action_runtimes = () => {
       ),
       producerSave?.body.includes("continue-on-error: true"),
       producerUpload?.body.includes("name: pinned-clang-producer"),
-      producerUpload?.body.includes("path: tests/experiment/.work/tools"),
+      producerUpload?.body.includes("path: pinned-clang-producer.tar"),
+      producerPack?.body.includes(
+        "tar -C tests/experiment/.work/tools -cf pinned-clang-producer.tar .",
+      ),
       isStrictlyOrdered(
         [
           "Restore the pinned Clang producer",
           "Provision the pinned Clang producer",
           "Save the pinned Clang producer",
+          "Pack the verified Clang producer",
           "Upload the verified Clang producer",
         ].map((name) =>
           producerSteps.findIndex((step) => step.name === name),
@@ -211,13 +221,20 @@ export const test_workflows_use_current_core_action_runtimes = () => {
       ),
       experimentJob.includes("needs: [latest_update, clang_producer]"),
       consumerDownload?.body.includes("name: pinned-clang-producer"),
-      consumerDownload?.body.includes("path: tests/experiment/.work/tools"),
+      consumerDownload?.body.includes(
+        "path: tests/experiment/.work/clang-producer-artifact",
+      ),
+      consumerUnpack?.body.includes(
+        "tar -C tests/experiment/.work/tools -xf tests/experiment/.work/clang-producer-artifact/pinned-clang-producer.tar",
+      ),
       install?.body.includes(
         'SAMCHON_GRAPH_CLANG_PRODUCER_ALLOW_BUILD: "0"',
       ),
       occurrences(experiment, "Save the pinned Clang producer") === 1,
     ],
     [
+      true,
+      true,
       true,
       true,
       true,

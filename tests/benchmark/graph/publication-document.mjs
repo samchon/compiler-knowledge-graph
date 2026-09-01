@@ -390,7 +390,8 @@ export function producerDescribedByToolchain(producer, tools) {
     if (tool.tool === producer.tool) {
       return (
         tool.version === producer.version ||
-        parenthesizedBuildPin(producer.version) === tool.version
+        (isImmutableBuildPin(tool.version) &&
+          containsExactPin(producer.version, tool.version))
       );
     }
     return Boolean(
@@ -409,9 +410,8 @@ const PRODUCER_TOOLCHAIN_ALIASES = {
   },
 };
 
-function parenthesizedBuildPin(version) {
-  const match = /\(([^()]*)\)\s*$/.exec(version);
-  return match?.[1];
+function isImmutableBuildPin(version) {
+  return /^[0-9a-f]{40,64}$/i.test(version);
 }
 
 function containsExactPin(evidence, pin) {

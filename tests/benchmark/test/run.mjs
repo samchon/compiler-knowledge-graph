@@ -391,7 +391,7 @@ function testIndexRouteEvidenceContract() {
       {
         tool: "samchon-clangd",
         version:
-          "clang version 22.1.8 (e33d8f51552a523b5696691738f1ef95f8e3a730)",
+          "clang version 22.1.8 (https://github.com/samchon/llvm-project.git e33d8f51552a523b5696691738f1ef95f8e3a730) ((https://github.com/samchon/llvm-project.git e33d8f51552a523b5696691738f1ef95f8e3a730))",
       },
       {
         tool: "samchon-clangd",

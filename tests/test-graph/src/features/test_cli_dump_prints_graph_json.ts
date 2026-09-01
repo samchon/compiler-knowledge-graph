@@ -68,6 +68,26 @@ function assertTheDumpSaysWhatProducedIt(root: string): void {
     "the dump names the indexer that answered",
     summary.some((line) => line.includes("indexer=")),
   );
+  const routeLine = summary.find((line) =>
+    line.startsWith("@samchon/graph: route="),
+  );
+  const route = JSON.parse(
+    routeLine?.slice("@samchon/graph: route=".length) ?? "null",
+  ) as {
+    schemaVersion?: number;
+    indexer?: string;
+    provenance?: unknown[];
+  } | null;
+  TestValidator.equals(
+    "the discarded payload keeps a bounded machine-readable route record",
+    [
+      route?.schemaVersion,
+      route?.indexer,
+      route?.provenance?.length,
+      (routeLine?.length ?? Number.POSITIVE_INFINITY) < 17_000,
+    ],
+    [1, "static", 0, true],
+  );
   TestValidator.predicate(
     "and reports the reasons nothing better served",
     summary.length > 1,

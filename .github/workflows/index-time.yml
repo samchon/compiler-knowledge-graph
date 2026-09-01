@@ -377,6 +377,12 @@ jobs:
       - name: Install renderer dependencies
         run: pnpm install --frozen-lockfile
 
+      # Route summaries derive the expected owner from the runtime's canonical
+      # provider registry, so the collect job builds that dependency before it
+      # validates or prints any folded report.
+      - name: Build provider registry dependency
+        run: pnpm build
+
       - name: Download reports
         uses: actions/download-artifact@v8
         with:

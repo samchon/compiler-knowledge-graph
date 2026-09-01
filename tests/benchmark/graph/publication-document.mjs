@@ -2,6 +2,10 @@ import {
   invalidWebsiteCellReason,
   websiteCellKey,
 } from "./website-cell.mjs";
+import {
+  expectedPrimaryProvider,
+  strictIntentOfTool,
+} from "./index-time-cell.mjs";
 
 /**
  * Start an agent-result merge without dropping a benchmark axis it does not own.
@@ -210,6 +214,9 @@ function assertIndexCells(value, label, fixtures) {
     if (cell.toolchain !== undefined) {
       assertToolchainEvidence(cell.toolchain, `${cellLabel}.toolchain`);
     }
+    if (cell.route !== undefined) {
+      assertIndexRoute(cell, cellLabel);
+    }
     if (cell.quietWait !== undefined && cell.quietWait !== null) {
       assertRecord(cell.quietWait, `${cellLabel}.quietWait`);
     }
@@ -218,6 +225,151 @@ function assertIndexCells(value, label, fixtures) {
       throw new TypeError(`${cellLabel} duplicates an earlier index cell identity`);
     }
     identities.add(identity);
+  }
+}
+
+function assertIndexRoute(cell, label) {
+  const strict = strictIntentOfTool(cell.tool);
+  if (strict === undefined) {
+    throw new TypeError(`${label}.route belongs only to a samchon-graph cell`);
+  }
+  if (cell.strict !== strict) {
+    throw new TypeError(`${label}.strict reverses its measured tool intent`);
+  }
+  if (typeof cell.language !== "string" || cell.language.trim() === "") {
+    throw new TypeError(`${label}.language must name the routed language`);
+  }
+  assertRecord(cell.route, `${label}.route`);
+  if (cell.route.schemaVersion !== 1) {
+    throw new TypeError(`${label}.route.schemaVersion must be 1`);
+  }
+  const intentLabel = `${label}.route.intent`;
+  const outcomeLabel = `${label}.route.outcome`;
+  assertRecord(cell.route.intent, intentLabel);
+  assertRecord(cell.route.outcome, outcomeLabel);
+  const expected = expectedPrimaryProvider(cell.language);
+  const intent = cell.route.intent;
+  if (
+    (strict && intent.strictProviders !== "enabled") ||
+    (!strict && intent.strictProviders !== "stood-down")
+  ) {
+    throw new TypeError(`${intentLabel}.strictProviders reverses its tool`);
+  }
+  if (
+    (strict && intent.expectedPrimaryProvider !== expected) ||
+    (!strict && intent.expectedPrimaryProvider !== null)
+  ) {
+    throw new TypeError(
+      `${intentLabel}.expectedPrimaryProvider disagrees with the canonical registry`,
+    );
+  }
+
+  const outcome = cell.route.outcome;
+  if (!["served", "fallback", "static", "unknown"].includes(outcome.verdict)) {
+    throw new TypeError(`${outcomeLabel}.verdict is invalid`);
+  }
+  if (
+    outcome.indexer !== null &&
+    !["lsp", "hybrid", "static"].includes(outcome.indexer)
+  ) {
+    throw new TypeError(`${outcomeLabel}.indexer is invalid`);
+  }
+  if (!Array.isArray(outcome.provenance)) {
+    throw new TypeError(`${outcomeLabel}.provenance must be an array`);
+  }
+  if (outcome.truncated !== undefined && outcome.truncated !== true) {
+    throw new TypeError(`${outcomeLabel}.truncated must be true when present`);
+  }
+  const providers = new Set();
+  for (const [index, provenance] of outcome.provenance.entries()) {
+    const provenanceLabel = `${outcomeLabel}.provenance[${String(index)}]`;
+    assertRecord(provenance, provenanceLabel);
+    for (const field of ["provider", "authority"]) {
+      if (
+        typeof provenance[field] !== "string" ||
+        provenance[field].trim() === ""
+      ) {
+        throw new TypeError(`${provenanceLabel}.${field} must be nonempty`);
+      }
+    }
+    if (providers.has(provenance.provider)) {
+      throw new TypeError(`${provenanceLabel}.provider is duplicated`);
+    }
+    providers.add(provenance.provider);
+    if (
+      !Array.isArray(provenance.languages) ||
+      !provenance.languages.includes(cell.language) ||
+      provenance.languages.some(
+        (language) => typeof language !== "string" || language.trim() === "",
+      ) ||
+      new Set(provenance.languages).size !== provenance.languages.length
+    ) {
+      throw new TypeError(
+        `${provenanceLabel}.languages must include the measured language`,
+      );
+    }
+    assertRecord(provenance.producer, `${provenanceLabel}.producer`);
+    for (const field of ["tool", "version"]) {
+      if (
+        typeof provenance.producer[field] !== "string" ||
+        provenance.producer[field].trim() === ""
+      ) {
+        throw new TypeError(
+          `${provenanceLabel}.producer.${field} must be nonempty`,
+        );
+      }
+    }
+    for (const field of ["schemaVersion", "protocolVersion"]) {
+      if (
+        !Number.isSafeInteger(provenance.producer[field]) ||
+        provenance.producer[field] < 1
+      ) {
+        throw new TypeError(
+          `${provenanceLabel}.producer.${field} must be a positive safe integer`,
+        );
+      }
+    }
+    if (cell.toolchain?.status === "recorded") {
+      const described = cell.toolchain.tools.some(
+        (tool) =>
+          tool.tool === provenance.producer.tool &&
+          tool.version === provenance.producer.version,
+      );
+      if (!described) {
+        throw new TypeError(
+          `${provenanceLabel}.producer is absent from the claimed toolchain`,
+        );
+      }
+    }
+  }
+  const primaryServed = providers.has(expected);
+  if (
+    outcome.verdict === "served" &&
+    (!strict ||
+      !primaryServed ||
+      (outcome.indexer !== "lsp" && outcome.indexer !== "hybrid"))
+  ) {
+    throw new TypeError(`${outcomeLabel} falsely claims the primary served`);
+  }
+  if (
+    outcome.verdict === "fallback" &&
+    ((outcome.indexer !== "lsp" && outcome.indexer !== "hybrid") ||
+      (strict && primaryServed))
+  ) {
+    throw new TypeError(`${outcomeLabel} is not a fallback result`);
+  }
+  if (
+    outcome.verdict === "static" &&
+    (outcome.indexer !== "static" || outcome.provenance.length !== 0)
+  ) {
+    throw new TypeError(`${outcomeLabel} is not a static result`);
+  }
+  if (
+    outcome.verdict === "unknown" &&
+    (outcome.provenance.length !== 0 ||
+      (outcome.indexer !== null && outcome.truncated !== true))
+  ) {
+    throw new TypeError(`${outcomeLabel} claims evidence despite being unknown`);
   }
 }
 

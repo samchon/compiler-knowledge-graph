@@ -11,6 +11,10 @@ import {
   latestWorkflowUpdateDecision,
 } from "../../../.github/scripts/latest-workflow-update.mjs";
 import { CORPUS, PROJECTS, projectDir } from "../graph/corpus.mjs";
+import {
+  summarizeCoverage,
+  summarizeUnresolved,
+} from "../../experiment/src/evidence-summary.mjs";
 import currentIndex from "../graph/current-index.cjs";
 import {
   analyzePreflightDump,
@@ -19,6 +23,9 @@ import {
 } from "../graph/language.mjs";
 import {
   ALL_TOOLS,
+  expectedPrimaryProvider,
+  graphResultFromLog,
+  indexRoute,
   timedOutIndexCell,
 } from "../graph/index-time-cell.mjs";
 import { javaSystemProperty } from "../graph/java-tool-options.mjs";
@@ -27,7 +34,10 @@ import {
   summarizeLspRequestTrace,
 } from "../graph/lsp-request-summary.mjs";
 import { assertPublicationCandidates } from "../graph/publication-gate.mjs";
-import { agentPublicationDocument } from "../graph/publication-document.mjs";
+import {
+  agentPublicationDocument,
+  assertIndexReport,
+} from "../graph/publication-document.mjs";
 import { removeTree } from "../graph/remove-tree.mjs";
 import {
   invalidWebsiteCellReason,
@@ -43,7 +53,7 @@ import {
 } from "./two-columns.mjs";
 
 const { compareNaturalOrdinal } = ordinal;
-const { selectCurrentAgentCells } = currentIndex;
+const { selectCurrentAgentCells, selectCurrentIndex } = currentIndex;
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const benchmarkDir = path.resolve(here, "..");
@@ -102,6 +112,8 @@ assertWorkflowOptionForms(
 testPublishedIndexCellsNameTheirMachine();
 testAgentPublicationPreservesIndexResults();
 testTimedOutIndexCellsPreserveToolIntent();
+testIndexRouteEvidenceContract();
+testExperimentEvidenceSummary();
 testIndexPublicationRefusesMalformedJson();
 testIndexCellIsolationContract();
 testLspRequestDiagnosisSummary();
@@ -155,15 +167,25 @@ function testPublishedIndexCellsNameTheirMachine() {
     "a published index cell carries a build time, a timeout, or says it has no build step",
   );
   if (published.index.schemaVersion === 2) {
-    const stale = (published.index.cells ?? []).filter(
+    const selectedFixtures = Object.fromEntries(
+      Object.entries(PROJECTS).map(([project, spec]) => [
+        project,
+        spec.commit,
+      ]),
+    );
+    const current = selectCurrentIndex(
+      published.index,
+      selectedFixtures,
+    ).index;
+    const stale = (current.cells ?? []).filter(
       (cell) =>
         cell?.fixtureCommit !== PROJECTS[cell?.project]?.commit ||
-        published.index.fixtures?.[cell?.project] !== cell?.fixtureCommit,
+        current.fixtures?.[cell?.project] !== cell?.fixtureCommit,
     );
     assert.deepEqual(
       stale.map((cell) => `${String(cell.project)}/${String(cell.tool)}`),
       [],
-      "a revision-bound index cell must name the exact currently selected fixture commit",
+      "a selected revision-bound cell must name the exact current fixture commit",
     );
   }
   // A fallback cell reports "no strict provider served" and so does a strict
@@ -198,6 +220,7 @@ function testAgentPublicationPreservesIndexResults() {
     cells: [
       {
         project: INDEX_PROJECT,
+        language: PROJECTS[INDEX_PROJECT].language,
         tool: "samchon-graph",
         buildMs: 1,
         fixtureCommit: FIXTURE_COMMIT,
@@ -294,6 +317,7 @@ function testAgentPublicationPreservesIndexResults() {
 function testTimedOutIndexCellsPreserveToolIntent() {
   const common = {
     project: INDEX_PROJECT,
+    language: PROJECTS[INDEX_PROJECT].language,
     timedOutMs: 3_600_000,
     servedBy: "attempted fixture indexer",
   };
@@ -316,6 +340,9 @@ function testTimedOutIndexCellsPreserveToolIntent() {
       tool,
       buildMs: null,
       ...(strict === undefined ? {} : { strict }),
+      ...(strict === undefined
+        ? {}
+        : { route: indexRoute(common.language, tool, undefined) }),
     });
     assert.equal(
       Object.hasOwn(cell, "strict"),
@@ -323,6 +350,229 @@ function testTimedOutIndexCellsPreserveToolIntent() {
       `${tool} timeout strict intent must match its measured lane`,
     );
   }
+}
+
+function testIndexRouteEvidenceContract() {
+  assert.equal(expectedPrimaryProvider("typescript"), "ttscgraph");
+  assert.equal(expectedPrimaryProvider("java"), "javac-graph");
+  assert.equal(expectedPrimaryProvider("c"), "clangd-snapshot");
+  assert.throws(
+    () => expectedPrimaryProvider("unknown"),
+    /expected one primary provider/,
+  );
+
+  const primary = routeSummary(
+    "java",
+    "javac-graph",
+    "scip-java-javac-graph",
+    "32eca214a413d1b8a375c481f666ff8a4ec96773",
+    "compiler",
+  );
+  const fallback = routeSummary(
+    "java",
+    "scip-java",
+    "scip-java",
+    "0.10.6",
+    "semantic-index",
+  );
+  const served = indexRoute("java", "samchon-graph", primary);
+  const fellBack = indexRoute("java", "samchon-graph", fallback);
+  const staticResult = indexRoute("java", "samchon-graph", {
+    schemaVersion: 1,
+    indexer: "static",
+    provenance: [],
+  });
+  const strictOff = indexRoute("java", "samchon-graph-fallback", fallback);
+  const missing = indexRoute("java", "samchon-graph", undefined);
+  assert.deepEqual(
+    [
+      served.outcome.verdict,
+      fellBack.outcome.verdict,
+      staticResult.outcome.verdict,
+      strictOff.intent.strictProviders,
+      strictOff.intent.expectedPrimaryProvider,
+      missing.outcome.verdict,
+    ],
+    ["served", "fallback", "static", "stood-down", null, "unknown"],
+  );
+
+  const parsed = graphResultFromLog(
+    [
+      "@samchon/graph: indexing with javac-graph(java)",
+      "@samchon/graph: indexer=lsp scip-java(java)",
+      `@samchon/graph: route=${JSON.stringify(fallback)}`,
+    ].join("\n"),
+  );
+  assert.equal(parsed.servedBy, "lsp scip-java(java)");
+  assert.deepEqual(parsed.summary, fallback);
+  assert.deepEqual(graphResultFromLog("malformed"), {
+    servedBy: "unknown",
+    summary: undefined,
+  });
+
+  const host = FIXTURE_HOST;
+  const valid = {
+    schemaVersion: 2,
+    host,
+    fixtures: { gson: PROJECTS.gson.commit },
+    scale: { gson: { files: 1, lines: 1 } },
+    cells: [
+      {
+        project: "gson",
+        language: "java",
+        tool: "samchon-graph",
+        strict: true,
+        buildMs: 1,
+        fixtureCommit: PROJECTS.gson.commit,
+        host,
+        toolchain: {
+          status: "recorded",
+          tools: [
+            {
+              tool: "scip-java-javac-graph",
+              version: "32eca214a413d1b8a375c481f666ff8a4ec96773",
+              source: "fixture",
+              digest: "git:fixture",
+            },
+            {
+              tool: "scip-java",
+              version: "0.10.6",
+              source: "fixture fallback",
+              digest: "sha256:fixture",
+            },
+          ],
+        },
+        route: served,
+      },
+    ],
+  };
+  assert.doesNotThrow(() => assertIndexReport(valid, "route fixture"));
+  assert.doesNotThrow(() =>
+    assertIndexReport(
+      {
+        ...valid,
+        cells: [{ ...valid.cells[0], route: missing }],
+      },
+      "missing route provenance fixture",
+    ),
+  );
+  assert.doesNotThrow(() =>
+    assertIndexReport(
+      {
+        ...valid,
+        cells: [{ ...valid.cells[0], route: undefined }],
+      },
+      "historical route fixture",
+    ),
+  );
+  for (const [label, mutate, pattern] of [
+    [
+      "reversed intent",
+      (candidate) => {
+        candidate.cells[0].route.intent.strictProviders = "stood-down";
+      },
+      /reverses its tool/,
+    ],
+    [
+      "mismatched expected owner",
+      (candidate) => {
+        candidate.cells[0].route.intent.expectedPrimaryProvider = "scip-java";
+      },
+      /canonical registry/,
+    ],
+    [
+      "false served verdict",
+      (candidate) => {
+        candidate.cells[0].route = fellBack;
+        candidate.cells[0].route.outcome.verdict = "served";
+      },
+      /falsely claims/,
+    ],
+    [
+      "mismatched toolchain",
+      (candidate) => {
+        candidate.cells[0].toolchain.tools[0].version = "other";
+      },
+      /absent from the claimed toolchain/,
+    ],
+  ]) {
+    const candidate = structuredClone(valid);
+    mutate(candidate);
+    assert.throws(
+      () => assertIndexReport(candidate, label),
+      pattern,
+      `${label} must be rejected`,
+    );
+  }
+}
+
+function routeSummary(language, provider, tool, version, authority) {
+  return {
+    schemaVersion: 1,
+    indexer: "lsp",
+    provenance: [
+      {
+        provider,
+        languages: [language],
+        authority,
+        producer: {
+          tool,
+          version,
+          schemaVersion: 6,
+          protocolVersion: 1,
+        },
+      },
+    ],
+  };
+}
+
+function testExperimentEvidenceSummary() {
+  const dump = {
+    coverage: [
+      {
+        provider: "primary",
+        family: "calls",
+        state: "complete",
+      },
+      {
+        provider: "primary",
+        family: "calls",
+        state: "partial",
+      },
+      {
+        provider: "other",
+        family: "calls",
+        state: "unsupported",
+      },
+    ],
+    unresolved: [
+      { provider: "primary", family: "calls", reason: "dynamic" },
+      { provider: "primary", family: "type_ref", reason: "provider-gap" },
+      { provider: "other", family: "calls", reason: "reflection" },
+    ],
+  };
+  const coverage = summarizeCoverage(dump, "primary");
+  const unresolved = summarizeUnresolved(dump, "primary");
+  assert.equal(coverage.families.length, 15);
+  assert.deepEqual(
+    coverage.families.find((row) => row.family === "calls"),
+    { family: "calls", complete: 1, partial: 1, unsupported: 0 },
+  );
+  assert.deepEqual(
+    coverage.families.find((row) => row.family === "imports"),
+    { family: "imports", complete: 0, partial: 0, unsupported: 0 },
+  );
+  assert.equal(unresolved.total, 2);
+  assert.equal(unresolved.byFamily.length, 15);
+  assert.equal(unresolved.byReason.length, 9);
+  assert.equal(
+    unresolved.byReason.find((row) => row.reason === "dynamic").count,
+    1,
+  );
+  assert.equal(
+    unresolved.byReason.find((row) => row.reason === "reflection").count,
+    0,
+  );
 }
 
 /**
@@ -356,6 +606,12 @@ function testIndexPublicationRefusesMalformedJson() {
           source: "fixture",
           digest: "sha256:fixture",
         },
+        {
+          tool: "ttscgraph",
+          version: "fixture-route",
+          source: "fixture route",
+          digest: "sha256:fixture-route",
+        },
       ],
     },
     projects: [INDEX_PROJECT],
@@ -365,6 +621,7 @@ function testIndexPublicationRefusesMalformedJson() {
     cells: [
       {
         project: INDEX_PROJECT,
+        language: PROJECTS[INDEX_PROJECT].language,
         tool: "samchon-graph",
         buildMs: 1,
         strict: true,
@@ -379,8 +636,25 @@ function testIndexPublicationRefusesMalformedJson() {
               source: "fixture",
               digest: "sha256:fixture",
             },
+            {
+              tool: "ttscgraph",
+              version: "fixture-route",
+              source: "fixture route",
+              digest: "sha256:fixture-route",
+            },
           ],
         },
+        route: indexRoute(
+          PROJECTS[INDEX_PROJECT].language,
+          "samchon-graph",
+          routeSummary(
+            PROJECTS[INDEX_PROJECT].language,
+            "ttscgraph",
+            "ttscgraph",
+            "fixture-route",
+            "compiler",
+          ),
+        ),
         host: FIXTURE_HOST,
       },
     ],
@@ -1013,6 +1287,14 @@ function testIndexPublicationRefusesMalformedJson() {
         ...cell,
         tool,
         strict,
+        route:
+          strict === undefined
+            ? undefined
+            : indexRoute(cell.language, tool, {
+                schemaVersion: 1,
+                indexer: "lsp",
+                provenance: [],
+              }),
         measurementId,
       })),
     };
@@ -1083,12 +1365,14 @@ function testIndexPublicationRefusesMalformedJson() {
     cells: [
       {
         project: INDEX_PROJECT,
+        language: PROJECTS[INDEX_PROJECT].language,
         tool: "samchon-graph",
         buildMs: 4,
         strict: true,
         measurementId: validReportDocument.measurementId,
         fixtureCommit: FIXTURE_COMMIT,
         toolchain: validReportDocument.toolchain,
+        route: validReportDocument.cells[0].route,
         host: FIXTURE_HOST,
       },
     ],
@@ -1324,6 +1608,9 @@ function testIndexCellIsolationContract() {
   const installRenderer = collect.indexOf(
     "- name: Install renderer dependencies",
   );
+  const buildRegistry = collect.indexOf(
+    "- name: Build provider registry dependency",
+  );
   const foldPublication = collect.indexOf(
     "- name: Fold reports into the publication",
   );
@@ -1336,11 +1623,13 @@ function testIndexCellIsolationContract() {
     collectStart >= 0 &&
       collectSetup >= 0 &&
       installRenderer > collectSetup &&
-      foldPublication > installRenderer &&
+      buildRegistry > installRenderer &&
+      foldPublication > buildRegistry &&
       showPublication > foldPublication &&
       renderPublication > showPublication &&
       uploadPublication > renderPublication &&
       collect.includes("run: pnpm install --frozen-lockfile") &&
+      collect.includes("run: pnpm build") &&
       collect.includes(
         "run: pnpm --filter @samchon/graph-benchmark render:png",
       ) &&

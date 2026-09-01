@@ -23,8 +23,9 @@ import path from "node:path";
 // indexing when a server needs it.
 export const CORPUS = [
   {
-    // A fork of excalidraw/excalidraw with `ttsc` (and its native TS7
-    // runtime, @typescript/typescript-win32-x64) pinned as devDependencies
+    // A fork of excalidraw/excalidraw with protocol-v1 `ttsc@0.25.0` (and its
+    // native TS7 runtime, @typescript/typescript-win32-x64) pinned as
+    // devDependencies
     // (github.com/samchon/ttsc-benchmark-excalidraw) so ttscserver resolves
     // and runs from the repo's own node_modules instead of depending on a
     // global install — otherwise a fresh clone falls back to the static
@@ -32,7 +33,7 @@ export const CORPUS = [
     name: "excalidraw",
     language: "typescript",
     url: "https://github.com/samchon/ttsc-benchmark-excalidraw.git",
-    commit: "e576ee0ecbdec2b3de3b7378f2cc08038026531b",
+    commit: "b4a1909669c3fe5cbcd9837fbd30c4b35d27c10e",
     preflight: preflightMinimums(1_000, 5_000, 3_000, 4),
   },
   {

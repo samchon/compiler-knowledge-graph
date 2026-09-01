@@ -21,6 +21,7 @@ import { fileURLToPath } from "node:url";
 import { PROJECTS } from "./corpus.mjs";
 import currentIndex from "./current-index.cjs";
 import { assertWebsitePublication } from "./publication-document.mjs";
+import { effectiveIndexRoute } from "./index-time-cell.mjs";
 
 const { selectCurrentIndex } = currentIndex;
 const SELECTED_FIXTURES = Object.fromEntries(
@@ -143,6 +144,7 @@ for (const row of rows) {
     continue;
   }
   for (const [tool, cell] of row.tools) {
+    const route = effectiveIndexRoute(cell, row.language);
     // A timed-out cell has no duration and is not a tool without a build step.
     // Both would print the same words if this only asked whether buildMs is a
     // number, and "this configuration does not finish inside the limit" is a
@@ -163,19 +165,34 @@ for (const row of rows) {
     // A cell measured with the providers stood down says so, because
     // "no strict provider served" is also what a failed provider produces and
     // the two must not read alike.
+    const actual = route?.outcome.provenance
+      .map(
+        (entry) =>
+          `${entry.provider}/${entry.producer.tool}@${entry.producer.version}`,
+      )
+      .join(", ");
     const via =
-      cell.strict === false
+      route?.intent.strictProviders === "stood-down"
         ? "  strict providers stood down"
-        : typeof cell.servedBy === "string"
-          ? `  via ${cell.servedBy}`
-          : "";
+        : route === undefined
+          ? ""
+          : `  expected ${route.intent.expectedPrimaryProvider}; ${route.outcome.verdict}` +
+            (actual === "" ? "" : ` via ${actual}`);
     const caveat =
-      typeof cell.servedBy === "string" && cell.servedBy.startsWith("static")
+      route?.outcome.verdict === "static"
         ? "  <- NOT A SEMANTIC INDEX"
         : "";
     process.stdout.write(
       `  ${pad(row.project, 12)} ${pad(row.language, 11)} ${pad(row.commit, 13)} ${pad(tool, 17)} ${pad(time, 12)} ${scale}${where}${via}${caveat}\n`,
     );
+    if (
+      route?.intent.strictProviders === "enabled" &&
+      route.outcome.verdict !== "served"
+    ) {
+      process.stdout.write(
+        `::warning title=index-time ${row.project} primary route::expected ${route.intent.expectedPrimaryProvider}; observed ${route.outcome.verdict}${actual === "" ? "" : ` via ${actual}`}\n`,
+      );
+    }
   }
 }
 
@@ -204,38 +221,27 @@ const paired = rows
 if (paired.length > 0) {
   process.stdout.write("\nstrict provider vs the same project with none:\n\n");
   for (const { row, strict, fallback } of paired) {
-    const strictProviderServed =
-      typeof strict.servedBy === "string" &&
-      /^(?:lsp|hybrid) /.test(strict.servedBy) &&
-      !/no strict provider/.test(strict.servedBy);
+    const strictRoute = effectiveIndexRoute(strict, row.language);
+    const fallbackRoute = effectiveIndexRoute(fallback, row.language);
+    const strictProviderServed = strictRoute?.outcome.verdict === "served";
     const strictSemantic =
-      strictProviderServed && strict.servedBy.startsWith("lsp ");
-    const strictFallbackSemantic =
-      !strictProviderServed &&
-      typeof strict.servedBy === "string" &&
-      strict.servedBy.startsWith("lsp ");
+      strictProviderServed && strictRoute.outcome.indexer === "lsp";
     const fallbackSemantic =
-      typeof fallback.servedBy === "string" &&
-      fallback.servedBy.startsWith("lsp ");
+      fallbackRoute?.outcome.indexer === "lsp";
     const sameMeasurement =
       typeof strict.measurementId === "string" &&
       strict.measurementId === fallback.measurementId &&
       sameHost(strict.host, fallback.host);
     const verdict =
-      !strictProviderServed &&
-      (!strictFallbackSemantic || !fallbackSemantic)
-        ? "strict provider did not serve and at least one cell produced no semantic index; times are not comparable"
-        : !strictProviderServed && !sameMeasurement
-          ? "strict provider did not serve and cells were not measured together on the same host; times are not comparable"
-          : !strictProviderServed
-            ? "no strict provider served, so both cells measured the same lane (LSP)"
-            : !strictSemantic
-              ? "strict provider served a hybrid index; times are not comparable"
-              : !fallbackSemantic
-                ? "strict-off cell produced no semantic index; times are not comparable"
-                : !sameMeasurement
-                  ? "cells were not measured together on the same host; times are not comparable"
-                  : `${(fallback.buildMs / strict.buildMs).toFixed(1)}x`;
+      !strictProviderServed
+        ? `expected ${strictRoute?.intent.expectedPrimaryProvider ?? "primary provider"} did not serve (${strictRoute?.outcome.verdict ?? "unknown"}); times are not comparable`
+        : !strictSemantic
+          ? "strict provider served a hybrid index; times are not comparable"
+          : !fallbackSemantic
+            ? "strict-off cell produced no semantic index; times are not comparable"
+            : !sameMeasurement
+              ? "cells were not measured together on the same host; times are not comparable"
+              : `${(fallback.buildMs / strict.buildMs).toFixed(1)}x`;
     const strictTime = `${(strict.buildMs / 1000).toFixed(1)} s`;
     const fallbackTime = `${(fallback.buildMs / 1000).toFixed(1)} s`;
     process.stdout.write(

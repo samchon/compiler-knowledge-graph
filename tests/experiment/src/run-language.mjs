@@ -6,6 +6,10 @@ import { buildGraphDump } from "@samchon/graph";
 
 import { findExperiment } from "./catalog.mjs";
 import {
+  summarizeCoverage,
+  summarizeUnresolved,
+} from "./evidence-summary.mjs";
+import {
   activateProvisionedTools,
   assertPinnedCorpus,
   cloneRepository,
@@ -319,6 +323,8 @@ const result = {
   diagnosticCount: dump.diagnostics?.length ?? 0,
   strictProvider: experiment.strictProvider,
   provenance,
+  coverageSummary: summarizeCoverage(dump, provenance?.provider),
+  unresolvedSummary: summarizeUnresolved(dump, provenance?.provider),
   edgeKindCounts,
   semanticLimitation: experiment.semanticLimitation,
   compilerLimitation: experiment.compilerLimitation,

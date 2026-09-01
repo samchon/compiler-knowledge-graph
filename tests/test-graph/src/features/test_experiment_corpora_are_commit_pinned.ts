@@ -17,6 +17,7 @@ export const test_experiment_corpora_are_commit_pinned = () => {
   const runner = experimentSource("run-language.mjs");
   const setup = experimentSource("setup-language.mjs");
   const clangProducer = experimentSource("clang-producer.mjs");
+  const evidenceSummary = experimentSource("evidence-summary.mjs");
 
   const repositories = [...catalog.matchAll(/repository:\s*"[^"]+"/g)];
   const commits = [...catalog.matchAll(/commit:\s*"([0-9a-f]{40})"/g)];
@@ -563,6 +564,21 @@ export const test_experiment_corpora_are_commit_pinned = () => {
     runner.includes("provenance.facts.includes(kind)") &&
       runner.includes("provenance.facts.includes(crossFileEdge)") &&
       runner.includes("tools: toolManifest(experiment.language)"),
+  );
+  TestValidator.predicate(
+    "real-provider artifacts compact complete coverage and stable unresolved reasons",
+    runner.includes("coverageSummary: summarizeCoverage(dump, provenance?.provider)") &&
+      runner.includes(
+        "unresolvedSummary: summarizeUnresolved(dump, provenance?.provider)",
+      ) &&
+      evidenceSummary.includes("GRAPH_EDGE_KINDS.map") &&
+      evidenceSummary.includes('row.state === "complete"') &&
+      evidenceSummary.includes('row.state === "partial"') &&
+      evidenceSummary.includes('row.state === "unsupported"') &&
+      evidenceSummary.includes('"identity-unstable"') &&
+      evidenceSummary.includes('"provider-gap"') &&
+      !evidenceSummary.includes("site.evidence") &&
+      !evidenceSummary.includes("site.candidates"),
   );
 
   // A digest over the root archive proves nothing while installation still

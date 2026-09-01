@@ -112,7 +112,10 @@ function dumpSummary(dump: ISamchonGraphDump): string {
   const by =
     served.length === 0 ? "no strict provider served" : served.join(" ");
   /* c8 ignore stop */
-  const lines = [`@samchon/graph: indexer=${dump.indexer} ${by}`];
+  const lines = [
+    `@samchon/graph: indexer=${dump.indexer} ${by}`,
+    `@samchon/graph: route=${routeSummary(dump)}`,
+  ];
   /* c8 ignore start -- the field is optional in the dump contract and always
    * present in practice, so the empty-fallback arm guards a shape no producer
    * in this repository emits. */
@@ -123,6 +126,40 @@ function dumpSummary(dump: ISamchonGraphDump): string {
   /* c8 ignore stop */
   return lines.join("\n");
 }
+
+/** Bounded machine-readable identity for the producer(s) that actually served. */
+function routeSummary(dump: ISamchonGraphDump): string {
+  const summary = {
+    schemaVersion: 1,
+    indexer: dump.indexer,
+    provenance: (dump.provenance ?? []).map((row) => ({
+      provider: row.provider,
+      languages: row.languages,
+      authority: row.authority,
+      producer: {
+        tool: row.producer.tool,
+        version: row.producer.version,
+        schemaVersion: row.producer.schemaVersion,
+        protocolVersion: row.producer.protocolVersion,
+      },
+    })),
+  };
+  const encoded = JSON.stringify(summary);
+  /* c8 ignore start -- ordinary and fixture provenance is far below this
+   * transport-only guard; reaching it requires a producer to publish an
+   * adversarially long but otherwise valid identity, and the safe result is
+   * intentionally a route whose evidence is marked truncated. */
+  if (Buffer.byteLength(encoded, "utf8") <= ROUTE_SUMMARY_LIMIT) return encoded;
+  return JSON.stringify({
+    schemaVersion: 1,
+    indexer: dump.indexer,
+    provenance: [],
+    truncated: true,
+  });
+  /* c8 ignore stop */
+}
+
+const ROUTE_SUMMARY_LIMIT = 16 * 1024;
 
 function helpText(): string {
   return `@samchon/graph

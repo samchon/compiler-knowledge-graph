@@ -421,6 +421,52 @@ function testIndexRouteEvidenceContract() {
     ),
     false,
   );
+  for (const [producer, toolchain] of [
+    [
+      {
+        tool: "samchon-clangd",
+        version: "clang version 22.1.8 (wrong-build)",
+      },
+      {
+        tool: "samchon-clangd",
+        version: "22.1.8",
+        source: "fixture",
+        digest: "git:22.1.8",
+      },
+    ],
+    [
+      {
+        tool: "scip-java-javac-graph",
+        version: "totally-unrelated-build",
+      },
+      {
+        tool: "scip-java",
+        version: "32eca214a413d1b8a375c481f666ff8a4ec96773",
+        source:
+          "https://github.com/samchon/scip-java@32eca214a413d1b8a375c481f666ff8a4ec96773",
+        digest: "sha256:fixture",
+      },
+    ],
+    [
+      {
+        tool: "scip-java-javac-graph",
+        version: "0.0.0-SNAPSHOT",
+      },
+      {
+        tool: "scip-java",
+        version: "32eca214a413d1b8a375c481f666ff8a4ec96773",
+        source:
+          "https://github.com/samchon/scip-java@032eca214a413d1b8a375c481f666ff8a4ec967730",
+        digest: "sha256:fixture",
+      },
+    ],
+  ]) {
+    assert.equal(
+      producerDescribedByToolchain(producer, [toolchain]),
+      false,
+      `${producer.tool} must not bind to an unrelated or partial build pin`,
+    );
+  }
 
   const primary = routeSummary(
     "java",

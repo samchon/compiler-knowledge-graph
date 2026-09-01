@@ -7,7 +7,7 @@ import {
 import fs from "node:fs";
 import path from "node:path";
 
-import { nearestRankP95 } from "../../../experiment/src/strict-lifecycle.mjs";
+import { nearestRankP95 } from "../../../experiment/src/lifecycle-performance.mjs";
 import { GraphPaths } from "../internal/GraphPaths";
 
 /** Real-language experiments always check out one reviewable corpus revision. */
@@ -15,6 +15,7 @@ export const test_experiment_corpora_are_commit_pinned = () => {
   const catalog = experimentSource("catalog.mjs");
   const helpers = experimentSource("process.mjs");
   const lifecycle = experimentSource("strict-lifecycle.mjs");
+  const lifecyclePerformance = experimentSource("lifecycle-performance.mjs");
   const runner = experimentSource("run-language.mjs");
   const setup = experimentSource("setup-language.mjs");
   const clangProducer = experimentSource("clang-producer.mjs");
@@ -86,9 +87,10 @@ export const test_experiment_corpora_are_commit_pinned = () => {
       rust.includes('"broadcast::channel(2)"') &&
       rust.includes('"broadcast::channel(3)"') &&
       lifecycle.includes('name: "native-baseline"') &&
-      lifecycle.includes('name: "performance"') &&
-      lifecycle.includes("performance no-op") &&
-      lifecycle.includes("performance edit"),
+      lifecycle.includes("measureLifecyclePerformance({") &&
+      lifecyclePerformance.includes('name: "performance"') &&
+      lifecyclePerformance.includes("performance no-op") &&
+      lifecyclePerformance.includes("performance edit"),
   );
   TestValidator.equals(
     "nearest-rank p95 keeps singleton and exact twenty-sample boundaries",

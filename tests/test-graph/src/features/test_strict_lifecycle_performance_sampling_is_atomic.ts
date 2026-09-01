@@ -189,8 +189,7 @@ export const test_strict_lifecycle_performance_sampling_is_atomic = async () => 
   TestValidator.predicate(
     "sampling rejects a replacement that cannot edit the source",
     invalidConfigurationError instanceof Error &&
-      invalidConfigurationError.message.includes(
-        "requires two real body-edit replacements",
-      ),
+      invalidConfigurationError.message ===
+        "fixture: lifecycle performance requires two real body-edit replacements",
   );
 };

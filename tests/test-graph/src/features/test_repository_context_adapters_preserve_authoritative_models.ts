@@ -8,8 +8,10 @@ import {
   pnpmRepositoryContextProvider,
   resolveCargoCommand,
 } from "@samchon/graph";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 
 import { GraphPaths } from "../internal/GraphPaths";
 import { parseGradleRepositoryContextModel } from "../../../../packages/graph/src/repository/parseGradleRepositoryContextModel";
@@ -39,6 +41,7 @@ export const test_repository_context_adapters_preserve_authoritative_models =
       const cargo = cargoFixture(root);
       const gradle = gradleFixture(root);
       const cmake = cmakeFixture(root);
+      assertTopologyPhaseTrace();
 
       const providerSources = [
         "cargoRepositoryContextProvider.ts",
@@ -1901,6 +1904,49 @@ function assertNativeCargoResolution(root: string): void {
       path.resolve(resolved.command) === path.resolve(executable) &&
       resolved.args.includes("--version") &&
       !resolved.command.toLowerCase().endsWith("cargo.cmd"),
+  );
+}
+
+function assertTopologyPhaseTrace(): void {
+  const module = pathToFileURL(
+    path.join(
+      GraphPaths.repositoryRoot,
+      "packages",
+      "graph",
+      "lib",
+      "repository",
+      "topologyPhaseTrace.js",
+    ),
+  ).href;
+  const traced = spawnSync(
+    process.execPath,
+    [
+      "--input-type=module",
+      "-e",
+      `import { topologyPhaseTrace } from ${JSON.stringify(module)}; topologyPhaseTrace("fixture", "join", performance.now() - 5, { nodes: 2 });`,
+    ],
+    {
+      encoding: "utf8",
+      env: { ...process.env, SAMCHON_GRAPH_TOPOLOGY_TRACE: "1" },
+      windowsHide: true,
+    },
+  );
+  const prefix = "@samchon/graph: topology-phase=";
+  const line = traced.stderr
+    .split(/\r?\n/)
+    .find((entry) => entry.startsWith(prefix));
+  const row = JSON.parse(line?.slice(prefix.length) ?? "null") as Record<
+    string,
+    unknown
+  > | null;
+  TestValidator.equals(
+    "topology phase traces are opt-in structured diagnostics",
+    [traced.status, row?.schemaVersion, row?.provider, row?.phase, row?.nodes],
+    [0, 1, "fixture", "join", 2],
+  );
+  TestValidator.predicate(
+    "topology phase traces report a nonnegative duration",
+    typeof row?.durationMs === "number" && row.durationMs >= 0,
   );
 }
 

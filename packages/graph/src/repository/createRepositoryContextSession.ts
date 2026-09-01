@@ -4,6 +4,7 @@ import { IRepositoryContextProvider } from "./IRepositoryContextProvider";
 import { IRepositoryContextSession } from "./IRepositoryContextSession";
 import { RepositoryContextProtocol } from "./RepositoryContextProtocol";
 import { repositoryContextFacts } from "./repositoryContextFacts";
+import { topologyPhaseTrace } from "./topologyPhaseTrace";
 
 const { repositoryContextPathDigest } = repositoryContextFacts;
 
@@ -55,6 +56,7 @@ export function createRepositoryContextSession(
         }
 
         const collected = await collect({ ...props, signal: options.signal });
+        const normalizationStarted = performance.now();
         assertOpen();
         throwIfAborted(options.signal);
         const sources = collected.shards.flatMap((shard) => shard.sources);
@@ -158,6 +160,15 @@ export function createRepositoryContextSession(
           contentDigest: RepositoryContextProtocol.contentDigest(facts),
         });
         const snapshot = store.apply(frames, options);
+        topologyPhaseTrace(
+          provider.name,
+          "normalization",
+          normalizationStarted,
+          {
+            nodes: facts.nodes.length,
+            edges: facts.edges.length,
+          },
+        );
         generation = sequence;
         currentWarnings = [...collected.warnings];
         inputState = createRepositoryContextSession.observeInputGeneration(

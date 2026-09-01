@@ -13,6 +13,7 @@ import { runTour } from "./operations/runTour";
 import { runTrace } from "./operations/runTrace";
 import { SamchonGraphMemory } from "./SamchonGraphMemory";
 import { SamchonRepositoryContextMemory } from "./repository";
+import { topologyPhaseTrace } from "./repository/topologyPhaseTrace";
 import { ISamchonGraphApplication, ISamchonGraphEscape } from "./structures";
 
 /**
@@ -138,6 +139,7 @@ export class SamchonGraphApplication implements ISamchonGraphApplication {
         }
         const topology = await this.topology();
         const confirmed = await this.load();
+        const joinStarted = performance.now();
         const compatible =
           graph.project === topology.dump.project &&
           topology.dump.provenance.length !== 0 &&
@@ -185,6 +187,12 @@ export class SamchonGraphApplication implements ISamchonGraphApplication {
               .map((node) => node.file),
           ),
         );
+        topologyPhaseTrace("repository-context", "join", joinStarted, {
+          codeFiles: graph.nodes.filter((node) => node.kind === "file").length,
+          nodes: result.nodes.length,
+          edges: result.edges.length,
+          compatible,
+        });
         return {
           audit:
             "Repository topology is returned from declared or owning-tool models; file joins are included only when the code generation stayed stable across the topology load.",

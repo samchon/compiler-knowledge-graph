@@ -8,6 +8,7 @@ import { spawnableCommand } from "../utils/spawnableCommand";
 import { IRepositoryContextProvider } from "./IRepositoryContextProvider";
 import { createRepositoryContextSession } from "./createRepositoryContextSession";
 import { repositoryContextFacts } from "./repositoryContextFacts";
+import { topologyPhaseTrace } from "./topologyPhaseTrace";
 import { workspaceDiscoveryDirectories } from "./workspaceDiscoveryDirectories";
 
 const {
@@ -422,45 +423,55 @@ function executePnpm(
   root: string,
   env: NodeJS.ProcessEnv,
 ): IPnpmPackage[] {
-  /* c8 ignore next -- each coverage host has exactly one native shim suffix. */
-  const command = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
-  const invocation = spawnableCommand(
-    command,
-    ["list", "-r", "--json", "--depth", "0"],
-    env,
-  );
-  const result = spawnSync(invocation.command, invocation.args, {
-    cwd: root,
-    env,
-    encoding: "utf8",
-    windowsHide: true,
-    windowsVerbatimArguments: invocation.windowsVerbatimArguments,
-  });
-  if (result.status !== 0) {
-    /* c8 ignore start -- direct-spawn errors and silent nonzero exits are
-     * operating-system fallbacks; stderr failures are exercised here. */
-    const failure =
-      result.stderr || result.error?.message || "unknown error";
-    /* c8 ignore stop */
-    throw new Error(
-      `pnpm repository context failed: ${failure.trim()}`,
+  const started = performance.now();
+  try {
+    /* c8 ignore next -- each coverage host has exactly one native shim suffix. */
+    const command = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
+    const invocation = spawnableCommand(
+      command,
+      ["list", "-r", "--json", "--depth", "0"],
+      env,
     );
+    const result = spawnSync(invocation.command, invocation.args, {
+      cwd: root,
+      env,
+      encoding: "utf8",
+      windowsHide: true,
+      windowsVerbatimArguments: invocation.windowsVerbatimArguments,
+    });
+    if (result.status !== 0) {
+      /* c8 ignore start -- direct-spawn errors and silent nonzero exits are
+       * operating-system fallbacks; stderr failures are exercised here. */
+      const failure =
+        result.stderr || result.error?.message || "unknown error";
+      /* c8 ignore stop */
+      throw new Error(
+        `pnpm repository context failed: ${failure.trim()}`,
+      );
+    }
+    return parsePnpmPackages(result.stdout);
+  } finally {
+    topologyPhaseTrace(PROVIDER, "model-query", started);
   }
-  return parsePnpmPackages(result.stdout);
 }
 
 function detectPnpmVersion(root: string, env: NodeJS.ProcessEnv): string {
-  /* c8 ignore next -- each coverage host has exactly one native shim suffix. */
-  const command = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
-  const invocation = spawnableCommand(command, ["--version"], env);
-  const result = spawnSync(invocation.command, invocation.args, {
-    cwd: root,
-    env,
-    encoding: "utf8",
-    windowsHide: true,
-    windowsVerbatimArguments: invocation.windowsVerbatimArguments,
-  });
-  return result.status === 0 ? result.stdout.trim() : "";
+  const started = performance.now();
+  try {
+    /* c8 ignore next -- each coverage host has exactly one native shim suffix. */
+    const command = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
+    const invocation = spawnableCommand(command, ["--version"], env);
+    const result = spawnSync(invocation.command, invocation.args, {
+      cwd: root,
+      env,
+      encoding: "utf8",
+      windowsHide: true,
+      windowsVerbatimArguments: invocation.windowsVerbatimArguments,
+    });
+    return result.status === 0 ? result.stdout.trim() : "";
+  } finally {
+    topologyPhaseTrace(PROVIDER, "tool-startup", started);
+  }
 }
 
 function dedupeEdges(

@@ -5,7 +5,10 @@ import path from "node:path";
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import { createResidentRepositoryContextSource } from "@samchon/graph";
+import {
+  SamchonRepositoryContextMemory,
+  createResidentRepositoryContextSource,
+} from "@samchon/graph";
 
 import { parseArgs, repositoryRoot } from "./process.mjs";
 
@@ -102,6 +105,19 @@ try {
   }));
   const joins = cold.result.edges.filter((edge) => edge.kind === "joins-file");
   const joinedFiles = new Set(joins.map((edge) => edge.to));
+  const normalizationJoinStarted = performance.now();
+  const localProjection = new SamchonRepositoryContextMemory(modelCold).inspect(
+    request.request,
+    {
+      state: "compatible",
+      topologyInputGeneration: modelCold.inputGeneration,
+      codeInputGeneration: "orientation-experiment",
+    },
+    joinedFiles,
+  );
+  const normalizationJoinMs = Math.round(
+    performance.now() - normalizationJoinStarted,
+  );
   const semanticFollowUpFiles = [
     "packages/graph/src/index.ts",
     "packages/graph/src/SamchonGraphApplication.ts",
@@ -131,6 +147,13 @@ try {
       warmTopologyMcpMs: noopMs,
       topologyModelColdMs,
       topologyModelNoopMs,
+      normalizationJoinMs,
+      phases: {
+        toolStartupMs: baseline.toolStartupMs,
+        modelQueryMs: baseline.modelQueryMs,
+        normalizationJoinMs,
+        mcpReadyMs,
+      },
       provenance: cold.result.provenance,
       coverage: cold.result.coverage,
       join: cold.result.join,
@@ -168,6 +191,26 @@ try {
     direct: baseline,
     correctness: {
       packageCountMatches: packages.length === baseline.packages,
+      projectSetMatches: sameStrings(
+        projects.map((node) => node.coordinate),
+        baseline.facts.projects,
+      ),
+      packageSetMatches: sameStrings(
+        packages.map((node) => node.name),
+        baseline.facts.packages,
+      ),
+      rootSetMatches: sameStrings(
+        roots.map((node) => node.root),
+        baseline.facts.roots,
+      ),
+      entrypointSetMatches: sameStrings(
+        entrypoints.map((node) => node.file),
+        baseline.facts.entrypoints,
+      ),
+      dependencySetMatches: sameStrings(
+        dependencyFacts.map((edge) => `${edge.from} -> ${edge.to}`),
+        baseline.facts.dependencies,
+      ),
       everyPackageHasEvidence: packages.every(
         (node) => node.evidence !== undefined,
       ),
@@ -193,12 +236,16 @@ try {
         JSON.stringify(noop.result) === JSON.stringify(cold.result),
       topologyModelNoopReusedGeneration: modelCold === modelNoop,
       topologyModelNoopUnder250Ms: topologyModelNoopMs < 250,
+      normalizationJoinProjectionIsCompatible:
+        localProjection.join.state === "compatible" &&
+        localProjection.edges.some((edge) => edge.kind === "joins-file"),
       semanticFollowUpReachedGraphApi: semanticFollowUpFiles.length === 2,
     },
     limitations: [
       "The direct comparison uses pnpm's resolved member list plus raw manifests; it does not claim shell or source reads are eliminated.",
       "The public MCP boundary exposes handshake, cold-call and warm-call latency; those calls include code-graph validation and wire costs, while the separate topology-model no-op is the issue's validated-input target.",
       "The cold MCP call intentionally keeps internal graph build, model query, normalization and join time aggregated because the public boundary does not expose those private phases.",
+      "The phase probes separately execute the same pnpm startup/model commands and the public in-memory topology join; they describe each phase and are not claimed to sum to the independently measured cold MCP call.",
       ...unsupported.map((family) =>
         `The pnpm provider reports ${family} as unsupported for this generation.`,
       ),
@@ -211,6 +258,7 @@ try {
       noopMs,
       topologyModelColdMs,
       topologyModelNoopMs,
+      normalizationJoinMs,
     };
     throw new Error(
       `topology orientation correctness failed: ${JSON.stringify(result.correctness)}; ` +
@@ -246,10 +294,94 @@ async function callTopology(client, request) {
 
 function directOrientation(root) {
   const started = performance.now();
-  const command = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
-  const listed = cp.spawnSync(
-    command,
-    ["list", "-r", "--json", "--depth", "0"],
+  const startupStarted = performance.now();
+  const versioned = runPnpm(root, ["--version"]);
+  const toolStartupMs = Math.round(performance.now() - startupStarted);
+  if (versioned.status !== 0) {
+    throw new Error(`direct pnpm startup failed: ${versioned.stderr}`);
+  }
+  const modelStarted = performance.now();
+  const listed = runPnpm(root, ["list", "-r", "--json", "--depth", "0"]);
+  const modelQueryMs = Math.round(performance.now() - modelStarted);
+  if (listed.status !== 0) {
+    throw new Error(`direct pnpm orientation failed: ${listed.stderr}`);
+  }
+  const packages = JSON.parse(listed.stdout);
+  if (!Array.isArray(packages)) {
+    throw new Error("direct pnpm orientation returned a non-array model");
+  }
+  const manifestStarted = performance.now();
+  const rows = packages.map((pkg) => {
+    const packageRoot = path.resolve(pkg.path);
+    const file = path.join(packageRoot, "package.json");
+    return {
+      pkg,
+      packageRoot,
+      file,
+      manifest: JSON.parse(fs.readFileSync(file, "utf8")),
+    };
+  });
+  const unique = [...new Set(rows.map((row) => row.file))];
+  const manifestReadMs = Math.round(performance.now() - manifestStarted);
+  const names = new Map(
+    rows.map((row) => [
+      row.packageRoot,
+      row.manifest.name ?? row.pkg.name ?? directFile(root, row.packageRoot),
+    ]),
+  );
+  const dependencyFacts = new Set();
+  const rootFacts = new Set();
+  const entrypointFacts = new Set();
+  for (const row of rows) {
+    const from = names.get(row.packageRoot);
+    for (const dependency of Object.values({
+      ...(row.pkg.dependencies ?? {}),
+      ...(row.pkg.devDependencies ?? {}),
+      ...(row.pkg.optionalDependencies ?? {}),
+    })) {
+      if (typeof dependency?.path !== "string") continue;
+      const to = names.get(path.resolve(dependency.path));
+      if (to !== undefined) dependencyFacts.add(`${from} -> ${to}`);
+    }
+    for (const declared of directRoots(row.packageRoot, row.manifest)) {
+      rootFacts.add(directFile(root, declared));
+    }
+    for (const target of directEntrypoints(row.manifest)) {
+      entrypointFacts.add(
+        directFile(root, path.resolve(row.packageRoot, target)),
+      );
+    }
+  }
+  const facts = {
+    projects: ["."],
+    packages: sortedUnique(names.values()),
+    roots: sortedUnique(rootFacts),
+    entrypoints: sortedUnique(entrypointFacts),
+    dependencies: sortedUnique(dependencyFacts),
+  };
+  return {
+    shellCalls: 2,
+    rgCalls: 0,
+    directoryWalks: 0,
+    rawManifestReads: unique.length,
+    tool: "pnpm",
+    toolVersion: versioned.stdout.trim(),
+    toolStartupMs,
+    modelQueryMs,
+    manifestReadMs,
+    packages: facts.packages.length,
+    roots: facts.roots.length,
+    entrypoints: facts.entrypoints.length,
+    dependencies: facts.dependencies.length,
+    facts,
+    elapsedMs: Math.round(performance.now() - started),
+  };
+}
+
+function runPnpm(root, args) {
+  return cp.spawnSync(
+    process.platform === "win32" ? "pnpm.cmd" : "pnpm",
+    args,
     {
       cwd: root,
       encoding: "utf8",
@@ -257,24 +389,76 @@ function directOrientation(root) {
       shell: process.platform === "win32",
     },
   );
-  if (listed.status !== 0) {
-    throw new Error(`direct pnpm orientation failed: ${listed.stderr}`);
+}
+
+function directRoots(packageRoot, manifest) {
+  const roots = [];
+  for (const value of Array.isArray(manifest.files) ? manifest.files : []) {
+    if (!directSimplePath(value)) continue;
+    const absolute = path.resolve(packageRoot, value);
+    const stat = fs.statSync(absolute, { throwIfNoEntry: false });
+    if (
+      stat?.isDirectory() === true ||
+      (stat === undefined && /^(?:lib|dist|build|out)(?:[\\/]|$)/.test(value))
+    ) {
+      roots.push(absolute);
+    }
   }
-  const packages = JSON.parse(listed.stdout);
-  const manifests = [
-    path.join(root, "package.json"),
-    ...packages.map((pkg) => path.join(path.resolve(pkg.path), "package.json")),
-  ];
-  const unique = [...new Set(manifests.map((file) => path.resolve(file)))];
-  for (const file of unique) JSON.parse(fs.readFileSync(file, "utf8"));
-  return {
-    shellCalls: 1,
-    rgCalls: 0,
-    directoryWalks: 0,
-    rawManifestReads: unique.length,
-    packages: packages.length,
-    elapsedMs: Math.round(performance.now() - started),
-  };
+  return roots;
+}
+
+function directSimplePath(value) {
+  return (
+    typeof value === "string" &&
+    value.trim() !== "" &&
+    !value.includes("*") &&
+    !value.startsWith("!") &&
+    !path.isAbsolute(value) &&
+    path.win32.parse(value).root === "" &&
+    !value.replaceAll("\\", "/").split("/").includes("..")
+  );
+}
+
+function directEntrypoints(manifest) {
+  const values = [];
+  for (const value of [
+    manifest.main,
+    manifest.module,
+    manifest.types ?? manifest.typings,
+  ]) {
+    if (typeof value === "string") values.push(value);
+  }
+  if (typeof manifest.bin === "string") values.push(manifest.bin);
+  else if (manifest.bin !== null && typeof manifest.bin === "object") {
+    for (const value of Object.values(manifest.bin)) {
+      if (typeof value === "string") values.push(value);
+    }
+  }
+  collectDirectExportTargets(manifest.exports, values);
+  return values;
+}
+
+function collectDirectExportTargets(value, output) {
+  if (typeof value === "string") output.push(value);
+  else if (value !== null && typeof value === "object") {
+    for (const child of Object.values(value)) {
+      collectDirectExportTargets(child, output);
+    }
+  }
+}
+
+function directFile(root, file) {
+  return path.relative(root, file).replaceAll("\\", "/") || ".";
+}
+
+function sortedUnique(values) {
+  return [...new Set(values)].sort(compareText);
+}
+
+function sameStrings(left, right) {
+  return (
+    JSON.stringify(sortedUnique(left)) === JSON.stringify(sortedUnique(right))
+  );
 }
 
 function compareText(left, right) {

@@ -162,23 +162,35 @@ export const test_strict_lifecycle_performance_sampling_is_atomic = async () => 
     thresholdError instanceof Error &&
       thresholdError.message.includes("lifecycle performance missed its target"),
   );
-  await TestValidator.error(
+  let invalidConfigurationError: unknown;
+  try {
+    await measureLifecyclePerformance({
+      language: "fixture",
+      sourceText: original,
+      editFind: "absent()",
+      editReplacements: ["channel(2)", "channel(3)"],
+      noopSamples: 1,
+      editSamples: 1,
+      noopP95MaxMs: 250,
+      editP95MaxMs: 2_000,
+      changedModes: ["incremental"],
+      currentDump: { generation: "invalid-config" },
+      currentIdentity: "invalid-config",
+      writeSource: () => {
+        throw new Error("invalid configuration reached writeSource");
+      },
+      load: async () => {
+        throw new Error("invalid configuration reached load");
+      },
+    });
+  } catch (error) {
+    invalidConfigurationError = error;
+  }
+  TestValidator.predicate(
     "sampling rejects a replacement that cannot edit the source",
-    () =>
-      measureLifecyclePerformance({
-        language: "fixture",
-        sourceText: original,
-        editFind: "absent()",
-        editReplacements: ["channel(2)", "channel(3)"],
-        noopSamples: 1,
-        editSamples: 1,
-        noopP95MaxMs: 250,
-        editP95MaxMs: 2_000,
-        changedModes: ["incremental"],
-        currentDump: current,
-        currentIdentity: identity,
-        writeSource: () => undefined,
-        load,
-      }),
+    invalidConfigurationError instanceof Error &&
+      invalidConfigurationError.message.includes(
+        "requires two real body-edit replacements",
+      ),
   );
 };

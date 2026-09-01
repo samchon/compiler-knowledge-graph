@@ -820,6 +820,11 @@ function assertIncomingReportScope(incoming) {
         `incoming index-time result cell ${cell.project}/${cell.tool} does not match its strict-provider intent`,
       );
     }
+    if (cell.language !== PROJECTS[cell.project]?.language) {
+      throw new TypeError(
+        `incoming index-time result cell ${cell.project}/${cell.tool} does not match its project's language`,
+      );
+    }
     if (
       expectedStrict !== undefined &&
       cell.route?.schemaVersion !== 1

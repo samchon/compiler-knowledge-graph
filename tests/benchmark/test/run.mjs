@@ -37,6 +37,7 @@ import { assertPublicationCandidates } from "../graph/publication-gate.mjs";
 import {
   agentPublicationDocument,
   assertIndexReport,
+  producerDescribedByToolchain,
 } from "../graph/publication-document.mjs";
 import { removeTree } from "../graph/remove-tree.mjs";
 import {
@@ -360,6 +361,66 @@ function testIndexRouteEvidenceContract() {
     () => expectedPrimaryProvider("unknown"),
     /expected one primary provider/,
   );
+  for (const [producer, toolchain] of [
+    [
+      {
+        tool: "samchon-rust-analyzer",
+        version: "0.0.0 (2850ecba80311bebd4cdaa9fedc5321533b5b1e7)",
+      },
+      {
+        tool: "samchon-rust-analyzer",
+        version: "2850ecba80311bebd4cdaa9fedc5321533b5b1e7",
+        source: "fixture",
+        digest: "git:2850ecba80311bebd4cdaa9fedc5321533b5b1e7",
+      },
+    ],
+    [
+      {
+        tool: "scip-java-javac-graph",
+        version: "0.0.0-SNAPSHOT",
+      },
+      {
+        tool: "scip-java",
+        version: "32eca214a413d1b8a375c481f666ff8a4ec96773",
+        source:
+          "https://github.com/samchon/scip-java@32eca214a413d1b8a375c481f666ff8a4ec96773",
+        digest: "sha256:fixture",
+      },
+    ],
+    [
+      {
+        tool: "samchon-clangd",
+        version:
+          "clang version 22.1.8 (e33d8f51552a523b5696691738f1ef95f8e3a730)",
+      },
+      {
+        tool: "samchon-clangd",
+        version: "e33d8f51552a523b5696691738f1ef95f8e3a730",
+        source: "fixture",
+        digest: "git:e33d8f51552a523b5696691738f1ef95f8e3a730",
+      },
+    ],
+  ]) {
+    assert.equal(
+      producerDescribedByToolchain(producer, [toolchain]),
+      true,
+      `${producer.tool} self-identification must bind to its provisioned build pin`,
+    );
+  }
+  assert.equal(
+    producerDescribedByToolchain(
+      { tool: "jdtls", version: "1.0.0" },
+      [
+        {
+          tool: "jdtls",
+          version: "unpinned",
+          source: "latest",
+          digest: "unpinned",
+        },
+      ],
+    ),
+    false,
+  );
 
   const primary = routeSummary(
     "java",
@@ -494,6 +555,13 @@ function testIndexRouteEvidenceContract() {
         candidate.cells[0].toolchain.tools[0].version = "other";
       },
       /absent from the claimed toolchain/,
+    ],
+    [
+      "impossible truncated result",
+      (candidate) => {
+        candidate.cells[0].route.outcome.truncated = true;
+      },
+      /truncated can describe only unknown empty provenance/,
     ],
   ]) {
     const candidate = structuredClone(valid);
@@ -963,6 +1031,17 @@ function testIndexPublicationRefusesMalformedJson() {
             fixtureCommit: "0".repeat(40),
           },
         ],
+      },
+    ],
+    [
+      "cell language mismatch",
+      {
+        ...validReportDocument,
+        cells: validReportDocument.cells.map((cell) => ({
+          ...cell,
+          language: "c",
+          route: indexRoute("c", "samchon-graph", undefined),
+        })),
       },
     ],
     [

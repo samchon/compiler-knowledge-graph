@@ -329,20 +329,27 @@ function assertIndexRoute(cell, label) {
         );
       }
     }
-    if (cell.toolchain?.status === "recorded") {
-      const described = cell.toolchain.tools.some(
-        (tool) =>
-          tool.tool === provenance.producer.tool &&
-          tool.version === provenance.producer.version,
-      );
-      if (!described) {
+    if (
+      cell.toolchain?.status === "recorded" &&
+      !producerDescribedByToolchain(
+        provenance.producer,
+        cell.toolchain.tools,
+      )
+    ) {
         throw new TypeError(
           `${provenanceLabel}.producer is absent from the claimed toolchain`,
         );
-      }
     }
   }
   const primaryServed = providers.has(expected);
+  if (
+    outcome.truncated === true &&
+    (outcome.verdict !== "unknown" || outcome.provenance.length !== 0)
+  ) {
+    throw new TypeError(
+      `${outcomeLabel}.truncated can describe only unknown empty provenance`,
+    );
+  }
   if (
     outcome.verdict === "served" &&
     (!strict ||
@@ -372,6 +379,29 @@ function assertIndexRoute(cell, label) {
     throw new TypeError(`${outcomeLabel} claims evidence despite being unknown`);
   }
 }
+
+/** Bind producer self-identification to the provisioned launcher/build pin. */
+export function producerDescribedByToolchain(producer, tools) {
+  const aliases = [
+    producer.tool,
+    ...(PRODUCER_TOOLCHAIN_ALIASES[producer.tool] ?? []),
+  ];
+  return tools.some((tool) => {
+    if (!aliases.includes(tool.tool) || tool.version === "unpinned") {
+      return false;
+    }
+    if (tool.version === producer.version) return true;
+    if (producer.version.includes(tool.version)) return true;
+    return (
+      tool.tool !== producer.tool &&
+      (tool.source.includes(tool.version) || tool.digest.includes(tool.version))
+    );
+  });
+}
+
+const PRODUCER_TOOLCHAIN_ALIASES = {
+  "scip-java-javac-graph": ["scip-java"],
+};
 
 function assertToolchainEvidence(value, label) {
   assertRecord(value, label);

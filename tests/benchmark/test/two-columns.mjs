@@ -419,11 +419,18 @@ export function assertStrictComparisonArithmetic() {
     new RegExp(`${redisFallbackProject}[^\\n]*x$`, "m"),
     "Redis's fallback result must never receive a strict-provider ratio",
   );
-  assert.match(
-    out,
-    /::warning title=index-time (?:gson|redis) primary route::expected (?:javac-graph|clangd-snapshot); observed fallback/,
-    "a publishable fallback must still emit an explicit workflow warning",
-  );
+  for (const [project, provider] of [
+    ["gson", "javac-graph"],
+    ["redis", "clangd-snapshot"],
+  ]) {
+    assert.match(
+      out,
+      new RegExp(
+        `::warning title=index-time ${project} primary route::expected ${provider}; observed fallback`,
+      ),
+      `${project}'s publishable fallback must emit its own workflow warning`,
+    );
+  }
 
   const jsonRan = cp.spawnSync(
     process.execPath,

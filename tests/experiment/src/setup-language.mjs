@@ -7,6 +7,10 @@ import path from "node:path";
 
 import { findExperiment } from "./catalog.mjs";
 import {
+  CLANG_PRODUCER_BUILD_PACKAGES,
+  installClangGraphProducer,
+} from "./clang-producer.mjs";
+import {
   appendGithubPath,
   ensureDir,
   parseArgs,
@@ -440,249 +444,6 @@ const installScipClang = () =>
       "06fd18c576f979a726c651594644ec4a35db4f471f2160b3f72eb89fa6001784",
   });
 
-/**
- * Accept an already-installed pinned producer, or report that there is none.
- *
- * Deliberately total: any missing file, any unreadable resource tree, any
- * version string that does not name the pinned commit, and any error at all
- * means "build it". Reuse is an optimisation, so it may only ever be taken
- * when the evidence for it is complete.
- */
-const installedClangGraphProducer = () => {
-  try {
-    const installed = path.join(binRoot, "samchon-clangd");
-    const alias = path.join(binRoot, "clangd");
-    if (
-      !fs.statSync(installed, { throwIfNoEntry: false })?.isFile() ||
-      !fs.statSync(alias, { throwIfNoEntry: false })?.isFile()
-    ) {
-      return false;
-    }
-    const resources = path.join(toolsRoot, "lib", "clang");
-    const versions = fs
-      .readdirSync(resources, { withFileTypes: true })
-      .filter(
-        (entry) =>
-          entry.isDirectory() &&
-          fs
-            .statSync(path.join(resources, entry.name, "include", "stddef.h"), {
-              throwIfNoEntry: false,
-            })
-            ?.isFile(),
-      );
-    if (versions.length !== 1) return false;
-    for (const binary of [installed, alias]) {
-      const reported = run(binary, ["--version"], { stdio: "pipe" });
-      if (!String(reported.stdout).includes(experiment.producerCommit)) {
-        return false;
-      }
-    }
-  } catch {
-    return false;
-  }
-  record({
-    tool: "samchon-clangd",
-    version: experiment.producerCommit,
-    source: `${experiment.producerRepository}@${experiment.producerCommit}`,
-    digest: `git:${experiment.producerCommit}`,
-  });
-  record({
-    tool: "clangd",
-    version: experiment.producerCommit,
-    source: "alias of samchon-clangd",
-    digest: `git:${experiment.producerCommit}`,
-  });
-  return true;
-};
-
-const installClangGraphProducer = () => {
-  if (
-    typeof experiment.producerRepository !== "string" ||
-    typeof experiment.producerCommit !== "string"
-  ) {
-    throw new Error(
-      `${experiment.language}: native Clang setup requires an exact producer repository and commit`,
-    );
-  }
-  // The producer is a pinned commit, so its binary is a pure function of that
-  // commit and this toolchain. Rebuilding it on every push was the actual
-  // waste: roughly two CPU-hours per workflow to reproduce bytes that cannot
-  // have changed. A restored install is therefore reused rather than rebuilt —
-  // but only after it says, itself, that it is the pinned producer. A cache is
-  // untrusted input, and the same `--version` check the fresh build has to
-  // pass is what admits a restored one, so a stale or foreign artifact fails
-  // closed here instead of quietly indexing a corpus with the wrong compiler.
-  if (installedClangGraphProducer()) return;
-  const source = path.join(toolsRoot, "samchon-clangd-source");
-  const build = path.join(source, "build");
-  fs.rmSync(source, { force: true, recursive: true });
-  ensureDir(source);
-  run("git", ["init", "--quiet"], { cwd: source });
-  run("git", ["remote", "add", "origin", experiment.producerRepository], {
-    cwd: source,
-  });
-  run(
-    "git",
-    ["fetch", "--depth=1", "origin", experiment.producerCommit],
-    { cwd: source },
-  );
-  run("git", ["checkout", "--detach", "FETCH_HEAD"], { cwd: source });
-  const revision = String(
-    run("git", ["rev-parse", "HEAD"], {
-      cwd: source,
-      stdio: "pipe",
-    }).stdout,
-  ).trim();
-  if (revision !== experiment.producerCommit) {
-    throw new Error(
-      `${experiment.language}: checked out native Clang ${revision}, expected ${experiment.producerCommit}`,
-    );
-  }
-  run("cmake", [
-    "-S",
-    path.join(source, "llvm"),
-    "-B",
-    build,
-    "-G",
-    "Ninja",
-    "-DCMAKE_BUILD_TYPE=Release",
-    "-DCMAKE_C_COMPILER=clang",
-    "-DCMAKE_CXX_COMPILER=clang++",
-    "-DLLVM_ENABLE_PROJECTS=clang;clang-tools-extra",
-    "-DLLVM_TARGETS_TO_BUILD=Native",
-    "-DLLVM_ENABLE_ASSERTIONS=ON",
-    "-DLLVM_INCLUDE_TESTS=OFF",
-    "-DCLANG_INCLUDE_TESTS=OFF",
-    "-DLLVM_INCLUDE_BENCHMARKS=OFF",
-    "-DLLVM_INCLUDE_EXAMPLES=OFF",
-    `-DLLVM_FORCE_VC_REVISION=${experiment.producerCommit}`,
-    `-DLLVM_FORCE_VC_REPOSITORY=${experiment.producerRepository}`,
-  ]);
-  // Build with the machine, not with a number. Note what that is and is not
-  // claiming, because two earlier versions of this comment claimed more.
-  //
-  // Every recorded build of this producer, all at the advertised job count
-  // except the first: 2,431 of 3,125 steps in 85 minutes and killed unfinished
-  // at a fixed `2`; 2,431 steps in 81.2 minutes; a complete build in 56.1; a
-  // complete build in 107. The last two are the same commit and the same job
-  // count, in one workflow, on two runners. Hosted-runner performance varies
-  // by roughly a factor of two, which swamps the difference this line makes
-  // and leaves no clean two-against-four comparison in the data at all.
-  //
-  // So the reason for sizing by the machine is the principle, not a measured
-  // speedup: a constant that leaves half a runner idle is wrong wherever it
-  // runs, and the effect size here is unmeasured. An earlier comment reported
-  // "roughly half" and another "barely five percent"; both read a difference
-  // out of numbers that could not support one.
-  //
-  // Also bounded by installed memory, which is a machine-class bound and not
-  // an out-of-memory guard — worth being exact about, because the two are easy
-  // to confuse and only the first is what this computes. It reads total rather
-  // than free memory, so it says "this machine should not run more than N
-  // concurrent compiles", not "this machine has room right now". It bounds
-  // compile concurrency only; the `clangd` link is a single build edge that
-  // runs whatever this number is, and LLVM's own controls for that
-  // (`LLVM_PARALLEL_LINK_JOBS` and friends) are deliberately not set here
-  // because the runs that reached the link reached it without trouble, so
-  // there is nothing yet to size them against. Two GiB per compile
-  // job is this repository's figure, chosen as a conventional one; it is not
-  // quoted from LLVM.
-  //
-  // Logged because it is otherwise invisible. Ninja does not print its job
-  // count and `run` does not echo argv, so a machine whose memory quietly
-  // halves the count would look exactly like a slow build, which is the
-  // confusion that cost this lane two CI runs already.
-  const jobs = Math.max(
-    1,
-    Math.min(
-      os.availableParallelism(),
-      Math.floor(os.totalmem() / (2 * 1024 * 1024 * 1024)),
-    ),
-  );
-  console.log(
-    `${experiment.language}: building the pinned Clang producer with ${String(jobs)} jobs ` +
-      `(cores ${String(os.availableParallelism())}, ` +
-      `memory ${String(Math.round(os.totalmem() / (1024 * 1024 * 1024)))} GiB)`,
-  );
-  run("cmake", [
-    "--build",
-    build,
-    "--parallel",
-    String(jobs),
-    "--target",
-    "clangd",
-  ]);
-  const binary = path.join(build, "bin", "clangd");
-  const version = String(
-    run(binary, ["--version"], { stdio: "pipe" }).stdout,
-  );
-  if (!version.includes(experiment.producerCommit)) {
-    throw new Error(
-      `${experiment.language}: native Clang version omits ${experiment.producerCommit}:\n${version}`,
-    );
-  }
-  const builtResources = path.join(build, "lib", "clang");
-  const resourceVersions = fs
-    .readdirSync(builtResources, { withFileTypes: true })
-    .filter(
-      (entry) =>
-        entry.isDirectory() &&
-        fs.statSync(
-          path.join(builtResources, entry.name, "include"),
-          { throwIfNoEntry: false },
-        )?.isDirectory(),
-    )
-    .map((entry) => entry.name);
-  if (resourceVersions.length !== 1) {
-    throw new Error(
-      `${experiment.language}: native Clang produced ${resourceVersions.length} resource-header trees`,
-    );
-  }
-  const installedResources = path.join(toolsRoot, "lib", "clang");
-  fs.rmSync(installedResources, { force: true, recursive: true });
-  ensureDir(path.dirname(installedResources));
-  fs.cpSync(builtResources, installedResources, { recursive: true });
-  const installedStddef = path.join(
-    installedResources,
-    resourceVersions[0],
-    "include",
-    "stddef.h",
-  );
-  if (!fs.statSync(installedStddef, { throwIfNoEntry: false })?.isFile()) {
-    throw new Error(
-      `${experiment.language}: native Clang resource headers were not installed at ${installedStddef}`,
-    );
-  }
-  for (const command of ["samchon-clangd", "clangd"]) {
-    const link = path.join(binRoot, command);
-    fs.rmSync(link, { force: true });
-    fs.linkSync(binary, link);
-  }
-  const installedVersion = String(
-    run(path.join(binRoot, "samchon-clangd"), ["--version"], {
-      stdio: "pipe",
-    }).stdout,
-  );
-  if (!installedVersion.includes(experiment.producerCommit)) {
-    throw new Error(
-      `${experiment.language}: installed native Clang omits ${experiment.producerCommit}:\n${installedVersion}`,
-    );
-  }
-  record({
-    tool: "samchon-clangd",
-    version: experiment.producerCommit,
-    source: `${experiment.producerRepository}@${experiment.producerCommit}`,
-    digest: `git:${experiment.producerCommit}`,
-  });
-  record({
-    tool: "clangd",
-    version: experiment.producerCommit,
-    source: "alias of samchon-clangd",
-    digest: `git:${experiment.producerCommit}`,
-  });
-  fs.rmSync(source, { force: true, recursive: true });
-};
-
 // The published tarball is a webpack bundle whose only runtime `require`s are
 // Node built-ins, so extracting the integrity-verified archive installs exactly
 // the bytes the digest covers. `npm install` would instead resolve the package's
@@ -938,8 +699,21 @@ switch (experiment.language) {
     // pinned corpora are CMake and emit one themselves, so nothing here uses it
     // today; it stays because the database is what makes this route selectable
     // at all, and a Makefile corpus would otherwise be unable to produce one.
-    apt(["clang", "cmake", "ninja-build", "bear"]);
-    installClangGraphProducer();
+    const allowClangProducerBuild =
+      process.env.SAMCHON_GRAPH_CLANG_PRODUCER_ALLOW_BUILD !== "0";
+    apt([
+      ...(allowClangProducerBuild ? CLANG_PRODUCER_BUILD_PACKAGES : []),
+      "bear",
+    ]);
+    installClangGraphProducer({
+      language: experiment.language,
+      toolsRoot,
+      binRoot,
+      producerRepository: experiment.producerRepository,
+      producerCommit: experiment.producerCommit,
+      record,
+      allowBuild: allowClangProducerBuild,
+    });
     record({
       tool: "bear",
       version: "unpinned",

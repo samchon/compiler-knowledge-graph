@@ -1,3 +1,8 @@
+import {
+  CLANG_PRODUCER_COMMIT,
+  CLANG_PRODUCER_REPOSITORY,
+} from "./clang-producer.mjs";
+
 // `minEdges` gates the relationship edges an experiment must produce. It is set
 // to 1 for languages whose reference edges are empirically confirmed against a
 // real server (see the LSP experiment CI matrix) so a regression back to the
@@ -144,8 +149,8 @@ export const LANGUAGE_EXPERIMENTS = [
     strictProvider: "clangd-snapshot",
     strictAuthority: "compiler",
     strictTool: "samchon-clangd",
-    producerRepository: "https://github.com/samchon/llvm-project.git",
-    producerCommit: "e33d8f51552a523b5696691738f1ef95f8e3a730",
+    producerRepository: CLANG_PRODUCER_REPOSITORY,
+    producerCommit: CLANG_PRODUCER_COMMIT,
     // A whole-compilation-database producer is not ready when it starts; it
     // is ready when clangd has background-indexed every translation unit the
     // database registers. The 180-second default expired on libuv with 62 of
@@ -241,8 +246,8 @@ export const LANGUAGE_EXPERIMENTS = [
     strictProvider: "clangd-snapshot",
     strictAuthority: "compiler",
     strictTool: "samchon-clangd",
-    producerRepository: "https://github.com/samchon/llvm-project.git",
-    producerCommit: "e33d8f51552a523b5696691738f1ef95f8e3a730",
+    producerRepository: CLANG_PRODUCER_REPOSITORY,
+    producerCommit: CLANG_PRODUCER_COMMIT,
     // A whole-compilation-database producer is not ready when it starts; it
     // is ready when clangd has background-indexed every translation unit the
     // database registers. The 180-second default expired on libuv with 62 of

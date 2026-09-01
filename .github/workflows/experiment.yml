@@ -69,26 +69,58 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
 
-  experiment:
+  clang_producer:
     needs: latest_update
     if: ${{ needs.latest_update.outputs.run == 'true' }}
+    name: pinned Clang producer
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - name: Skip when no C-family lane was requested
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.language != 'all' && inputs.language != 'c' && inputs.language != 'cpp' }}
+        run: echo "The requested language does not consume the Clang producer."
+
+      - name: Checkout
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.language == 'all' || inputs.language == 'c' || inputs.language == 'cpp' }}
+        uses: actions/checkout@v7
+
+      - name: Setup Node
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.language == 'all' || inputs.language == 'c' || inputs.language == 'cpp' }}
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22.x
+
+      - name: Restore the pinned Clang producer
+        id: clang_producer
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.language == 'all' || inputs.language == 'c' || inputs.language == 'cpp' }}
+        uses: actions/cache/restore@v6
+        with:
+          path: tests/experiment/.work/tools
+          key: clang-producer-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('packages/graph/src/provider/cpp/CPP_CLANG_PRODUCER_COMMIT.ts', 'tests/experiment/src/clang-producer.mjs') }}
+
+      - name: Provision the pinned Clang producer
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.language == 'all' || inputs.language == 'c' || inputs.language == 'cpp' }}
+        run: node tests/experiment/src/clang-producer.mjs
+
+      # This job owns the build and saves it before either corpus consumer can
+      # start. A later C or C++ experiment failure cannot discard a successful
+      # compiler build, and the two consumers cannot race on one cold key.
+      - name: Save the pinned Clang producer
+        if: ${{ steps.clang_producer.outputs.cache-hit != 'true' && (github.event_name != 'workflow_dispatch' || inputs.language == 'all' || inputs.language == 'c' || inputs.language == 'cpp') }}
+        uses: actions/cache/save@v6
+        with:
+          path: tests/experiment/.work/tools
+          key: ${{ steps.clang_producer.outputs.cache-primary-key }}
+
+  experiment:
+    needs: [latest_update, clang_producer]
+    if: ${{ always() && needs.latest_update.outputs.run == 'true' }}
     name: ${{ matrix.language }} LSP
     runs-on: ubuntu-latest
-    # Fourteen rows install a released producer and finish in minutes; the
-    # ninety-minute bound is theirs and stays exactly where it is. C and C++
-    # build a compiler from source, and that is a property of the row rather
-    # than a defect inside it. Measured: three minutes of checkout, install and
-    # package build, then 56 minutes to a linked `clangd` on one runner and 107
-    # on another in the same workflow, then the real-corpus lifecycle run.
-    # Ninety did not fit. 150 covers the fast runner comfortably and the slow
-    # one barely, and it is still a bound, so a lane that hangs is caught. Only
-    # the two rows that build a compiler get it.
-    #
-    # The restore below is what should keep an ordinary push away from that
-    # cost, and it is an expectation rather than a property: Actions caches are
-    # branch-scoped and evicted, so a first push on a fresh branch still pays
-    # the whole build, on whichever runner it draws.
-    timeout-minutes: ${{ (matrix.language == 'c' || matrix.language == 'cpp') && 150 || 90 }}
+    # Compiler construction has its own 150-minute predecessor above. Every
+    # matrix row now spends this budget on setup and the real-corpus lifecycle
+    # only; C and C++ cannot consume it rebuilding LLVM on a cold cache miss.
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
@@ -152,50 +184,23 @@ jobs:
         if: ${{ github.event_name != 'workflow_dispatch' || inputs.language == 'all' || inputs.language == matrix.language }}
         run: pnpm build
 
-      # C and C++ are the only rows whose producer is built rather than
-      # downloaded, and it is a pinned commit: the same bytes, reproduced from
-      # scratch, on every push. Restoring them instead is not a shortcut around
-      # the build but a removal of work that had no reason to happen twice.
-      #
-      # The key hashes every file the built bytes depend on. `catalog.mjs` is
-      # the one `setup` actually reads its commit from, so it has to be here —
-      # keying on the adapter's constant alone would leave the two bound only
-      # by a text assertion in a different workflow, and a divergence would hit
-      # the key, fail the `--version` check, rebuild, and then not re-save,
-      # because an exact hit has nothing to write. That is silent, permanent,
-      # full-cost rebuilding, so the binding is made structural instead.
-      #
-      # Restore and save are split so the save runs even when a later step
-      # fails. A campaign iterating on these lanes is exactly the case where
-      # the producer builds and the experiment does not, and `cache`'s combined
-      # form would discard an hour or more of correct build because a corpus
-      # assertion afterwards went red.
+      # The producer job has already built and saved this exact generation.
+      # Consumers may verify and use it, but an exact miss fails here instead
+      # of silently making either matrix row a second build owner.
       - name: Restore the pinned Clang producer
-        id: clang_producer
         if: ${{ (matrix.language == 'c' || matrix.language == 'cpp') && (github.event_name != 'workflow_dispatch' || inputs.language == 'all' || inputs.language == matrix.language) }}
         uses: actions/cache/restore@v6
         with:
           path: tests/experiment/.work/tools
-          key: clang-producer-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('packages/graph/src/provider/cpp/CPP_CLANG_PRODUCER_COMMIT.ts', 'tests/experiment/src/catalog.mjs', 'tests/experiment/src/setup-language.mjs') }}
+          key: clang-producer-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('packages/graph/src/provider/cpp/CPP_CLANG_PRODUCER_COMMIT.ts', 'tests/experiment/src/clang-producer.mjs') }}
+          fail-on-cache-miss: true
 
       - name: Install language server
         if: ${{ github.event_name != 'workflow_dispatch' || inputs.language == 'all' || inputs.language == matrix.language }}
         run: pnpm --filter @samchon/graph-experiment run setup -- --language ${{ matrix.language }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      # Saved before the experiment runs, not after it, and only on a miss.
-      # The producer is proved by this point — `setup` refuses to finish unless
-      # the installed binary reports the pinned commit — and what follows is a
-      # corpus run whose failure says nothing about the compiler that was
-      # built. Waiting until the end would tie a correct build's survival to an
-      # unrelated assertion.
-      - name: Save the pinned Clang producer
-        if: ${{ (matrix.language == 'c' || matrix.language == 'cpp') && steps.clang_producer.outputs.cache-hit != 'true' && (github.event_name != 'workflow_dispatch' || inputs.language == 'all' || inputs.language == matrix.language) }}
-        uses: actions/cache/save@v6
-        with:
-          path: tests/experiment/.work/tools
-          key: ${{ steps.clang_producer.outputs.cache-primary-key }}
+          SAMCHON_GRAPH_CLANG_PRODUCER_ALLOW_BUILD: "0"
 
       # Node sizes its old space from a heuristic, not from the runner, and on
       # these 16 GiB hosts it settles near 4 GiB, which a real C project's

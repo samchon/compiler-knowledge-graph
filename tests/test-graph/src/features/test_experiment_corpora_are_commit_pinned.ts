@@ -16,6 +16,7 @@ export const test_experiment_corpora_are_commit_pinned = () => {
   const lifecycle = experimentSource("strict-lifecycle.mjs");
   const runner = experimentSource("run-language.mjs");
   const setup = experimentSource("setup-language.mjs");
+  const clangProducer = experimentSource("clang-producer.mjs");
 
   const repositories = [...catalog.matchAll(/repository:\s*"[^"]+"/g)];
   const commits = [...catalog.matchAll(/commit:\s*"([0-9a-f]{40})"/g)];
@@ -202,10 +203,8 @@ export const test_experiment_corpora_are_commit_pinned = () => {
     [cpp, c].every(
       (row) =>
         row.includes('strictProvider: "clangd-snapshot"') &&
-        row.includes(
-          'producerRepository: "https://github.com/samchon/llvm-project.git"',
-        ) &&
-        row.includes(`producerCommit: "${CPP_CLANG_PRODUCER_COMMIT}"`) &&
+        row.includes("producerRepository: CLANG_PRODUCER_REPOSITORY") &&
+        row.includes("producerCommit: CLANG_PRODUCER_COMMIT") &&
         row.includes('crossFileEdge: "references"') &&
         row.includes('"contains"') &&
         row.includes('"references"') &&
@@ -215,29 +214,40 @@ export const test_experiment_corpora_are_commit_pinned = () => {
     ) &&
       !c.includes('"instantiates"') &&
       !c.includes('"extends"') &&
-      !c.includes('"overrides"'),
+      !c.includes('"overrides"') &&
+      clangProducer.includes(
+        '"https://github.com/samchon/llvm-project.git"',
+      ) &&
+      clangProducer.includes(`"${CPP_CLANG_PRODUCER_COMMIT}"`) &&
+      clangProducer.includes("assertClangProducerAdapterPin()") &&
+      setup.includes("installClangGraphProducer({"),
   );
   TestValidator.predicate(
     "C and C++ build and record the exact campaign-owned native producer",
-    cppSetup.includes('apt(["clang", "cmake", "ninja-build", "bear"])') &&
-      cppSetup.includes("installClangGraphProducer()") &&
-      setup.includes(
-        '["fetch", "--depth=1", "origin", experiment.producerCommit]',
+    cppSetup.includes("CLANG_PRODUCER_BUILD_PACKAGES") &&
+      cppSetup.includes("installClangGraphProducer({") &&
+      clangProducer.includes(
+        '["fetch", "--depth=1", "origin", CLANG_PRODUCER_COMMIT]',
       ) &&
-      setup.includes('["checkout", "--detach", "FETCH_HEAD"]') &&
-      setup.includes('["rev-parse", "HEAD"]') &&
-      setup.includes('"-DLLVM_ENABLE_PROJECTS=clang;clang-tools-extra"') &&
-      setup.includes('"--target",') &&
-      setup.includes('"clangd",') &&
-      setup.includes('for (const command of ["samchon-clangd", "clangd"])') &&
-      setup.includes("fs.linkSync(binary, link)") &&
-      setup.includes('path.join(build, "lib", "clang")') &&
-      setup.includes("fs.cpSync(builtResources, installedResources") &&
-      setup.includes('"include",') &&
-      setup.includes('"stddef.h",') &&
-      setup.includes("version.includes(experiment.producerCommit)") &&
-      setup.includes("installedVersion.includes(experiment.producerCommit)") &&
-      setup.includes('tool: "samchon-clangd"') &&
+      clangProducer.includes('["checkout", "--detach", "FETCH_HEAD"]') &&
+      clangProducer.includes('["rev-parse", "HEAD"]') &&
+      clangProducer.includes(
+        '"-DLLVM_ENABLE_PROJECTS=clang;clang-tools-extra"',
+      ) &&
+      clangProducer.includes('"--target",') &&
+      clangProducer.includes('"clangd",') &&
+      clangProducer.includes(
+        'for (const command of ["samchon-clangd", "clangd"])',
+      ) &&
+      clangProducer.includes("fs.linkSync(binary, link)") &&
+      clangProducer.includes('path.join(build, "lib", "clang")') &&
+      clangProducer.includes(
+        "fs.cpSync(builtResources, installedResources",
+      ) &&
+      clangProducer.includes('"include",') &&
+      clangProducer.includes('"stddef.h",') &&
+      clangProducer.includes("version.includes(CLANG_PRODUCER_COMMIT)") &&
+      clangProducer.includes('tool: "samchon-clangd"') &&
       !cppSetup.includes('apt(["clangd"'),
   );
   // A fixed parallelism here already cost CI lanes, and the size of this build
@@ -260,7 +270,11 @@ export const test_experiment_corpora_are_commit_pinned = () => {
   // actually happened here and the nearest spellings of them; it cannot
   // enumerate every way to reintroduce a constant.
   const clangBuild = withoutLineComments(
-    region(setup, "const installClangGraphProducer", "const installScipPython"),
+    region(
+      clangProducer,
+      "export function installClangGraphProducer",
+      "function installedClangGraphProducer",
+    ),
   );
   TestValidator.equals(
     "the native Clang build is sized by the machine and bounded by its memory",
@@ -289,18 +303,20 @@ export const test_experiment_corpora_are_commit_pinned = () => {
   // it, so the region is what makes a deletion visible.
   const restoredProducer = withoutLineComments(
     region(
-      setup,
-      "const installedClangGraphProducer",
-      "const installClangGraphProducer",
+      clangProducer,
+      "function installedClangGraphProducer",
+      "function assertVersion",
     ),
   );
   TestValidator.equals(
     "a restored native Clang producer is re-proved against the pin before reuse",
     [
-      setup.includes("if (installedClangGraphProducer()) return;"),
-      cppSetup.includes("installClangGraphProducer()"),
-      /String\(reported\.stdout\)\.includes\(\s*experiment\.producerCommit,?\s*\)/u.test(
-        restoredProducer,
+      clangProducer.includes(
+        "const installed = installedClangGraphProducer({ toolsRoot, binRoot })",
+      ),
+      cppSetup.includes("installClangGraphProducer({"),
+      restoredProducer.includes(
+        'for (const binary of [installed, alias]) assertVersion("cache", binary)',
       ),
       restoredProducer.includes('"stddef.h"'),
       restoredProducer.includes("versions.length !== 1"),

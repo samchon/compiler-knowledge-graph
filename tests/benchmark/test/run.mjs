@@ -35,6 +35,7 @@ import {
 } from "../graph/website-cell.mjs";
 import ordinal from "../graph/ordinal.cjs";
 import { assertDeclarationsPrecedeExecution } from "./declaration-order.mjs";
+import { assertClangProducerCacheOwnership } from "./clang-producer-cache.mjs";
 import { assertWorkflowOptionForms } from "./option-form.mjs";
 import {
   assertBothIndexColumnsAreMeasured,
@@ -90,6 +91,7 @@ testPublicationRequiresMatchingCodexTraceAudit();
 testFixtureAndPreflightIntegrity();
 testReferenceRenderer();
 testLatestWorkflowUpdateClassifier();
+assertClangProducerCacheOwnership();
 assertBothIndexColumnsAreMeasured();
 assertStrictComparisonArithmetic();
 assertDeclarationsPrecedeExecution(graphDir, ["index-time.mjs"]);
@@ -1279,17 +1281,16 @@ function testIndexCellIsolationContract() {
       workflow.includes("--project=${{ matrix.project }}") &&
       workflow.includes('SAMCHON_GRAPH_BENCH_TIMEOUT_MS: "1800000"') &&
       !workflow.includes('SAMCHON_GRAPH_BENCH_TIMEOUT_MS: "3600000"') &&
-      // Two budgets, and which one a row gets is decided by whether it
-      // provisions a compiler built from source. The literal 120 that used to
-      // stand here was the whole cap, and it killed the two rows that spend an
-      // hour and three quarters compiling clangd before they had measured
-      // anything. Both numbers are asserted, and so is the condition that
-      // separates them, because a cap that applied to every row again would
-      // still contain the string "120".
-      workflow.includes(
-        "timeout-minutes: ${{ (matrix.language == 'c' || matrix.language == 'cpp') && 210 || 120 }}",
+      // The compiler build now has its own 150-minute predecessor budget. The
+      // measurement itself returns to one 120-minute budget, because no row
+      // can spend it compiling LLVM. Assert each owner rather than merely
+      // finding both literals somewhere in the file.
+      /\n  clang_producer:[\s\S]*?timeout-minutes: 150[\s\S]*?\n  measure:/u.test(
+        workflow,
       ) &&
-      !workflow.includes("timeout-minutes: 150") &&
+      /\n  measure:[\s\S]*?timeout-minutes: 120[\s\S]*?\n    strategy:/u.test(
+        workflow,
+      ) &&
       workflow.includes("--timeout-ms=300000") &&
       workflow.includes("timeout-minutes: 10"),
     "measurement and slow-lane diagnosis must each run inside their evidence-backed bounded budgets",

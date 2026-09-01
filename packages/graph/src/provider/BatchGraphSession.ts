@@ -427,15 +427,11 @@ export class BatchGraphSession implements IBulkGraphSession {
             abortedProcessError(
               this.options.provider,
               command.command,
-              // Bounded before it is labelled, not after. A producer killed
-              // after an hour is the one most likely to have filled the whole
-              // 64 KiB stderr buffer with progress, and the last of that says
-              // where it had got to — but slicing the finished sentence would
-              // cut off the `(no stderr; last of stdout)` attribution whenever
-              // the fallback text is long, leaving a reader unable to tell a
-              // diagnosis from a scraped stdout tail. The exit-code path keeps
-              // its full text: a producer that chose to stop usually said why
-              // once, and this one did not choose to stop at all.
+              // Keep the same bounded, attributed tails used for an ordinary
+              // non-zero exit. A producer killed after an hour is especially
+              // likely to have filled the capture buffers with progress, but
+              // the final lines still say where it got to. Bounding before
+              // labelling also keeps the stream attribution intact.
               failureDetail(stderr, stdout),
             ),
           );

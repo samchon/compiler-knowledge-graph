@@ -468,6 +468,20 @@ async function assertFailuresRetainTheGeneration(): Promise<void> {
     !loudFailureMessage.includes("OPENING LINE") &&
       loudFailureMessage.includes("…"),
   );
+  const stderrFailure = sessionOf(root, { mode: "stderr-fail" });
+  let stderrFailureMessage = "";
+  try {
+    await stderrFailure.refresh();
+  } catch (error) {
+    stderrFailureMessage = (error as Error).message;
+  }
+  TestValidator.predicate(
+    "a stderr-only failure is likewise bounded to its actionable tail",
+    stderrFailureMessage.includes("FAILURE: compiler rejected the project") &&
+      !stderrFailureMessage.includes("OPENING ERROR") &&
+      stderrFailureMessage.includes("…") &&
+      stderrFailureMessage.length < 2_200,
+  );
   // The ordinary shape: one line, nothing to cut. An ellipsis here would claim
   // the tool said more than it did, which is the same kind of untruth as
   // dropping what it said.

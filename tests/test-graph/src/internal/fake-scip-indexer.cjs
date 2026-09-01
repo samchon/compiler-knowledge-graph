@@ -67,6 +67,14 @@ if (mode === "stdout-fail") {
   process.exit(3);
 }
 
+if (mode === "stderr-fail") {
+  // The conventional tool shape, made long enough to prove that stderr is
+  // subject to the same diagnostic bound as stdout and a split pair.
+  process.stderr.write(`OPENING ERROR\n${"diagnostic noise\n".repeat(300)}`);
+  process.stderr.write("FAILURE: compiler rejected the project\n");
+  process.exit(3);
+}
+
 if (mode === "both-streams-fail") {
   // The Maven witness: the JVM writes an informational environment notice to
   // stderr while the build tool writes the actionable failure to stdout.

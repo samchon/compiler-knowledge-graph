@@ -133,28 +133,34 @@ export const test_strict_lifecycle_performance_sampling_is_atomic = async () => 
 
   text = original;
   current = { generation: "threshold" };
-  identity = "threshold";
+  identity = "initial";
   edited = false;
-  await TestValidator.error(
+  let thresholdError: unknown;
+  try {
+    await measureLifecyclePerformance({
+      language: "fixture",
+      sourceText: original,
+      editFind: "channel(1)",
+      editReplacements: ["channel(2)", "channel(3)"],
+      noopSamples: 1,
+      editSamples: 1,
+      noopP95MaxMs: 5,
+      editP95MaxMs: 2_000,
+      changedModes: ["incremental"],
+      currentDump: current,
+      currentIdentity: identity,
+      writeSource: (next: string) => {
+        text = next;
+      },
+      load,
+    });
+  } catch (error) {
+    thresholdError = error;
+  }
+  TestValidator.predicate(
     "a sample at the strict less-than ceiling rejects the row",
-    () =>
-      measureLifecyclePerformance({
-        language: "fixture",
-        sourceText: original,
-        editFind: "channel(1)",
-        editReplacements: ["channel(2)", "channel(3)"],
-        noopSamples: 1,
-        editSamples: 1,
-        noopP95MaxMs: 5,
-        editP95MaxMs: 2_000,
-        changedModes: ["incremental"],
-        currentDump: current,
-        currentIdentity: identity,
-        writeSource: (next: string) => {
-          text = next;
-        },
-        load,
-      }),
+    thresholdError instanceof Error &&
+      thresholdError.message.includes("lifecycle performance missed its target"),
   );
   await TestValidator.error(
     "sampling rejects a replacement that cannot edit the source",

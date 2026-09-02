@@ -181,6 +181,7 @@ async function assertClientLifecycle(
 
   await assertQueueCancellation(root, source);
   await assertInFlightCancellation(root);
+  await assertInitializationFailure(root);
   await assertCommandCancellationRecovery(root);
   await assertInputMovementFence(root, source);
   await assertNonErrorValidationFailure(root);
@@ -206,6 +207,17 @@ async function assertInFlightCancellation(root: string): Promise<void> {
   setTimeout(() => controller.abort(new Error("in-flight stop")), 10);
   await rejected("an in-flight JDT initialization observes caller cancellation", pending, "in-flight stop");
   await new Promise((resolve) => setTimeout(resolve, 120));
+  await client.close();
+}
+
+async function assertInitializationFailure(root: string): Promise<void> {
+  const client = directClient(root, ["--fail-initialize"]);
+  const controller = new AbortController();
+  await rejected(
+    "an underlying JDT initialization failure wins the live caller signal race",
+    client.refresh({ signal: controller.signal }),
+    "fixture initialize failure",
+  );
   await client.close();
 }
 

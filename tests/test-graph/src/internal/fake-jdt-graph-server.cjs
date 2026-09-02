@@ -13,6 +13,7 @@ const requestLog = valueOf("--request-log=");
 const marker = valueOf("--marker=");
 const delayCommand = Number(valueOf("--delay-command=") ?? 0);
 const delayInitialize = Number(valueOf("--delay-initialize=") ?? 0);
+const failInitialize = args.includes("--fail-initialize");
 const reuseAfterChange = args.includes("--reuse-after-change");
 const source = path.join(process.cwd(), "src", "Example.java");
 let buffer = Buffer.alloc(0);
@@ -36,6 +37,9 @@ process.stdin.on("data", (chunk) => {
 function handle(message) {
   if (requestLog) fs.appendFileSync(requestLog, `${JSON.stringify(message)}\n`);
   if (message.method === "initialize") {
+    if (failInitialize) {
+      return error(message.id, -32000, "fixture initialize failure");
+    }
     const result = { capabilities: { executeCommandProvider: { commands: ["java.graph.snapshot"] } } };
     return delayInitialize > 0
       ? setTimeout(() => respond(message.id, result), delayInitialize)

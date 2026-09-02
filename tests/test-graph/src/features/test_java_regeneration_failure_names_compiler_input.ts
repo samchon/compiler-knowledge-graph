@@ -89,6 +89,15 @@ export const test_java_regeneration_failure_names_compiler_input = () => {
       firstEvidenceDifference(["row-a"], ["row-a", "row-b"]),
       "missing -> row-b",
     );
+    const longPrefix = "x".repeat(500);
+    const longDifference = firstEvidenceDifference(
+      [`${longPrefix}OLD`],
+      [`${longPrefix}NEW`],
+    );
+    TestValidator.predicate(
+      "difference after the diagnostic bound stays visible",
+      longDifference.includes("OLD") && longDifference.includes("NEW"),
+    );
     TestValidator.error(
       "store root cannot escape the isolated corpus",
       () => captureGenerationEvidence(root, ".."),

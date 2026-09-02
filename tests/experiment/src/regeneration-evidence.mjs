@@ -111,11 +111,13 @@ export function firstEvidenceDifference(left, right) {
   const removed = left.find((row) => !rightRows.has(row));
   const added = right.find((row) => !leftRows.has(row));
   if (removed !== undefined || added !== undefined) {
-    return `${bounded(removed)} -> ${bounded(added)}`;
+    const focus = firstDifferenceIndex(removed, added);
+    return `${bounded(removed, focus)} -> ${bounded(added, focus)}`;
   }
   for (let index = 0; index < left.length; index++) {
     if (left[index] !== right[index]) {
-      return `${bounded(left[index])} -> ${bounded(right[index])}`;
+      const focus = firstDifferenceIndex(left[index], right[index]);
+      return `${bounded(left[index], focus)} -> ${bounded(right[index], focus)}`;
     }
   }
   return "committed producer universe rows are equal";
@@ -162,7 +164,26 @@ function compareUtf8(left, right) {
   return Buffer.compare(Buffer.from(left, "utf8"), Buffer.from(right, "utf8"));
 }
 
-function bounded(value) {
+function firstDifferenceIndex(left, right) {
+  if (left === undefined || right === undefined) return undefined;
+  const limit = Math.min(left.length, right.length);
+  for (let index = 0; index < limit; index++) {
+    if (left[index] !== right[index]) return index;
+  }
+  return limit;
+}
+
+function bounded(value, focus) {
   if (value === undefined) return "missing";
-  return value.length <= 480 ? value : `${value.slice(0, 477)}...`;
+  const limit = 480;
+  if (value.length <= limit) return value;
+  if (focus === undefined) {
+    const half = (limit - 3) / 2;
+    return `${value.slice(0, Math.ceil(half))}...${value.slice(-Math.floor(half))}`;
+  }
+  const contentLimit = limit - 6;
+  const initialStart = Math.max(0, focus - Math.floor(contentLimit / 2));
+  const end = Math.min(value.length, initialStart + contentLimit);
+  const start = Math.max(0, end - contentLimit);
+  return `${start > 0 ? "..." : ""}${value.slice(start, end)}${end < value.length ? "..." : ""}`;
 }

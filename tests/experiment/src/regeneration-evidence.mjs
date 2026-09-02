@@ -59,13 +59,23 @@ export function captureGenerationEvidence(projectRoot, relativeStoreRoot) {
     }
     const committed = fs.realpathSync(requestedGeneration);
     assertDescendant(target, committed, "regeneration evidence generation");
-    const universe = path.join(committed, "UNIVERSE");
-    if (!fs.statSync(universe, { throwIfNoEntry: false })?.isFile()) {
+    const requestedUniverse = path.join(committed, "UNIVERSE");
+    if (!fs.statSync(requestedUniverse, { throwIfNoEntry: false })?.isFile()) {
       throw new Error(`regeneration evidence generation has no UNIVERSE: ${committed}`);
     }
+    const universe = fs.realpathSync(requestedUniverse);
+    assertDescendant(committed, universe, "regeneration evidence universe");
     const files = [universe];
-    const compiler = path.join(committed, ".universe");
-    if (fs.statSync(compiler, { throwIfNoEntry: false })?.isDirectory()) {
+    const requestedCompiler = path.join(committed, ".universe");
+    if (
+      fs.statSync(requestedCompiler, { throwIfNoEntry: false })?.isDirectory()
+    ) {
+      const compiler = fs.realpathSync(requestedCompiler);
+      assertDescendant(
+        committed,
+        compiler,
+        "regeneration compiler universe",
+      );
       files.push(...walkFiles(compiler));
     }
     for (const file of files.sort(compareUtf8)) {

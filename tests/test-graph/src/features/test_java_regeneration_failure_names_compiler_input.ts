@@ -74,6 +74,25 @@ export const test_java_regeneration_failure_names_compiler_input = () => {
       () => captureGenerationEvidence(root, ".."),
       Error,
     );
+    const foreign = fs.mkdtempSync(
+      path.join(os.tmpdir(), "graph-java-universe-foreign-"),
+    );
+    try {
+      const compiler = path.join(committed, ".universe");
+      fs.rmSync(compiler, { force: true, recursive: true });
+      if (process.platform === "win32") {
+        fs.symlinkSync(foreign, compiler, "junction");
+      } else {
+        fs.symlinkSync(foreign, compiler, "dir");
+      }
+      TestValidator.error(
+        "compiler universe cannot escape through a link",
+        () => captureGenerationEvidence(root, "target/scip-targetroot"),
+        Error,
+      );
+    } finally {
+      fs.rmSync(foreign, { force: true, recursive: true });
+    }
     fs.writeFileSync(path.join(target, "CURRENT"), "not-a-generation\n");
     TestValidator.error(
       "malformed current generation is rejected",

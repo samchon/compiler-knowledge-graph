@@ -393,7 +393,7 @@ export const LANGUAGE_EXPERIMENTS = [
     jdtProducerRepository: "https://github.com/samchon/eclipse.jdt.ls.git",
     jdtProducerCommit: "8e163968cdabc6b5dc60bb05b9eb9ae7600151d1",
     jdtProducerDigest:
-      "8f29b97b255f5fd86675969b3130f60f8d8624c56294d99847dbec0460e3d22c",
+      "9360c956c53cf77492c5b33a4ef19e63abceda208a7bc7798107b55f11efca56",
     nativeBaseline: {
       kind: "shell",
       command: "mvn -q test-compile",

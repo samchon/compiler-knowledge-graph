@@ -391,8 +391,8 @@ export const LANGUAGE_EXPERIMENTS = [
     producerRepository: "https://github.com/samchon/scip-java.git",
     producerCommit: "49159074904dd401b80e6c5e9ae62a3e856a478c",
     jdtProducerRepository: "https://github.com/samchon/eclipse.jdt.ls.git",
-    jdtProducerCommit: "084c3ccaaf4d7fcf291698fc955057c37d5f9cee",
-    jdtProducerTree: "94763efb4748d8616c3901099e79e91f1be81171",
+    jdtProducerCommit: "08c542896f257a77f288453b95f1729be95b4f42",
+    jdtProducerTree: "dfe79d0e4f101f13bfdeef80629449a97af8022e",
     nativeBaseline: {
       kind: "shell",
       command: "mvn -q test-compile",

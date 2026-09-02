@@ -497,7 +497,7 @@ export const test_experiment_corpora_are_commit_pinned = async () => {
       java.includes(
         `jdtProducerCommit: "${JDT_GRAPH_PRODUCER_COMMIT}"`,
       ) &&
-      /jdtProducerDigest:\s*\n\s*"[0-9a-f]{64}"/u.test(java) &&
+      /jdtProducerTree:\s*"[0-9a-f]{40}"/u.test(java) &&
       !java.includes("regenerationLimitation:") &&
       setup.includes("if (pin.verify !== undefined) pin.verify({ gradle, source })") &&
       setup.includes("org.scip_code.scip_java.javac.JavaGraphShardTest") &&
@@ -508,7 +508,9 @@ export const test_experiment_corpora_are_commit_pinned = async () => {
       setup.includes("tests.GraphAggregateRunnerTest") &&
       setup.includes("tests.GradleBuildToolTest") &&
       setup.includes("const installJdtGraphProducer = async") &&
-      setup.includes("verifySha256(archive, experiment.jdtProducerDigest)") &&
+      setup.includes("verifyGitTree(source, experiment.jdtProducerTree)") &&
+      setup.includes('["add", "--all", "--force"]') &&
+      setup.includes('["write-tree"]') &&
       setup.includes('run(maven, ["clean", "verify", "-U", "-DskipTests=true"]') &&
       setup.includes("GraphSnapshotCommandTest") &&
       setup.includes("UnresolvedTypesQuickFixTest#testTypeInSealedTypeDeclaration") &&

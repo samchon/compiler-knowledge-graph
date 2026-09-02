@@ -481,12 +481,33 @@ ${help}`,
   recordProvisionedEnvironment("SAMCHON_GRAPH_JAVAC_GRAPH", link);
 };
 
+/** Prove that an extracted source archive is the exact pinned Git tree. */
+const verifyGitTree = (source, expected) => {
+  const repository = path.join(source, ".git");
+  fs.rmSync(repository, { force: true, recursive: true });
+  try {
+    run("git", ["init", "--quiet"], { cwd: source });
+    run("git", ["config", "core.autocrlf", "false"], { cwd: source });
+    run("git", ["add", "--all", "--force"], { cwd: source });
+    const actual = String(
+      run("git", ["write-tree"], { cwd: source, stdio: "pipe" }).stdout,
+    ).trim();
+    if (actual !== expected) {
+      throw new Error(
+        `${source} has Git tree ${actual}, expected ${expected}`,
+      );
+    }
+  } finally {
+    fs.rmSync(repository, { force: true, recursive: true });
+  }
+};
+
 /** Build and install the exact JDT workspace graph producer revision. */
 const installJdtGraphProducer = async () => {
   for (const field of [
     "jdtProducerRepository",
     "jdtProducerCommit",
-    "jdtProducerDigest",
+    "jdtProducerTree",
   ]) {
     if (typeof experiment[field] !== "string" || experiment[field] === "") {
       throw new Error(`java: the JDT graph setup requires an exact ${field}`);
@@ -505,10 +526,10 @@ const installJdtGraphProducer = async () => {
     `eclipse-jdt-ls-${experiment.jdtProducerCommit}`,
   );
   await downloadFile(url, archive);
-  verifySha256(archive, experiment.jdtProducerDigest);
   fs.rmSync(source, { force: true, recursive: true });
   ensureDir(source);
   run("tar", ["-xzf", archive, "--strip-components=1", "-C", source]);
+  verifyGitTree(source, experiment.jdtProducerTree);
   const maven = path.join(source, "mvnw");
   if (!fs.statSync(maven, { throwIfNoEntry: false })?.isFile()) {
     throw new Error(`java: the pinned JDT Maven wrapper is missing at ${maven}`);
@@ -552,7 +573,7 @@ const installJdtGraphProducer = async () => {
     tool: "eclipse-jdtls-graph-snapshot",
     version: experiment.jdtProducerCommit,
     source: url,
-    digest: `sha256:${experiment.jdtProducerDigest}`,
+    digest: `git-tree:${experiment.jdtProducerTree}`,
   });
 };
 

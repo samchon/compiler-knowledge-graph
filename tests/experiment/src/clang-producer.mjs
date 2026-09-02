@@ -19,7 +19,7 @@ const workRoot = path.join(repositoryRoot, "tests", "experiment", ".work");
 export const CLANG_PRODUCER_REPOSITORY =
   "https://github.com/samchon/llvm-project.git";
 export const CLANG_PRODUCER_COMMIT =
-  "e33d8f51552a523b5696691738f1ef95f8e3a730";
+  "d6371c37445998d24776692a27e086bb24f9916a";
 export const CLANG_PRODUCER_BUILD_PACKAGES = Object.freeze([
   "clang",
   "cmake",
@@ -63,6 +63,11 @@ export function clangProducerProvisionDecision({ installed, allowBuild }) {
   );
 }
 
+/** Resolve the native executable name without relying on PATHEXT. */
+export function clangProducerExecutable(command, platform = process.platform) {
+  return `${command}${platform === "win32" ? ".exe" : ""}`;
+}
+
 /** Install or verify the one pinned native Clang producer. */
 export function installClangGraphProducer({
   language,
@@ -73,6 +78,7 @@ export function installClangGraphProducer({
   record,
   allowBuild = true,
   prepareBuild = () => undefined,
+  platform = process.platform,
 }) {
   if (
     producerRepository !== CLANG_PRODUCER_REPOSITORY ||
@@ -85,7 +91,11 @@ export function installClangGraphProducer({
   }
   assertClangProducerAdapterPin();
 
-  const installed = installedClangGraphProducer({ toolsRoot, binRoot });
+  const installed = installedClangGraphProducer({
+    toolsRoot,
+    binRoot,
+    platform,
+  });
   const decision = clangProducerProvisionDecision({ installed, allowBuild });
   if (decision === "reuse") {
     recordClangTools(record);
@@ -167,7 +177,11 @@ export function installClangGraphProducer({
     "clangd",
   ]);
 
-  const binary = path.join(build, "bin", "clangd");
+  const binary = path.join(
+    build,
+    "bin",
+    clangProducerExecutable("clangd", platform),
+  );
   assertVersion(language, binary);
   const builtResources = path.join(build, "lib", "clang");
   const resourceVersions = fs
@@ -203,20 +217,29 @@ export function installClangGraphProducer({
     );
   }
   for (const command of ["samchon-clangd", "clangd"]) {
-    const link = path.join(binRoot, command);
+    const link = path.join(binRoot, clangProducerExecutable(command, platform));
     fs.rmSync(link, { force: true });
     fs.linkSync(binary, link);
   }
-  assertVersion(language, path.join(binRoot, "samchon-clangd"));
+  assertVersion(
+    language,
+    path.join(binRoot, clangProducerExecutable("samchon-clangd", platform)),
+  );
   recordClangTools(record);
   fs.rmSync(source, { force: true, recursive: true });
   return decision;
 }
 
-function installedClangGraphProducer({ toolsRoot, binRoot }) {
+function installedClangGraphProducer({ toolsRoot, binRoot, platform }) {
   try {
-    const installed = path.join(binRoot, "samchon-clangd");
-    const alias = path.join(binRoot, "clangd");
+    const installed = path.join(
+      binRoot,
+      clangProducerExecutable("samchon-clangd", platform),
+    );
+    const alias = path.join(
+      binRoot,
+      clangProducerExecutable("clangd", platform),
+    );
     if (
       !fs.statSync(installed, { throwIfNoEntry: false })?.isFile() ||
       !fs.statSync(alias, { throwIfNoEntry: false })?.isFile()

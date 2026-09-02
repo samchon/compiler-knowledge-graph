@@ -7,16 +7,24 @@ import {
 import fs from "node:fs";
 import path from "node:path";
 
-import { nearestRankP95 } from "../../../experiment/src/lifecycle-performance.mjs";
+import {
+  measureLifecycleNoopPerformance,
+  nearestRankP95,
+} from "../../../experiment/src/lifecycle-performance.mjs";
+import { findExperiment } from "../../../experiment/src/catalog.mjs";
 import {
   RUST_GRAPH_PRODUCER_SLOW_TEST,
   RUST_GRAPH_PRODUCER_UNIT_TEST,
   verifyRustGraphProducer,
 } from "../../../experiment/src/rust-producer.mjs";
+import {
+  measureClangBackgroundIndex,
+} from "../../../experiment/src/clang-background-baseline.mjs";
+import { hasRepresentativeEdge } from "../../../experiment/src/representative-edges.mjs";
 import { GraphPaths } from "../internal/GraphPaths";
 
 /** Real-language experiments always check out one reviewable corpus revision. */
-export const test_experiment_corpora_are_commit_pinned = () => {
+export const test_experiment_corpora_are_commit_pinned = async () => {
   const catalog = experimentSource("catalog.mjs");
   const helpers = experimentSource("process.mjs");
   const lifecycle = experimentSource("strict-lifecycle.mjs");
@@ -107,6 +115,239 @@ export const test_experiment_corpora_are_commit_pinned = () => {
   );
   TestValidator.error("nearest-rank p95 rejects an empty sample", () =>
     nearestRankP95([]),
+  );
+  TestValidator.predicate(
+    "C and C++ measure twenty exact resident no-ops below 250 ms",
+    [c, cpp].every(
+      (row) =>
+        row.includes('nativeBaseline: { command: "samchon-clangd" }') &&
+        row.includes("noopPerformance: {") &&
+        row.includes("samples: 20") &&
+        row.includes("p95MaxMs: 250"),
+    ) && lifecycle.includes("measureLifecycleNoopPerformance({"),
+  );
+  const cExperiment = findExperiment("c") as {
+    repository: string;
+    commit: string;
+    representativeEdges: Array<{ kind: string; from: string; to: string }>;
+  };
+  const cppExperiment = findExperiment("cpp") as typeof cExperiment;
+  TestValidator.equals(
+    "Redis and LevelDB smokes pin exact representative semantic edges",
+    [
+      [
+        cExperiment.repository,
+        cExperiment.commit,
+        cExperiment.representativeEdges,
+      ],
+      [
+        cppExperiment.repository,
+        cppExperiment.commit,
+        cppExperiment.representativeEdges,
+      ],
+      [
+        runner.includes("representativeEdges"),
+        runner.includes("hasRepresentativeEdge(dump, claim)"),
+        hasRepresentativeEdge(
+          {
+            nodes: [
+              { id: "from", qualifiedName: "leveldb::DBImpl::Get" },
+              { id: "to", qualifiedName: "leveldb::MemTable::Get" },
+            ],
+            edges: [{ from: "from", to: "to", kind: "calls" }],
+          },
+          {
+            from: "wrong::leveldb::DBImpl::Get",
+            to: "leveldb::MemTable::Get",
+            kind: "calls",
+          },
+        ),
+      ],
+    ],
+    [
+      [
+        "https://github.com/samchon/graph-benchmark-redis.git",
+        "6bf6224c3dad518329ddc893ef9c5d58dcbabdeb",
+        [
+          { kind: "calls", from: "processCommand", to: "lookupCommand" },
+          { kind: "calls", from: "processCommand", to: "call" },
+          { kind: "accesses", from: "processCommand", to: "server" },
+          { kind: "type_ref", from: "processCommand", to: "client" },
+        ],
+      ],
+      [
+        "https://github.com/samchon/graph-benchmark-leveldb.git",
+        "7ee830d02b623e8ffe0b95d59a74db1e58da04c5",
+        [
+          {
+            kind: "calls",
+            from: "leveldb::DBImpl::Get",
+            to: "leveldb::MemTable::Get",
+          },
+          {
+            kind: "accesses",
+            from: "leveldb::DBImpl::Get",
+            to: "leveldb::DBImpl::mutex_",
+          },
+          {
+            kind: "type_ref",
+            from: "leveldb::DBImpl::Get",
+            to: "leveldb::Slice",
+          },
+          { kind: "extends", from: "leveldb::DBImpl", to: "leveldb::DB" },
+        ],
+      ],
+      [true, true, false],
+    ],
+  );
+  const residentDump = {};
+  let noopSample = 0;
+  const noopPerformance = await measureLifecycleNoopPerformance({
+    language: "cpp",
+    samples: 20,
+    p95MaxMs: 250,
+    currentDump: residentDump,
+    currentIdentity: "resident",
+    load: () => ({
+      dump: residentDump,
+      mode: "unchanged",
+      identity: "resident",
+      elapsedMs: ++noopSample,
+    }),
+  });
+  TestValidator.equals(
+    "no-op performance publishes every sample and nearest-rank p95",
+    noopPerformance,
+    {
+      name: "noop-performance",
+      status: "passed",
+      samples: Array.from({ length: 20 }, (_, index) => index + 1),
+      p95Ms: 19,
+      p95MaxMs: 250,
+    },
+  );
+  let boundaryError = "";
+  try {
+    await measureLifecycleNoopPerformance({
+      language: "cpp",
+      samples: 1,
+      p95MaxMs: 5,
+      currentDump: residentDump,
+      currentIdentity: "resident",
+      load: () => ({
+        dump: residentDump,
+        mode: "unchanged",
+        identity: "resident",
+        elapsedMs: 5,
+      }),
+    });
+  } catch (error) {
+    boundaryError = error instanceof Error ? error.message : String(error);
+  }
+  TestValidator.equals(
+    "no-op performance treats the strict ceiling as a miss",
+    boundaryError,
+    "cpp: lifecycle no-op performance missed its target: p95 5/5 ms",
+  );
+  let progressListener: ((params: {
+    token: string;
+    value: { kind: string };
+  }) => void) | undefined;
+  const baselineCalls: unknown[] = [];
+  const clock = [100, 175];
+  const baselineRoot = path.resolve("baseline-fixture");
+  const baselineCompilationDatabase = path.join(
+    baselineRoot,
+    "build",
+    "compile_commands.json",
+  );
+  const baselineSource = path.join(baselineRoot, "db", "db_impl.cc");
+  const baselineElapsed = await measureClangBackgroundIndex({
+    command: "samchon-clangd",
+    compilationDatabase: baselineCompilationDatabase,
+    cwd: baselineRoot,
+    language: "cpp",
+    sourceFile: baselineSource,
+    timeoutMs: 1_000,
+    now: () => clock.shift()!,
+    readSource: () => "int baseline();\n",
+    createClient: (command, args) => ({
+      onNotification: (method, listener) => {
+        baselineCalls.push(["notification", method]);
+        progressListener = listener;
+      },
+      request: async (method, params) => {
+        baselineCalls.push(["request", method, params]);
+        return {};
+      },
+      notify: (method, params) => {
+        baselineCalls.push(["notify", method, params]);
+        if (method !== "textDocument/didOpen") return;
+        progressListener?.({
+          token: "backgroundIndexProgress",
+          value: { kind: "begin" },
+        });
+        progressListener?.({
+          token: "backgroundIndexProgress",
+          value: { kind: "end" },
+        });
+      },
+      close: async () => {
+        baselineCalls.push(["close", command, args]);
+      },
+    }),
+  });
+  TestValidator.equals(
+    "native clang baseline waits for standard background-index progress",
+    [baselineElapsed, baselineCalls[0], baselineCalls.at(-1)],
+    [
+      75,
+      ["notification", "$/progress"],
+      [
+        "close",
+        "samchon-clangd",
+        [
+          "--background-index",
+          `--compile-commands-dir=${path.join(baselineRoot, "build")}`,
+        ],
+      ],
+    ],
+  );
+  TestValidator.predicate(
+    "native clang baseline opens a real compilation-database source",
+    baselineCalls.some(
+      (entry) =>
+        Array.isArray(entry) &&
+        entry[0] === "notify" &&
+        entry[1] === "textDocument/didOpen",
+    ),
+  );
+  let initializationError = "";
+  try {
+    await measureClangBackgroundIndex({
+      command: "samchon-clangd",
+      compilationDatabase: baselineCompilationDatabase,
+      cwd: baselineRoot,
+      language: "cpp",
+      sourceFile: baselineSource,
+      timeoutMs: 10,
+      readSource: () => "int baseline();\n",
+      createClient: () => ({
+        onNotification: () => undefined,
+        request: async () => {
+          throw new Error("fixture initialize failure");
+        },
+        notify: () => undefined,
+        close: async () => undefined,
+      }),
+    });
+  } catch (error) {
+    initializationError = error instanceof Error ? error.message : String(error);
+  }
+  TestValidator.equals(
+    "native clang baseline preserves initialize failures without a stray timeout rejection",
+    initializationError,
+    "fixture initialize failure",
   );
   const cargoCalls: Array<{
     command: string;
@@ -427,8 +668,8 @@ export const test_experiment_corpora_are_commit_pinned = () => {
   TestValidator.equals(
     "a restored native Clang producer is re-proved against the pin before reuse",
     [
-      clangProducer.includes(
-        "const installed = installedClangGraphProducer({ toolsRoot, binRoot })",
+      /const installed = installedClangGraphProducer\(\{\s*toolsRoot,\s*binRoot,\s*platform,\s*\}\);/u.test(
+        clangProducer,
       ),
       cppSetup.includes("installClangGraphProducer({"),
       restoredProducer.includes(

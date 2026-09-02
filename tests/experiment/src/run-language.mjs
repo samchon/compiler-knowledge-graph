@@ -21,6 +21,7 @@ import {
   toolManifest,
 } from "./process.mjs";
 import { runStrictLifecycle } from "./strict-lifecycle.mjs";
+import { hasRepresentativeEdge } from "./representative-edges.mjs";
 
 activateProvisionedTools();
 
@@ -227,6 +228,13 @@ const edgeKindCounts = Object.fromEntries(
       dump.edges.filter((edge) => edge.kind === kind).length,
     ]),
 );
+for (const claim of strict ? experiment.representativeEdges ?? [] : []) {
+  if (!hasRepresentativeEdge(dump, claim)) {
+    throw new Error(
+      `${experiment.language}: representative ${claim.from} -[${claim.kind}]-> ${claim.to} edge was not proved`,
+    );
+  }
+}
 // A small pinned build fixture can truthfully exercise a relationship only in
 // the isolated create/rename transition. `runStrictLifecycle` has already
 // required this exact edge in both generations; count that evidence instead of
@@ -326,6 +334,7 @@ const result = {
   coverageSummary: summarizeCoverage(dump, provenance?.provider),
   unresolvedSummary: summarizeUnresolved(dump, provenance?.provider),
   edgeKindCounts,
+  representativeEdges: experiment.representativeEdges,
   semanticLimitation: experiment.semanticLimitation,
   compilerLimitation: experiment.compilerLimitation,
   regenerationLimitation: experiment.regenerationLimitation,

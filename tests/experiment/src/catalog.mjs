@@ -146,20 +146,22 @@ export const LANGUAGE_EXPERIMENTS = [
   },
   {
     language: "cpp",
-    repository: "https://github.com/fmtlib/fmt.git",
-    commit: "bcaa44d05579c75a83571821faee7acf6a9a0d55",
+    repository: "https://github.com/samchon/graph-benchmark-leveldb.git",
+    commit: "7ee830d02b623e8ffe0b95d59a74db1e58da04c5",
     // Uncapped: the native snapshot publishes a whole-compilation-database
     // generation and refuses a file cap.
     //
     // The compilation database enumerates every native clangd graph view and
     // is what a CMake project has to be configured to produce; preparation
     // itself compiles nothing.
-    prepare: "cmake -S . -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
+    prepare:
+      "cmake -S . -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DLEVELDB_BUILD_TESTS=OFF -DLEVELDB_BUILD_BENCHMARKS=OFF",
     strictProvider: "clangd-snapshot",
     strictAuthority: "compiler",
     strictTool: "samchon-clangd",
     producerRepository: CLANG_PRODUCER_REPOSITORY,
     producerCommit: CLANG_PRODUCER_COMMIT,
+    nativeBaseline: { command: "samchon-clangd" },
     // A whole-compilation-database producer is not ready when it starts; it
     // is ready when clangd has background-indexed every translation unit the
     // database registers. The 180-second default expired on libuv with 62 of
@@ -214,16 +216,34 @@ export const LANGUAGE_EXPERIMENTS = [
       "references",
     ],
     crossFileEdge: "references",
+    representativeEdges: [
+      {
+        kind: "calls",
+        from: "leveldb::DBImpl::Get",
+        to: "leveldb::MemTable::Get",
+      },
+      {
+        kind: "accesses",
+        from: "leveldb::DBImpl::Get",
+        to: "leveldb::DBImpl::mutex_",
+      },
+      {
+        kind: "type_ref",
+        from: "leveldb::DBImpl::Get",
+        to: "leveldb::Slice",
+      },
+      { kind: "extends", from: "leveldb::DBImpl", to: "leveldb::DB" },
+    ],
     semanticLimitation:
       "The native Clang lane retains exact TU/configuration facts, while calls, instantiation, exports, implements and dispatch stay explicitly partial and C/C++ have no decorates, renders or tests family.",
     // Background jobs may finish in any order, but the native shard set,
     // manifest and generation digest are canonical and publish only after all
     // registered configurations agree on one complete source state.
     lifecycle: {
-      sourceFile: "src/format.cc",
+      sourceFile: "db/db_impl.cc",
       editSuffix: "\n// samchon-graph lifecycle edit\n",
-      createFile: "samchon_graph_experiment.cc",
-      renamedFile: "samchon_graph_experiment_renamed.cc",
+      createFile: "db/samchon_graph_experiment.cc",
+      renamedFile: "db/samchon_graph_experiment_renamed.cc",
       createText:
         "int samchonGraphExperiment(void) { return 0; }\n",
       createdSymbol: "samchonGraphExperiment",
@@ -237,26 +257,31 @@ export const LANGUAGE_EXPERIMENTS = [
       // A malformed compilation database invalidates the native universe, so
       // the strict resident rejects publication until it is repaired.
       failurePolicy: "reject",
+      noopPerformance: {
+        samples: 20,
+        p95MaxMs: 250,
+      },
     },
     minNodes: 1,
     minEdges: 1,
   },
   {
     language: "c",
-    repository: "https://github.com/libuv/libuv.git",
-    commit: "9d51562c10be60bc1126a3d71803b1038f4fbb7e",
+    repository: "https://github.com/samchon/graph-benchmark-redis.git",
+    commit: "6bf6224c3dad518329ddc893ef9c5d58dcbabdeb",
     // Uncapped: the native snapshot publishes a whole-compilation-database
     // generation and refuses a file cap.
     //
     // The compilation database enumerates every native clangd graph view and
     // is what a CMake project has to be configured to produce; preparation
     // itself compiles nothing.
-    prepare: "cmake -S . -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
+    prepare: "bear -- make -j2",
     strictProvider: "clangd-snapshot",
     strictAuthority: "compiler",
     strictTool: "samchon-clangd",
     producerRepository: CLANG_PRODUCER_REPOSITORY,
     producerCommit: CLANG_PRODUCER_COMMIT,
+    nativeBaseline: { command: "samchon-clangd" },
     // A whole-compilation-database producer is not ready when it starts; it
     // is ready when clangd has background-indexed every translation unit the
     // database registers. The 180-second default expired on libuv with 62 of
@@ -311,26 +336,36 @@ export const LANGUAGE_EXPERIMENTS = [
       "references",
     ],
     crossFileEdge: "references",
+    representativeEdges: [
+      { kind: "calls", from: "processCommand", to: "lookupCommand" },
+      { kind: "calls", from: "processCommand", to: "call" },
+      { kind: "accesses", from: "processCommand", to: "server" },
+      { kind: "type_ref", from: "processCommand", to: "client" },
+    ],
     semanticLimitation:
       "The native Clang lane retains exact TU/configuration facts, while calls, instantiation, exports, implements and dispatch stay explicitly partial and C/C++ have no decorates, renders or tests family.",
     // C and C++ share the same atomic, canonical generation boundary.
     lifecycle: {
-      sourceFile: "src/uv-common.c",
+      sourceFile: "src/server.c",
       editSuffix: "\n// samchon-graph lifecycle edit\n",
-      createFile: "samchon_graph_experiment.c",
-      renamedFile: "samchon_graph_experiment_renamed.c",
+      createFile: "src/samchon_graph_experiment.c",
+      renamedFile: "src/samchon_graph_experiment_renamed.c",
       createText:
         "int samchonGraphExperiment(void) { return 0; }\n",
       createdSymbol: "samchonGraphExperiment",
       // The database itself, because that is what this producer reads. Breaking
       // CMakeLists would leave an already-generated database untouched and test
       // nothing.
-      buildFile: "build/compile_commands.json",
-      compilationDatabase: "build/compile_commands.json",
-      failureFile: "build/compile_commands.json",
+      buildFile: "compile_commands.json",
+      compilationDatabase: "compile_commands.json",
+      failureFile: "compile_commands.json",
       failureSuffix: "\n[ not json",
       // The C and C++ slices share the same strict rejection boundary.
       failurePolicy: "reject",
+      noopPerformance: {
+        samples: 20,
+        p95MaxMs: 250,
+      },
     },
     minNodes: 1,
     minEdges: 1,

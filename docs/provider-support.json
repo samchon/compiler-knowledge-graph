@@ -134,9 +134,11 @@
       "commands": ["samchon-clangd", "clangd"],
       "projectCommandSources": ["compile_commands.json", "build/compile_commands.json"],
       "environmentOverrides": ["SAMCHON_GRAPH_CLANGD_SNAPSHOT"],
-      "install": "Build the `samchon/llvm-project` graph-snapshot fork at commit `e33d8f51552a523b5696691738f1ef95f8e3a730`; point `SAMCHON_GRAPH_CLANGD_SNAPSHOT` at `clangd` or install it as `samchon-clangd`, and provide a compilation database.",
+      "install": "Build the `samchon/llvm-project` graph-snapshot fork at commit `d6371c37445998d24776692a27e086bb24f9916a`; point `SAMCHON_GRAPH_CLANGD_SNAPSHOT` at `clangd` or install it as `samchon-clangd`, and provide a compilation database.",
       "installSources": [
-        {"label": "native Clang graph producer PR", "url": "https://github.com/samchon/llvm-project/pull/1"},
+        {"label": "pinned Clang producer commit", "url": "https://github.com/samchon/llvm-project/commit/d6371c37445998d24776692a27e086bb24f9916a"},
+        {"label": "bounded resident-view PR", "url": "https://github.com/samchon/llvm-project/pull/2"},
+        {"label": "initial native Clang producer PR", "url": "https://github.com/samchon/llvm-project/pull/1"},
         {"label": "LLVM build instructions", "url": "https://llvm.org/docs/CMake.html"}
       ],
       "resolution": "Absolute `SAMCHON_GRAPH_CLANGD_SNAPSHOT`, then project/PATH `samchon-clangd`, then a project/PATH `clangd` only when its version reports the pinned producer commit.",

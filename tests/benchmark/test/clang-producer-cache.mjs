@@ -9,6 +9,7 @@ import {
   CLANG_PRODUCER_COMMIT,
   CLANG_PRODUCER_REPOSITORY,
   assertClangProducerAdapterPin,
+  clangProducerExecutable,
   clangProducerProvisionDecision,
 } from "../../experiment/src/clang-producer.mjs";
 import { findExperiment } from "../../experiment/src/catalog.mjs";
@@ -34,6 +35,12 @@ export function assertClangProducerCacheOwnership() {
     /adapter pins 0000000000000000000000000000000000000000/,
     "a divergent adapter pin must refuse the producer generation",
   );
+  assert.equal(
+    clangProducerExecutable("samchon-clangd", "win32"),
+    "samchon-clangd.exe",
+  );
+  assert.equal(clangProducerExecutable("clangd", "linux"), "clangd");
+  assert.equal(clangProducerExecutable("clangd", "darwin"), "clangd");
   for (const language of ["c", "cpp"]) {
     const experiment = findExperiment(language);
     assert.equal(experiment.producerRepository, CLANG_PRODUCER_REPOSITORY);

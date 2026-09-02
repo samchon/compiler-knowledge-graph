@@ -81,6 +81,48 @@ export async function measureLifecyclePerformance(props) {
   };
 }
 
+/** Measure a resident no-op p95 without inventing an edit ceiling. */
+export async function measureLifecycleNoopPerformance(props) {
+  for (const [name, value] of Object.entries({
+    samples: props.samples,
+    p95MaxMs: props.p95MaxMs,
+  })) {
+    if (!Number.isSafeInteger(value) || value < 1) {
+      throw new Error(
+        `${props.language}: lifecycle no-op performance ${name} must be a positive integer`,
+      );
+    }
+  }
+  const samples = [];
+  for (let index = 0; index < props.samples; index++) {
+    const sample = await props.load();
+    samples.push(sample.elapsedMs);
+    if (
+      sample.dump !== props.currentDump ||
+      sample.mode !== "unchanged" ||
+      sample.identity !== props.currentIdentity
+    ) {
+      throw new Error(
+        `${props.language}: performance no-op ${String(index + 1)} replaced the resident generation`,
+      );
+    }
+  }
+  const p95Ms = nearestRankP95(samples);
+  if (p95Ms >= props.p95MaxMs) {
+    throw new Error(
+      `${props.language}: lifecycle no-op performance missed its target: ` +
+        `p95 ${String(p95Ms)}/${String(props.p95MaxMs)} ms`,
+    );
+  }
+  return {
+    name: "noop-performance",
+    status: "passed",
+    samples,
+    p95Ms,
+    p95MaxMs: props.p95MaxMs,
+  };
+}
+
 export function nearestRankP95(samples) {
   if (samples.length === 0) {
     throw new Error("nearestRankP95 requires at least one sample");

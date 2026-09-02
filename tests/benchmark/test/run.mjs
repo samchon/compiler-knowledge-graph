@@ -391,13 +391,13 @@ function testIndexRouteEvidenceContract() {
       {
         tool: "samchon-clangd",
         version:
-          "clang version 22.1.8 (https://github.com/samchon/llvm-project.git e33d8f51552a523b5696691738f1ef95f8e3a730) ((https://github.com/samchon/llvm-project.git e33d8f51552a523b5696691738f1ef95f8e3a730))",
+          "clang version 22.1.8 (https://github.com/samchon/llvm-project.git d6371c37445998d24776692a27e086bb24f9916a) ((https://github.com/samchon/llvm-project.git d6371c37445998d24776692a27e086bb24f9916a))",
       },
       {
         tool: "samchon-clangd",
-        version: "e33d8f51552a523b5696691738f1ef95f8e3a730",
+        version: "d6371c37445998d24776692a27e086bb24f9916a",
         source: "fixture",
-        digest: "git:e33d8f51552a523b5696691738f1ef95f8e3a730",
+        digest: "git:d6371c37445998d24776692a27e086bb24f9916a",
       },
     ],
   ]) {

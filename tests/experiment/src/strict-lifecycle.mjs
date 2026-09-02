@@ -2,9 +2,14 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { createResidentGraphSource } from "@samchon/graph";
+import { LspClient } from "../../../packages/graph/lib/lsp/LspClient.js";
 
+import { measureClangBackgroundIndex } from "./clang-background-baseline.mjs";
 import { compilationDatabaseLifecycle } from "./compilation-database-lifecycle.mjs";
-import { measureLifecyclePerformance } from "./lifecycle-performance.mjs";
+import {
+  measureLifecycleNoopPerformance,
+  measureLifecyclePerformance,
+} from "./lifecycle-performance.mjs";
 import { isolateCorpus, shell } from "./process.mjs";
 
 /** Measure one strict provider without ever editing the pinned corpus clone. */
@@ -46,13 +51,37 @@ export const runStrictLifecycle = async (experiment, pinnedRoot) => {
       shell(experiment.prepare, { cwd: baselineRoot });
     }
     const started = performance.now();
-    shell(experiment.nativeBaseline, { cwd: baselineRoot });
+    const nativeElapsedMs =
+      typeof experiment.nativeBaseline === "string"
+        ? (shell(experiment.nativeBaseline, { cwd: baselineRoot }),
+          Math.round(performance.now() - started))
+        : await measureClangBackgroundIndex({
+            command: experiment.nativeBaseline.command,
+            compilationDatabase: path.join(
+              baselineRoot,
+              fixture.compilationDatabase,
+            ),
+            cwd: baselineRoot,
+            language: experiment.language,
+            sourceFile: path.join(baselineRoot, fixture.sourceFile),
+            timeoutMs: experiment.readyTimeoutMs ?? 180_000,
+            createClient: (command, commandArgs) =>
+              new LspClient(
+                command,
+                commandArgs,
+                experiment.readyTimeoutMs ?? 180_000,
+                baselineRoot,
+              ),
+          });
     rows.push({
       name: "native-baseline",
       status: "passed",
-      command: experiment.nativeBaseline,
+      command:
+        typeof experiment.nativeBaseline === "string"
+          ? experiment.nativeBaseline
+          : `${experiment.nativeBaseline.command} --background-index`,
       project: baselineRoot,
-      elapsedMs: Math.round(performance.now() - started),
+      elapsedMs: nativeElapsedMs,
     });
   }
   const resident = createResidentGraphSource({
@@ -126,6 +155,32 @@ export const runStrictLifecycle = async (experiment, pinnedRoot) => {
     if (cold !== unchanged) {
       throw new Error(
         `${experiment.language}: unchanged resident load replaced dump identity`,
+      );
+    }
+
+    if (fixture.noopPerformance !== undefined) {
+      rows.push(
+        await measureLifecycleNoopPerformance({
+          language: experiment.language,
+          ...fixture.noopPerformance,
+          currentDump: dump,
+          currentIdentity: previousIdentity,
+          load: async () => {
+            const started = performance.now();
+            const next = await resident.load();
+            const provenance = strictProvenance(next, experiment);
+            return {
+              dump: next,
+              mode: resident.modes().get(experiment.strictProvider),
+              identity: [
+                provenance.manifest,
+                provenance.content,
+                provenance.universe,
+              ].join(":"),
+              elapsedMs: Math.round(performance.now() - started),
+            };
+          },
+        }),
       );
     }
 

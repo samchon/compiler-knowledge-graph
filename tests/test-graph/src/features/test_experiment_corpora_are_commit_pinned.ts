@@ -6,6 +6,7 @@ import {
   RUST_GRAPH_PRODUCER_COMMIT,
 } from "@samchon/graph";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 import {
@@ -13,6 +14,7 @@ import {
   nearestRankP95,
 } from "../../../experiment/src/lifecycle-performance.mjs";
 import { findExperiment } from "../../../experiment/src/catalog.mjs";
+import { verifyGitTree } from "../../../experiment/src/git-tree.mjs";
 import {
   RUST_GRAPH_PRODUCER_SLOW_TEST,
   RUST_GRAPH_PRODUCER_UNIT_TEST,
@@ -26,12 +28,14 @@ import { GraphPaths } from "../internal/GraphPaths";
 
 /** Real-language experiments always check out one reviewable corpus revision. */
 export const test_experiment_corpora_are_commit_pinned = async () => {
+  verifyGitTreeFixture();
   const catalog = experimentSource("catalog.mjs");
   const helpers = experimentSource("process.mjs");
   const lifecycle = experimentSource("strict-lifecycle.mjs");
   const lifecyclePerformance = experimentSource("lifecycle-performance.mjs");
   const runner = experimentSource("run-language.mjs");
   const setup = experimentSource("setup-language.mjs");
+  const gitTree = experimentSource("git-tree.mjs");
   const javaAgreement = experimentSource("java-producer-agreement.mjs");
   const clangProducer = experimentSource("clang-producer.mjs");
   const evidenceSummary = experimentSource("evidence-summary.mjs");
@@ -509,9 +513,9 @@ export const test_experiment_corpora_are_commit_pinned = async () => {
       setup.includes("tests.GradleBuildToolTest") &&
       setup.includes("const installJdtGraphProducer = async") &&
       setup.includes("verifyGitTree(source, experiment.jdtProducerTree)") &&
-      setup.includes('["add", "--all", "--force"]') &&
-      setup.includes('["write-tree"]') &&
-      setup.includes('run(maven, ["clean", "verify", "-U", "-DskipTests=true"]') &&
+      gitTree.includes('["add", "--all", "--force"]') &&
+      gitTree.includes('["write-tree"]') &&
+      setup.includes('run(maven, ["clean", "install", "-U", "-DskipTests=true"]') &&
       setup.includes("GraphSnapshotCommandTest") &&
       setup.includes("UnresolvedTypesQuickFixTest#testTypeInSealedTypeDeclaration") &&
       setup.includes("FileEventHandlerTest") &&
@@ -1016,6 +1020,33 @@ export const test_experiment_corpora_are_commit_pinned = async () => {
       !setup.includes("npm install -g pyright"),
   );
 };
+
+/** Exercise both the accepting and rejecting cleanup paths of the tree pin. */
+function verifyGitTreeFixture(): void {
+  const source = fs.mkdtempSync(
+    path.join(os.tmpdir(), "samchon-graph-git-tree-"),
+  );
+  const repository = path.join(source, ".git");
+  try {
+    fs.writeFileSync(path.join(source, "fixture.txt"), "graph snapshot\n");
+    verifyGitTree(source, "40c24dc91a696208881f6616618948ca18f05a92");
+    TestValidator.equals(
+      "successful Git tree verification removes its temporary repository",
+      fs.existsSync(repository),
+      false,
+    );
+    TestValidator.error("a mismatched Git tree is rejected", () =>
+      verifyGitTree(source, "0000000000000000000000000000000000000000"),
+    );
+    TestValidator.equals(
+      "failed Git tree verification removes its temporary repository",
+      fs.existsSync(repository),
+      false,
+    );
+  } finally {
+    fs.rmSync(source, { force: true, recursive: true });
+  }
+}
 
 /**
  * One source region with its line comments removed.

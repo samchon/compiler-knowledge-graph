@@ -10,6 +10,7 @@ import {
   CLANG_PRODUCER_BUILD_PACKAGES,
   installClangGraphProducer,
 } from "./clang-producer.mjs";
+import { verifyGitTree } from "./git-tree.mjs";
 import {
   appendGithubPath,
   ensureDir,
@@ -481,27 +482,6 @@ ${help}`,
   recordProvisionedEnvironment("SAMCHON_GRAPH_JAVAC_GRAPH", link);
 };
 
-/** Prove that an extracted source archive is the exact pinned Git tree. */
-const verifyGitTree = (source, expected) => {
-  const repository = path.join(source, ".git");
-  fs.rmSync(repository, { force: true, recursive: true });
-  try {
-    run("git", ["init", "--quiet"], { cwd: source });
-    run("git", ["config", "core.autocrlf", "false"], { cwd: source });
-    run("git", ["add", "--all", "--force"], { cwd: source });
-    const actual = String(
-      run("git", ["write-tree"], { cwd: source, stdio: "pipe" }).stdout,
-    ).trim();
-    if (actual !== expected) {
-      throw new Error(
-        `${source} has Git tree ${actual}, expected ${expected}`,
-      );
-    }
-  } finally {
-    fs.rmSync(repository, { force: true, recursive: true });
-  }
-};
-
 /** Build and install the exact JDT workspace graph producer revision. */
 const installJdtGraphProducer = async () => {
   for (const field of [
@@ -535,7 +515,7 @@ const installJdtGraphProducer = async () => {
     throw new Error(`java: the pinned JDT Maven wrapper is missing at ${maven}`);
   }
   fs.chmodSync(maven, 0o755);
-  run(maven, ["clean", "verify", "-U", "-DskipTests=true"], {
+  run(maven, ["clean", "install", "-U", "-DskipTests=true"], {
     cwd: source,
   });
   run(

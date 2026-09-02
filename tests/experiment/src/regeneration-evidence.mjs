@@ -100,8 +100,14 @@ export function firstEvidenceDifference(left, right) {
   if (left === undefined || right === undefined) {
     return `producer evidence ${left === undefined ? "appeared" : "disappeared"}`;
   }
-  const removed = multisetRemainder(left, right).at(0);
-  const added = multisetRemainder(right, left).at(0);
+  const removedRows = multisetRemainder(left, right);
+  const addedRows = multisetRemainder(right, left);
+  const removedCompiler = removedRows.find(isCompilerInvocation);
+  const addedCompiler = addedRows.find(isCompilerInvocation);
+  const compilerMoved =
+    removedCompiler !== undefined || addedCompiler !== undefined;
+  const removed = compilerMoved ? removedCompiler : removedRows.at(0);
+  const added = compilerMoved ? addedCompiler : addedRows.at(0);
   if (removed !== undefined || added !== undefined) {
     const focus = firstDifferenceIndex(removed, added);
     return `${bounded(removed, focus)} -> ${bounded(added, focus)}`;
@@ -113,6 +119,10 @@ export function firstEvidenceDifference(left, right) {
     }
   }
   return "committed producer universe rows are equal";
+}
+
+function isCompilerInvocation(row) {
+  return row.startsWith("compiler invocation:");
 }
 
 function multisetRemainder(source, matched) {

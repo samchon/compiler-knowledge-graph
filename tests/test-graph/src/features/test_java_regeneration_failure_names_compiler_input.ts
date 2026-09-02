@@ -145,6 +145,25 @@ export const test_java_regeneration_failure_names_compiler_input = () => {
         addedUnicode.length <= 491 &&
         hasNoLoneSurrogate(addedUnicode),
     );
+    const addedInvocation = `compiler invocation:${"y".repeat(700)}retry.jar`;
+    const addedWithUniverse = firstEvidenceDifference(
+      ["generation universe:compilerTarget=old"],
+      [addedInvocation, "generation universe:compilerTarget=new"],
+    );
+    TestValidator.predicate(
+      "added invocation takes precedence over its opaque universe digest",
+      addedWithUniverse.startsWith("missing -> ") &&
+        addedWithUniverse.includes("retry.jar"),
+    );
+    const removedWithUniverse = firstEvidenceDifference(
+      [addedInvocation, "generation universe:compilerTarget=old"],
+      ["generation universe:compilerTarget=new"],
+    );
+    TestValidator.predicate(
+      "removed invocation takes precedence over its opaque universe digest",
+      removedWithUniverse.endsWith(" -> missing") &&
+        removedWithUniverse.includes("retry.jar"),
+    );
     TestValidator.error(
       "store root cannot escape the isolated corpus",
       () => captureGenerationEvidence(root, ".."),

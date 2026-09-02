@@ -179,11 +179,41 @@ function bounded(value, focus) {
   if (value.length <= limit) return value;
   if (focus === undefined) {
     const half = (limit - 3) / 2;
-    return `${value.slice(0, Math.ceil(half))}...${value.slice(-Math.floor(half))}`;
+    return `${codePointSlice(value, 0, Math.ceil(half))}...${codePointSlice(value, value.length - Math.floor(half), value.length)}`;
   }
   const contentLimit = limit - 6;
   const initialStart = Math.max(0, focus - Math.floor(contentLimit / 2));
   const end = Math.min(value.length, initialStart + contentLimit);
   const start = Math.max(0, end - contentLimit);
-  return `${start > 0 ? "..." : ""}${value.slice(start, end)}${end < value.length ? "..." : ""}`;
+  return `${start > 0 ? "..." : ""}${codePointSlice(value, start, end)}${end < value.length ? "..." : ""}`;
+}
+
+function codePointSlice(value, requestedStart, requestedEnd) {
+  let start = requestedStart;
+  let end = requestedEnd;
+  if (
+    start > 0 &&
+    start < value.length &&
+    isLowSurrogate(value.charCodeAt(start)) &&
+    isHighSurrogate(value.charCodeAt(start - 1))
+  ) {
+    start++;
+  }
+  if (
+    end > 0 &&
+    end < value.length &&
+    isHighSurrogate(value.charCodeAt(end - 1)) &&
+    isLowSurrogate(value.charCodeAt(end))
+  ) {
+    end--;
+  }
+  return value.slice(start, end);
+}
+
+function isHighSurrogate(value) {
+  return value >= 0xd800 && value <= 0xdbff;
+}
+
+function isLowSurrogate(value) {
+  return value >= 0xdc00 && value <= 0xdfff;
 }

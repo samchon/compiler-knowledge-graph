@@ -96,7 +96,23 @@ export const test_java_regeneration_failure_names_compiler_input = () => {
     );
     TestValidator.predicate(
       "difference after the diagnostic bound stays visible",
-      longDifference.includes("OLD") && longDifference.includes("NEW"),
+      longDifference.includes("OLD") &&
+        longDifference.includes("NEW") &&
+        longDifference.includes("...") &&
+        longDifference.length <= 964,
+    );
+    const unicodePrefix = "😀".repeat(250);
+    const unicodeDifference = firstEvidenceDifference(
+      [`${unicodePrefix}OLD${unicodePrefix}`],
+      [`${unicodePrefix}NEW${unicodePrefix}`],
+    );
+    TestValidator.predicate(
+      "bounded diagnostics preserve Unicode code points",
+      unicodeDifference.includes("OLD") &&
+        unicodeDifference.includes("NEW") &&
+        unicodeDifference.includes("...") &&
+        unicodeDifference.length <= 964 &&
+        hasNoLoneSurrogate(unicodeDifference),
     );
     TestValidator.error(
       "store root cannot escape the isolated corpus",
@@ -140,4 +156,18 @@ function encodedIdentity(prefix: string, suffix: string): string {
     `v1|literal:${literal(prefix)}|tool|literal:${literal(suffix)}`,
     "utf8",
   ).toString("base64url");
+}
+
+function hasNoLoneSurrogate(value: string): boolean {
+  for (let index = 0; index < value.length; index++) {
+    const code = value.charCodeAt(index);
+    if (code >= 0xd800 && code <= 0xdbff) {
+      const next = value.charCodeAt(index + 1);
+      if (next < 0xdc00 || next > 0xdfff) return false;
+      index++;
+    } else if (code >= 0xdc00 && code <= 0xdfff) {
+      return false;
+    }
+  }
+  return true;
 }

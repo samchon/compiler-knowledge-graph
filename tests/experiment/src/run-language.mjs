@@ -22,6 +22,7 @@ import {
 } from "./process.mjs";
 import { runStrictLifecycle } from "./strict-lifecycle.mjs";
 import { hasRepresentativeEdge } from "./representative-edges.mjs";
+import { runJavaProducerAgreement } from "./java-producer-agreement.mjs";
 
 activateProvisionedTools();
 
@@ -309,6 +310,11 @@ if (warnings.some((warning) => /LSP indexing failed|LSP returned no symbols|serv
   throw new Error(`${experiment.language}: LSP warning failed experiment: ${warnings.join("; ")}`);
 }
 
+const producerAgreement =
+  experiment.language === "java"
+    ? await runJavaProducerAgreement(experiment, cwd)
+    : undefined;
+
 // Read after the whole run rather than before it: what has to be proved is that
 // nothing this run did — preparation, indexing, or lifecycle editing — reached
 // the clone whose commit the result publishes.
@@ -343,6 +349,7 @@ const result = {
   crossFileCalls,
   crossFileRelationships,
   lifecycle: lifecycle?.rows,
+  producerAgreement,
   warnings,
   sampleNodes: dump.nodes.slice(0, 20).map((node) => ({
     id: node.id,

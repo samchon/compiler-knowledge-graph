@@ -1,6 +1,7 @@
 import { TestValidator } from "@nestia/e2e";
 import {
   CPP_CLANG_PRODUCER_COMMIT,
+  JDT_GRAPH_PRODUCER_COMMIT,
   LANGUAGE_SPECS,
   RUST_GRAPH_PRODUCER_COMMIT,
 } from "@samchon/graph";
@@ -31,6 +32,7 @@ export const test_experiment_corpora_are_commit_pinned = async () => {
   const lifecyclePerformance = experimentSource("lifecycle-performance.mjs");
   const runner = experimentSource("run-language.mjs");
   const setup = experimentSource("setup-language.mjs");
+  const javaAgreement = experimentSource("java-producer-agreement.mjs");
   const clangProducer = experimentSource("clang-producer.mjs");
   const evidenceSummary = experimentSource("evidence-summary.mjs");
 
@@ -487,11 +489,15 @@ export const test_experiment_corpora_are_commit_pinned = async () => {
       setup.includes('run(link, ["--version"])'),
   );
   TestValidator.predicate(
-    "Java verifies compiler breadth and a native Maven baseline",
+    "Java pins both producers, verifies their breadth and proves agreement",
     java.includes('kind: "shell"') &&
       java.includes('command: "mvn -q test-compile"') &&
       java.includes("warmup: true") &&
       java.includes('clean: ["target"]') &&
+      java.includes(
+        `jdtProducerCommit: "${JDT_GRAPH_PRODUCER_COMMIT}"`,
+      ) &&
+      /jdtProducerDigest:\s*\n\s*"[0-9a-f]{64}"/u.test(java) &&
       !java.includes("regenerationLimitation:") &&
       setup.includes("if (pin.verify !== undefined) pin.verify({ gradle, source })") &&
       setup.includes("org.scip_code.scip_java.javac.JavaGraphShardTest") &&
@@ -500,7 +506,24 @@ export const test_experiment_corpora_are_commit_pinned = async () => {
       setup.includes("tests.MavenGraphLifecycleTest") &&
       setup.includes("tests.MavenGraphPluginTest") &&
       setup.includes("tests.GraphAggregateRunnerTest") &&
-      setup.includes("tests.GradleBuildToolTest"),
+      setup.includes("tests.GradleBuildToolTest") &&
+      setup.includes("const installJdtGraphProducer = async") &&
+      setup.includes("verifySha256(archive, experiment.jdtProducerDigest)") &&
+      setup.includes('run(maven, ["clean", "verify", "-U", "-DskipTests=true"]') &&
+      setup.includes("GraphSnapshotCommandTest") &&
+      setup.includes("UnresolvedTypesQuickFixTest#testTypeInSealedTypeDeclaration") &&
+      setup.includes("FileEventHandlerTest") &&
+      setup.includes("CleanUpsTest") &&
+      setup.includes('path.join(binRoot, "samchon-jdtls")') &&
+      setup.includes(
+        'recordProvisionedEnvironment("SAMCHON_GRAPH_JDT_WORKSPACE", dedicated)',
+      ) &&
+      runner.includes("runJavaProducerAgreement(experiment, cwd)") &&
+      javaAgreement.includes("const javac = await buildGraphDump(options)") &&
+      javaAgreement.includes("delete process.env[JAVAC_OVERRIDE]") &&
+      javaAgreement.includes("const jdt = await buildGraphDump(options)") &&
+      /declaration\(\s*"constructor"/u.test(javaAgreement) &&
+      javaAgreement.includes('declaration("method"'),
   );
   TestValidator.predicate(
     "a local start process reactivates the complete environment from setup",

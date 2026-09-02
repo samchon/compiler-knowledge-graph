@@ -421,7 +421,7 @@ const installJavacGraphProducer = async (gradle) => {
     commit: experiment.producerCommit,
     version: experiment.producerCommit,
     digest:
-      "ac037aed0bb1d64c7175dbf354f697176ad05d73a17032884ecfc09b7e54d129",
+      "d354daf242cf0098ec93481acd2475e0316c8edd3a5d86c5c170a57aa5523aea",
     verify: ({ gradle: verifiedGradle, source }) => {
       run(
         verifiedGradle,
@@ -477,6 +477,83 @@ const installJavacGraphProducer = async (gradle) => {
 ${help}`,
     );
   }
+  process.env.SAMCHON_GRAPH_JAVAC_GRAPH = link;
+  recordProvisionedEnvironment("SAMCHON_GRAPH_JAVAC_GRAPH", link);
+};
+
+/** Build and install the exact JDT workspace graph producer revision. */
+const installJdtGraphProducer = async () => {
+  for (const field of [
+    "jdtProducerRepository",
+    "jdtProducerCommit",
+    "jdtProducerDigest",
+  ]) {
+    if (typeof experiment[field] !== "string" || experiment[field] === "") {
+      throw new Error(`java: the JDT graph setup requires an exact ${field}`);
+    }
+  }
+  const repository = experiment.jdtProducerRepository
+    .replace(/^https:\/\/github\.com\//u, "")
+    .replace(/\.git$/u, "");
+  const url = `https://codeload.github.com/${repository}/tar.gz/${experiment.jdtProducerCommit}`;
+  const archive = path.join(
+    toolsRoot,
+    `eclipse-jdt-ls-${experiment.jdtProducerCommit}.tar.gz`,
+  );
+  const source = path.join(
+    toolsRoot,
+    `eclipse-jdt-ls-${experiment.jdtProducerCommit}`,
+  );
+  await downloadFile(url, archive);
+  verifySha256(archive, experiment.jdtProducerDigest);
+  fs.rmSync(source, { force: true, recursive: true });
+  ensureDir(source);
+  run("tar", ["-xzf", archive, "--strip-components=1", "-C", source]);
+  const maven = path.join(source, "mvnw");
+  if (!fs.statSync(maven, { throwIfNoEntry: false })?.isFile()) {
+    throw new Error(`java: the pinned JDT Maven wrapper is missing at ${maven}`);
+  }
+  fs.chmodSync(maven, 0o755);
+  run(maven, ["clean", "verify", "-U", "-DskipTests=true"], {
+    cwd: source,
+  });
+  run(
+    maven,
+    [
+      "verify",
+      "-pl",
+      "org.eclipse.jdt.ls.tests",
+      "-am",
+      "-Dtest=GraphSnapshotCommandTest,UnresolvedTypesQuickFixTest#testTypeInSealedTypeDeclaration,FileEventHandlerTest,CleanUpsTest",
+    ],
+    { cwd: source },
+  );
+  const launcher = path.join(
+    source,
+    "org.eclipse.jdt.ls.product",
+    "target",
+    "repository",
+    "bin",
+    "jdtls",
+  );
+  if (!fs.statSync(launcher, { throwIfNoEntry: false })?.isFile()) {
+    throw new Error(`java: the pinned JDT launcher is missing at ${launcher}`);
+  }
+  fs.chmodSync(launcher, 0o755);
+  const dedicated = path.join(binRoot, "samchon-jdtls");
+  const generic = path.join(binRoot, "jdtls");
+  for (const link of [dedicated, generic]) {
+    fs.rmSync(link, { force: true });
+    fs.symlinkSync(launcher, link);
+  }
+  process.env.SAMCHON_GRAPH_JDT_WORKSPACE = dedicated;
+  recordProvisionedEnvironment("SAMCHON_GRAPH_JDT_WORKSPACE", dedicated);
+  record({
+    tool: "eclipse-jdtls-graph-snapshot",
+    version: experiment.jdtProducerCommit,
+    source: url,
+    digest: `sha256:${experiment.jdtProducerDigest}`,
+  });
 };
 
 // Needs a compilation database, which is why the provider carries
@@ -774,10 +851,9 @@ switch (experiment.language) {
     await installScip();
     break;
   case "java": {
-    // jdtls is not an apt package and requires Java 21+; install the JDK and the
-    // Eclipse JDT.LS snapshot tarball, then put its bin on PATH. The launcher is
-    // a Python script that locates its plugins relative to its own path, so it
-    // must run from the extracted tree rather than a symlink.
+    // Both compiler-owned lanes are built from exact source archives. JDT.LS
+    // needs Java 21+ and its launcher is a Python script that locates plugins
+    // relative to the built product repository.
     apt(["openjdk-21-jdk", "python3"]);
     // jdtls crashes on the runner's default JDK; point it at Java 21.
     const javaHome = "/usr/lib/jvm/java-21-openjdk-amd64";
@@ -787,23 +863,6 @@ switch (experiment.language) {
       fs.appendFileSync(process.env.GITHUB_ENV, `JAVA_HOME=${javaHome}${os.EOL}`);
     }
     appendGithubPath(path.join(javaHome, "bin"));
-    const target = path.join(toolsRoot, "jdtls");
-    const archive = path.join(toolsRoot, "jdtls.tar.gz");
-    await downloadFile(
-      "https://download.eclipse.org/jdtls/snapshots/jdt-language-server-latest.tar.gz",
-      archive,
-    );
-    fs.rmSync(target, { force: true, recursive: true });
-    ensureDir(target);
-    run("tar", ["-xzf", archive, "-C", target]);
-    appendGithubPath(path.join(target, "bin"));
-    record({
-      tool: "jdtls",
-      version: "unpinned",
-      source:
-        "https://download.eclipse.org/jdtls/snapshots/jdt-language-server-latest.tar.gz",
-      digest: "unpinned",
-    });
     // One launcher, built from the pinned fork. It serves both the strict
     // javac route and the SCIP lane behind it, so installing the released
     // binary first only downloaded a `scip-java` the source build then
@@ -811,6 +870,7 @@ switch (experiment.language) {
     // though a run had used it.
     await installScip();
     await installJavacGraphProducer(await installGradle());
+    await installJdtGraphProducer();
     break;
   }
   case "csharp": {

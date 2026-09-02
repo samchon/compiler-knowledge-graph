@@ -382,14 +382,18 @@ export const LANGUAGE_EXPERIMENTS = [
     // Use scip-java's own pinned Maven fixture for that contract; Gson remains
     // the separate large-corpus timing proof.
     repository: "https://github.com/samchon/scip-java.git",
-    commit: "994e2033aa56dd924ab557e86e0ca0ac2913d53c",
+    commit: "49159074904dd401b80e6c5e9ae62a3e856a478c",
     projectRoot: "scip-java/src/test/resources/fixtures/maven/basic",
     // The producer and the corpus are one checkout on purpose. The fixture is
     // the producer's own Maven project, so a pin that named a different
     // revision for each would measure a plugin against a build it was never
     // tested with.
     producerRepository: "https://github.com/samchon/scip-java.git",
-    producerCommit: "994e2033aa56dd924ab557e86e0ca0ac2913d53c",
+    producerCommit: "49159074904dd401b80e6c5e9ae62a3e856a478c",
+    jdtProducerRepository: "https://github.com/samchon/eclipse.jdt.ls.git",
+    jdtProducerCommit: "8e163968cdabc6b5dc60bb05b9eb9ae7600151d1",
+    jdtProducerDigest:
+      "8f29b97b255f5fd86675969b3130f60f8d8624c56294d99847dbec0460e3d22c",
     nativeBaseline: {
       kind: "shell",
       command: "mvn -q test-compile",

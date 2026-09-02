@@ -10,6 +10,7 @@ import { toolchainVersion } from "../toolchainVersion";
 import { JAVA_GRAPH_FACTS } from "./JAVA_GRAPH_FACTS";
 import { JAVA_GRAPH_PROVIDER } from "./JAVA_GRAPH_PROVIDER";
 import { JavaGraphSession } from "./JavaGraphSession";
+import { jdtGraphProvider } from "./jdtGraphProvider";
 
 const OVERRIDE = "SAMCHON_GRAPH_JAVAC_GRAPH";
 const TOOLCHAIN_OVERRIDE = "SAMCHON_GRAPH_JAVA_TOOLCHAIN";
@@ -81,7 +82,7 @@ export const javaGraphProvider: IGraphProvider = {
     commands: ["scip-java", "java"],
     environmentOverrides: [OVERRIDE, TOOLCHAIN_OVERRIDE],
   },
-  fallbacks: [javaScipProvider],
+  fallbacks: [jdtGraphProvider, javaScipProvider],
   buildInputs: javaScipProvider.buildInputs,
   configuration: (root, env) =>
     [...javaToolchain(root, env).rows],

@@ -79,7 +79,13 @@ export function captureGenerationEvidence(projectRoot, relativeStoreRoot) {
       files.push(...walkFiles(compiler));
     }
     for (const file of files.sort(compareUtf8)) {
-      const relative = path.relative(store, file).replaceAll(path.sep, "/");
+      const targetRelative = path
+        .relative(store, target)
+        .replaceAll(path.sep, "/");
+      const committedRelative = path
+        .relative(committed, file)
+        .replaceAll(path.sep, "/");
+      const relative = `${targetRelative}/${committedRelative}`;
       const lines = fs.readFileSync(file, "utf8").split(/\r?\n/u);
       if (lines.at(-1) === "") lines.pop();
       for (let index = 0; index < lines.length; index++) {
@@ -100,8 +106,12 @@ export function firstEvidenceDifference(left, right) {
   if (left === undefined || right === undefined) {
     return `producer evidence ${left === undefined ? "appeared" : "disappeared"}`;
   }
-  if (left.length !== right.length) {
-    return `producer evidence rows ${String(left.length)} -> ${String(right.length)}`;
+  const leftRows = new Set(left);
+  const rightRows = new Set(right);
+  const removed = left.find((row) => !rightRows.has(row));
+  const added = right.find((row) => !leftRows.has(row));
+  if (removed !== undefined || added !== undefined) {
+    return `${bounded(removed)} -> ${bounded(added)}`;
   }
   for (let index = 0; index < left.length; index++) {
     if (left[index] !== right[index]) {

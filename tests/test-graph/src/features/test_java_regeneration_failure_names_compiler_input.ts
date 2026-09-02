@@ -20,22 +20,23 @@ export const test_java_regeneration_failure_names_compiler_input = () => {
       "targets",
       "a".repeat(64),
     );
-    const generation = "b".repeat(64);
-    const committed = path.join(target, "generations", generation);
-    const invocation = path.join(
-      committed,
+    const current = path.join(target, "CURRENT");
+    const coldGeneration = "b".repeat(64);
+    const coldCommitted = path.join(target, "generations", coldGeneration);
+    const coldInvocation = path.join(
+      coldCommitted,
       ".universe",
       `${"c".repeat(64)}.args.d`,
       `${"d".repeat(64)}.args`,
     );
-    fs.mkdirSync(path.dirname(invocation), { recursive: true });
-    fs.writeFileSync(path.join(target, "CURRENT"), `${generation}\n`);
+    fs.mkdirSync(path.dirname(coldInvocation), { recursive: true });
+    fs.writeFileSync(current, `${coldGeneration}\n`);
     fs.writeFileSync(
-      path.join(committed, "UNIVERSE"),
+      path.join(coldCommitted, "UNIVERSE"),
       "java.version=21\ncompilerTarget=first\n",
     );
     fs.writeFileSync(
-      invocation,
+      coldInvocation,
       [
         "@invocation",
         "@plugin",
@@ -53,8 +54,22 @@ export const test_java_regeneration_failure_names_compiler_input = () => {
       ),
     );
 
+    const retryGeneration = "f".repeat(64);
+    const retryCommitted = path.join(target, "generations", retryGeneration);
+    const retryInvocation = path.join(
+      retryCommitted,
+      ".universe",
+      `${"c".repeat(64)}.args.d`,
+      `${"d".repeat(64)}.args`,
+    );
+    fs.mkdirSync(path.dirname(retryInvocation), { recursive: true });
+    fs.writeFileSync(current, `${retryGeneration}\n`);
     fs.writeFileSync(
-      invocation,
+      path.join(retryCommitted, "UNIVERSE"),
+      "java.version=21\ncompilerTarget=retry\n",
+    );
+    fs.writeFileSync(
+      retryInvocation,
       [
         "@invocation",
         "@plugin",
@@ -69,6 +84,11 @@ export const test_java_regeneration_failure_names_compiler_input = () => {
       "first moved compiler input is actionable",
       difference.includes('first.jar"') && difference.includes('retry.jar"'),
     );
+    TestValidator.equals(
+      "added compiler input is named",
+      firstEvidenceDifference(["row-a"], ["row-a", "row-b"]),
+      "missing -> row-b",
+    );
     TestValidator.error(
       "store root cannot escape the isolated corpus",
       () => captureGenerationEvidence(root, ".."),
@@ -78,7 +98,7 @@ export const test_java_regeneration_failure_names_compiler_input = () => {
       path.join(os.tmpdir(), "graph-java-universe-foreign-"),
     );
     try {
-      const compiler = path.join(committed, ".universe");
+      const compiler = path.join(retryCommitted, ".universe");
       fs.rmSync(compiler, { force: true, recursive: true });
       if (process.platform === "win32") {
         fs.symlinkSync(foreign, compiler, "junction");
@@ -93,7 +113,7 @@ export const test_java_regeneration_failure_names_compiler_input = () => {
     } finally {
       fs.rmSync(foreign, { force: true, recursive: true });
     }
-    fs.writeFileSync(path.join(target, "CURRENT"), "not-a-generation\n");
+    fs.writeFileSync(current, "not-a-generation\n");
     TestValidator.error(
       "malformed current generation is rejected",
       () => captureGenerationEvidence(root, "target/scip-targetroot"),

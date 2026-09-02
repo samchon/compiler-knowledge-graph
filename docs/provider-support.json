@@ -170,9 +170,9 @@
       "facts": ["contains", "exports", "imports", "calls", "accesses", "instantiates", "type_ref", "extends", "implements", "overrides", "dispatches", "decorates", "tests", "references"],
       "commands": ["scip-java", "java"],
       "environmentOverrides": ["SAMCHON_GRAPH_JAVAC_GRAPH", "SAMCHON_GRAPH_JAVA_TOOLCHAIN"],
-      "install": "Build the pinned `scip-java` graph producer at `49159074904dd401b80e6c5e9ae62a3e856a478c` and the pinned JDT workspace producer at `0d55a6c13d14e0d0466eeb021920349b3d0c6d35` with JDK 21. A javac build without `--graph-output` is declined before compilation.",
+      "install": "Build the pinned `scip-java` graph producer at `fefb1bfb2e3fac90cd90f64fc07cc57fb533b49a` and the pinned JDT workspace producer at `0d55a6c13d14e0d0466eeb021920349b3d0c6d35` with JDK 21. A javac build without `--graph-output` is declined before compilation.",
       "installSources": [
-        {"label": "pinned javac graph producer", "url": "https://github.com/samchon/scip-java/commit/49159074904dd401b80e6c5e9ae62a3e856a478c"},
+        {"label": "pinned javac graph producer", "url": "https://github.com/samchon/scip-java/commit/fefb1bfb2e3fac90cd90f64fc07cc57fb533b49a"},
         {"label": "initial javac graph implementation", "url": "https://github.com/samchon/scip-java/pull/1"},
         {"label": "producer acceptance pull request", "url": "https://github.com/samchon/scip-java/pull/2"},
         {"label": "pinned JDT workspace producer", "url": "https://github.com/samchon/eclipse.jdt.ls/commit/0d55a6c13d14e0d0466eeb021920349b3d0c6d35"},

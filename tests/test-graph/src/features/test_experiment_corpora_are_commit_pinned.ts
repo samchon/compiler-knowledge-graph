@@ -474,8 +474,35 @@ export const test_experiment_corpora_are_commit_pinned = async () => {
   TestValidator.equals(
     "failed Rust producer fixture retains its exact exit code",
     producerFailure,
-    "Rust HIR unit fixture failed at the pinned producer commit with exit code 101",
+    "Rust HIR unit fixture failed at the pinned producer commit: exited with code 101",
   );
+  for (const failure of [
+    {
+      result: { status: null, signal: null, error: new Error("spawn ENOENT") },
+      detail: "could not start: spawn ENOENT",
+    },
+    {
+      result: { status: null, signal: "SIGKILL" },
+      detail: "terminated by signal SIGKILL",
+    },
+  ]) {
+    let message = "";
+    try {
+      verifyRustGraphProducer({
+        cargo: "cargo",
+        producerRoot: "producer",
+        run: () => ({ ...failure.result, stdout: "", stderr: "" }),
+        emit: () => undefined,
+      });
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+    TestValidator.equals(
+      `Rust producer failure preserves ${failure.detail}`,
+      message,
+      `Rust HIR unit fixture failed at the pinned producer commit: ${failure.detail}`,
+    );
+  }
   TestValidator.predicate(
     "the remaining SCIP providers use isolated upstream lifecycle projects",
     [kotlin, ruby, php, dart].every(

@@ -52,9 +52,15 @@ export function verifyRustGraphProducer({
     const stdout = String(result.stdout ?? "");
     const stderr = String(result.stderr ?? "");
     emit(stdout, stderr);
-    if (result.status !== undefined && result.status !== 0) {
+    if (result.status !== 0) {
+      const failure =
+        result.error instanceof Error
+          ? `could not start: ${result.error.message}`
+          : typeof result.signal === "string" && result.signal !== ""
+            ? `terminated by signal ${result.signal}`
+            : `exited with code ${String(result.status)}`;
       throw new Error(
-        `${test.label} failed at the pinned producer commit with exit code ${String(result.status)}`,
+        `${test.label} failed at the pinned producer commit: ${failure}`,
       );
     }
     const summaries = `${stdout}\n${stderr}`.match(

@@ -46,11 +46,17 @@ export function verifyRustGraphProducer({
     const result = run(cargo, test.args, {
       cwd: producerRoot,
       stdio: "pipe",
+      check: false,
       ...(test.env === undefined ? {} : { env: test.env }),
     });
     const stdout = String(result.stdout ?? "");
     const stderr = String(result.stderr ?? "");
     emit(stdout, stderr);
+    if (result.status !== undefined && result.status !== 0) {
+      throw new Error(
+        `${test.label} failed at the pinned producer commit with exit code ${String(result.status)}`,
+      );
+    }
     const summaries = `${stdout}\n${stderr}`.match(
       /(?:^|\r?\n)test result: ok\. 1 passed; 0 failed;/gu,
     );

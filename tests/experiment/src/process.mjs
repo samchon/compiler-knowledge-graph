@@ -38,7 +38,7 @@ export const run = (command, args = [], options = {}) => {
     stdio: options.stdio ?? "inherit",
     windowsHide: true,
   });
-  if (result.status !== 0) {
+  if (result.status !== 0 && options.check !== false) {
     throw new Error(`${command} ${args.join(" ")} failed with exit code ${result.status}`);
   }
   return result;

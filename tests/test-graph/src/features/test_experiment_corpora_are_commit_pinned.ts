@@ -359,7 +359,12 @@ export const test_experiment_corpora_are_commit_pinned = async () => {
   const cargoCalls: Array<{
     command: string;
     args: string[];
-    options: { cwd: string; stdio: string; env?: Record<string, string> };
+    options: {
+      cwd: string;
+      stdio: string;
+      check: boolean;
+      env?: Record<string, string>;
+    };
   }> = [];
   verifyRustGraphProducer({
     cargo: "cargo",
@@ -367,6 +372,7 @@ export const test_experiment_corpora_are_commit_pinned = async () => {
     run: (command, args, options) => {
       cargoCalls.push({ command, args, options });
       return {
+        status: 0,
         stdout:
           "running 1 test\ntest fixture ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out\n",
         stderr: "",
@@ -391,7 +397,7 @@ export const test_experiment_corpora_are_commit_pinned = async () => {
           "--",
           "--exact",
         ],
-        options: { cwd: "producer", stdio: "pipe" },
+        options: { cwd: "producer", stdio: "pipe", check: false },
       },
       {
         command: "cargo",
@@ -410,6 +416,7 @@ export const test_experiment_corpora_are_commit_pinned = async () => {
         options: {
           cwd: "producer",
           stdio: "pipe",
+          check: false,
           env: { RUN_SLOW_TESTS: "1" },
         },
       },
@@ -421,6 +428,7 @@ export const test_experiment_corpora_are_commit_pinned = async () => {
       cargo: "cargo",
       producerRoot: "producer",
       run: () => ({
+        status: 0,
         stdout:
           "running 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out\n",
         stderr: "",
@@ -434,6 +442,39 @@ export const test_experiment_corpora_are_commit_pinned = async () => {
     "Rust producer verification rejects Cargo's successful zero-test result exactly",
     zeroTestError,
     "Rust HIR unit fixture did not run exactly one passing test at the pinned producer commit",
+  );
+  const emittedFailure: string[] = [];
+  let producerFailure = "";
+  try {
+    verifyRustGraphProducer({
+      cargo: "cargo",
+      producerRoot: "producer",
+      run: (_command, _args, options) => {
+        TestValidator.equals("failed Rust fixture stays captured", options, {
+          cwd: "producer",
+          stdio: "pipe",
+          check: false,
+        });
+        return {
+          status: 101,
+          stdout: "actionable producer stdout\n",
+          stderr: "actionable producer stderr\n",
+        };
+      },
+      emit: (stdout, stderr) => emittedFailure.push(stdout, stderr),
+    });
+  } catch (error) {
+    producerFailure = error instanceof Error ? error.message : String(error);
+  }
+  TestValidator.equals(
+    "failed Rust producer fixtures emit both streams before rejection",
+    emittedFailure,
+    ["actionable producer stdout\n", "actionable producer stderr\n"],
+  );
+  TestValidator.equals(
+    "failed Rust producer fixture retains its exact exit code",
+    producerFailure,
+    "Rust HIR unit fixture failed at the pinned producer commit with exit code 101",
   );
   TestValidator.predicate(
     "the remaining SCIP providers use isolated upstream lifecycle projects",

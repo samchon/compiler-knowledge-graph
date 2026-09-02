@@ -65,7 +65,10 @@ export function captureGenerationEvidence(projectRoot, relativeStoreRoot) {
     }
     const universe = fs.realpathSync(requestedUniverse);
     assertDescendant(committed, universe, "regeneration evidence universe");
-    const files = [universe];
+    const universeLines = readLines(universe);
+    for (const line of universeLines) {
+      rows.push(`generation universe:${line}`);
+    }
     const requestedCompiler = path.join(committed, ".universe");
     if (
       fs.statSync(requestedCompiler, { throwIfNoEntry: false })?.isDirectory()
@@ -76,22 +79,13 @@ export function captureGenerationEvidence(projectRoot, relativeStoreRoot) {
         compiler,
         "regeneration compiler universe",
       );
-      files.push(...walkFiles(compiler));
-    }
-    for (const file of files.sort(compareUtf8)) {
-      const targetRelative = path
-        .relative(store, target)
-        .replaceAll(path.sep, "/");
-      const committedRelative = path
-        .relative(committed, file)
-        .replaceAll(path.sep, "/");
-      const relative = `${targetRelative}/${committedRelative}`;
-      const lines = fs.readFileSync(file, "utf8").split(/\r?\n/u);
-      if (lines.at(-1) === "") lines.pop();
-      for (let index = 0; index < lines.length; index++) {
-        rows.push(
-          `${relative}:${String(index + 1)}:${diagnosticLine(file, lines[index])}`,
+      for (const file of walkFiles(compiler).filter((path) =>
+        path.endsWith(".args"),
+      )) {
+        const invocation = readLines(file).map((line) =>
+          diagnosticLine(file, line),
         );
+        rows.push(`compiler invocation:${JSON.stringify(invocation)}`);
       }
     }
   }
@@ -106,10 +100,8 @@ export function firstEvidenceDifference(left, right) {
   if (left === undefined || right === undefined) {
     return `producer evidence ${left === undefined ? "appeared" : "disappeared"}`;
   }
-  const leftRows = new Set(left);
-  const rightRows = new Set(right);
-  const removed = left.find((row) => !rightRows.has(row));
-  const added = right.find((row) => !leftRows.has(row));
+  const removed = multisetRemainder(left, right).at(0);
+  const added = multisetRemainder(right, left).at(0);
   if (removed !== undefined || added !== undefined) {
     const focus = firstDifferenceIndex(removed, added);
     return `${bounded(removed, focus)} -> ${bounded(added, focus)}`;
@@ -121,6 +113,18 @@ export function firstEvidenceDifference(left, right) {
     }
   }
   return "committed producer universe rows are equal";
+}
+
+function multisetRemainder(source, matched) {
+  const counts = new Map();
+  for (const row of matched) counts.set(row, (counts.get(row) ?? 0) + 1);
+  const remainder = [];
+  for (const row of source) {
+    const count = counts.get(row) ?? 0;
+    if (count === 0) remainder.push(row);
+    else counts.set(row, count - 1);
+  }
+  return remainder;
 }
 
 function diagnosticLine(file, line) {
@@ -136,6 +140,12 @@ function diagnosticLine(file, line) {
     const literal = Buffer.from(token, "base64url").toString("utf8");
     return `|literal:${JSON.stringify(literal)}`;
   });
+}
+
+function readLines(file) {
+  const lines = fs.readFileSync(file, "utf8").split(/\r?\n/u);
+  if (lines.at(-1) === "") lines.pop();
+  return lines;
 }
 
 function walkFiles(root) {
@@ -179,7 +189,11 @@ function bounded(value, focus) {
   if (value.length <= limit) return value;
   if (focus === undefined) {
     const half = (limit - 3) / 2;
-    return `${codePointSlice(value, 0, Math.ceil(half))}...${codePointSlice(value, value.length - Math.floor(half), value.length)}`;
+    return `${codePointSlice(value, 0, Math.ceil(half))}...${codePointSlice(
+      value,
+      value.length - Math.floor(half),
+      value.length,
+    )}`;
   }
   const contentLimit = limit - 6;
   const initialStart = Math.max(0, focus - Math.floor(contentLimit / 2));

@@ -11,6 +11,10 @@ import {
   measureLifecyclePerformance,
 } from "./lifecycle-performance.mjs";
 import { isolateCorpus, shell } from "./process.mjs";
+import {
+  captureGenerationEvidence,
+  firstEvidenceDifference,
+} from "./regeneration-evidence.mjs";
 
 /** Measure one strict provider without ever editing the pinned corpus clone. */
 export const runStrictLifecycle = async (experiment, pinnedRoot) => {
@@ -178,6 +182,13 @@ export const runStrictLifecycle = async (experiment, pinnedRoot) => {
 
   try {
     const cold = await load("cold", ["initial"]);
+    const coldRegenerationEvidence =
+      fixture.regenerationEvidenceRoot === undefined
+        ? undefined
+        : captureGenerationEvidence(
+            lifecycleRoot,
+            fixture.regenerationEvidenceRoot,
+          );
     const unchanged = await load("unchanged", ["unchanged"]);
     if (cold !== unchanged) {
       throw new Error(
@@ -619,6 +630,13 @@ export const runStrictLifecycle = async (experiment, pinnedRoot) => {
     }
     const coldProvenance = strictProvenance(cold, experiment);
     const retryProvenance = strictProvenance(retried, experiment);
+    const retryRegenerationEvidence =
+      fixture.regenerationEvidenceRoot === undefined
+        ? undefined
+        : captureGenerationEvidence(
+            lifecycleRoot,
+            fixture.regenerationEvidenceRoot,
+          );
     // Restoring the sources restores the generation, or the row says why not.
     //
     // This was written as two claims, on the theory that a source manifest is a
@@ -641,13 +659,17 @@ export const runStrictLifecycle = async (experiment, pinnedRoot) => {
     const limitation = experiment.regenerationLimitation;
     if (!reproduced && limitation === undefined) {
       const difference = firstGenerationDifference(cold, retried);
+      const producerDifference = firstEvidenceDifference(
+        coldRegenerationEvidence,
+        retryRegenerationEvidence,
+      );
       throw new Error(
         `${experiment.language}: restoring the original sources did not reproduce the generation ` +
           `(manifest ${reproducedManifest ? "unchanged" : "moved"}, ` +
           `facts ${reproducedContent ? "unchanged" : "moved"}; ` +
           `cold ${String(cold.nodes.length)} nodes/${String(cold.edges.length)} edges, ` +
           `retry ${String(retried.nodes.length)} nodes/${String(retried.edges.length)} edges; ` +
-          `first difference: ${difference})`,
+          `first difference: ${difference}; producer evidence: ${producerDifference})`,
       );
     }
     rows.push({

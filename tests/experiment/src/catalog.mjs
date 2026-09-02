@@ -446,6 +446,9 @@ export const LANGUAGE_EXPERIMENTS = [
       failureFile: "pom.xml",
       failureSuffix: "\n<not-closed",
       failurePolicy: "reject",
+      // On a reproduction failure, expose the exact normalized compiler input
+      // that moved rather than only the public target-universe digest.
+      regenerationEvidenceRoot: "target/scip-targetroot",
     },
     minNodes: 1,
     minEdges: 0,

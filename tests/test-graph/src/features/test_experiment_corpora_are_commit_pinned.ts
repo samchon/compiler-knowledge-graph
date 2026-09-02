@@ -120,7 +120,8 @@ export const test_experiment_corpora_are_commit_pinned = async () => {
     "C and C++ measure twenty exact resident no-ops below 250 ms",
     [c, cpp].every(
       (row) =>
-        row.includes('nativeBaseline: { command: "samchon-clangd" }') &&
+        row.includes('kind: "clang-background-index"') &&
+        row.includes('command: "samchon-clangd"') &&
         row.includes("noopPerformance: {") &&
         row.includes("samples: 20") &&
         row.includes("p95MaxMs: 250"),
@@ -486,6 +487,22 @@ export const test_experiment_corpora_are_commit_pinned = async () => {
       setup.includes('run(link, ["--version"])'),
   );
   TestValidator.predicate(
+    "Java verifies compiler breadth and a native Maven baseline",
+    java.includes('kind: "shell"') &&
+      java.includes('command: "mvn -q test-compile"') &&
+      java.includes("warmup: true") &&
+      java.includes('clean: ["target"]') &&
+      !java.includes("regenerationLimitation:") &&
+      setup.includes("if (pin.verify !== undefined) pin.verify({ gradle, source })") &&
+      setup.includes("org.scip_code.scip_java.javac.JavaGraphShardTest") &&
+      setup.includes("org.scip_code.scip_java.gradle.GraphGenerationStoreTest") &&
+      setup.includes("tests.GradleGraphLifecycleTest") &&
+      setup.includes("tests.MavenGraphLifecycleTest") &&
+      setup.includes("tests.MavenGraphPluginTest") &&
+      setup.includes("tests.GraphAggregateRunnerTest") &&
+      setup.includes("tests.GradleBuildToolTest"),
+  );
+  TestValidator.predicate(
     "a local start process reactivates the complete environment from setup",
     helpers.includes("export const activateProvisionedTools") &&
       helpers.includes('"environment.json"') &&
@@ -737,17 +754,12 @@ export const test_experiment_corpora_are_commit_pinned = async () => {
   TestValidator.predicate(
     "native C and C++ regeneration stays reproducible",
     [cpp, c].every((row) => !declares(row, "regenerationLimitation")) &&
-      // Counted over the whole catalog so any reproduction exemption requires
-      // a reviewed contract change here. There is exactly one, and this is the
-      // review: scip-java digests its build universe from the raw javac
-      // invocation, and that invocation names the per-run temporary directory
-      // its embedded plugin jar is unpacked into. An unchanged checkout comes
-      // back with identical facts under a different universe — five nodes and
-      // eight edges both times — so the exemption is about the producer's
-      // universe rather than about its facts, and it says so.
-      [...catalog.matchAll(/regenerationLimitation:/g)].length === 1 &&
-      declares(java, "regenerationLimitation") &&
-      java.includes("temporary directory its embedded plugin jar") &&
+      // Counted over the whole catalog so a future exemption requires a
+      // reviewed contract change here. The pinned Java producer now hashes
+      // plugin bytes and tags only its transient scratch path, so it returns to
+      // the same strongest assertion as C/C++.
+      [...catalog.matchAll(/regenerationLimitation:/g)].length === 0 &&
+      !declares(java, "regenerationLimitation") &&
       runner.includes("experiment.regenerationLimitation !== undefined") &&
       runner.includes("regenerationLimitation.trim() === \"\"") &&
       runner.includes(

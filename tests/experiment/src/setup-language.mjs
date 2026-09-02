@@ -356,6 +356,7 @@ const installScipJavaSource = async (gradle, pin) => {
     "tar",
     ["-xzf", archive, "--strip-components=1", "-C", source],
   );
+  if (pin.verify !== undefined) pin.verify({ gradle, source });
   run(gradle, ["--no-daemon", ":scip-java:installDist"], { cwd: source });
   const launcher = path.join(
     source,
@@ -420,7 +421,52 @@ const installJavacGraphProducer = async (gradle) => {
     commit: experiment.producerCommit,
     version: experiment.producerCommit,
     digest:
-      "3ef45fedc5ad60ca6af0200a9b3fe7e978eadc8df63dda0a9dcba677f50b1417",
+      "ac037aed0bb1d64c7175dbf354f697176ad05d73a17032884ecfc09b7e54d129",
+    verify: ({ gradle: verifiedGradle, source }) => {
+      run(
+        verifiedGradle,
+        [
+          ":scip-javac:test",
+          "--tests",
+          "org.scip_code.scip_java.javac.JavaGraphShardTest",
+          "--no-daemon",
+          "--no-configuration-cache",
+        ],
+        { cwd: source },
+      );
+      run(
+        verifiedGradle,
+        [
+          ":scip-gradle-plugin:test",
+          "--tests",
+          "org.scip_code.scip_java.gradle.GraphGenerationStoreTest",
+          "--no-daemon",
+          "--no-configuration-cache",
+        ],
+        { cwd: source },
+      );
+      run(
+        verifiedGradle,
+        [
+          ":scip-java:test",
+          "--tests",
+          "tests.GradleGraphLifecycleTest",
+          "--tests",
+          "tests.MavenGraphLifecycleTest",
+          "--tests",
+          "tests.MavenGraphPluginTest",
+          "--tests",
+          "tests.GraphAggregateRunnerTest",
+          "--tests",
+          "tests.GradleBuildToolTest",
+          "--no-daemon",
+          "--no-configuration-cache",
+          "-Pkotlin.compiler.execution.strategy=in-process",
+          "-Pkotlin.incremental=false",
+        ],
+        { cwd: source },
+      );
+    },
   });
   const help = String(
     run(link, ["index", "--help"], { stdio: "pipe" }).stdout,

@@ -50,36 +50,63 @@ export const runStrictLifecycle = async (experiment, pinnedRoot) => {
     if (experiment.prepare !== undefined) {
       shell(experiment.prepare, { cwd: baselineRoot });
     }
-    const started = performance.now();
-    const nativeElapsedMs =
-      typeof experiment.nativeBaseline === "string"
-        ? (shell(experiment.nativeBaseline, { cwd: baselineRoot }),
-          Math.round(performance.now() - started))
-        : await measureClangBackgroundIndex({
-            command: experiment.nativeBaseline.command,
-            compilationDatabase: path.join(
-              baselineRoot,
-              fixture.compilationDatabase,
-            ),
-            cwd: baselineRoot,
-            language: experiment.language,
-            sourceFile: path.join(baselineRoot, fixture.sourceFile),
-            timeoutMs: experiment.readyTimeoutMs ?? 180_000,
-            createClient: (command, commandArgs) =>
-              new LspClient(
-                command,
-                commandArgs,
-                experiment.readyTimeoutMs ?? 180_000,
-                baselineRoot,
-              ),
-          });
+    let nativeElapsedMs;
+    if (typeof experiment.nativeBaseline === "string") {
+      const started = performance.now();
+      shell(experiment.nativeBaseline, { cwd: baselineRoot });
+      nativeElapsedMs = Math.round(performance.now() - started);
+    } else if (experiment.nativeBaseline.kind === "clang-background-index") {
+      nativeElapsedMs = await measureClangBackgroundIndex({
+        command: experiment.nativeBaseline.command,
+        compilationDatabase: path.join(
+          baselineRoot,
+          fixture.compilationDatabase,
+        ),
+        cwd: baselineRoot,
+        language: experiment.language,
+        sourceFile: path.join(baselineRoot, fixture.sourceFile),
+        timeoutMs: experiment.readyTimeoutMs ?? 180_000,
+        createClient: (command, commandArgs) =>
+          new LspClient(
+            command,
+            commandArgs,
+            experiment.readyTimeoutMs ?? 180_000,
+            baselineRoot,
+          ),
+      });
+    } else if (experiment.nativeBaseline.kind === "shell") {
+      if (experiment.nativeBaseline.warmup === true) {
+        shell(experiment.nativeBaseline.command, { cwd: baselineRoot });
+      }
+      for (const relative of experiment.nativeBaseline.clean ?? []) {
+        const target = path.resolve(baselineRoot, relative);
+        if (
+          target === baselineRoot ||
+          !target.startsWith(`${baselineRoot}${path.sep}`)
+        ) {
+          throw new Error(
+            `${experiment.language}: native baseline cleanup escapes its corpus`,
+          );
+        }
+        fs.rmSync(target, { force: true, recursive: true });
+      }
+      const started = performance.now();
+      shell(experiment.nativeBaseline.command, { cwd: baselineRoot });
+      nativeElapsedMs = Math.round(performance.now() - started);
+    } else {
+      throw new Error(
+        `${experiment.language}: unknown native baseline ${String(experiment.nativeBaseline.kind)}`,
+      );
+    }
     rows.push({
       name: "native-baseline",
       status: "passed",
       command:
         typeof experiment.nativeBaseline === "string"
           ? experiment.nativeBaseline
-          : `${experiment.nativeBaseline.command} --background-index`,
+          : experiment.nativeBaseline.kind === "clang-background-index"
+            ? `${experiment.nativeBaseline.command} --background-index`
+            : experiment.nativeBaseline.command,
       project: baselineRoot,
       elapsedMs: nativeElapsedMs,
     });

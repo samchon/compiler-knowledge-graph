@@ -381,9 +381,9 @@ function testIndexRouteEvidenceContract() {
       },
       {
         tool: "scip-java",
-        version: "32eca214a413d1b8a375c481f666ff8a4ec96773",
+        version: "994e2033aa56dd924ab557e86e0ca0ac2913d53c",
         source:
-          "https://github.com/samchon/scip-java@32eca214a413d1b8a375c481f666ff8a4ec96773",
+          "https://github.com/samchon/scip-java@994e2033aa56dd924ab557e86e0ca0ac2913d53c",
         digest: "sha256:fixture",
       },
     ],
@@ -441,9 +441,9 @@ function testIndexRouteEvidenceContract() {
       },
       {
         tool: "scip-java",
-        version: "32eca214a413d1b8a375c481f666ff8a4ec96773",
+        version: "994e2033aa56dd924ab557e86e0ca0ac2913d53c",
         source:
-          "https://github.com/samchon/scip-java@32eca214a413d1b8a375c481f666ff8a4ec96773",
+          "https://github.com/samchon/scip-java@994e2033aa56dd924ab557e86e0ca0ac2913d53c",
         digest: "sha256:fixture",
       },
     ],
@@ -454,9 +454,9 @@ function testIndexRouteEvidenceContract() {
       },
       {
         tool: "scip-java",
-        version: "32eca214a413d1b8a375c481f666ff8a4ec96773",
+        version: "994e2033aa56dd924ab557e86e0ca0ac2913d53c",
         source:
-          "https://github.com/samchon/scip-java@032eca214a413d1b8a375c481f666ff8a4ec967730",
+          "https://github.com/samchon/scip-java@0994e2033aa56dd924ab557e86e0ca0ac2913d53c0",
         digest: "sha256:fixture",
       },
     ],
@@ -472,7 +472,7 @@ function testIndexRouteEvidenceContract() {
     "java",
     "javac-graph",
     "scip-java-javac-graph",
-    "32eca214a413d1b8a375c481f666ff8a4ec96773",
+    "994e2033aa56dd924ab557e86e0ca0ac2913d53c",
     "compiler",
   );
   const fallback = routeSummary(
@@ -537,7 +537,7 @@ function testIndexRouteEvidenceContract() {
           tools: [
             {
               tool: "scip-java-javac-graph",
-              version: "32eca214a413d1b8a375c481f666ff8a4ec96773",
+              version: "994e2033aa56dd924ab557e86e0ca0ac2913d53c",
               source: "fixture",
               digest: "git:fixture",
             },

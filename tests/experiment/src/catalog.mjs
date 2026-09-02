@@ -161,7 +161,10 @@ export const LANGUAGE_EXPERIMENTS = [
     strictTool: "samchon-clangd",
     producerRepository: CLANG_PRODUCER_REPOSITORY,
     producerCommit: CLANG_PRODUCER_COMMIT,
-    nativeBaseline: { command: "samchon-clangd" },
+    nativeBaseline: {
+      kind: "clang-background-index",
+      command: "samchon-clangd",
+    },
     // A whole-compilation-database producer is not ready when it starts; it
     // is ready when clangd has background-indexed every translation unit the
     // database registers. The 180-second default expired on libuv with 62 of
@@ -281,7 +284,10 @@ export const LANGUAGE_EXPERIMENTS = [
     strictTool: "samchon-clangd",
     producerRepository: CLANG_PRODUCER_REPOSITORY,
     producerCommit: CLANG_PRODUCER_COMMIT,
-    nativeBaseline: { command: "samchon-clangd" },
+    nativeBaseline: {
+      kind: "clang-background-index",
+      command: "samchon-clangd",
+    },
     // A whole-compilation-database producer is not ready when it starts; it
     // is ready when clangd has background-indexed every translation unit the
     // database registers. The 180-second default expired on libuv with 62 of
@@ -376,14 +382,20 @@ export const LANGUAGE_EXPERIMENTS = [
     // Use scip-java's own pinned Maven fixture for that contract; Gson remains
     // the separate large-corpus timing proof.
     repository: "https://github.com/samchon/scip-java.git",
-    commit: "32eca214a413d1b8a375c481f666ff8a4ec96773",
+    commit: "994e2033aa56dd924ab557e86e0ca0ac2913d53c",
     projectRoot: "scip-java/src/test/resources/fixtures/maven/basic",
     // The producer and the corpus are one checkout on purpose. The fixture is
     // the producer's own Maven project, so a pin that named a different
     // revision for each would measure a plugin against a build it was never
     // tested with.
     producerRepository: "https://github.com/samchon/scip-java.git",
-    producerCommit: "32eca214a413d1b8a375c481f666ff8a4ec96773",
+    producerCommit: "994e2033aa56dd924ab557e86e0ca0ac2913d53c",
+    nativeBaseline: {
+      kind: "shell",
+      command: "mvn -q test-compile",
+      warmup: true,
+      clean: ["target"],
+    },
     strictProvider: "javac-graph",
     strictAuthority: "compiler",
     // The launcher and the producer are two names. `scip-java` is the command
@@ -406,15 +418,6 @@ export const LANGUAGE_EXPERIMENTS = [
     // counts that transition rather than pre-editing the pinned baseline.
     semanticEdges: ["contains", "instantiates"],
     crossFileEdge: "instantiates",
-    // The producer cannot yet reproduce its own generation, and the exemption
-    // names the exact reason rather than accepting an unexplained difference.
-    // Restoring the original sources returns identical facts — five nodes and
-    // eight edges both times — and a different build universe, because the
-    // universe is digested from the raw javac invocation and that invocation
-    // names the temporary directory the launcher unpacked its compiler plugin
-    // into, which is new on every run. Filed at samchon/scip-java#1.
-    regenerationLimitation:
-      "scip-java 32eca214a413d1b8a375c481f666ff8a4ec96773 digests its build universe from the raw javac invocation, which names the per-run temporary directory its embedded plugin jar is unpacked into, so an unchanged checkout reproduces identical facts under a different universe",
     lifecycle: {
       sourceFile: "src/main/java/com/Example.java",
       editSuffix: "\n// samchon-graph lifecycle edit\n",

@@ -7,6 +7,7 @@ import type { ISamchonGraphDump } from "@samchon/graph";
 import { routeSummary } from "../../../../packages/graph/src/routeSummary";
 import { GraphFixtures } from "../internal/GraphFixtures";
 import { GraphPaths } from "../internal/GraphPaths";
+import { waitForProcessId } from "../internal/waitForProcessId";
 
 export const test_cli_dump_prints_graph_json = async () => {
   const root = GraphFixtures.createOrderFixture();
@@ -259,8 +260,7 @@ async function assertTimedOutDumpRetiresItsLanguageServer(): Promise<void> {
     stderr += chunk;
   });
   try {
-    await waitForFile(pidFile, 5_000);
-    serverPid = Number(fs.readFileSync(pidFile, "utf8"));
+    serverPid = await waitForProcessId(pidFile);
     child.kill("SIGTERM");
     const code = await waitForExit(child, 5_000);
     TestValidator.equals(
@@ -296,16 +296,6 @@ async function assertTimedOutDumpRetiresItsLanguageServer(): Promise<void> {
     }
   }
   /* c8 ignore stop */
-}
-
-async function waitForFile(file: string, timeoutMs: number): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (!fs.existsSync(file)) {
-    if (Date.now() >= deadline) {
-      throw new Error(`Timed out waiting for ${file}`);
-    }
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  }
 }
 
 function waitForExit(

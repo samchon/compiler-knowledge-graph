@@ -5,6 +5,7 @@ import path from "node:path";
 
 import { TtscGraphClient } from "../../../../packages/graph/src/provider/ttscgraph/TtscGraphClient";
 import { GraphPaths } from "../internal/GraphPaths";
+import { waitForProcessId } from "../internal/waitForProcessId";
 
 /** A stalled request owns one child generation, never the resident queue. */
 export const test_ttscgraph_native_requests_recover_from_stalls = async () => {
@@ -334,7 +335,7 @@ const assertRetiredChildIsClosed = async (): Promise<void> => {
     const controller = new AbortController();
     const stalled = client.refresh({ signal: controller.signal });
     await waitForFile(requested);
-    const pid = Number(fs.readFileSync(started, "utf8"));
+    const pid = await waitForProcessId(started);
     controller.abort("retire stubborn generation");
     await rejectionOf(stalled);
     await waitForFile(terminated);

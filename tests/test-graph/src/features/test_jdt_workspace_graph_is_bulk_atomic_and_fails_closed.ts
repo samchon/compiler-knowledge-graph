@@ -8,6 +8,7 @@ import {
   assertGraphSnapshotContract,
   jdtGraphProvider,
   javaDeclarationSymbol,
+  semanticGraphNodeId,
 } from "@samchon/graph";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
@@ -180,6 +181,7 @@ async function assertClientLifecycle(
 
   await assertQueueCancellation(root, source);
   await assertInFlightCancellation(root);
+  await assertCommandCancellationRecovery(root);
   await assertInputMovementFence(root, source);
   await assertNonErrorValidationFailure(root);
   await assertRegisteredProvider(root);
@@ -207,6 +209,27 @@ async function assertInFlightCancellation(root: string): Promise<void> {
   await client.close();
 }
 
+async function assertCommandCancellationRecovery(root: string): Promise<void> {
+  const client = directClient(root, ["--delay-command=100"]);
+  const controller = new AbortController();
+  const pending = client.refresh({ signal: controller.signal });
+  setTimeout(() => controller.abort(new Error("command stop")), 10);
+  await rejected(
+    "an in-flight JDT command observes caller cancellation",
+    pending,
+    "command stop",
+  );
+  await new Promise((resolve) => setTimeout(resolve, 120));
+  const recovered = await client.refresh();
+  TestValidator.predicate(
+    "a full unchanged producer snapshot resynchronizes after command cancellation",
+    recovered.changed &&
+      recovered.mode === "initial" &&
+      recovered.generation === 1,
+  );
+  await client.close();
+}
+
 async function assertInputMovementFence(root: string, source: string): Promise<void> {
   const client = directClient(root, ["--reuse-after-change"]);
   await client.refresh();
@@ -216,10 +239,10 @@ async function assertInputMovementFence(root: string, source: string): Promise<v
     client.refresh(),
     "watched Java inputs moved",
   );
-  const recovered = await client.refresh();
-  TestValidator.predicate(
-    "a failed queued refresh does not poison the next producer request",
-    !recovered.changed && recovered.mode === "unchanged",
+  await rejected(
+    "a stale producer remains fenced until it accepts the moved input",
+    client.refresh(),
+    "watched Java inputs moved",
   );
   fs.writeFileSync(
     source,
@@ -229,13 +252,23 @@ async function assertInputMovementFence(root: string, source: string): Promise<v
 }
 
 async function assertNonErrorValidationFailure(root: string): Promise<void> {
+  let first = true;
   const client = directClient(root, [], () => {
+    if (!first) return;
+    first = false;
     throw "fixture string failure";
   });
   await rejected(
     "a non-Error validation failure is still surfaced as an Error",
     client.refresh(),
     "fixture string failure",
+  );
+  const recovered = await client.refresh();
+  TestValidator.predicate(
+    "a full unchanged producer snapshot resynchronizes after validation rejection",
+    recovered.changed &&
+      recovered.mode === "initial" &&
+      recovered.generation === 1,
   );
   await client.close();
 }
@@ -376,19 +409,104 @@ function assertAdapterBoundaries(root: string, source: string): void {
         published.snapshot.nodes.find((node) => node.kind === "class")?.id,
   );
 
+  const gradleRoot = path.join(root, "gradle");
+  fs.mkdirSync(gradleRoot, { recursive: true });
+  fs.writeFileSync(
+    path.join(gradleRoot, "settings.gradle"),
+    "rootProject.name = 'fixture'\ninclude 'module'\n",
+  );
+  fs.writeFileSync(path.join(gradleRoot, "build.gradle"), "plugins { id 'java' }\n");
+  const gradleMain = path.join(
+    gradleRoot,
+    "src",
+    "main",
+    "java",
+    "Example.java",
+  );
+  const gradleTest = path.join(
+    gradleRoot,
+    "src",
+    "test",
+    "java",
+    "Example.java",
+  );
+  const gradleModule = path.join(
+    gradleRoot,
+    "module",
+    "src",
+    "main",
+    "java",
+    "Example.java",
+  );
+  for (const file of [gradleMain, gradleTest, gradleModule]) {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, "package example; class Example {}\n");
+  }
+  fs.writeFileSync(
+    path.join(gradleRoot, "module", "build.gradle"),
+    "plugins { id 'java' }\n",
+  );
+  const gradleCases = [
+    [gradleMain, ":compileJava"],
+    [gradleTest, ":compileTestJava"],
+    [gradleModule, ":module:compileJava"],
+  ] as const;
+  const gradleIds = gradleCases.map(([file]) => {
+    const raw = rawSnapshot(gradleRoot, file);
+    if (file === gradleModule) {
+      raw.projects[0]!.location = pathToFileURL(
+        path.join(gradleRoot, "module"),
+      ).href;
+    }
+    const snapshot = new JdtGraphSnapshotAdapter(gradleRoot).apply(raw).snapshot;
+    return snapshot.nodes.find((node) => node.kind === "class")?.id;
+  });
+  TestValidator.equals(
+    "JDT derives the exact standard Gradle main, test and subproject task scopes",
+    gradleIds,
+    gradleCases.map(([, target]) => gradleJavaId(target)),
+  );
+  const gradleVariants = [
+    ["settings-kts", "settings.gradle.kts", "src/main/java", ":compileJava"],
+    ["build-only", "build.gradle", "src/main/java", ":compileJava"],
+    ["build-kts-only", "build.gradle.kts", "src/test/java", ":compileTestJava"],
+    ["custom-source", "build.gradle", "generated/java", "jdt:fixture"],
+  ] as const;
+  const variantIds = gradleVariants.map(
+    ([name, buildFile, sourceDirectory]) => {
+      const variantRoot = path.join(root, name);
+      const variantSource = path.join(
+        variantRoot,
+        sourceDirectory,
+        "Example.java",
+      );
+      fs.mkdirSync(path.dirname(variantSource), { recursive: true });
+      fs.writeFileSync(variantSource, "package example; class Example {}\n");
+      fs.writeFileSync(path.join(variantRoot, buildFile), "// fixture\n");
+      const snapshot = new JdtGraphSnapshotAdapter(variantRoot).apply(
+        rawSnapshot(variantRoot, variantSource),
+      ).snapshot;
+      return snapshot.nodes.find((node) => node.kind === "class")?.id;
+    },
+  );
+  TestValidator.equals(
+    "JDT recognizes both Gradle DSLs and declines custom task inference",
+    variantIds,
+    gradleVariants.map(([, , , target]) => gradleJavaId(target)),
+  );
+
   const sameButIncremental = structuredClone(initial);
   sameButIncremental.mode = "incremental";
-  refused(
-    "the producer cannot claim an edit without moving generation",
-    () => adapter.apply(sameButIncremental),
-    "changed mode",
+  TestValidator.predicate(
+    "consumer history makes a repeated generation unchanged after producer cursor drift",
+    adapter.apply(sameButIncremental).snapshot === published.snapshot,
   );
   const movedButUnchanged = movedSnapshot(initial);
   movedButUnchanged.mode = "unchanged";
-  refused(
-    "the producer cannot move generation while claiming no-op reuse",
-    () => adapter.apply(movedButUnchanged),
-    "changed generation",
+  const resynchronized = adapter.apply(movedButUnchanged);
+  TestValidator.predicate(
+    "a full producer snapshot resynchronizes an unseen same-universe generation",
+    resynchronized.changed && resynchronized.mode === "incremental",
   );
 
   const broken = structuredClone(initial);
@@ -410,14 +528,15 @@ function assertAdapterBoundaries(root: string, source: string): void {
   );
   TestValidator.predicate(
     "a refused JDT generation leaves current untouched",
-    adapter.current === published.snapshot,
+    adapter.current === resynchronized.snapshot,
   );
 
-  const moved = movedSnapshot(initial);
+  const moved = movedSnapshot(initial, "generation-three");
+  moved.universe = digest("universe-two");
   const next = adapter.apply(moved);
   TestValidator.predicate(
     "a valid moved producer generation replaces current atomically",
-    next.changed && next.mode === "incremental" && adapter.current === next.snapshot,
+    next.changed && next.mode === "reload" && adapter.current === next.snapshot,
   );
 
   const cases: Array<[string, (raw: IJdtGraphSnapshot) => unknown, string]> = [
@@ -524,12 +643,35 @@ function rawSnapshot(root: string, source: string): IJdtGraphSnapshot {
   };
 }
 
-function movedSnapshot(raw: IJdtGraphSnapshot): IJdtGraphSnapshot {
+function movedSnapshot(
+  raw: IJdtGraphSnapshot,
+  generation = "generation-two",
+): IJdtGraphSnapshot {
   const moved = structuredClone(raw);
-  moved.generation = digest("generation-two");
+  moved.generation = digest(generation);
   moved.mode = "incremental";
   moved.sequence = 2;
   return moved;
+}
+
+function gradleJavaId(target: string): string {
+  const symbol = javaDeclarationSymbol({
+    kind: "class",
+    name: "Example",
+    qualifiedName: "example.Example",
+  });
+  return semanticGraphNodeId(
+    {
+      version: 2,
+      language: "java",
+      symbol,
+      role: "class",
+      native: { key: symbol, stability: "semantic" },
+      scope: { target },
+      stability: "persistent",
+    },
+    "example.Example",
+  );
 }
 
 function rawNode(

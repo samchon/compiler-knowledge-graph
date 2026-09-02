@@ -64,7 +64,7 @@ export class JdtGraphClient implements IBulkGraphSession {
     return this.enqueue(async () => {
       const signal = combineSignals(options.signal, this.lifecycleAbort.signal);
       await this.initialize(signal);
-      const moved = this.notifyInputChanges();
+      const inputs = this.notifyInputChanges();
       const raw = await this.lsp.request<IJdtGraphSnapshot>(
         "workspace/executeCommand",
         { command: COMMAND, arguments: [] },
@@ -75,11 +75,12 @@ export class JdtGraphClient implements IBulkGraphSession {
         signal,
         validate: this.validate,
       });
-      if (moved && !result.changed) {
+      if (inputs.moved && !result.changed) {
         throw new Error(
           "JDT workspace graph: watched Java inputs moved but the producer reused its generation",
         );
       }
+      this.watchedInputs = inputs.current;
       if (result.changed) this.version += 1;
       return {
         changed: result.changed,
@@ -133,7 +134,10 @@ export class JdtGraphClient implements IBulkGraphSession {
     this.lsp.notify("initialized", {});
   }
 
-  private notifyInputChanges(): boolean {
+  private notifyInputChanges(): {
+    current: Map<string, string>;
+    moved: boolean;
+  } {
     const current = javaInputDigests(this.root);
     const files = new Set([...this.watchedInputs.keys(), ...current.keys()]);
     const changes: Array<{ uri: string; type: 1 | 2 | 3 }> = [];
@@ -149,8 +153,7 @@ export class JdtGraphClient implements IBulkGraphSession {
     if (changes.length !== 0) {
       this.lsp.notify("workspace/didChangeWatchedFiles", { changes });
     }
-    this.watchedInputs = current;
-    return changes.length !== 0;
+    return { current, moved: changes.length !== 0 };
   }
 
   private enqueue<T>(task: () => Promise<T>, signal?: AbortSignal): Promise<T> {

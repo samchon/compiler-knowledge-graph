@@ -7,11 +7,12 @@ import {
   semanticGraphNodeId,
 } from "@samchon/graph";
 
+import { run } from "./process.mjs";
+
 const JAVAC_OVERRIDE = "SAMCHON_GRAPH_JAVAC_GRAPH";
 const JDT_OVERRIDE = "SAMCHON_GRAPH_JDT_WORKSPACE";
 const JAVAC_PROVIDER = "javac-graph";
 const JDT_PROVIDER = "jdt-workspace";
-const TARGET = "maven:.";
 
 /** Prove that the two compiler-owned Java lanes agree on persistent IDs. */
 export const runJavaProducerAgreement = async (experiment, root) => {
@@ -24,35 +25,44 @@ export const runJavaProducerAgreement = async (experiment, root) => {
     throw new Error("java agreement: the pinned JDT producer is not configured");
   }
 
-  const source = path.join(
+  writeAgreementClass(
+    path.join(root, "src", "main", "java", "com"),
+    "ProducerAgreement",
+  );
+  const maven = await compareProducers({
+    experiment,
     root,
-    "src",
-    "main",
-    "java",
-    "com",
-    "ProducerAgreement.java",
-  );
-  fs.mkdirSync(path.dirname(source), { recursive: true });
-  fs.writeFileSync(
-    source,
-    [
-      "package com;",
-      "",
-      "public final class ProducerAgreement {",
-      "    public final int value;",
-      "",
-      "    public ProducerAgreement(int value) {",
-      "        this.value = value;",
-      "    }",
-      "",
-      "    public int twice(int factor) {",
-      "        return value * factor;",
-      "    }",
-      "}",
-      "",
-    ].join("\n"),
-  );
+    javacLauncher,
+    label: "Maven root",
+    declarations: declarationsFor("ProducerAgreement", "maven:."),
+  });
 
+  const gradleRoot = path.join(root, ".samchon-graph-gradle-agreement");
+  prepareGradleAgreement(gradleRoot);
+  const gradle = await compareProducers({
+    experiment,
+    root: gradleRoot,
+    javacLauncher,
+    label: "Gradle main/test/module",
+    declarations: [
+      ...declarationsFor("GradleMainAgreement", ":compileJava"),
+      ...declarationsFor("GradleTestAgreement", ":compileTestJava"),
+      ...declarationsFor(
+        "GradleModuleAgreement",
+        ":module:compileJava",
+      ),
+    ],
+  });
+  return { maven, gradle };
+};
+
+async function compareProducers({
+  experiment,
+  root,
+  javacLauncher,
+  label,
+  declarations,
+}) {
   const options = {
     cwd: root,
     mode: "lsp",
@@ -74,14 +84,14 @@ export const runJavaProducerAgreement = async (experiment, root) => {
       )
       .join(path.delimiter);
     const jdt = await buildGraphDump(options);
-    return assertAgreement(javac, jdt);
+    return assertAgreement(javac, jdt, label, declarations);
   } finally {
     process.env[JAVAC_OVERRIDE] = javacLauncher;
     process.env.PATH = previousPath;
   }
-};
+}
 
-function assertAgreement(javac, jdt) {
+function assertAgreement(javac, jdt, label, declarations) {
   const javacProvenance = strictProvenance(javac, JAVAC_PROVIDER);
   const jdtProvenance = strictProvenance(jdt, JDT_PROVIDER);
   if (
@@ -90,7 +100,7 @@ function assertAgreement(javac, jdt) {
     javacProvenance.universe === jdtProvenance.universe
   ) {
     throw new Error(
-      `java agreement: distinct producers published indistinguishable provenance: ${JSON.stringify({ javac: javacProvenance, jdt: jdtProvenance })}`,
+      `java agreement (${label}): distinct producers published indistinguishable provenance: ${JSON.stringify({ javac: javacProvenance, jdt: jdtProvenance })}`,
     );
   }
   if (
@@ -98,27 +108,16 @@ function assertAgreement(javac, jdt) {
     jdtProvenance.facts[0] !== "contains"
   ) {
     throw new Error(
-      `java agreement: JDT published facts beyond containment: ${jdtProvenance.facts.join(", ")}`,
+      `java agreement (${label}): JDT published facts beyond containment: ${jdtProvenance.facts.join(", ")}`,
     );
   }
 
-  const declarations = [
-    declaration("class", "ProducerAgreement", "com.ProducerAgreement"),
-    declaration("field", "value", "com.ProducerAgreement.value"),
-    declaration(
-      "constructor",
-      "ProducerAgreement",
-      "com.ProducerAgreement.ProducerAgreement",
-      "int",
-    ),
-    declaration("method", "twice", "com.ProducerAgreement.twice", "int"),
-  ];
   for (const expected of declarations) {
     const javacNode = javac.nodes.find((node) => node.id === expected.id);
     const jdtNode = jdt.nodes.find((node) => node.id === expected.id);
     if (javacNode === undefined || jdtNode === undefined) {
       throw new Error(
-        `java agreement: ${expected.kind} ${expected.qualifiedName} did not share ${expected.id}`,
+        `java agreement (${label}): ${expected.kind} ${expected.qualifiedName} did not share ${expected.id}`,
       );
     }
     for (const node of [javacNode, jdtNode]) {
@@ -128,14 +127,14 @@ function assertAgreement(javac, jdt) {
         node.qualifiedName !== expected.qualifiedName
       ) {
         throw new Error(
-          `java agreement: ${expected.id} carried incompatible declaration metadata: ${JSON.stringify(node)}`,
+          `java agreement (${label}): ${expected.id} carried incompatible declaration metadata: ${JSON.stringify(node)}`,
         );
       }
     }
   }
 
   return {
-    target: TARGET,
+    targets: [...new Set(declarations.map((row) => row.target))],
     declarations: declarations.map(({ id, kind, qualifiedName }) => ({
       id,
       kind,
@@ -146,7 +145,29 @@ function assertAgreement(javac, jdt) {
   };
 }
 
-function declaration(kind, name, qualifiedName, parameters = "") {
+function declarationsFor(className, target) {
+  const qualified = `com.${className}`;
+  return [
+    declaration("class", className, qualified, target),
+    declaration("field", "value", `${qualified}.value`, target),
+    declaration(
+      "constructor",
+      className,
+      `${qualified}.${className}`,
+      target,
+      "int",
+    ),
+    declaration("method", "twice", `${qualified}.twice`, target, "int"),
+  ];
+}
+
+function declaration(
+  kind,
+  name,
+  qualifiedName,
+  target,
+  parameters = "",
+) {
   const symbol = javaDeclarationSymbol({
     kind,
     name,
@@ -161,7 +182,7 @@ function declaration(kind, name, qualifiedName, parameters = "") {
         symbol,
         role: kind,
         native: { key: symbol, stability: "semantic" },
-        scope: { target: TARGET },
+        scope: { target },
         stability: "persistent",
       },
       qualifiedName,
@@ -169,7 +190,66 @@ function declaration(kind, name, qualifiedName, parameters = "") {
     kind,
     name,
     qualifiedName,
+    target,
   };
+}
+
+function prepareGradleAgreement(root) {
+  fs.rmSync(root, { force: true, recursive: true });
+  fs.mkdirSync(root, { recursive: true });
+  fs.writeFileSync(
+    path.join(root, "settings.gradle"),
+    "rootProject.name = 'producer-agreement'\ninclude 'module'\n",
+  );
+  fs.writeFileSync(
+    path.join(root, "build.gradle"),
+    "plugins { id 'java' }\n",
+  );
+  fs.mkdirSync(path.join(root, "module"), { recursive: true });
+  fs.writeFileSync(
+    path.join(root, "module", "build.gradle"),
+    "plugins { id 'java' }\n",
+  );
+  writeAgreementClass(
+    path.join(root, "src", "main", "java", "com"),
+    "GradleMainAgreement",
+  );
+  writeAgreementClass(
+    path.join(root, "src", "test", "java", "com"),
+    "GradleTestAgreement",
+  );
+  writeAgreementClass(
+    path.join(root, "module", "src", "main", "java", "com"),
+    "GradleModuleAgreement",
+  );
+  run(
+    "gradle",
+    ["wrapper", "--gradle-version", "9.4.1", "--no-daemon"],
+    { cwd: root },
+  );
+}
+
+function writeAgreementClass(directory, className) {
+  fs.mkdirSync(directory, { recursive: true });
+  fs.writeFileSync(
+    path.join(directory, `${className}.java`),
+    [
+      "package com;",
+      "",
+      `public final class ${className} {`,
+      "    public final int value;",
+      "",
+      `    public ${className}(int value) {`,
+      "        this.value = value;",
+      "    }",
+      "",
+      "    public int twice(int factor) {",
+      "        return value * factor;",
+      "    }",
+      "}",
+      "",
+    ].join("\n"),
+  );
 }
 
 function strictProvenance(dump, provider) {

@@ -523,7 +523,11 @@ export const test_experiment_corpora_are_commit_pinned = async () => {
       javaAgreement.includes("delete process.env[JAVAC_OVERRIDE]") &&
       javaAgreement.includes("const jdt = await buildGraphDump(options)") &&
       /declaration\(\s*"constructor"/u.test(javaAgreement) &&
-      javaAgreement.includes('declaration("method"'),
+      javaAgreement.includes('declaration("method"') &&
+      javaAgreement.includes('declarationsFor("GradleMainAgreement", ":compileJava")') &&
+      javaAgreement.includes('declarationsFor("GradleTestAgreement", ":compileTestJava")') &&
+      javaAgreement.includes('":module:compileJava"') &&
+      javaAgreement.includes('["wrapper", "--gradle-version", "9.4.1", "--no-daemon"]'),
   );
   TestValidator.predicate(
     "a local start process reactivates the complete environment from setup",

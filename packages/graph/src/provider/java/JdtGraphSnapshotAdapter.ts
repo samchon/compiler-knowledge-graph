@@ -97,27 +97,17 @@ export class JdtGraphSnapshotAdapter {
     }
     const prior = this.store.current;
     if (prior?.protocol?.generation === raw.generation) {
-      if (raw.mode !== "unchanged") {
-        throw new Error(
-          "JDT workspace graph: producer changed mode without changing generation",
-        );
-      }
       return { changed: false, mode: "unchanged", snapshot: prior };
-    }
-    if (raw.mode === "unchanged") {
-      throw new Error(
-        "JDT workspace graph: producer changed generation while reporting unchanged",
-      );
     }
 
     const shard = adaptShard(this.root, raw);
     const digest = GraphSnapshotProtocol.shardDigest(shard);
     const manifest = [{ key: shard.key, digest }];
     const hello = helloOf(raw);
-    this.sequence += 1;
+    const sequence = this.sequence + 1;
     const begin: GraphSnapshotProtocol.IBegin = {
       type: "begin",
-      sequence: this.sequence,
+      sequence,
       generation: raw.generation,
       universe: raw.universe,
       manifest: GraphSnapshotProtocol.manifestDigest(shard.sources),
@@ -142,9 +132,15 @@ export class JdtGraphSnapshotAdapter {
         ? {}
         : { validate: options.validate }),
     });
+    this.sequence = sequence;
     return {
       changed: true,
-      mode: raw.mode === "initial" ? "initial" : raw.mode,
+      mode:
+        prior === undefined
+          ? "initial"
+          : prior.provenance.universe === raw.universe
+            ? "incremental"
+            : "reload",
       snapshot,
     };
   }
@@ -242,7 +238,7 @@ function adaptNode(
           key: symbol,
           stability: generationScoped ? "positional" : "semantic",
         },
-        scope: { target: targetOf(root, raw, node.project) },
+        scope: { target: targetOf(root, raw, node.project, node.uri) },
         stability: generationScoped ? "generation" : "persistent",
         ...(generationScoped ? { generation: raw.generation } : {}),
       },
@@ -291,6 +287,7 @@ function targetOf(
   root: string,
   raw: IJdtGraphSnapshot,
   projectName: string,
+  sourceUri: string,
 ): string {
   const project = raw.projects.find((candidate) => candidate.name === projectName)!;
   const directory = sourceFile(root, project.location);
@@ -298,7 +295,41 @@ function targetOf(
     const relative = projectRelative(root, directory);
     return `maven:${relative === "" ? "." : relative}`;
   }
+  const gradleRoot = gradleRootOf(root, directory);
+  const task = gradleJavaTask(directory, sourceFile(root, sourceUri));
+  if (gradleRoot !== undefined && task !== undefined) {
+    const relative = projectRelative(gradleRoot, directory);
+    const projectPath =
+      relative === "" ? "" : `:${relative.split("/").join(":")}`;
+    return `${projectPath}:${task}`;
+  }
   return `jdt:${projectName}`;
+}
+
+function gradleRootOf(root: string, project: string): string | undefined {
+  for (let cursor = project; isSubPath(root, cursor); cursor = path.dirname(cursor)) {
+    if (
+      fs.existsSync(path.join(cursor, "settings.gradle")) ||
+      fs.existsSync(path.join(cursor, "settings.gradle.kts"))
+    ) {
+      return cursor;
+    }
+    if (cursor === root || path.dirname(cursor) === cursor) break;
+  }
+  return fs.existsSync(path.join(project, "build.gradle")) ||
+    fs.existsSync(path.join(project, "build.gradle.kts"))
+    ? project
+    : undefined;
+}
+
+function gradleJavaTask(
+  project: string,
+  source: string,
+): "compileJava" | "compileTestJava" | undefined {
+  const relative = projectRelative(project, source);
+  if (relative.startsWith("src/main/java/")) return "compileJava";
+  if (relative.startsWith("src/test/java/")) return "compileTestJava";
+  return undefined;
 }
 
 function helloOf(

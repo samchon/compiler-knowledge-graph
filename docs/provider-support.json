@@ -186,7 +186,7 @@
       "nativeAnalysis": "The javac plugin walks each attributed compilation unit once inside the project's compile task; the JDT command reconciles each resident compilation unit once and emits one bulk snapshot.",
       "exportMerge": "javac target generations and the JDT workspace generation each become one validated protocol transaction; JDT is a fallback semantic owner, never an enrichment pass after javac.",
       "reuseResident": "Build-tool incremental compilation carries unchanged javac shards forward. JDT keeps the workspace process resident, freezes source buffers under one read boundary and retains the prior strict generation on errors.",
-      "limitations": "javac diagnostics stay with the build that emitted them and are not carried by this route. JDT carries resident diagnostics and unsaved-buffer digests but currently proves containment only; its producer remains a pinned fork draft.",
+      "limitations": "javac diagnostics stay with the build that emitted them and are not carried by this route. JDT carries resident diagnostics and unsaved-buffer digests but currently proves containment only; standard Gradle main/test/subproject sources share javac task identities, while custom source-set tasks retain JDT-local scope. Its producer remains a pinned fork draft.",
       "decline": "A missing producer or JDK, a launcher without `--graph-output`, incompatible schema or coverage, a foreign root, a bounded request, an incomplete JDT generation or moved inputs behind a reused generation declines the affected strict lane.",
       "fallback": "Pinned `jdt-workspace`, then `scip-java`, then generic `jdtls`, then `@samchon/graph-sitter`.",
       "experimentLanguages": ["java"],

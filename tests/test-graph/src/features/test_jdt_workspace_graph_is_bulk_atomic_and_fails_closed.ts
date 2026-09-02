@@ -210,28 +210,42 @@ async function assertInFlightCancellation(root: string): Promise<void> {
 }
 
 async function assertCommandCancellationRecovery(root: string): Promise<void> {
-  const client = directClient(root, ["--delay-command=100"]);
+  const requestLog = path.join(root, "command-cancel-requests.ndjson");
+  const client = directClient(root, [
+    "--delay-command=100",
+    `--request-log=${requestLog}`,
+  ]);
   const controller = new AbortController();
   const pending = client.refresh({ signal: controller.signal });
-  setTimeout(() => controller.abort(new Error("command stop")), 10);
+  await waitForRequest(requestLog, "workspace/executeCommand");
+  controller.abort(new Error("command stop"));
   await rejected(
     "an in-flight JDT command observes caller cancellation",
     pending,
-    "command stop",
+    "LSP request aborted: workspace/executeCommand",
   );
   await new Promise((resolve) => setTimeout(resolve, 120));
   const recovered = await client.refresh();
-  TestValidator.predicate(
+  TestValidator.equals(
     "a full unchanged producer snapshot resynchronizes after command cancellation",
-    recovered.changed &&
-      recovered.mode === "initial" &&
-      recovered.generation === 1,
+    [
+      recovered.changed,
+      recovered.mode,
+      recovered.generation,
+      recovered.snapshot.protocol?.sequence,
+      requestCount(requestLog, "workspace/didChangeWatchedFiles"),
+    ],
+    [true, "initial", 1, 1, 2],
   );
   await client.close();
 }
 
 async function assertInputMovementFence(root: string, source: string): Promise<void> {
-  const client = directClient(root, ["--reuse-after-change"]);
+  const requestLog = path.join(root, "input-fence-requests.ndjson");
+  const client = directClient(root, [
+    "--reuse-after-change",
+    `--request-log=${requestLog}`,
+  ]);
   await client.refresh();
   fs.appendFileSync(source, "// moved behind producer\n");
   await rejected(
@@ -244,6 +258,11 @@ async function assertInputMovementFence(root: string, source: string): Promise<v
     client.refresh(),
     "watched Java inputs moved",
   );
+  TestValidator.equals(
+    "the stale input notification is repeated until a generation accepts it",
+    requestCount(requestLog, "workspace/didChangeWatchedFiles"),
+    3,
+  );
   fs.writeFileSync(
     source,
     "package example; public final class Example { void run() {} }\n",
@@ -252,8 +271,9 @@ async function assertInputMovementFence(root: string, source: string): Promise<v
 }
 
 async function assertNonErrorValidationFailure(root: string): Promise<void> {
+  const requestLog = path.join(root, "validation-retry-requests.ndjson");
   let first = true;
-  const client = directClient(root, [], () => {
+  const client = directClient(root, [`--request-log=${requestLog}`], () => {
     if (!first) return;
     first = false;
     throw "fixture string failure";
@@ -264,11 +284,16 @@ async function assertNonErrorValidationFailure(root: string): Promise<void> {
     "fixture string failure",
   );
   const recovered = await client.refresh();
-  TestValidator.predicate(
+  TestValidator.equals(
     "a full unchanged producer snapshot resynchronizes after validation rejection",
-    recovered.changed &&
-      recovered.mode === "initial" &&
-      recovered.generation === 1,
+    [
+      recovered.changed,
+      recovered.mode,
+      recovered.generation,
+      recovered.snapshot.protocol?.sequence,
+      requestCount(requestLog, "workspace/didChangeWatchedFiles"),
+    ],
+    [true, "initial", 1, 1, 2],
   );
   await client.close();
 }
@@ -712,6 +737,24 @@ function evidence(source: string): IJdtGraphSnapshot.IEvidence {
     endLine: 1,
     endColumn: 20,
   };
+}
+
+function requestCount(file: string, method: string): number {
+  return fs
+    .readFileSync(file, "utf8")
+    .trim()
+    .split(/\r?\n/u)
+    .map((line) => JSON.parse(line) as { method?: string })
+    .filter((message) => message.method === method).length;
+}
+
+async function waitForRequest(file: string, method: string): Promise<void> {
+  const deadline = performance.now() + 5_000;
+  while (performance.now() < deadline) {
+    if (fs.existsSync(file) && requestCount(file, method) !== 0) return;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  throw new Error(`fake JDT server did not receive ${method}`);
 }
 
 function digest(value: string | Buffer): string {

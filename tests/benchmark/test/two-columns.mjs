@@ -388,7 +388,7 @@ export function assertStrictComparisonArithmetic() {
   assert.match(
     out,
     new RegExp(
-      `${unknownProvenanceProject}[^\\n]*expected scip-dotnet did not serve`,
+      `${unknownProvenanceProject}[^\\n]*expected roslyn-workspace did not serve`,
     ),
     "a completed cell without strict-provider provenance must be non-comparable",
   );

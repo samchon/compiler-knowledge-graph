@@ -1478,9 +1478,9 @@ async function assertClientWatchesExternalDependencies(): Promise<void> {
     const initialDirectoryStats = directoryStats;
     await client.refresh();
     TestValidator.equals(
-      "unchanged external dependencies avoid Linux corpus stats while other hosts retain their missing-rename guard",
+      "unchanged external dependencies avoid corpus-wide file and directory stats",
       [headerStats, directoryStats > initialDirectoryStats],
-      [initialHeaderStats, process.platform !== "linux"],
+      [initialHeaderStats, false],
     );
 
     fs.writeFileSync(header, "void callee();\nvoid external_change();\n");
@@ -1503,11 +1503,37 @@ async function assertClientWatchesExternalDependencies(): Promise<void> {
         inputWatches: Map<string, { watcher?: fs.FSWatcher }>;
       }
     ).inputWatches;
-    const externalWatch = watches.get(include)?.watcher;
-    TestValidator.predicate(
-      "the external dependency directory owns a native watch",
-      externalWatch !== undefined,
+    const parentWatches = (
+      client as unknown as {
+        inputParentWatches: Map<string, { watcher?: fs.FSWatcher }>;
+      }
+    ).inputParentWatches;
+    const watchTransitions = client as unknown as {
+      releaseInputParentWatch(directory: string): void;
+      retireInputWatch(directory: string): void;
+    };
+    const watchCount = watches.size;
+    watchTransitions.releaseInputParentWatch(root);
+    watchTransitions.releaseInputParentWatch(
+      path.join(external, "missing", "child"),
     );
+    watchTransitions.retireInputWatch(path.join(external, "missing"));
+    TestValidator.equals(
+      "stale and project-local parent-watch transitions are harmless",
+      watches.size,
+      watchCount,
+    );
+    const externalWatch = watches.get(include)?.watcher;
+    const externalParentWatch = parentWatches.get(external)?.watcher;
+    TestValidator.predicate(
+      "the external dependency directory owns child and parent-entry watches",
+      externalWatch !== undefined &&
+        externalParentWatch !== undefined,
+    );
+    externalParentWatch!.emit("change", "change", "include");
+    externalParentWatch!.emit("change", "rename", "unrelated");
+    externalParentWatch!.emit("change", "rename", null);
+    await client.refresh();
 
     const retiredInclude = path.join(external, "include-retired");
     const replacementInclude = path.join(external, "include-replacement");
@@ -1516,11 +1542,9 @@ async function assertClientWatchesExternalDependencies(): Promise<void> {
       path.join(replacementInclude, "fixture.h"),
       "void callee();\nvoid replaced_directory();\n",
     );
-    // Windows and macOS may omit a usable signal for the replacement path;
-    // suppress their callback to prove the identity fallback independently.
-    // Linux uses its native rename signal and must not poll every directory
-    // during a no-op refresh.
-    suppressIncludeEvents = process.platform !== "linux";
+    // Suppress the child inode's callback on every host. The parent directory
+    // entry must retire and replace it without a corpus-wide identity poll.
+    suppressIncludeEvents = true;
     fs.renameSync(include, retiredInclude);
     fs.renameSync(replacementInclude, include);
     const replaced = await client.refresh();
@@ -1541,6 +1565,47 @@ async function assertClientWatchesExternalDependencies(): Promise<void> {
     TestValidator.predicate(
       "the reattached directory watch observes later dependency edits",
       replacementChanged.changed,
+    );
+
+    const failedParentWatch = parentWatches.get(external)?.watcher;
+    TestValidator.predicate(
+      "the replacement directory retains an active parent-entry watch",
+      failedParentWatch !== undefined,
+    );
+    failedParentWatch!.emit("error", new Error("fixture parent watch failure"));
+    failedParentWatch!.emit("change", "rename", "include");
+    failedParentWatch!.emit("error", new Error("retired parent watch"));
+    const parentFailureStats = directoryStats;
+    const parentGuardedWatch = fs.watch;
+    fs.watch = ((...args: unknown[]): fs.FSWatcher => {
+      if (path.resolve(String(args[0])) === external) {
+        throw new Error("fixture parent watch unavailable");
+      }
+      return Reflect.apply(
+        parentGuardedWatch as (...values: unknown[]) => fs.FSWatcher,
+        fs,
+        args,
+      );
+    }) as typeof fs.watch;
+    await client.refresh();
+    const degradedRetired = path.join(external, "include-degraded-retired");
+    const degradedReplacement = path.join(external, "include-degraded-next");
+    fs.mkdirSync(degradedReplacement);
+    fs.writeFileSync(
+      path.join(degradedReplacement, "fixture.h"),
+      "void callee();\nvoid degraded_parent_change();\n",
+    );
+    suppressIncludeEvents = true;
+    fs.renameSync(include, degradedRetired);
+    fs.renameSync(degradedReplacement, include);
+    const degraded = await client.refresh();
+    suppressIncludeEvents = false;
+    fs.watch = parentGuardedWatch;
+    TestValidator.predicate(
+      "an unavailable parent watch falls back to one directory identity and republishes its replacement",
+      degraded.changed &&
+        directoryStats > parentFailureStats &&
+        headerStats > initialHeaderStats,
     );
 
     // A delayed native event from the earlier directory replacement may have
@@ -1664,6 +1729,21 @@ async function assertClientWatchesExternalDependencies(): Promise<void> {
       "late events from retired directory watches cannot reintroduce stale inputs",
       !dirtyInputs.has(relocatedSource) &&
         !dirtyInputs.has(path.join(relocatedInclude, "fixture.h")),
+    );
+    fs.writeFileSync(
+      path.join(root, "compile_commands.json"),
+      JSON.stringify([
+        {
+          directory: external,
+          file: source,
+          arguments: ["clang++", "-x", "c++", "-c", source],
+        },
+      ]),
+    );
+    await client.refresh();
+    TestValidator.predicate(
+      "shutdown retains an active external parent watch to close",
+      [...parentWatches.values()].some((watch) => watch.watcher !== undefined),
     );
   } finally {
     fs.watch = originalWatch;
@@ -1865,26 +1945,37 @@ async function assertClientFailures(root: string): Promise<void> {
   );
   await hanging.close();
 
-  const retrySent = path.join(root, "cpp-retry-abort-sent.txt");
-  const delaying = cppClient(root, [
-    "--retry=100",
-    `--retry-sent-marker=${retrySent}`,
-  ]);
+  const delaying = cppClient(root, ["--retry=100"]);
   await (
     delaying as unknown as {
       initialize(signal: AbortSignal): Promise<void>;
     }
   ).initialize(new AbortController().signal);
   const delayAbort = new AbortController();
-  const delayed = delaying.refresh({ signal: delayAbort.signal });
-  await waitFor(() => fs.existsSync(retrySent));
-  await new Promise((resolve) => setTimeout(resolve, 10));
-  delayAbort.abort("delay cancellation");
-  await rejected(
-    "retry delay remains cancellable",
-    delayed,
-    "cancel",
-  );
+  const originalSetTimeout = globalThis.setTimeout;
+  let enterDelay!: () => void;
+  const enteredDelay = new Promise<void>((resolve) => {
+    enterDelay = resolve;
+  });
+  globalThis.setTimeout = ((
+    callback: (...args: unknown[]) => void,
+    milliseconds?: number,
+    ...args: unknown[]
+  ) => {
+    const timer = originalSetTimeout(callback, milliseconds, ...args);
+    // The request timeout is 5,000 ms; 50 ms is the client's first retry
+    // backoff. Resolve only once that timer has actually been installed.
+    if (milliseconds === 50) enterDelay();
+    return timer;
+  }) as typeof setTimeout;
+  try {
+    const delayed = delaying.refresh({ signal: delayAbort.signal });
+    await enteredDelay;
+    delayAbort.abort("delay cancellation");
+    await rejected("retry delay remains cancellable", delayed, "cancel");
+  } finally {
+    globalThis.setTimeout = originalSetTimeout;
+  }
   await delaying.close();
 
   const queued = cppClient(root, ["--hang"]);
@@ -2172,12 +2263,4 @@ async function rejected(
     error !== undefined &&
       message.split("|").some((candidate) => error!.message.includes(candidate)),
   );
-}
-
-async function waitFor(predicate: () => boolean): Promise<void> {
-  const deadline = Date.now() + 5_000;
-  while (!predicate()) {
-    if (Date.now() >= deadline) throw new Error("fixture condition timed out");
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  }
 }

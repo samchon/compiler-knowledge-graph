@@ -108,7 +108,39 @@ export const test_resident_bulk_provider_polls_generations_without_reprocessing_
       [...resident.modes()],
       [["ttscgraph", "initial"]],
     );
-    const unchanged = await resident.load();
+    const originalReadFileSync = fs.readFileSync;
+    const originalReaddirSync = fs.readdirSync;
+    let sourceReads = 0;
+    let directoryReads = 0;
+    fs.readFileSync = ((target: fs.PathOrFileDescriptor, ...args: unknown[]) => {
+      if (typeof target === "string" && path.resolve(target) === file) {
+        sourceReads += 1;
+      }
+      return Reflect.apply(originalReadFileSync, fs, [
+        target,
+        ...args,
+      ]) as ReturnType<typeof fs.readFileSync>;
+    }) as typeof fs.readFileSync;
+    fs.readdirSync = ((...args: unknown[]) => {
+      directoryReads += 1;
+      return Reflect.apply(
+        originalReaddirSync as (...values: unknown[]) => unknown,
+        fs,
+        args,
+      );
+    }) as typeof fs.readdirSync;
+    let unchanged;
+    try {
+      unchanged = await resident.load();
+    } finally {
+      fs.readFileSync = originalReadFileSync;
+      fs.readdirSync = originalReaddirSync;
+    }
+    TestValidator.equals(
+      "an unchanged compiler-owned generation performs no coordinator corpus walk or source read",
+      [directoryReads, sourceReads],
+      [0, 0],
+    );
     TestValidator.predicate(
       "an unchanged bulk generation reuses the resident dump object",
       unchanged === loaded,

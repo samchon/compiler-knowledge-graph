@@ -88,6 +88,7 @@ export class CppGraphClient implements IBulkGraphSession {
   private watchedInputs = new Map<string, IInputDigest>();
   private readonly dirtyInputs = new Set<string>();
   private readonly inputWatches = new Map<string, IInputWatch>();
+  private readonly inputParentWatches = new Map<string, IInputParentWatch>();
   private polledInputs = new Set<string>();
   private version = 0;
   private closed = false;
@@ -230,23 +231,21 @@ export class CppGraphClient implements IBulkGraphSession {
     this.dirtyInputs.clear();
     for (const file of this.polledInputs) files.add(file);
     for (const [directory, watch] of this.inputWatches) {
-      // Windows does not promise an event when the watched directory itself
-      // is moved, and macOS can keep following its renamed inode without a
-      // usable signal for the replacement path. Poll identities there so the
-      // handle cannot follow a retired tree indefinitely. Linux supplies the
-      // rename signal; polling every directory as well would turn its large
-      // no-op corpus into another metadata walk.
-      /* c8 ignore start -- CI exercises both platform contracts, but each
-       * per-platform coverage lane can execute only its host's side. */
+      this.ensureInputParentWatch(directory);
+      // A parent watcher observes the directory entry rather than following
+      // its inode, so atomic replacement retires the child handle on every
+      // host without an O(dependency-directory count) no-op stat walk. If the
+      // parent cannot be watched, retain the identity poll as a correctness
+      // fallback only for that degraded directory.
       if (
-        process.platform !== "linux" &&
+        !isSubPath(this.root, directory) &&
+        !this.hasInputParentWatch(directory) &&
         watch.watcher !== undefined &&
         watch.identity !== directoryIdentity(directory)
       ) {
         watch.watcher.close();
         watch.watcher = undefined;
       }
-      /* c8 ignore stop */
       if (watch.watcher === undefined) {
         for (const file of watch.files) files.add(file);
         // Reattach before reading. A write before this point is in the digest;
@@ -307,6 +306,7 @@ export class CppGraphClient implements IBulkGraphSession {
       const current = this.inputWatches.get(directory);
       if (current !== undefined) {
         current.files.add(file);
+        this.ensureInputParentWatch(directory);
         continue;
       }
       const watch: IInputWatch = {
@@ -314,6 +314,7 @@ export class CppGraphClient implements IBulkGraphSession {
         identity: null,
       };
       this.inputWatches.set(directory, watch);
+      this.ensureInputParentWatch(directory);
       this.openInputWatch(directory, watch);
     }
   }
@@ -336,6 +337,7 @@ export class CppGraphClient implements IBulkGraphSession {
       if (entries === undefined) {
         watch.watcher?.close();
         this.inputWatches.delete(directory);
+        this.releaseInputParentWatch(directory);
         for (const file of watch.files) this.dirtyInputs.delete(file);
         continue;
       }
@@ -344,11 +346,13 @@ export class CppGraphClient implements IBulkGraphSession {
       }
       watch.files = entries;
       wanted.delete(directory);
+      this.ensureInputParentWatch(directory);
       if (watch.watcher === undefined) this.openInputWatch(directory, watch);
     }
     for (const [directory, entries] of wanted) {
       const watch: IInputWatch = { files: entries, identity: null };
       this.inputWatches.set(directory, watch);
+      this.ensureInputParentWatch(directory);
       this.openInputWatch(directory, watch);
     }
     this.polledInputs = polled;
@@ -402,9 +406,91 @@ export class CppGraphClient implements IBulkGraphSession {
     }
   }
 
+  private ensureInputParentWatch(directory: string): void {
+    if (isSubPath(this.root, directory)) return;
+    const parent = path.dirname(directory);
+    let watch = this.inputParentWatches.get(parent);
+    if (watch === undefined) {
+      watch = { directories: new Set() };
+      this.inputParentWatches.set(parent, watch);
+    }
+    watch.directories.add(directory);
+    if (watch.watcher !== undefined) return;
+    try {
+      const watcher = fs.watch(
+        parent,
+        { persistent: false },
+        (event, filename) => {
+          if (
+            this.closed ||
+            this.inputParentWatches.get(parent) !== watch ||
+            watch.watcher !== watcher
+          )
+            return;
+          if (event !== "rename") return;
+          const changed =
+            filename === null
+              ? undefined
+              : path.resolve(parent, filename.toString()).toLowerCase();
+          for (const child of watch.directories) {
+            if (changed !== undefined && child.toLowerCase() !== changed) {
+              continue;
+            }
+            this.retireInputWatch(child);
+          }
+        },
+      );
+      watcher.on("error", () => {
+        if (
+          this.closed ||
+          this.inputParentWatches.get(parent) !== watch ||
+          watch.watcher !== watcher
+        )
+          return;
+        watcher.close();
+        watch.watcher = undefined;
+        for (const child of watch.directories) {
+          this.retireInputWatch(child);
+        }
+      });
+      watch.watcher = watcher;
+    } catch {
+      // `notifyInputChanges` identity-polls only the external directories whose
+      // parent watch could not be opened, and retries this attachment next load.
+      watch.watcher = undefined;
+    }
+  }
+
+  private hasInputParentWatch(directory: string): boolean {
+    return (
+      this.inputParentWatches.get(path.dirname(directory))?.watcher !== undefined
+    );
+  }
+
+  private releaseInputParentWatch(directory: string): void {
+    if (isSubPath(this.root, directory)) return;
+    const parent = path.dirname(directory);
+    const watch = this.inputParentWatches.get(parent);
+    if (watch === undefined) return;
+    watch.directories.delete(directory);
+    if (watch.directories.size !== 0) return;
+    watch.watcher?.close();
+    this.inputParentWatches.delete(parent);
+  }
+
+  private retireInputWatch(directory: string): void {
+    const watch = this.inputWatches.get(directory);
+    if (watch === undefined) return;
+    for (const file of watch.files) this.dirtyInputs.add(file);
+    watch.watcher?.close();
+    watch.watcher = undefined;
+  }
+
   private closeInputWatches(): void {
     for (const watch of this.inputWatches.values()) watch.watcher?.close();
+    for (const watch of this.inputParentWatches.values()) watch.watcher?.close();
     this.inputWatches.clear();
+    this.inputParentWatches.clear();
     this.dirtyInputs.clear();
     this.polledInputs.clear();
   }
@@ -814,6 +900,11 @@ interface IInputDigest {
 interface IInputWatch {
   files: Set<string>;
   identity: string | null;
+  watcher?: fs.FSWatcher;
+}
+
+interface IInputParentWatch {
+  directories: Set<string>;
   watcher?: fs.FSWatcher;
 }
 

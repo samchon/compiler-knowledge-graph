@@ -509,6 +509,34 @@ export function createResidentGraphSource(
     signal: AbortSignal,
   ): Promise<void> {
     for (let attempt = 1; ; attempt++) {
+      const prefetched = await refreshBulkSessions(current.sessions, signal);
+      const bulkChanged = [...prefetched].some(
+        ([language, refresh]) =>
+          refresh.changed ||
+          current.generations.get(language) !== refresh.generation,
+      );
+      if (
+        !bulkChanged &&
+        entirelyBulkOwned(options.languages, current.sessions)
+      ) {
+        // An explicitly selected, wholly compiler-owned project has one
+        // authority for source membership and freshness: its resident
+        // provider. Re-walking and hashing the checkout before and after an
+        // unchanged provider generation asks the filesystem the same question
+        // twice, costs seconds on large native corpora, and can only observe
+        // bytes the compiler did not resolve. `IRefresh` also requires an
+        // unchanged answer to reuse its prior immutable snapshot verbatim, so
+        // its payload and slice contract were already validated when that
+        // generation was committed. Mixed and discovery-driven projects
+        // continue through the coordinator fence below.
+        current.modes = bulkModesOf(prefetched);
+        return;
+      }
+      const bulkSliceLanguagesChanged = !sameBulkSliceLanguages(
+        current.sessions,
+        prefetched,
+        current.providers,
+      );
       const selected = selectGraphSources(root, options);
       const liveBuildInputs = residentBuildInputs(
         selected.languages,
@@ -567,16 +595,6 @@ export function createResidentGraphSource(
         await replaceLanguages(current, signal);
         return;
       }
-      const prefetched = await refreshBulkSessions(current.sessions, signal);
-      const bulkChanged = [...prefetched].some(
-        ([language, refresh]) =>
-          current.generations.get(language) !== refresh.generation,
-      );
-      const bulkSliceLanguagesChanged = !sameBulkSliceLanguages(
-        current.sessions,
-        prefetched,
-        current.providers,
-      );
       const providerMovement = movedProviderSource(
         providerSourcesOf(
           [...new Set(prefetched.values())].map(
@@ -958,6 +976,25 @@ function bulkLanguagesOf(
     if (isBulkGraphSession(session)) languages.add(language);
   }
   return languages;
+}
+
+/** Whether fixed language selection delegates every requested lane to bulk. */
+function entirelyBulkOwned(
+  requested: readonly GraphLanguage[] | undefined,
+  sessions: ReadonlyMap<GraphLanguage, ILspSession | IBulkGraphSession>,
+): boolean {
+  if (
+    requested === undefined ||
+    requested.length === 0 ||
+    requested.length !== sessions.size
+  ) {
+    return false;
+  }
+  for (const language of requested) {
+    const session = sessions.get(language);
+    if (session === undefined || !isBulkGraphSession(session)) return false;
+  }
+  return true;
 }
 
 /**

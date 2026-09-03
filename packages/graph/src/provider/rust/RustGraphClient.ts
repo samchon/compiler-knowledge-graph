@@ -234,15 +234,15 @@ export class RustGraphClient implements IBulkGraphSession {
         ) {
           throw error;
         }
-        if (deadline !== undefined && performance.now() >= deadline) {
+        const remaining =
+          deadline === undefined ? undefined : deadline - performance.now();
+        if (remaining !== undefined && remaining <= 0) {
           throw new Error(
             `rust HIR graph: producer did not become ready within ${String(this.readyTimeoutMs)} ms: ${error.message}`,
           );
         }
         await delay(
-          deadline === undefined
-            ? backoff
-            : Math.min(backoff, Math.max(0, deadline - performance.now())),
+          remaining === undefined ? backoff : Math.min(backoff, remaining),
           signal,
         );
         // Same backoff, same clamp and same reset as the Clang client, for the

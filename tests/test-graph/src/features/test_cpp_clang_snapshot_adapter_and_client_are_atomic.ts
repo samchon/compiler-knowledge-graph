@@ -1478,9 +1478,9 @@ async function assertClientWatchesExternalDependencies(): Promise<void> {
     const initialDirectoryStats = directoryStats;
     await client.refresh();
     TestValidator.equals(
-      "unchanged external dependencies avoid POSIX corpus stats while Windows retains its missing-rename guard",
+      "unchanged external dependencies avoid Linux corpus stats while other hosts retain their missing-rename guard",
       [headerStats, directoryStats > initialDirectoryStats],
-      [initialHeaderStats, process.platform === "win32"],
+      [initialHeaderStats, process.platform !== "linux"],
     );
 
     fs.writeFileSync(header, "void callee();\nvoid external_change();\n");
@@ -1516,11 +1516,11 @@ async function assertClientWatchesExternalDependencies(): Promise<void> {
       path.join(replacementInclude, "fixture.h"),
       "void callee();\nvoid replaced_directory();\n",
     );
-    // Windows is the platform whose directory watcher may omit this rename;
-    // suppress its callback to prove the identity fallback independently.
-    // POSIX uses the native inode rename signal and must not poll every
-    // directory during a no-op refresh.
-    suppressIncludeEvents = process.platform === "win32";
+    // Windows and macOS may omit a usable signal for the replacement path;
+    // suppress their callback to prove the identity fallback independently.
+    // Linux uses its native rename signal and must not poll every directory
+    // during a no-op refresh.
+    suppressIncludeEvents = process.platform !== "linux";
     fs.renameSync(include, retiredInclude);
     fs.renameSync(replacementInclude, include);
     const replaced = await client.refresh();
@@ -1865,7 +1865,11 @@ async function assertClientFailures(root: string): Promise<void> {
   );
   await hanging.close();
 
-  const delaying = cppClient(root, ["--retry=100"]);
+  const retrySent = path.join(root, "cpp-retry-abort-sent.txt");
+  const delaying = cppClient(root, [
+    "--retry=100",
+    `--retry-sent-marker=${retrySent}`,
+  ]);
   await (
     delaying as unknown as {
       initialize(signal: AbortSignal): Promise<void>;
@@ -1873,7 +1877,9 @@ async function assertClientFailures(root: string): Promise<void> {
   ).initialize(new AbortController().signal);
   const delayAbort = new AbortController();
   const delayed = delaying.refresh({ signal: delayAbort.signal });
-  setTimeout(() => delayAbort.abort("delay cancellation"), 20).unref?.();
+  await waitFor(() => fs.existsSync(retrySent));
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  delayAbort.abort("delay cancellation");
   await rejected(
     "retry delay remains cancellable",
     delayed,
@@ -2166,4 +2172,12 @@ async function rejected(
     error !== undefined &&
       message.split("|").some((candidate) => error!.message.includes(candidate)),
   );
+}
+
+async function waitFor(predicate: () => boolean): Promise<void> {
+  const deadline = Date.now() + 5_000;
+  while (!predicate()) {
+    if (Date.now() >= deadline) throw new Error("fixture condition timed out");
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
 }

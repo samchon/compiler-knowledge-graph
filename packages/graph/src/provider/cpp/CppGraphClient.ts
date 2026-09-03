@@ -231,18 +231,22 @@ export class CppGraphClient implements IBulkGraphSession {
     for (const file of this.polledInputs) files.add(file);
     for (const [directory, watch] of this.inputWatches) {
       // Windows does not promise an event when the watched directory itself
-      // is moved. Poll identities there so an atomic replacement cannot leave
-      // this handle following the retired tree indefinitely. On inode-based
-      // POSIX watchers the rename signal retires the old handle; polling every
-      // directory as well would turn a large no-op into another corpus walk.
+      // is moved, and macOS can keep following its renamed inode without a
+      // usable signal for the replacement path. Poll identities there so the
+      // handle cannot follow a retired tree indefinitely. Linux supplies the
+      // rename signal; polling every directory as well would turn its large
+      // no-op corpus into another metadata walk.
+      /* c8 ignore start -- CI exercises both platform contracts, but each
+       * per-platform coverage lane can execute only its host's side. */
       if (
-        process.platform === "win32" &&
+        process.platform !== "linux" &&
         watch.watcher !== undefined &&
         watch.identity !== directoryIdentity(directory)
       ) {
         watch.watcher.close();
         watch.watcher = undefined;
       }
+      /* c8 ignore stop */
       if (watch.watcher === undefined) {
         for (const file of watch.files) files.add(file);
         // Reattach before reading. A write before this point is in the digest;
@@ -473,7 +477,9 @@ export class CppGraphClient implements IBulkGraphSession {
             `@samchon/graph: c, cpp: waiting for the clang graph producer: ${waiting}\n`,
           );
         }
-        if (deadline !== undefined && performance.now() >= deadline) {
+        const remaining =
+          deadline === undefined ? undefined : deadline - performance.now();
+        if (remaining !== undefined && remaining <= 0) {
           throw new Error(
             `C/C++ clang graph: producer did not become ready within ${String(this.readyTimeoutMs)} ms: ${error.message}`,
           );
@@ -484,9 +490,7 @@ export class CppGraphClient implements IBulkGraphSession {
         // bound quietly widened — the thing this provider keeps having to
         // correct elsewhere.
         await delay(
-          deadline === undefined
-            ? backoff
-            : Math.min(backoff, Math.max(0, deadline - performance.now())),
+          remaining === undefined ? backoff : Math.min(backoff, remaining),
           signal,
         );
         // Backing off, because polling twenty times a second for a condition

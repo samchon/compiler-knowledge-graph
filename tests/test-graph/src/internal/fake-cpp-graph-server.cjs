@@ -12,6 +12,7 @@ const valueOf = (prefix) =>
 const commit =
   valueOf("--commit=") ?? "1111111111111111111111111111111111111111";
 const requestLog = valueOf("--request-log=");
+const retrySentMarker = valueOf("--retry-sent-marker=");
 const watchLog = valueOf("--watch-log=");
 let retry = Number(valueOf("--retry=") ?? 0);
 let contentModified = Number(valueOf("--content-modified=") ?? 0);
@@ -149,6 +150,9 @@ function handle(message) {
     }
     if (retry > 0) {
       retry -= 1;
+      if (retrySentMarker !== undefined) {
+        fs.writeFileSync(retrySentMarker, "sent");
+      }
       sendError(message.id, -32802, "fixture graph is not ready");
       return;
     }

@@ -1438,9 +1438,14 @@ async function assertClientWatchesExternalDependencies(): Promise<void> {
   const originalStatSync = fs.statSync;
   const originalWatch = fs.watch;
   let headerStats = 0;
+  let directoryStats = 0;
   let suppressIncludeEvents = false;
   fs.statSync = ((file: fs.PathLike, ...args: unknown[]) => {
-    if (typeof file === "string" && path.resolve(file) === header) ++headerStats;
+    if (typeof file === "string") {
+      const resolved = path.resolve(file);
+      if (resolved === header) ++headerStats;
+      else if (resolved === include) ++directoryStats;
+    }
     return Reflect.apply(originalStatSync, fs, [file, ...args]) as fs.Stats;
   }) as typeof fs.statSync;
   fs.watch = ((...args: unknown[]): fs.FSWatcher => {
@@ -1470,11 +1475,12 @@ async function assertClientWatchesExternalDependencies(): Promise<void> {
   try {
     await client.refresh();
     const initialHeaderStats = headerStats;
+    const initialDirectoryStats = directoryStats;
     await client.refresh();
     TestValidator.equals(
-      "unchanged external dependencies rely on their directory watch instead of a corpus stat walk",
-      headerStats,
-      initialHeaderStats,
+      "unchanged external dependencies avoid POSIX corpus stats while Windows retains its missing-rename guard",
+      [headerStats, directoryStats > initialDirectoryStats],
+      [initialHeaderStats, process.platform === "win32"],
     );
 
     fs.writeFileSync(header, "void callee();\nvoid external_change();\n");
@@ -1510,14 +1516,18 @@ async function assertClientWatchesExternalDependencies(): Promise<void> {
       path.join(replacementInclude, "fixture.h"),
       "void callee();\nvoid replaced_directory();\n",
     );
-    suppressIncludeEvents = true;
+    // Windows is the platform whose directory watcher may omit this rename;
+    // suppress its callback to prove the identity fallback independently.
+    // POSIX uses the native inode rename signal and must not poll every
+    // directory during a no-op refresh.
+    suppressIncludeEvents = process.platform === "win32";
     fs.renameSync(include, retiredInclude);
     fs.renameSync(replacementInclude, include);
     const replaced = await client.refresh();
     suppressIncludeEvents = false;
     const replacementWatch = watches.get(include)?.watcher;
     TestValidator.predicate(
-      "an atomically replaced dependency directory reattaches without relying on a native rename event",
+      "an atomically replaced dependency directory reattaches through its platform change signal",
       replaced.changed &&
         replacementWatch !== undefined &&
         replacementWatch !== externalWatch,

@@ -231,9 +231,12 @@ export class CppGraphClient implements IBulkGraphSession {
     for (const file of this.polledInputs) files.add(file);
     for (const [directory, watch] of this.inputWatches) {
       // Windows does not promise an event when the watched directory itself
-      // is moved. Poll one identity per directory so an atomic replacement
-      // cannot leave this handle following the retired tree indefinitely.
+      // is moved. Poll identities there so an atomic replacement cannot leave
+      // this handle following the retired tree indefinitely. On inode-based
+      // POSIX watchers the rename signal retires the old handle; polling every
+      // directory as well would turn a large no-op into another corpus walk.
       if (
+        process.platform === "win32" &&
         watch.watcher !== undefined &&
         watch.identity !== directoryIdentity(directory)
       ) {

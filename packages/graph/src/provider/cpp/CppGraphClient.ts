@@ -230,6 +230,16 @@ export class CppGraphClient implements IBulkGraphSession {
     this.dirtyInputs.clear();
     for (const file of this.polledInputs) files.add(file);
     for (const [directory, watch] of this.inputWatches) {
+      // Windows does not promise an event when the watched directory itself
+      // is moved. Poll one identity per directory so an atomic replacement
+      // cannot leave this handle following the retired tree indefinitely.
+      if (
+        watch.watcher !== undefined &&
+        watch.identity !== directoryIdentity(directory)
+      ) {
+        watch.watcher.close();
+        watch.watcher = undefined;
+      }
       if (watch.watcher === undefined) {
         for (const file of watch.files) files.add(file);
         // Reattach before reading. A write before this point is in the digest;
@@ -292,7 +302,10 @@ export class CppGraphClient implements IBulkGraphSession {
         current.files.add(file);
         continue;
       }
-      const watch: IInputWatch = { files: new Set([file]) };
+      const watch: IInputWatch = {
+        files: new Set([file]),
+        identity: null,
+      };
       this.inputWatches.set(directory, watch);
       this.openInputWatch(directory, watch);
     }
@@ -327,7 +340,7 @@ export class CppGraphClient implements IBulkGraphSession {
       if (watch.watcher === undefined) this.openInputWatch(directory, watch);
     }
     for (const [directory, entries] of wanted) {
-      const watch: IInputWatch = { files: entries };
+      const watch: IInputWatch = { files: entries, identity: null };
       this.inputWatches.set(directory, watch);
       this.openInputWatch(directory, watch);
     }
@@ -335,6 +348,7 @@ export class CppGraphClient implements IBulkGraphSession {
   }
 
   private openInputWatch(directory: string, watch: IInputWatch): void {
+    const before = directoryIdentity(directory);
     try {
       const watcher = fs.watch(directory, { persistent: false }, (event) => {
         if (
@@ -364,9 +378,19 @@ export class CppGraphClient implements IBulkGraphSession {
         watch.watcher = undefined;
       });
       watch.watcher = watcher;
+      const after = directoryIdentity(directory);
+      watch.identity = after;
+      if (before !== after && watch.watcher === watcher) {
+        // The path moved between proving its identity and attaching the
+        // handle. Poll its files now and retry the handle at the next sync.
+        for (const file of watch.files) this.dirtyInputs.add(file);
+        watcher.close();
+        watch.watcher = undefined;
+      }
     } catch {
       // A missing build directory and filesystems without watch support stay
       // correct by polling the files assigned to this directory on each load.
+      watch.identity = directoryIdentity(directory);
       watch.watcher = undefined;
     }
   }
@@ -782,6 +806,7 @@ interface IInputDigest {
 
 interface IInputWatch {
   files: Set<string>;
+  identity: string | null;
   watcher?: fs.FSWatcher;
 }
 
@@ -881,6 +906,15 @@ function fileFingerprint(file: string): string | null {
     stat.mtimeNs,
     stat.ctimeNs,
   ].join(":");
+}
+
+function directoryIdentity(directory: string): string | null {
+  try {
+    const stat = fs.statSync(directory, { bigint: true });
+    return [stat.dev, stat.ino, stat.birthtimeNs].join(":");
+  } catch {
+    return null;
+  }
 }
 
 function inputEventTurn(): Promise<void> {

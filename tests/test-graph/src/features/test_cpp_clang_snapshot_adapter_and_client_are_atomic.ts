@@ -1476,13 +1476,12 @@ async function assertClientWatchesExternalDependencies(): Promise<void> {
       path.join(replacementInclude, "fixture.h"),
       "void callee();\nvoid replaced_directory();\n",
     );
-    externalWatch?.emit("change", "rename", "fixture.h");
     fs.renameSync(include, retiredInclude);
     fs.renameSync(replacementInclude, include);
     const replaced = await client.refresh();
     const replacementWatch = watches.get(include)?.watcher;
     TestValidator.predicate(
-      "an atomically replaced dependency directory reattaches its native watch to the new path",
+      "an atomically replaced dependency directory reattaches without relying on a native rename event",
       replaced.changed &&
         replacementWatch !== undefined &&
         replacementWatch !== externalWatch,
@@ -1499,19 +1498,27 @@ async function assertClientWatchesExternalDependencies(): Promise<void> {
     );
 
     replacementWatch.emit("error", new Error("fixture watch replacement"));
-    let reattachWrites = 0;
+    const reattachReplacement = path.join(external, "include-reattach");
+    const reattachRetired = path.join(external, "include-replaced-again");
+    fs.mkdirSync(reattachReplacement);
+    fs.writeFileSync(
+      path.join(reattachReplacement, "fixture.h"),
+      "void callee();\nvoid replaced_directory();\nvoid reattach_change();\n",
+    );
+    let reattachMoves = 0;
     fs.watch = ((...args: unknown[]): fs.FSWatcher => {
       const watcher = Reflect.apply(
         originalWatch as (...values: unknown[]) => fs.FSWatcher,
         fs,
         args,
       );
-      if (path.resolve(String(args[0])) === include) {
-        ++reattachWrites;
-        fs.writeFileSync(
-          header,
-          "void callee();\nvoid replaced_directory();\nvoid reattach_change();\n",
-        );
+      if (
+        path.resolve(String(args[0])) === include &&
+        reattachMoves === 0
+      ) {
+        ++reattachMoves;
+        fs.renameSync(include, reattachRetired);
+        fs.renameSync(reattachReplacement, include);
       }
       return watcher;
     }) as typeof fs.watch;
@@ -1520,7 +1527,7 @@ async function assertClientWatchesExternalDependencies(): Promise<void> {
     const reattachedWatch = watches.get(include)?.watcher;
     TestValidator.predicate(
       "a failed directory watch reattaches before its fallback digest closes the change window",
-      reattachWrites === 1 &&
+      reattachMoves === 1 &&
         reattached.changed &&
         reattachedWatch !== undefined,
     );

@@ -142,12 +142,11 @@ export const cppGraphProvider: IGraphProvider = {
       [
         "--background-index",
         `-j=${String(workers)}`,
-        // Only when somebody is reading. A producer that stops answering
-        // says why in its log and nowhere else, and a run that waited twenty
-        // minutes for one had nothing but request lines to show for it. The
-        // switch that passes the log through is the switch that asks for it.
+        // Only when somebody is reading. Info retains indexing progress,
+        // refusals, and reply timing without verbose transport logging copying
+        // a successful graph response into stderr beside the response itself.
         ...(process.env["SAMCHON_GRAPH_LSP_SERVER_LOG"] === "1"
-          ? ["--log=verbose"]
+          ? ["--log=info"]
           : []),
       ],
     );

@@ -68,6 +68,13 @@ if (args.includes("--version")) {
   process.stdout.write(`clangd version 22.1.8 (${commit})\n`);
   process.exit(0);
 }
+if (
+  args.includes("--require-info-log") &&
+  (!args.includes("--log=info") || args.includes("--log=verbose"))
+) {
+  process.stderr.write("fixture requires bounded info logging\n");
+  process.exit(2);
+}
 if (args.includes("--snapshot")) {
   process.stdout.write(JSON.stringify(snapshot(null, undefined, 32)));
   process.exit(0);

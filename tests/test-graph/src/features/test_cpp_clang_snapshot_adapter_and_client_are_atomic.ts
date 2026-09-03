@@ -242,14 +242,24 @@ async function assertProvider(root: string): Promise<void> {
   } finally {
     await session.close();
   }
-  // Asked to pass the server's log through, the provider also asks the server
-  // to write one. A producer that stops answering explains itself there and
-  // nowhere else, and a run that waited twenty minutes for one had nothing
-  // but its own request lines to show.
+  // Asked to pass the server's log through, the provider asks for bounded info
+  // diagnostics. Verbose transport logging mirrors every successful graph
+  // response into stderr, duplicating the largest payload in the protocol.
+  const loggedCommand = nodeShim(root, "info-log-clangd", COMMIT, [
+    "--require-info-log",
+  ]);
+  const logged = cppGraphProvider.resolve(root, {
+    ...process.env,
+    [override]: loggedCommand,
+  });
+  TestValidator.predicate(
+    "the C/C++ provider resolves its diagnostic logging fixture",
+    logged !== undefined,
+  );
   process.env.SAMCHON_GRAPH_LSP_SERVER_LOG = "1";
   const cppOnly = cppGraphProvider.open({
     root,
-    command: resolved!,
+    command: logged!,
     languages: ["cpp"],
     options: {},
   });
@@ -1955,6 +1965,7 @@ function nodeShim(
   root: string,
   name: string,
   commit: string,
+  args: readonly string[] = [],
 ): string {
   const directory = path.join(root, "shims");
   fs.mkdirSync(directory, { recursive: true });
@@ -1966,6 +1977,7 @@ function nodeShim(
     `"${process.execPath}"`,
     `"${GraphPaths.fakeCppGraphServer}"`,
     `--commit=${commit}`,
+    ...args.map((argument) => JSON.stringify(argument)),
   ].join(" ");
   fs.writeFileSync(
     file,

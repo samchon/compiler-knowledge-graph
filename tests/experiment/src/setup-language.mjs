@@ -330,10 +330,12 @@ const installScipRuby = () =>
 // to the compiler minor that loads them: #973's merged 2.4.0 tree builds but
 // fails inside Koin's 2.3.20 compiler with NoClassDefFoundError. Pin the exact
 // upstream #973 commit that completed the 2.3.20 port, before its next commit
-// moved the plugin and fixture to 2.4.0. The source archive, compiler minor and
+// moved the plugin and fixture to 2.4.0. The source tree, compiler minor and
 // fixture revision are then one reviewable generation instead of a local patch.
 const SCIP_JAVA_KOTLIN_COMMIT =
   "e940c1889767a81347387067a375320dc6f5d83e";
+const SCIP_JAVA_KOTLIN_TREE =
+  "f76ccc736fda0692c007dd7f9f1b9cbde44ca075";
 const SCIP_JAVA_KOTLIN_VERSION = "2.3.20";
 
 /**
@@ -342,21 +344,23 @@ const SCIP_JAVA_KOTLIN_VERSION = "2.3.20";
  * Two rows need this and they need different revisions: Kotlin needs the
  * upstream commit that completed the 2.3.20 plugin port, and Java needs the
  * fork whose `index` command writes a graph artifact at all. The revision, its
- * archive digest and the version string a run records are therefore arguments
- * rather than constants — one builder, two pins, and no local patch on either.
+ * Git tree and the version string a run records are therefore arguments rather
+ * than constants. GitHub may repackage a generated source archive without
+ * changing its contents, so the immutable extracted tree is the security and
+ * reproducibility boundary: one builder, two pins, and no local patch on either.
  */
 const installScipJavaSource = async (gradle, pin) => {
   const url = `https://codeload.github.com/${pin.repository}/tar.gz/${pin.commit}`;
   const archive = path.join(toolsRoot, `scip-java-${pin.commit}.tar.gz`);
   const source = path.join(toolsRoot, `scip-java-${pin.commit}`);
   await downloadFile(url, archive);
-  verifySha256(archive, pin.digest);
   fs.rmSync(source, { force: true, recursive: true });
   ensureDir(source);
   run(
     "tar",
     ["-xzf", archive, "--strip-components=1", "-C", source],
   );
+  verifyGitTree(source, pin.tree);
   if (pin.verify !== undefined) pin.verify({ gradle, source });
   run(gradle, ["--no-daemon", ":scip-java:installDist"], { cwd: source });
   const launcher = path.join(
@@ -380,7 +384,7 @@ const installScipJavaSource = async (gradle, pin) => {
     tool: "scip-java",
     version: pin.version,
     source: url,
-    digest: `sha256:${pin.digest}`,
+    digest: `git-tree:${pin.tree}`,
   });
   return link;
 };
@@ -389,9 +393,8 @@ const installScipJavaKotlinSnapshot = (gradle) =>
   installScipJavaSource(gradle, {
     repository: "scip-code/scip-java",
     commit: SCIP_JAVA_KOTLIN_COMMIT,
+    tree: SCIP_JAVA_KOTLIN_TREE,
     version: `${SCIP_JAVA_KOTLIN_COMMIT}+kotlin-${SCIP_JAVA_KOTLIN_VERSION}`,
-    digest:
-      "985eb03ef165864dbae3db4453d4566e699f78761bace3e4614bf67d38ce76cf",
   });
 
 /**
@@ -408,10 +411,11 @@ const installScipJavaKotlinSnapshot = (gradle) =>
 const installJavacGraphProducer = async (gradle) => {
   if (
     typeof experiment.producerRepository !== "string" ||
-    typeof experiment.producerCommit !== "string"
+    typeof experiment.producerCommit !== "string" ||
+    typeof experiment.producerTree !== "string"
   ) {
     throw new Error(
-      "java: the javac graph setup requires an exact producer repository and commit",
+      "java: the javac graph setup requires an exact producer repository, commit, and tree",
     );
   }
   const repository = experiment.producerRepository
@@ -420,9 +424,8 @@ const installJavacGraphProducer = async (gradle) => {
   const link = await installScipJavaSource(gradle, {
     repository,
     commit: experiment.producerCommit,
+    tree: experiment.producerTree,
     version: experiment.producerCommit,
-    digest:
-      "d354daf242cf0098ec93481acd2475e0316c8edd3a5d86c5c170a57aa5523aea",
     verify: ({ gradle: verifiedGradle, source }) => {
       run(
         verifiedGradle,

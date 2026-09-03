@@ -535,15 +535,14 @@ export const test_experiment_corpora_are_commit_pinned = async () => {
       setup.includes("await installGradle()"),
   );
   TestValidator.predicate(
-    "Kotlin uses one checksum-pinned 2.3.20 producer and fixture generation",
+    "Kotlin uses one tree-pinned 2.3.20 producer and fixture generation",
     kotlin.includes("e940c1889767a81347387067a375320dc6f5d83e") &&
       kotlin.includes("built with Kotlin 2.3.20") &&
       setup.includes("const SCIP_JAVA_KOTLIN_COMMIT") &&
       setup.includes('"e940c1889767a81347387067a375320dc6f5d83e"') &&
+      setup.includes("const SCIP_JAVA_KOTLIN_TREE") &&
+      setup.includes('"f76ccc736fda0692c007dd7f9f1b9cbde44ca075"') &&
       setup.includes('const SCIP_JAVA_KOTLIN_VERSION = "2.3.20"') &&
-      setup.includes(
-        "985eb03ef165864dbae3db4453d4566e699f78761bace3e4614bf67d38ce76cf",
-      ) &&
       setup.includes(
         "`${SCIP_JAVA_KOTLIN_COMMIT}+kotlin-${SCIP_JAVA_KOTLIN_VERSION}`",
       ) &&
@@ -569,6 +568,9 @@ export const test_experiment_corpora_are_commit_pinned = async () => {
       java.includes(
         `jdtProducerCommit: "${JDT_GRAPH_PRODUCER_COMMIT}"`,
       ) &&
+      java.includes(
+        'producerTree: "8cb3dd9b84fbbbb8dba22827b9d8e7dd21c3f46e"',
+      ) &&
       /jdtProducerTree:\s*"[0-9a-f]{40}"/u.test(java) &&
       !java.includes("regenerationLimitation:") &&
       setup.includes("if (pin.verify !== undefined) pin.verify({ gradle, source })") &&
@@ -580,6 +582,8 @@ export const test_experiment_corpora_are_commit_pinned = async () => {
       setup.includes("tests.GraphAggregateRunnerTest") &&
       setup.includes("tests.GradleBuildToolTest") &&
       setup.includes("const installJdtGraphProducer = async") &&
+      setup.includes("verifyGitTree(source, pin.tree)") &&
+      setup.includes("digest: `git-tree:${pin.tree}`") &&
       setup.includes("verifyGitTree(source, experiment.jdtProducerTree)") &&
       gitTree.includes('["add", "--all", "--force"]') &&
       gitTree.includes('["write-tree"]') &&

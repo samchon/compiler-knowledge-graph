@@ -390,6 +390,7 @@ export const LANGUAGE_EXPERIMENTS = [
     // tested with.
     producerRepository: "https://github.com/samchon/scip-java.git",
     producerCommit: "fefb1bfb2e3fac90cd90f64fc07cc57fb533b49a",
+    producerTree: "8cb3dd9b84fbbbb8dba22827b9d8e7dd21c3f46e",
     jdtProducerRepository: "https://github.com/samchon/eclipse.jdt.ls.git",
     jdtProducerCommit: "0d55a6c13d14e0d0466eeb021920349b3d0c6d35",
     jdtProducerTree: "18937e87ae9b42098100b398fde8cfb87f4c9b7c",

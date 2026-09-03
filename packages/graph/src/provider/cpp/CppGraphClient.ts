@@ -229,9 +229,13 @@ export class CppGraphClient implements IBulkGraphSession {
     const files = new Set(this.dirtyInputs);
     this.dirtyInputs.clear();
     for (const file of this.polledInputs) files.add(file);
-    for (const watch of this.inputWatches.values()) {
+    for (const [directory, watch] of this.inputWatches) {
       if (watch.watcher === undefined) {
         for (const file of watch.files) files.add(file);
+        // Reattach before reading. A write before this point is in the digest;
+        // a write after it is held by the new watcher for this or the next
+        // refresh. Opening after the read would leave a lost-update window.
+        this.openInputWatch(directory, watch);
       }
     }
     for (const file of required) {
@@ -247,9 +251,6 @@ export class CppGraphClient implements IBulkGraphSession {
       if (before === after) continue;
       const type = before === undefined || before === null ? 1 : after === null || after === undefined ? 3 : 2;
       changes.push({ uri: pathToFileURL(file).href, type });
-    }
-    for (const [directory, watch] of this.inputWatches) {
-      if (watch.watcher === undefined) this.openInputWatch(directory, watch);
     }
     if (changes.length !== 0) {
       this.lsp.notify("workspace/didChangeWatchedFiles", { changes });
@@ -336,7 +337,12 @@ export class CppGraphClient implements IBulkGraphSession {
   private openInputWatch(directory: string, watch: IInputWatch): void {
     try {
       const watcher = fs.watch(directory, { persistent: false }, (event) => {
-        if (this.closed) return;
+        if (
+          this.closed ||
+          this.inputWatches.get(directory) !== watch ||
+          watch.watcher !== watcher
+        )
+          return;
         for (const file of watch.files) this.dirtyInputs.add(file);
         // A rename can be the watched directory itself being atomically
         // replaced. Native watchers follow the old inode on Unix, so retire
@@ -347,10 +353,15 @@ export class CppGraphClient implements IBulkGraphSession {
         }
       });
       watcher.on("error", () => {
-        if (this.closed) return;
+        if (
+          this.closed ||
+          this.inputWatches.get(directory) !== watch ||
+          watch.watcher !== watcher
+        )
+          return;
         for (const file of watch.files) this.dirtyInputs.add(file);
         watcher.close();
-        if (watch.watcher === watcher) watch.watcher = undefined;
+        watch.watcher = undefined;
       });
       watch.watcher = watcher;
     } catch {

@@ -1426,6 +1426,7 @@ async function assertClientWatchesExternalDependencies(): Promise<void> {
   );
   const watchLog = path.join(root, "external-watches.ndjson");
   const originalStatSync = fs.statSync;
+  const originalWatch = fs.watch;
   let headerStats = 0;
   fs.statSync = ((file: fs.PathLike, ...args: unknown[]) => {
     if (typeof file === "string" && path.resolve(file) === header) ++headerStats;
@@ -1497,7 +1498,34 @@ async function assertClientWatchesExternalDependencies(): Promise<void> {
       replacementChanged.changed,
     );
 
-    replacementWatch.emit("error", new Error("fixture watch failure"));
+    replacementWatch.emit("error", new Error("fixture watch replacement"));
+    let reattachWrites = 0;
+    fs.watch = ((...args: unknown[]): fs.FSWatcher => {
+      const watcher = Reflect.apply(
+        originalWatch as (...values: unknown[]) => fs.FSWatcher,
+        fs,
+        args,
+      );
+      if (path.resolve(String(args[0])) === include) {
+        ++reattachWrites;
+        fs.writeFileSync(
+          header,
+          "void callee();\nvoid replaced_directory();\nvoid reattach_change();\n",
+        );
+      }
+      return watcher;
+    }) as typeof fs.watch;
+    const reattached = await client.refresh();
+    fs.watch = originalWatch;
+    const reattachedWatch = watches.get(include)?.watcher;
+    TestValidator.predicate(
+      "a failed directory watch reattaches before its fallback digest closes the change window",
+      reattachWrites === 1 &&
+        reattached.changed &&
+        reattachedWatch !== undefined,
+    );
+
+    reattachedWatch?.emit("error", new Error("fixture watch failure"));
     fs.writeFileSync(header, "void callee();\nvoid fallback_change();\n");
     const polled = await client.refresh();
     TestValidator.predicate(
@@ -1530,9 +1558,13 @@ async function assertClientWatchesExternalDependencies(): Promise<void> {
       ]),
     );
     const relocatedSnapshot = await client.refresh();
+    const relocatedSourceWatch = watches.get(relocated)?.watcher;
+    const relocatedHeaderWatch = watches.get(relocatedInclude)?.watcher;
     TestValidator.predicate(
       "a compilation database that discovers a new external directory attaches its watch before publication",
-      relocatedSnapshot.changed && watches.has(relocated),
+      relocatedSnapshot.changed &&
+        relocatedSourceWatch !== undefined &&
+        relocatedHeaderWatch !== undefined,
     );
 
     const localInclude = path.join(root, "include");
@@ -1558,7 +1590,18 @@ async function assertClientWatchesExternalDependencies(): Promise<void> {
         !watches.has(relocated) &&
         !watches.has(relocatedInclude),
     );
+    relocatedSourceWatch?.emit("change", "change", "main.cpp");
+    relocatedHeaderWatch?.emit("error", new Error("retired directory watch"));
+    const dirtyInputs = (
+      client as unknown as { dirtyInputs: Set<string> }
+    ).dirtyInputs;
+    TestValidator.predicate(
+      "late events from retired directory watches cannot reintroduce stale inputs",
+      !dirtyInputs.has(relocatedSource) &&
+        !dirtyInputs.has(path.join(relocatedInclude, "fixture.h")),
+    );
   } finally {
+    fs.watch = originalWatch;
     fs.statSync = originalStatSync;
     await client.close();
   }

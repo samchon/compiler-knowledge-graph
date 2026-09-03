@@ -1533,7 +1533,19 @@ async function assertClientWatchesExternalDependencies(): Promise<void> {
       replacementChanged.changed,
     );
 
-    replacementWatch.emit("error", new Error("fixture watch replacement"));
+    // A delayed native event from the earlier directory replacement may have
+    // retired and replaced the handle while the edit above was committed.
+    // Fail the handle that is active now so every platform exercises the
+    // intended error-to-fallback transition.
+    const activeReplacementWatch = watches.get(include)?.watcher;
+    TestValidator.predicate(
+      "the replacement directory retains an active watch after its edit",
+      activeReplacementWatch !== undefined,
+    );
+    activeReplacementWatch!.emit(
+      "error",
+      new Error("fixture watch replacement"),
+    );
     const reattachReplacement = path.join(external, "include-reattach");
     const reattachRetired = path.join(external, "include-replaced-again");
     fs.mkdirSync(reattachReplacement);

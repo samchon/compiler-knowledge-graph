@@ -305,7 +305,7 @@ const assertRetiredChildIsClosed = async (): Promise<void> => {
   const childSource = [
     'const fs = require("node:fs");',
     'const readline = require("node:readline");',
-    `fs.writeFileSync(${JSON.stringify(started)}, String(process.pid));`,
+    `fs.writeFileSync(${JSON.stringify(started)}, process.pid + "\\n");`,
     "readline.createInterface({ input: process.stdin }).once(\"line\", () =>",
     `  fs.writeFileSync(${JSON.stringify(requested)}, "request\\n"));`,
     "process.on(\"SIGTERM\", () =>",
@@ -324,7 +324,7 @@ const assertRetiredChildIsClosed = async (): Promise<void> => {
       "-e",
       [
         'const fs = require("node:fs");',
-        `fs.writeFileSync(${JSON.stringify(unrelatedStarted)}, String(process.pid));`,
+        `fs.writeFileSync(${JSON.stringify(unrelatedStarted)}, process.pid + "\\n");`,
         "setInterval(() => undefined, 1_000);",
       ].join("\n"),
     ],

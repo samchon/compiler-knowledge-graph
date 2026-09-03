@@ -1306,13 +1306,30 @@ async function assertClientReusesUnchangedInputDigests(): Promise<void> {
   const root = fixtureRoot();
   const source = path.join(root, "main.cpp");
   const watchLog = path.join(root, "digest-watches.ndjson");
+  fs.mkdirSync(path.join(root, ".clangd"));
   const originalReadFileSync = fs.readFileSync;
+  const originalStatSync = fs.statSync;
   let sourceReads = 0;
+  let moveSourceAfterReads = false;
+  let sourceMovements = 0;
   fs.readFileSync = ((file: fs.PathOrFileDescriptor, ...args: unknown[]) => {
+    const result = Reflect.apply(originalReadFileSync, fs, [
+      file,
+      ...args,
+    ]) as unknown;
     if (typeof file === "string" && path.resolve(file) === source) {
       ++sourceReads;
+      if (moveSourceAfterReads) {
+        const touched = originalStatSync(source);
+        fs.utimesSync(
+          source,
+          touched.atime,
+          new Date(touched.mtimeMs + 1_000),
+        );
+        ++sourceMovements;
+      }
     }
-    return Reflect.apply(originalReadFileSync, fs, [file, ...args]) as unknown;
+    return result;
   }) as typeof fs.readFileSync;
   const client = cppClient(root, [`--watch-log=${watchLog}`]);
   try {
@@ -1339,6 +1356,27 @@ async function assertClientReusesUnchangedInputDigests(): Promise<void> {
       [initialReads + 1, 1],
     );
 
+    const beforeMovement = originalStatSync(source);
+    fs.utimesSync(
+      source,
+      beforeMovement.atime,
+      new Date(beforeMovement.mtimeMs + 1_000),
+    );
+    moveSourceAfterReads = true;
+    await client.refresh();
+    moveSourceAfterReads = false;
+    TestValidator.equals(
+      "an input moving throughout every stable-read attempt is published as unknown",
+      [sourceReads, sourceMovements],
+      [initialReads + 7, 6],
+    );
+    await client.refresh();
+    TestValidator.equals(
+      "a settled input recovers from the unknown digest without reusing it",
+      sourceReads,
+      initialReads + 8,
+    );
+
     await new Promise((resolve) => setTimeout(resolve, 20));
     const touched = fs.statSync(source);
     fs.writeFileSync(source, "void called() {}\n");
@@ -1353,7 +1391,7 @@ async function assertClientReusesUnchangedInputDigests(): Promise<void> {
           .filter((row) => String(row.uri).endsWith("/main.cpp"))
           .map((row) => row.type),
       ],
-      [initialReads + 2, [1, 2]],
+      [initialReads + 9, [1, 3, 2]],
     );
   } finally {
     fs.readFileSync = originalReadFileSync;

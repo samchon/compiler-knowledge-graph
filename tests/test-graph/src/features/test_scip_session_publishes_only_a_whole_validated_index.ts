@@ -3,6 +3,7 @@ import { ScipSession, scipProvider } from "@samchon/graph";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 
 import { GraphPaths } from "../internal/GraphPaths";
 
@@ -372,6 +373,17 @@ async function assertGenerations(): Promise<void> {
     ["scip-fake", ""],
   );
   await bare.close();
+
+  const singleSlash = sessionOf(root, {
+    indexRoot: singleSlashFileUri(root).replace(/^file:/u, "FiLe:"),
+    plainRoot: true,
+  });
+  TestValidator.equals(
+    "a SCIP session accepts a mixed-case single-slash file URI for its exact project root",
+    (await singleSlash.refresh()).snapshot.nodes.map((node) => node.name),
+    ["first"],
+  );
+  await singleSlash.close();
 
   // A failure that is not an Error still has to arrive as one: a caller cannot
   // read `.message` off a string.
@@ -1014,6 +1026,10 @@ async function rejects(task: Promise<unknown>, label: string): Promise<void> {
 
 function settle(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 50));
+}
+
+function singleSlashFileUri(file: string): string {
+  return pathToFileURL(file).href.replace(/^file:\/\/\//u, "file:/");
 }
 
 /** A deterministic signal for the two synchronous cancellation handoffs. */

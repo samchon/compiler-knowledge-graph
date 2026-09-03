@@ -272,9 +272,7 @@ export class ScipSession implements IBulkGraphSession {
     if (projectRoot === "") {
       throw new Error(`${this.options.provider}: the index has no project root`);
     }
-    const declared = projectRoot.startsWith("file://")
-      ? fileFromUri(projectRoot)
-      : projectRoot;
+    const declared = fileFromUri(projectRoot);
     if (!samePath(declared, this.root)) {
       throw new Error(
         `${this.options.provider}: the index was produced for ${declared}, not ${this.root}`,

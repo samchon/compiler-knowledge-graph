@@ -101,9 +101,9 @@
       "facts": ["contains", "exports", "imports", "calls", "accesses", "instantiates", "type_ref", "extends", "implements", "overrides", "dispatches", "decorates", "tests", "references"],
       "commands": ["samchon-rust-analyzer", "rust-analyzer"],
       "environmentOverrides": ["SAMCHON_GRAPH_RUST_ANALYZER_HIR"],
-      "install": "Build the `samchon/rust-analyzer` graph-snapshot fork at commit `2806f44a73d8325a7fa0881c46f6190b165369bf`; point `SAMCHON_GRAPH_RUST_ANALYZER_HIR` at that binary or install it as `samchon-rust-analyzer`.",
+      "install": "Build the `samchon/rust-analyzer` graph-snapshot fork at commit `d72d412ab33377065224a69fe523aedf4b99ddcb`; point `SAMCHON_GRAPH_RUST_ANALYZER_HIR` at that binary or install it as `samchon-rust-analyzer`.",
       "installSources": [
-        {"label": "pinned HIR producer commit", "url": "https://github.com/samchon/rust-analyzer/commit/2806f44a73d8325a7fa0881c46f6190b165369bf"},
+        {"label": "pinned HIR producer commit", "url": "https://github.com/samchon/rust-analyzer/commit/d72d412ab33377065224a69fe523aedf4b99ddcb"},
         {"label": "initial native HIR producer PR", "url": "https://github.com/samchon/rust-analyzer/pull/1"},
         {"label": "node ownership repair PR", "url": "https://github.com/samchon/rust-analyzer/pull/2"},
         {"label": "rust-analyzer build instructions", "url": "https://rust-analyzer.github.io/book/contributing/"}

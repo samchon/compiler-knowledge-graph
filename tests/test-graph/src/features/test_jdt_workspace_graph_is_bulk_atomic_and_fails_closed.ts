@@ -387,6 +387,26 @@ function assertAdapterBoundaries(root: string, source: string): void {
         root,
       ),
   });
+  const singleSlash = rawSnapshot(root, source);
+  const projectUri = singleSlashFileUri(root);
+  const sourceUri = singleSlashFileUri(source);
+  singleSlash.projects[0]!.location = projectUri;
+  singleSlash.sources[0]!.uri = sourceUri;
+  for (const node of singleSlash.nodes) {
+    node.uri = sourceUri;
+    node.evidence.uri = sourceUri;
+  }
+  for (const edge of singleSlash.edges) edge.evidence.uri = sourceUri;
+  for (const diagnostic of singleSlash.diagnostics) {
+    diagnostic.uri = sourceUri;
+    diagnostic.evidence.uri = sourceUri;
+  }
+  TestValidator.predicate(
+    "JDT single-slash file URIs resolve to the project files they name",
+    new JdtGraphSnapshotAdapter(root)
+      .apply(singleSlash)
+      .snapshot.sources.has(path.normalize(source)),
+  );
   const unchanged = structuredClone(initial);
   unchanged.mode = "unchanged";
   TestValidator.predicate(
@@ -749,6 +769,10 @@ function evidence(source: string): IJdtGraphSnapshot.IEvidence {
     endLine: 1,
     endColumn: 20,
   };
+}
+
+function singleSlashFileUri(file: string): string {
+  return pathToFileURL(file).href.replace(/^file:\/\/\//u, "file:/");
 }
 
 function requestCount(file: string, method: string): number {

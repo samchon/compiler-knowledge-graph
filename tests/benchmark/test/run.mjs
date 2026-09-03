@@ -365,13 +365,13 @@ function testIndexRouteEvidenceContract() {
     [
       {
         tool: "samchon-rust-analyzer",
-        version: "0.0.0 (9923b2c14b0b2a9bed6e8534c70b027e03a1d721)",
+        version: "0.0.0 (2806f44a73d8325a7fa0881c46f6190b165369bf)",
       },
       {
         tool: "samchon-rust-analyzer",
-        version: "9923b2c14b0b2a9bed6e8534c70b027e03a1d721",
+        version: "2806f44a73d8325a7fa0881c46f6190b165369bf",
         source: "fixture",
-        digest: "git:9923b2c14b0b2a9bed6e8534c70b027e03a1d721",
+        digest: "git:2806f44a73d8325a7fa0881c46f6190b165369bf",
       },
     ],
     [

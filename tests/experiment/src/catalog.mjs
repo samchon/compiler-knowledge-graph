@@ -86,7 +86,7 @@ export const LANGUAGE_EXPERIMENTS = [
     strictAuthority: "analyzer",
     strictTool: "samchon-rust-analyzer",
     producerRepository: "https://github.com/samchon/rust-analyzer.git",
-    producerCommit: "9923b2c14b0b2a9bed6e8534c70b027e03a1d721",
+    producerCommit: "2806f44a73d8325a7fa0881c46f6190b165369bf",
     nativeBaseline: "samchon-rust-analyzer prime-caches .",
     requiredCapabilities: [
       "coverage",

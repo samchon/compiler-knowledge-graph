@@ -147,6 +147,7 @@ export const test_cpp_clang_snapshot_adapter_and_client_are_atomic = async () =>
   await assertClientLifecycle(root);
   await assertClientInputShapes();
   await assertClientReusesUnchangedInputDigests();
+  await assertClientWatchesExternalDependencies();
   await assertClientReportsItsOwnSize();
   await assertClientReadsPublishedBodies(publishedFixtureRoot());
   assertDeltaThatLosesAnOwnerAsksForTheWhole(publishedFixtureRoot());
@@ -806,6 +807,7 @@ async function assertClientLifecycle(root: string): Promise<void> {
       [edited.changed, edited.mode, edited.generation],
       [deleted.changed, deleted.mode, deleted.generation],
       client.generation,
+      client.current === deleted.snapshot,
       edited.snapshot.nodes.some((node) => node.name === "editedCaller"),
       // A refresh opens with the one request that carries no cursor, and that
       // is where it declares the generation it already holds. Continuations
@@ -823,6 +825,7 @@ async function assertClientLifecycle(root: string): Promise<void> {
       [true, "incremental", 2],
       [true, "reload", 3],
       3,
+      true,
       true,
       // Five openers for four refreshes. Deleting a compile command moves the
       // universe, which re-adapts every surviving shard -- and the adapter
@@ -1395,6 +1398,137 @@ async function assertClientReusesUnchangedInputDigests(): Promise<void> {
     );
   } finally {
     fs.readFileSync = originalReadFileSync;
+    await client.close();
+  }
+}
+
+async function assertClientWatchesExternalDependencies(): Promise<void> {
+  const root = GraphPaths.createTempDirectory("samchon-graph-cpp-watch-root-");
+  const external = GraphPaths.createTempDirectory(
+    "samchon-graph-cpp-watch-external-",
+  );
+  const include = path.join(external, "include");
+  const source = path.join(external, "main.cpp");
+  const header = path.join(include, "fixture.h");
+  fs.mkdirSync(include);
+  fs.writeFileSync(source, '#include "include/fixture.h"\nvoid caller() {}\n');
+  fs.writeFileSync(header, "void callee();\n");
+  fs.writeFileSync(
+    path.join(root, "compile_commands.json"),
+    JSON.stringify([
+      {
+        directory: external,
+        file: source,
+        arguments: ["clang++", "-x", "c++", "-c", source],
+      },
+    ]),
+  );
+  const watchLog = path.join(root, "external-watches.ndjson");
+  const originalStatSync = fs.statSync;
+  let headerStats = 0;
+  fs.statSync = ((file: fs.PathLike, ...args: unknown[]) => {
+    if (typeof file === "string" && path.resolve(file) === header) ++headerStats;
+    return Reflect.apply(originalStatSync, fs, [file, ...args]) as fs.Stats;
+  }) as typeof fs.statSync;
+  const client = cppClient(root, [`--watch-log=${watchLog}`]);
+  try {
+    await client.refresh();
+    const initialHeaderStats = headerStats;
+    await client.refresh();
+    TestValidator.equals(
+      "unchanged external dependencies rely on their directory watch instead of a corpus stat walk",
+      headerStats,
+      initialHeaderStats,
+    );
+
+    fs.writeFileSync(header, "void callee();\nvoid external_change();\n");
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    const changed = await client.refresh();
+    TestValidator.predicate(
+      "an external dependency event rehashes and republishes its affected generation",
+      changed.changed &&
+        headerStats > initialHeaderStats &&
+        readLines(watchLog)
+          .flatMap((row) => row.changes)
+          .some(
+            (row) =>
+              String(row.uri) === pathToFileURL(header).href && row.type === 2,
+          ),
+    );
+
+    const watches = (
+      client as unknown as {
+        inputWatches: Map<string, { watcher?: fs.FSWatcher }>;
+      }
+    ).inputWatches;
+    const externalWatch = watches.get(include)?.watcher;
+    TestValidator.predicate(
+      "the external dependency directory owns a native watch",
+      externalWatch !== undefined,
+    );
+    externalWatch?.emit("error", new Error("fixture watch failure"));
+    fs.writeFileSync(header, "void callee();\nvoid fallback_change();\n");
+    const polled = await client.refresh();
+    TestValidator.predicate(
+      "a failed external directory watch falls back to input polling",
+      polled.changed,
+    );
+
+    const relocated = GraphPaths.createTempDirectory(
+      "samchon-graph-cpp-watch-relocated-",
+    );
+    const relocatedInclude = path.join(relocated, "include");
+    const relocatedSource = path.join(relocated, "main.cpp");
+    fs.mkdirSync(relocatedInclude);
+    fs.writeFileSync(
+      relocatedSource,
+      '#include "include/fixture.h"\nvoid relocated_caller() {}\n',
+    );
+    fs.writeFileSync(
+      path.join(relocatedInclude, "fixture.h"),
+      "void relocated_callee();\n",
+    );
+    fs.writeFileSync(
+      path.join(root, "compile_commands.json"),
+      JSON.stringify([
+        {
+          directory: relocated,
+          file: relocatedSource,
+          arguments: ["clang++", "-x", "c++", "-c", relocatedSource],
+        },
+      ]),
+    );
+    const relocatedSnapshot = await client.refresh();
+    TestValidator.predicate(
+      "a compilation database that discovers a new external directory attaches its watch before publication",
+      relocatedSnapshot.changed && watches.has(relocated),
+    );
+
+    const localInclude = path.join(root, "include");
+    const localSource = path.join(root, "main.cpp");
+    fs.mkdirSync(localInclude);
+    fs.writeFileSync(localSource, "void caller() {}\n");
+    fs.writeFileSync(path.join(localInclude, "fixture.h"), "void callee();\n");
+    fs.writeFileSync(
+      path.join(root, "compile_commands.json"),
+      JSON.stringify([
+        {
+          directory: root,
+          file: localSource,
+          arguments: ["clang++", "-x", "c++", "-c", localSource],
+        },
+      ]),
+    );
+    await client.refresh();
+    TestValidator.predicate(
+      "dependency directories removed from the compilation universe release their watches",
+      !watches.has(external) &&
+        !watches.has(include) &&
+        !watches.has(relocated) &&
+        !watches.has(relocatedInclude),
+    );
+  } finally {
+    fs.statSync = originalStatSync;
     await client.close();
   }
 }

@@ -9,6 +9,7 @@ import { appendAll } from "../../indexer/appendAll";
 import { LspClient } from "../../lsp/LspClient";
 import { LspResponseError } from "../../lsp/LspResponseError";
 import { GraphLanguage } from "../../typings";
+import { isSubPath } from "../../utils/isSubPath";
 import { IBulkGraphSession } from "../IBulkGraphSession";
 import { cppGraphHeapTrace } from "./cppGraphHeapTrace";
 import { CppGraphReloadRequired } from "./CppGraphReloadRequired";
@@ -85,6 +86,9 @@ export class CppGraphClient implements IBulkGraphSession {
   private queue: Promise<void> = Promise.resolve();
   private initialized: Promise<void> | undefined;
   private watchedInputs = new Map<string, IInputDigest>();
+  private readonly dirtyInputs = new Set<string>();
+  private readonly inputWatches = new Map<string, IInputWatch>();
+  private polledInputs = new Set<string>();
   private version = 0;
   private closed = false;
   private closing: Promise<void> | undefined;
@@ -131,9 +135,9 @@ export class CppGraphClient implements IBulkGraphSession {
     return this.enqueue(async () => {
       const signal = combineSignals(options.signal, this.lifecycleAbort.signal);
       await this.initialize(signal);
-      const moved = this.notifyInputChanges();
+      const moved = await this.notifyInputChanges();
       const result = await this.applySnapshot(signal, moved);
-      this.commitSnapshotInputs(result.snapshot);
+      if (result.changed) this.commitSnapshotInputs(result.snapshot);
       if (!result.changed) {
         return {
           changed: false,
@@ -156,6 +160,7 @@ export class CppGraphClient implements IBulkGraphSession {
     if (this.closing !== undefined) return this.closing;
     this.closed = true;
     this.lifecycleAbort.abort(new Error("C/C++ clang graph: session is closed"));
+    this.closeInputWatches();
     this.closing = this.lsp.close();
     return this.closing;
   }
@@ -188,7 +193,9 @@ export class CppGraphClient implements IBulkGraphSession {
       signal,
     );
     this.lsp.notify("initialized", {});
-    const inputs = inputDigests(this.root);
+    const files = inputFiles(this.root);
+    this.syncInputWatches(files);
+    const inputs = inputDigests(files);
     const changes = [...inputs]
       .filter(([, input]) => input.digest !== null)
       .map(([file]) => ({ uri: pathToFileURL(file).href, type: 1 }));
@@ -208,17 +215,34 @@ export class CppGraphClient implements IBulkGraphSession {
    * consumer that watched it move and then published the previous generation
    * unchanged would be reporting on a checkout it no longer describes.
    */
-  private notifyInputChanges(): boolean {
-    const current = inputDigests(
-      this.root,
-      this.current,
-      this.watchedInputs,
-    );
-    const files = new Set([...this.watchedInputs.keys(), ...current.keys()]);
+  private async notifyInputChanges(): Promise<boolean> {
+    // Let native filesystem notifications queued by the write that prompted
+    // this load reach their directory watchers before deciding it is a no-op.
+    // Project-owned inputs are also polled: direct writes followed immediately
+    // by load must not depend on an OS event's delivery latency. External SDK
+    // and dependency trees stay bound by their directory events without
+    // turning every no-op into a stat walk over tens of thousands of headers.
+    await inputEventTurn();
+    const required = inputFiles(this.root);
+    this.addInputWatches(required);
+    const files = new Set(this.dirtyInputs);
+    this.dirtyInputs.clear();
+    for (const file of this.polledInputs) files.add(file);
+    for (const watch of this.inputWatches.values()) {
+      if (watch.watcher === undefined) {
+        for (const file of watch.files) files.add(file);
+      }
+    }
+    for (const file of required) {
+      if (!this.watchedInputs.has(file)) files.add(file);
+    }
+    const current = new Map(this.watchedInputs);
     const changes: Array<{ uri: string; type: 1 | 2 | 3 }> = [];
     for (const file of [...files].sort(compareText)) {
       const before = this.watchedInputs.get(file)?.digest;
-      const after = current.get(file)?.digest;
+      const input = fileDigest(file, this.watchedInputs.get(file));
+      const after = input.digest;
+      current.set(file, input);
       if (before === after) continue;
       const type = before === undefined || before === null ? 1 : after === null || after === undefined ? 3 : 2;
       changes.push({ uri: pathToFileURL(file).href, type });
@@ -231,11 +255,12 @@ export class CppGraphClient implements IBulkGraphSession {
   }
 
   private commitSnapshotInputs(snapshot: IBulkGraphSession.ISnapshot): void {
-    const committed = inputDigests(
-      this.root,
-      snapshot,
-      this.watchedInputs,
-    );
+    const files = inputFiles(this.root, snapshot);
+    // Attach watchers before reading the post-snapshot baseline. A file that
+    // moves during the read is either rejected by fileDigest's stable-read
+    // fence or arrives as a dirty event checked by the next resident load.
+    this.syncInputWatches(files);
+    const committed = inputDigests(files, this.watchedInputs);
     for (const [file, source] of snapshot.sources) {
       if (!path.isAbsolute(file)) continue;
       const digest = source.diskDigest === "" ? null : source.diskDigest;
@@ -251,6 +276,82 @@ export class CppGraphClient implements IBulkGraphSession {
       });
     }
     this.watchedInputs = committed;
+  }
+
+  private addInputWatches(files: Iterable<string>): void {
+    for (const file of files) {
+      if (isSubPath(this.root, file)) this.polledInputs.add(file);
+      const directory = path.dirname(file);
+      const current = this.inputWatches.get(directory);
+      if (current !== undefined) {
+        current.files.add(file);
+        continue;
+      }
+      const watch: IInputWatch = { files: new Set([file]) };
+      this.inputWatches.set(directory, watch);
+      this.openInputWatch(directory, watch);
+    }
+  }
+
+  private syncInputWatches(files: Iterable<string>): void {
+    const wanted = new Map<string, Set<string>>();
+    const polled = new Set<string>();
+    for (const file of files) {
+      if (isSubPath(this.root, file)) polled.add(file);
+      const directory = path.dirname(file);
+      let entries = wanted.get(directory);
+      if (entries === undefined) {
+        entries = new Set();
+        wanted.set(directory, entries);
+      }
+      entries.add(file);
+    }
+    for (const [directory, watch] of this.inputWatches) {
+      const entries = wanted.get(directory);
+      if (entries === undefined) {
+        watch.watcher?.close();
+        this.inputWatches.delete(directory);
+        for (const file of watch.files) this.dirtyInputs.delete(file);
+        continue;
+      }
+      for (const file of watch.files) {
+        if (!entries.has(file)) this.dirtyInputs.delete(file);
+      }
+      watch.files = entries;
+      wanted.delete(directory);
+      if (watch.watcher === undefined) this.openInputWatch(directory, watch);
+    }
+    for (const [directory, entries] of wanted) {
+      const watch: IInputWatch = { files: entries };
+      this.inputWatches.set(directory, watch);
+      this.openInputWatch(directory, watch);
+    }
+    this.polledInputs = polled;
+  }
+
+  private openInputWatch(directory: string, watch: IInputWatch): void {
+    try {
+      const watcher = fs.watch(directory, { persistent: false }, () => {
+        for (const file of watch.files) this.dirtyInputs.add(file);
+      });
+      watcher.on("error", () => {
+        for (const file of watch.files) this.dirtyInputs.add(file);
+        watcher.close();
+        watch.watcher = undefined;
+      });
+      watch.watcher = watcher;
+    } catch {
+      // A missing build directory and filesystems without watch support stay
+      // correct by polling the files assigned to this directory on each load.
+      watch.watcher = undefined;
+    }
+  }
+
+  private closeInputWatches(): void {
+    for (const watch of this.inputWatches.values()) watch.watcher?.close();
+    this.inputWatches.clear();
+    this.dirtyInputs.clear();
+    this.polledInputs.clear();
   }
 
   private async requestSnapshot(
@@ -302,7 +403,7 @@ export class CppGraphClient implements IBulkGraphSession {
           "graph snapshot is not ready",
         );
         if (error.code === CONTENT_MODIFIED && !indexing)
-          this.notifyInputChanges();
+          await this.notifyInputChanges();
         // Say what is being waited on, once per distinct answer.
         //
         // The producer refuses until every translation unit the compilation
@@ -655,6 +756,11 @@ interface IInputDigest {
   fingerprint: string | null;
 }
 
+interface IInputWatch {
+  files: Set<string>;
+  watcher?: fs.FSWatcher;
+}
+
 function compilationDatabaseFiles(root: string): string[] {
   for (const candidate of [
     path.join(root, "compile_commands.json"),
@@ -685,11 +791,10 @@ function compilationDatabaseFiles(root: string): string[] {
   return [];
 }
 
-function inputDigests(
+function inputFiles(
   root: string,
   snapshot?: IBulkGraphSession.ISnapshot,
-  previous: ReadonlyMap<string, IInputDigest> = new Map(),
-): Map<string, IInputDigest> {
+): string[] {
   const files = new Set<string>([
     path.join(root, ".clangd"),
     path.join(root, "compile_flags.txt"),
@@ -700,6 +805,13 @@ function inputDigests(
   for (const file of snapshot?.sources.keys() ?? []) {
     if (path.isAbsolute(file)) files.add(file);
   }
+  return [...files].sort(compareText);
+}
+
+function inputDigests(
+  files: Iterable<string>,
+  previous: ReadonlyMap<string, IInputDigest> = new Map(),
+): Map<string, IInputDigest> {
   return new Map(
     [...files]
       .sort(compareText)
@@ -745,6 +857,12 @@ function fileFingerprint(file: string): string | null {
     stat.mtimeNs,
     stat.ctimeNs,
   ].join(":");
+}
+
+function inputEventTurn(): Promise<void> {
+  return new Promise((resolve) => {
+    setImmediate(resolve);
+  });
 }
 
 function serverRequest(method: string, params: unknown): unknown {

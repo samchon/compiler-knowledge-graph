@@ -1428,10 +1428,34 @@ async function assertClientWatchesExternalDependencies(): Promise<void> {
   const originalStatSync = fs.statSync;
   const originalWatch = fs.watch;
   let headerStats = 0;
+  let suppressIncludeEvents = false;
   fs.statSync = ((file: fs.PathLike, ...args: unknown[]) => {
     if (typeof file === "string" && path.resolve(file) === header) ++headerStats;
     return Reflect.apply(originalStatSync, fs, [file, ...args]) as fs.Stats;
   }) as typeof fs.statSync;
+  fs.watch = ((...args: unknown[]): fs.FSWatcher => {
+    const callbackIndex = args.length - 1;
+    const callback = args[callbackIndex];
+    if (
+      path.resolve(String(args[0])) !== include ||
+      typeof callback !== "function"
+    ) {
+      return Reflect.apply(
+        originalWatch as (...values: unknown[]) => fs.FSWatcher,
+        fs,
+        args,
+      );
+    }
+    const forwarded = [...args];
+    forwarded[callbackIndex] = (...values: unknown[]): void => {
+      if (!suppressIncludeEvents) Reflect.apply(callback, undefined, values);
+    };
+    return Reflect.apply(
+      originalWatch as (...values: unknown[]) => fs.FSWatcher,
+      fs,
+      forwarded,
+    );
+  }) as typeof fs.watch;
   const client = cppClient(root, [`--watch-log=${watchLog}`]);
   try {
     await client.refresh();
@@ -1476,9 +1500,11 @@ async function assertClientWatchesExternalDependencies(): Promise<void> {
       path.join(replacementInclude, "fixture.h"),
       "void callee();\nvoid replaced_directory();\n",
     );
+    suppressIncludeEvents = true;
     fs.renameSync(include, retiredInclude);
     fs.renameSync(replacementInclude, include);
     const replaced = await client.refresh();
+    suppressIncludeEvents = false;
     const replacementWatch = watches.get(include)?.watcher;
     TestValidator.predicate(
       "an atomically replaced dependency directory reattaches without relying on a native rename event",

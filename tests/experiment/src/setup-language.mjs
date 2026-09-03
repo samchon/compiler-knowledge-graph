@@ -901,9 +901,36 @@ switch (experiment.language) {
       source: "dotnet tool install --global csharp-ls",
       digest: "unpinned",
     });
-    // The strict C# producer, built on Roslyn like csharp-ls but reading the
-    // solution once instead of answering a request per symbol. Installed as a
-    // global dotnet tool, so the SDK above is its only prerequisite.
+    const producerRoot = path.join(toolsRoot, "samchon-roslyn");
+    fs.rmSync(producerRoot, { force: true, recursive: true });
+    run(dotnet, [
+      "publish",
+      path.join(repositoryRoot, "sidecars", "csharp", "Samchon.Graph.CSharp.csproj"),
+      "--configuration",
+      "Release",
+      "--output",
+      producerRoot,
+      "--no-self-contained",
+      "-p:RestoreLockedMode=true",
+    ]);
+    const producer = path.join(producerRoot, "samchon-roslyn");
+    fs.chmodSync(producer, 0o755);
+    const producerLink = path.join(binRoot, "samchon-roslyn");
+    fs.rmSync(producerLink, { force: true });
+    fs.symlinkSync(producer, producerLink);
+    process.env.SAMCHON_GRAPH_ROSLYN_WORKSPACE = producerLink;
+    recordProvisionedEnvironment(
+      "SAMCHON_GRAPH_ROSLYN_WORKSPACE",
+      producerLink,
+    );
+    record({
+      tool: "samchon-roslyn",
+      version: "workspace",
+      source: "sidecars/csharp",
+      digest: "built-from-locked-source",
+    });
+    // Keep scip-dotnet installed only for the registered optional navigation
+    // fallback; the Roslyn workspace service above owns strict C# facts.
     shell(`"${dotnet}" tool install --global scip-dotnet || "${dotnet}" tool update --global scip-dotnet`);
     record({
       tool: "scip-dotnet",

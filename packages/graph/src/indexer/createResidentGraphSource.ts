@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import fs from "node:fs";
 import path from "node:path";
 import {
   ISamchonGraphDiagnostic,
@@ -16,6 +17,7 @@ import { dumpProvenanceOf } from "../provider/dumpProvenanceOf";
 import { fallbackCoverage } from "../provider/fallbackCoverage";
 import { graphCoverageOf } from "../provider/graphCoverageOf";
 import { graphUnresolvedOf } from "../provider/graphUnresolvedOf";
+import { graphSnapshotDigests } from "../provider/graphSnapshotDigests";
 import { IGraphProvider } from "../provider/IGraphProvider";
 import { GRAPH_PROVIDERS } from "../provider/GRAPH_PROVIDERS";
 import { IBulkGraphSession } from "../provider/IBulkGraphSession";
@@ -71,6 +73,7 @@ interface IResidentState {
   inputManifest: Map<string, string>;
   inputGeneration: string;
   buildInputs: string[];
+  sourceFiles: string[];
   providerTopology: string;
 
   /**
@@ -85,6 +88,11 @@ interface IResidentState {
   providerTopologyRows: readonly providerTopology.IRow[];
   /** An available strict candidate fell back while this state was built. */
   providerFallback: boolean;
+
+  /** Last fact proof accepted from each resident bulk session. */
+  bulkFactDigests: Map<IBulkGraphSession, string>;
+  bulkWarnings: Map<IBulkGraphSession, readonly string[]>;
+  bulkSourceFiles: Map<IBulkGraphSession, readonly string[]>;
 }
 
 interface IResidentDependencies {
@@ -215,6 +223,7 @@ export function createResidentGraphSource(
         inputManifest,
         inputGeneration,
         buildInputs,
+        sourceFiles: [...selected.files],
         providerTopology: providerTopology.serialize(availableTopology),
         providerTopologyRows: availableTopology,
         providerFallback: availableTopology.some((row) =>
@@ -224,6 +233,9 @@ export function createResidentGraphSource(
               row.provider,
           ),
         ),
+        bulkFactDigests: bulkFactDigestsOf(sessions),
+        bulkWarnings: bulkWarningsOf(sessions),
+        bulkSourceFiles: bulkSourceFilesOf(sessions),
       };
     } catch (error) {
       // Once the build hands its sessions to this source, every later failure
@@ -469,6 +481,117 @@ export function createResidentGraphSource(
     current.source = sourceReaderOf(root, sources, current.sessions);
     current.inputManifest = committedInputs;
     current.inputGeneration = inputGeneration;
+    current.sourceFiles = [...committedSelection.files];
+    current.bulkFactDigests = bulkFactDigestsOf(current.sessions);
+    current.bulkWarnings = bulkWarningsOf(current.sessions);
+    current.bulkSourceFiles = bulkSourceFilesOf(current.sessions);
+  }
+
+  function commitFactEquivalentBulkRefresh(
+    current: IResidentState,
+    prefetched: ReadonlyMap<GraphLanguage, IBulkGraphSession.IRefresh>,
+    signal: AbortSignal,
+  ): boolean {
+    // A single fixed bulk owner can prove that a new compiler generation has
+    // exactly the prior graph facts. Under that proof, unchanged universe,
+    // warnings, and source membership make the normal graph merge, topology
+    // discovery, and whole-checkout hash walk redundant. We still hash every
+    // provider-reported tracked disk source and recompute the project input
+    // generation before publishing the new manifest envelope. Every tracked
+    // provider source is read at that fence, including sources whose digest did
+    // not move, because an unrelated file can change after the provider took
+    // its immutable snapshot. Mixed, discovery-driven, or structurally changed
+    // projects return false and use the full coordinator transaction below.
+    if (!entirelyBulkOwned(options.languages, current.sessions)) return false;
+    const sessions = [
+      ...new Set(
+        [...current.sessions.values()].filter(isBulkGraphSession),
+      ),
+    ];
+    if (sessions.length !== 1) return false;
+    const session = sessions[0]!;
+    const refresh = [...prefetched]
+      .filter(([language]) => current.sessions.get(language) === session)
+      .map(([, candidate]) => candidate)[0];
+    if (refresh?.changed !== true) return false;
+    const snapshot = refresh.snapshot;
+    const protocol = snapshot.protocol;
+    const priorProvenance = current.dump.provenance;
+    if (
+      protocol === undefined ||
+      current.bulkFactDigests.get(session) !== protocol.factDigest ||
+      priorProvenance?.length !== 1 ||
+      priorProvenance[0]!.provider !== snapshot.provenance.provider ||
+      priorProvenance[0]!.universe !== snapshot.provenance.universe ||
+      // A stored fact digest means this session had a current snapshot when
+      // all three bookkeeping maps were captured, so these rows exist together.
+      !sameStringArray(current.bulkWarnings.get(session)!, snapshot.warnings) ||
+      !sameStringArray(
+        current.bulkSourceFiles.get(session)!,
+        [...snapshot.sources.keys()].sort(compareText),
+      )
+    ) {
+      return false;
+    }
+
+    assertOpen();
+    if (session.current !== snapshot) {
+      throw new StaleCandidateError(
+        `@samchon/graph: the ${snapshot.provenance.provider} provider replaced its fact-equivalent snapshot while this refresh was preparing`,
+      );
+    }
+    const committedInputs = new Map(current.inputManifest);
+    for (const [file, digest] of snapshot.sources) {
+      if (!committedInputs.has(file)) continue;
+      if (digest.diskDigest === "" || fileDigest(file) !== digest.diskDigest) {
+        throw new StaleCandidateError(
+          `@samchon/graph: ${file} moved after the provider prepared its fact-equivalent generation`,
+        );
+      }
+      committedInputs.set(file, digest.diskDigest);
+    }
+    const providerSources = providerSourcesOf([snapshot]);
+    const movement = movedProviderSource(
+      providerSources,
+      committedInputs,
+      committedInputs,
+    );
+    if (movement !== undefined) {
+      throw new StaleCandidateError(
+        `@samchon/graph: ${movement}, so no fact-equivalent slice may be published`,
+      );
+    }
+    if (signal.aborted) throw closedError();
+
+    const provenance = [
+      {
+        ...priorProvenance[0]!,
+        manifest: graphSnapshotDigests.manifestOf(snapshot),
+      },
+    ];
+    const inputGeneration = projectInputGeneration({
+      sourceFiles: current.sourceFiles,
+      buildInputFiles: current.buildInputs.map((input) =>
+        path.resolve(root, input),
+      ),
+      manifest: committedInputs,
+      providerSources,
+      provenance,
+    });
+    current.dump = {
+      ...current.dump,
+      generation: { input: inputGeneration },
+      provenance,
+    };
+    current.generations = bulkGenerationsOf(current.sessions);
+    current.modes = bulkModesOf(prefetched);
+    current.source = sourceReaderOf(root, new Map(), current.sessions);
+    current.inputManifest = committedInputs;
+    current.inputGeneration = inputGeneration;
+    current.bulkFactDigests = bulkFactDigestsOf(current.sessions);
+    current.bulkWarnings = bulkWarningsOf(current.sessions);
+    current.bulkSourceFiles = bulkSourceFilesOf(current.sessions);
+    return true;
   }
 
   async function replaceLanguages(
@@ -509,12 +632,21 @@ export function createResidentGraphSource(
     signal: AbortSignal,
   ): Promise<void> {
     for (let attempt = 1; ; attempt++) {
+      let phaseStarted = performance.now();
       const prefetched = await refreshBulkSessions(current.sessions, signal);
+      traceResident("prefetch", phaseStarted);
       const bulkChanged = [...prefetched].some(
         ([language, refresh]) =>
           refresh.changed ||
           current.generations.get(language) !== refresh.generation,
       );
+      if (
+        bulkChanged &&
+        commitFactEquivalentBulkRefresh(current, prefetched, signal)
+      ) {
+        traceResident("fact-equivalent-commit", phaseStarted);
+        return;
+      }
       if (
         !bulkChanged &&
         entirelyBulkOwned(options.languages, current.sessions)
@@ -551,6 +683,7 @@ export function createResidentGraphSource(
       // project does not use is another candidate to probe, and a
       // half-installed toolchain fails intermittently for the same reason it is
       // not serving.
+      phaseStarted = performance.now();
       const liveRows = providerTopology.reestablish(
         providerTopology.available(
           root,
@@ -564,6 +697,7 @@ export function createResidentGraphSource(
         ),
         current.providerTopologyRows,
       );
+      traceResident("topology", phaseStarted);
       const liveTopology = providerTopology.serialize(liveRows);
       if (liveTopology !== current.providerTopology) {
         await replaceLanguages(current, signal);
@@ -578,12 +712,14 @@ export function createResidentGraphSource(
         await replaceLanguages(current, signal);
         return;
       }
+      phaseStarted = performance.now();
       const inputManifest = projectInputManifest(
         root,
         options,
         liveBuildInputs,
         selected.files,
       );
+      traceResident("input-manifest", phaseStarted);
       if (
         current.providerFallback &&
         !sameProjectInputManifest(current.inputManifest, inputManifest)
@@ -614,7 +750,9 @@ export function createResidentGraphSource(
         current.modes = bulkModesOf(prefetched);
         return;
       }
+      phaseStarted = performance.now();
       const discovered = discoverLanguages(root, options);
+      traceResident("language-discovery", phaseStarted);
       if (
         !sameLanguages(current.languages, discovered) ||
         bulkSliceLanguagesChanged
@@ -764,6 +902,62 @@ function bulkModesOf(
     modes.set(refresh.snapshot.provenance.provider, refresh.mode);
   }
   return modes;
+}
+
+function traceResident(phase: string, started: number): void {
+  if (process.env["SAMCHON_GRAPH_ROSLYN_TRACE"] !== "1") return;
+  process.stderr.write(
+    `${JSON.stringify({
+      phase: `roslyn-resident-${phase}`,
+      elapsedMs: Math.round(performance.now() - started),
+    })}\n`,
+  );
+}
+
+function bulkFactDigestsOf(
+  sessions: ReadonlyMap<GraphLanguage, ILspSession | IBulkGraphSession>,
+): Map<IBulkGraphSession, string> {
+  const digests = new Map<IBulkGraphSession, string>();
+  for (const session of sessions.values()) {
+    if (!isBulkGraphSession(session)) continue;
+    const digest = session.current?.protocol?.factDigest;
+    if (digest !== undefined) digests.set(session, digest);
+  }
+  return digests;
+}
+
+function bulkWarningsOf(
+  sessions: ReadonlyMap<GraphLanguage, ILspSession | IBulkGraphSession>,
+): Map<IBulkGraphSession, readonly string[]> {
+  const warnings = new Map<IBulkGraphSession, readonly string[]>();
+  for (const session of sessions.values()) {
+    if (!isBulkGraphSession(session) || session.current === undefined) continue;
+    warnings.set(session, session.current.warnings);
+  }
+  return warnings;
+}
+
+function bulkSourceFilesOf(
+  sessions: ReadonlyMap<GraphLanguage, ILspSession | IBulkGraphSession>,
+): Map<IBulkGraphSession, readonly string[]> {
+  const sources = new Map<IBulkGraphSession, readonly string[]>();
+  for (const session of sessions.values()) {
+    if (!isBulkGraphSession(session) || session.current === undefined) continue;
+    sources.set(session, [...session.current.sources.keys()].sort(compareText));
+  }
+  return sources;
+}
+
+function fileDigest(file: string): string {
+  try {
+    return createHash("sha256").update(fs.readFileSync(file)).digest("hex");
+  } catch {
+    return "";
+  }
+}
+
+function compareText(left: string, right: string): number {
+  return left < right ? -1 : 1;
 }
 
 function providerSourcesOf(

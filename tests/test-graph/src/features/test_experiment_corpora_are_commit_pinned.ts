@@ -73,6 +73,7 @@ export const test_experiment_corpora_are_commit_pinned = async () => {
   const dart = region(catalog, 'language: "dart"', "\n];");
   const luaSetup = region(setup, 'case "lua"', 'case "dart"');
   const javaSetup = region(setup, 'case "java"', 'case "csharp"');
+  const csharpSetup = region(setup, 'case "csharp"', 'case "kotlin"');
   const kotlinSetup = region(setup, 'case "kotlin"', 'case "swift"');
   const rustSetup = region(setup, 'case "rust"', 'case "cpp"');
   const cppSetup = region(setup, 'case "cpp"', 'case "java"');
@@ -669,10 +670,16 @@ export const test_experiment_corpora_are_commit_pinned = async () => {
       runner.includes("semanticLimitation: experiment.semanticLimitation"),
   );
   TestValidator.predicate(
-    "every producer with no grounded edge family states that limitation explicitly",
-    csharp.includes("semanticEdges: []") &&
-      !csharp.includes("crossFileEdge:") &&
-      declares(csharp, "semanticLimitation") &&
+    "the C# experiment proves the resident compiler route and its edit bounds",
+    csharp.includes('strictProvider: "roslyn-workspace"') &&
+      csharp.includes('strictAuthority: "compiler"') &&
+      csharp.includes('strictTool: "samchon-roslyn"') &&
+      csharp.includes('crossFileEdge: "accesses"') &&
+      csharp.includes("noopP95MaxMs: 250") &&
+      csharp.includes("editP95MaxMs: 2000") &&
+      csharp.includes('failurePolicy: "reject"') &&
+      csharpSetup.includes('"publish"') &&
+      csharpSetup.includes("SAMCHON_GRAPH_ROSLYN_WORKSPACE") &&
       runner.includes("experiment.semanticEdges.length === 0") &&
       runner.includes("crossFileEdge !== undefined") &&
       runner.includes("semanticLimitation.trim() ==="),
@@ -827,10 +834,8 @@ export const test_experiment_corpora_are_commit_pinned = async () => {
   // fact plane and the source manifest come back byte-identical and only the
   // build universe moves. The claim, not the check, was what had to change.
   TestValidator.predicate(
-    "a degraded publication is distinct from an unchanged tolerated one",
-    csharp.includes('failurePolicy: "published"') &&
-      declares(csharp, "failureLimitation") &&
-      [lua, python].every(
+    "the lifecycle keeps degraded and tolerated publication policies distinct",
+    [lua, python].every(
         (row) =>
           row.includes('failurePolicy: "tolerated"') &&
           declares(row, "failureLimitation"),

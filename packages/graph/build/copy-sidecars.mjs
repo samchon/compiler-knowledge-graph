@@ -5,9 +5,9 @@ import { fileURLToPath } from "node:url";
 /**
  * Copy the sidecar sources this package ships into the package itself.
  *
- * The Go sidecar is source a user compiles into `samchon-graph-go`; the Gradle
- * Java source reads the opted-in Tooling API model; and the Lua exporter is a
- * script the provider hands to lua-language-server at run time. All three must
+ * The Go and C# sidecars are source a user compiles into their native producer;
+ * the Gradle Java source reads the opted-in Tooling API model; and the Lua
+ * exporter is a script the provider hands to lua-language-server. All must
  * exist in an installed package rather than only in this repository.
  *
  * Named per file rather than copied wholesale. A directory copy would ship
@@ -21,6 +21,14 @@ const packageRoot = path.resolve(
 const repositoryRoot = path.resolve(packageRoot, "..", "..");
 
 const SIDECARS = {
+  csharp: [
+    "GraphExtractor.cs",
+    "GraphProtocol.cs",
+    "Program.cs",
+    "Samchon.Graph.CSharp.csproj",
+    "WorkspaceGraphService.cs",
+    "packages.lock.json",
+  ],
   gradle: ["RepositoryContext.java"],
   go: [
     "analyze.go",

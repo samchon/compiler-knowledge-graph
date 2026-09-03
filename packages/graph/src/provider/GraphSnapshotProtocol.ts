@@ -408,6 +408,14 @@ export namespace GraphSnapshotProtocol {
      * so a caller may only adopt when it drops every reference it has as this
      * returns. On a 469-shard generation the copy is a second whole graph,
      * held at the moment the caller is still holding the first.
+     *
+     * `reuseValidatedFacts` is an explicit resident-provider optimization. It
+     * may reuse the prior generation's frozen fact arrays only after every
+     * changed shard proves the same fact digest, the whole-generation fact
+     * digest agrees, and the universe, targets, warnings, and source identity
+     * set are unchanged. Source byte digests and the protocol envelope still
+     * advance. Any missing proof takes the ordinary assembly and validation
+     * path; a contradictory proof rejects the transaction.
      */
     public apply(
       frames: readonly Frame[],
@@ -416,6 +424,7 @@ export namespace GraphSnapshotProtocol {
         warnings?: readonly string[];
         validate?: (snapshot: IBulkGraphSession.ISnapshot) => void;
         adopt?: boolean;
+        reuseValidatedFacts?: boolean;
       } = {},
     ): IBulkGraphSession.ISnapshot {
       throwIfAborted(options.signal);
@@ -478,6 +487,11 @@ export namespace GraphSnapshotProtocol {
         begin.baseGeneration === undefined
           ? new Map<string, ICommittedShard>()
           : new Map(this.committed);
+      let factsEquivalent =
+        begin.baseGeneration !== undefined &&
+        this.snapshot !== undefined &&
+        begin.universe === this.snapshot.provenance.universe &&
+        sameList(begin.targets, this.snapshot.protocol!.targets);
       const touched = new Set<string>();
       const invalidated = new Set<string>();
       for (const frame of frames.slice(2, -1)) {
@@ -496,12 +510,24 @@ export namespace GraphSnapshotProtocol {
               `graph snapshot protocol: shard digest mismatch: ${frame.shard.key}`,
             );
           }
-          if (this.committed.get(frame.shard.key)?.digest !== digest) {
+          const prior = this.committed.get(frame.shard.key);
+          let shardFacts = prior?.factDigest;
+          if (prior?.digest !== digest) {
             invalidated.add(frame.shard.key);
+            if (factsEquivalent) {
+              if (prior === undefined) factsEquivalent = false;
+              else {
+                const priorFacts =
+                  prior.factDigest ?? shardFactDigest(prior.shard);
+                shardFacts = shardFactDigest(frame.shard);
+                factsEquivalent = priorFacts === shardFacts;
+              }
+            }
           }
           next.set(frame.shard.key, {
             digest,
             shard: options.adopt === true ? frame.shard : clone(frame.shard),
+            ...(shardFacts === undefined ? {} : { factDigest: shardFacts }),
           });
         } else if (frame.type === "deleteShard") {
           assertString(frame.key, "deleteShard.key");
@@ -517,6 +543,7 @@ export namespace GraphSnapshotProtocol {
             );
           }
           invalidated.add(frame.key);
+          factsEquivalent = false;
         } else {
           throw new Error(
             `graph snapshot protocol: unexpected ${frame.type} inside transaction`,
@@ -557,13 +584,64 @@ export namespace GraphSnapshotProtocol {
           "graph snapshot protocol: commit shard manifest mismatch",
         );
       }
+      const warnings = options.warnings ?? [];
+      const sources = factsEquivalent ? sourcesOf(next) : undefined;
+      const reuseFacts =
+        options.reuseValidatedFacts === true &&
+        factsEquivalent &&
+        this.snapshot !== undefined &&
+        commit.factDigest === this.snapshot.protocol!.factDigest &&
+        sources !== undefined &&
+        sameMapKeys(sources, this.snapshot.sources) &&
+        sameList(warnings, this.snapshot.warnings);
+      if (
+        options.reuseValidatedFacts === true &&
+        factsEquivalent &&
+        this.snapshot !== undefined &&
+        commit.factDigest !== this.snapshot.protocol!.factDigest
+      ) {
+        throw new Error("graph snapshot protocol: commit fact digest mismatch");
+      }
+      if (reuseFacts) {
+        // The opt-in proof above establishes that the already-frozen arrays
+        // are precisely the facts this commit names. Revalidating and copying
+        // those arrays would traverse the whole graph for a body-only edit;
+        // the source manifest and protocol envelope are the only new data.
+        if (
+          manifestDigest(
+            [...sources].map(([file, source]) => ({ file, ...source })),
+          ) !== begin.manifest
+        ) {
+          throw new Error(
+            "graph snapshot protocol: input manifest digest mismatch",
+          );
+        }
+        const assembled = assembleFactEquivalent(
+          this.snapshot!,
+          begin,
+          commit,
+          expectedManifest,
+          sources,
+        );
+        throwIfAborted(options.signal);
+        freezeDeep(assembled, "the graph snapshot protocol generation");
+        proven(assembled, commit.factDigest);
+        throwIfAborted(options.signal);
+        this.committed = next;
+        this.published = new Map(
+          [...next].map(([key, entry]) => [key, entry.shard]),
+        );
+        this.identity = clone(hello);
+        this.snapshot = assembled;
+        return assembled;
+      }
       const assembled = assemble(
         hello,
         begin,
         commit,
         expectedManifest,
         next,
-        options.warnings ?? [],
+        warnings,
       );
       assertAssembledFacts(assembled, hello);
       if (
@@ -606,6 +684,88 @@ export namespace GraphSnapshotProtocol {
   interface ICommittedShard {
     digest: string;
     shard: IShard;
+    factDigest?: string;
+  }
+
+  function shardFactDigest(shard: IShard): string {
+    return digest({
+      coverage: shard.coverage,
+      diagnostics: shard.diagnostics,
+      edges: shard.edges,
+      nodes: shard.nodes,
+      unresolved: shard.unresolved,
+    });
+  }
+
+  function sourcesOf(
+    shards: ReadonlyMap<string, ICommittedShard>,
+  ): Map<string, IBulkGraphSession.ISourceDigest> {
+    const sources = new Map<string, IBulkGraphSession.ISourceDigest>();
+    for (const { shard } of shards.values()) {
+      for (const source of shard.sources) {
+        const value = {
+          checkerDigest: source.checkerDigest,
+          diskDigest: source.diskDigest,
+        };
+        const prior = sources.get(source.file);
+        if (
+          prior !== undefined &&
+          (prior.checkerDigest !== value.checkerDigest ||
+            prior.diskDigest !== value.diskDigest)
+        ) {
+          throw new Error(
+            `graph snapshot protocol: shards disagree about source ${source.file}`,
+          );
+        }
+        sources.set(source.file, value);
+      }
+    }
+    return sources;
+  }
+
+  function sameMapKeys(
+    left: ReadonlyMap<string, unknown>,
+    right: ReadonlyMap<string, unknown>,
+  ): boolean {
+    return (
+      left.size === right.size && [...left.keys()].every((key) => right.has(key))
+    );
+  }
+
+  function assembleFactEquivalent(
+    prior: IBulkGraphSession.ISnapshot,
+    begin: IBegin,
+    commit: ICommit,
+    manifest: IBulkGraphSession.IShard[],
+    sources: Map<string, IBulkGraphSession.ISourceDigest>,
+  ): IBulkGraphSession.ISnapshot {
+    return {
+      languages: prior.languages,
+      nodes: prior.nodes,
+      edges: prior.edges,
+      diagnostics: prior.diagnostics,
+      sources: sealedMap(
+        sources,
+        "the graph snapshot protocol source manifest",
+      ),
+      provenance: prior.provenance,
+      coverage: prior.coverage,
+      unresolved: prior.unresolved,
+      protocol: {
+        version: VERSION,
+        sequence: begin.sequence,
+        generation: begin.generation,
+        // Fact equivalence is possible only for a delta against the currently
+        // committed generation, so both base fields were proved above.
+        baseSequence: begin.baseSequence!,
+        baseGeneration: begin.baseGeneration!,
+        manifest: begin.manifest,
+        targets: [...begin.targets],
+        shards: manifest.map((entry) => ({ ...entry })),
+        factDigest: commit.factDigest,
+      },
+      warnings: prior.warnings,
+    };
   }
 
   /**

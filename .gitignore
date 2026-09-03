@@ -46,3 +46,5 @@ packages/graph/sidecars/
 # directory, and Go refuses to run an executable it found there.
 sidecars/go/go
 sidecars/go/go.exe
+sidecars/csharp/bin/
+sidecars/csharp/obj/

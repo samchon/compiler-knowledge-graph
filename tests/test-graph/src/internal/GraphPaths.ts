@@ -64,6 +64,7 @@ export const GraphPaths = {
   fakeCmake: path.join(repositoryRoot, "tests", "test-graph", "src", "internal", "fake-cmake.cjs"),
   fakeLspServer: path.join(repositoryRoot, "tests", "test-graph", "src", "internal", "fake-lsp-server.cjs"),
   fakeCppGraphServer: path.join(repositoryRoot, "tests", "test-graph", "src", "internal", "fake-cpp-graph-server.cjs"),
+  fakeCsharpGraphServer: path.join(repositoryRoot, "tests", "test-graph", "src", "internal", "fake-csharp-graph-server.cjs"),
   fakeJdtGraphServer: path.join(repositoryRoot, "tests", "test-graph", "src", "internal", "fake-jdt-graph-server.cjs"),
   fakeRustGraphServer: path.join(repositoryRoot, "tests", "test-graph", "src", "internal", "fake-rust-graph-server.cjs"),
   fakeTtscGraphServer: path.join(repositoryRoot, "tests", "test-graph", "src", "internal", "fake-ttscgraph-server.cjs"),

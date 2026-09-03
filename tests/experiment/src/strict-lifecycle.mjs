@@ -229,6 +229,7 @@ export const runStrictLifecycle = async (experiment, pinnedRoot) => {
         sourceText,
         currentDump: dump,
         currentIdentity: previousIdentity,
+        describeDifference: firstGenerationDifference,
         changedModes: CHANGED_MODES,
         writeSource: (text) => fs.writeFileSync(sourceFile, text),
         load: async () => {

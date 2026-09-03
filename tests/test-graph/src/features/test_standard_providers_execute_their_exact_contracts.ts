@@ -7,6 +7,7 @@ import {
   type IGraphProvider,
   RUST_GRAPH_PRODUCER_COMMIT,
   CPP_CLANG_PRODUCER_COMMIT,
+  csharpGraphProvider,
   cppGraphProvider,
   javaGraphProvider,
   goGraphProvider,
@@ -931,12 +932,15 @@ function assertFixtureRegistryCoverage(): void {
     rustGraphProvider,
     cppGraphProvider,
     javaGraphProvider,
+    csharpGraphProvider,
     // The two SCIP entries a strict route owns as its fallback tier. They are
     // exercised by the loop above, but the registry does not list them as
     // owners, so the ledger must not either.
     ...standardScipProviders.filter(
       (provider) =>
-        provider.name !== "scip-clang" && provider.name !== "scip-java",
+        provider.name !== "scip-clang" &&
+        provider.name !== "scip-java" &&
+        provider.name !== "scip-dotnet",
     ),
     ...standardSidecarProviders,
   ]
@@ -1248,6 +1252,12 @@ async function assertRemainingRegisteredFixtures(root: string): Promise<void> {
     ],
   };
   await assertRegisteredFixture(cppGraphProvider, cppCommand, root, "calls");
+
+  const csharpCommand: IGraphProvider.ICommand = {
+    command: process.execPath,
+    args: [GraphPaths.fakeCsharpGraphServer, "--conformance"],
+  };
+  await assertRegisteredFixture(csharpGraphProvider, csharpCommand, root);
 
   // Lua's producer is the language server itself, driven through its `--doc`
   // export with our exporter injected, so the fixture stands in for the server

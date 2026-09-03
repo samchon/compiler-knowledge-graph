@@ -455,51 +455,61 @@ export const LANGUAGE_EXPERIMENTS = [
     minEdges: 0,
   },
   {
-    // serilog has a root .sln, which csharp-ls needs to load a project context;
-    // the dotnet/samples monorepo has none and yields zero symbols.
+    // Serilog exercises a real multi-project solution while staying small
+    // enough for repeated immutable Roslyn Solution generations.
     language: "csharp",
     repository: "https://github.com/serilog/serilog.git",
     commit: "07d39cfb2928076ecd902a61d295f90d74fe1fa5",
-    // Uncapped, because scip-dotnet refuses a cap: a SCIP indexer publishes a
-    // whole-workspace artifact and has no bounded mode, so a capped row is a row
-    // it declines to serve.
-    strictProvider: "scip-dotnet",
-    strictAuthority: "semantic-index",
-    strictTool: "scip-dotnet",
-    requiredCapabilities: ["universe", "diskDigests"],
-    // Declarations, but no edge family. scip-dotnet 0.2.14 writes occurrence
-    // ranges without enclosing_range, SymbolInformation without
-    // enclosing_symbol, and no type-definition relationship. The common
-    // adapter can therefore publish compiler-resolved declarations but cannot
-    // ground a reference origin or either of its other common SCIP families.
-    semanticEdges: [],
-    semanticLimitation:
-      "scip-dotnet 0.2.14 emits no occurrence enclosing_range, SymbolInformation.enclosing_symbol, or type-definition relationship, so its semantic declarations carry no provable graph edge family",
+    strictProvider: "roslyn-workspace",
+    strictAuthority: "compiler",
+    strictTool: "samchon-roslyn",
+    timeoutMs: 300_000,
+    requiredCapabilities: [
+      "universe",
+      "diskDigests",
+      "incremental",
+      "immutableSolution",
+      "sourceGeneratedDocuments",
+    ],
+    semanticEdges: ["accesses"],
+    crossFileEdge: "accesses",
+    nativeBaseline: "samchon-roslyn --measure-load .",
     lifecycle: {
-      sourceFile: "src/Serilog/Log.cs",
+      sourceFile: "src/Serilog/Events/ScalarValue.cs",
       editSuffix: "\n// samchon-graph lifecycle edit\n",
       createFile: "src/Serilog/SamchonGraphExperiment.cs",
       renamedFile: "src/Serilog/SamchonGraphExperimentRenamed.cs",
       createText:
-        "namespace Serilog;\n\ninternal static class SamchonGraphExperiment\n{\n    internal static string Run() => \"strict-lifecycle\";\n}\n",
+        "namespace Serilog;\n\ninternal static class SamchonGraphExperiment\n{\n    internal static ILogger Run() => Log.Logger;\n}\n",
       createdSymbol: "SamchonGraphExperiment",
+      createdEdge: {
+        kind: "accesses",
+        from: "Run",
+        to: "Logger",
+        crossFile: true,
+      },
       buildFile: "src/Serilog/Serilog.csproj",
       failureFile: "src/Serilog/Serilog.csproj",
       failureSuffix: "\n<NotClosed>",
-      // scip-dotnet 0.2.14 writes the index before it reads and logs
-      // MSBuildWorkspace failures, then returns zero. The malformed project is
-      // therefore not a fail-closed boundary for this producer.
-      failurePolicy: "published",
-      failureLimitation:
-        "scip-dotnet 0.2.14 logs MSBuildWorkspace failures only after writing the index and exits successfully, so a malformed C# project file publishes a degraded generation instead of rejecting it",
+      failurePolicy: "reject",
+      performance: {
+        noopSamples: 5,
+        editSamples: 3,
+        noopP95MaxMs: 250,
+        editP95MaxMs: 2000,
+        editFind: "if (Value == null) return 0;",
+        editReplacements: [
+          "if (Value == null) return 1;",
+          "if (Value == null) return 2;",
+        ],
+      },
     },
-    minNodes: 1,
-    minEdges: 0,
-    // The upstream solution's perf/AOT entries make csharp-ls return no symbols.
-    // Keep the product and main test projects so experiments retain both the
-    // runtime graph and its test anchors without loading those broken entries.
+    // Select and restore exactly the product and test projects before the
+    // resident service starts; refreshes themselves never invoke restore.
+    // NuGet's live advisory feed is not part of this commit-pinned compiler
+    // fixture, and Serilog promotes its changing audit warnings to errors.
     prepare:
-      "dotnet new sln -n Serilog --format sln --force && dotnet sln Serilog.sln add src/Serilog/Serilog.csproj test/Serilog.Tests/Serilog.Tests.csproj",
+      "dotnet new sln -n Serilog --format sln --force && dotnet sln Serilog.sln add src/Serilog/Serilog.csproj test/Serilog.Tests/Serilog.Tests.csproj && dotnet restore Serilog.sln -p:NuGetAudit=false",
   },
   {
     language: "kotlin",

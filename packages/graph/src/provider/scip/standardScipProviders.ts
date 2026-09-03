@@ -244,7 +244,14 @@ const dotnetScipProvider = createScipProvider({
     "packages.lock.json",
     "nuget.config",
   ],
-  buildExtensions: [".sln", ".csproj", ".fsproj", ".props", ".targets"],
+  buildExtensions: [
+    ".sln",
+    ".slnx",
+    ".csproj",
+    ".fsproj",
+    ".props",
+    ".targets",
+  ],
   indexArgs: (artifact) => ["index", "--output", artifact],
 });
 

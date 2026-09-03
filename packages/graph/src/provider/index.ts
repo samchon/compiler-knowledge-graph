@@ -7,6 +7,7 @@ export * from "./fallbackCoverage";
 export * from "./graphCoverageOf";
 export * from "./graphUnresolvedOf";
 export * from "./GraphSnapshotProtocol";
+export * from "./csharp";
 export * from "./cpp";
 export * from "./go";
 export * from "./IBulkGraphSession";

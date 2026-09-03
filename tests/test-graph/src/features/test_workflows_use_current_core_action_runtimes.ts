@@ -255,6 +255,22 @@ export const test_workflows_use_current_core_action_runtimes = () => {
       "SAMCHON_GRAPH_RUST_ANALYZER_HIR: ${{ github.workspace }}/tests/experiment/.work/tools/bin/samchon-rust-analyzer",
     ),
   );
+  const testWorkflow = fs.readFileSync(
+    path.join(directory, "test.yml"),
+    "utf8",
+  );
+  const experimentSetup = fs.readFileSync(
+    path.join(GraphPaths.repositoryRoot, "tests", "experiment", "src", "setup-language.mjs"),
+    "utf8",
+  );
+  TestValidator.predicate(
+    "Roslyn builds enforce the lock file through the MSBuild property",
+    [testWorkflow, experimentSetup].every(
+      (source) =>
+        source.includes("-p:RestoreLockedMode=true") &&
+        !source.includes("--locked-mode"),
+    ),
+  );
   const indexTime = fs.readFileSync(
     path.join(directory, "index-time.yml"),
     "utf8",

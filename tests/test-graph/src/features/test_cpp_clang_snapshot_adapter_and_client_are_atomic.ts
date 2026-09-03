@@ -146,6 +146,7 @@ export const test_cpp_clang_snapshot_adapter_and_client_are_atomic = async () =>
   await assertProvider(root);
   await assertClientLifecycle(root);
   await assertClientInputShapes();
+  await assertClientReusesUnchangedInputDigests();
   await assertClientReportsItsOwnSize();
   await assertClientReadsPublishedBodies(publishedFixtureRoot());
   assertDeltaThatLosesAnOwnerAsksForTheWhole(publishedFixtureRoot());
@@ -1297,6 +1298,65 @@ async function assertClientInputShapes(): Promise<void> {
       [1, 3],
     );
   } finally {
+    await client.close();
+  }
+}
+
+async function assertClientReusesUnchangedInputDigests(): Promise<void> {
+  const root = fixtureRoot();
+  const source = path.join(root, "main.cpp");
+  const watchLog = path.join(root, "digest-watches.ndjson");
+  const originalReadFileSync = fs.readFileSync;
+  let sourceReads = 0;
+  fs.readFileSync = ((file: fs.PathOrFileDescriptor, ...args: unknown[]) => {
+    if (typeof file === "string" && path.resolve(file) === source) {
+      ++sourceReads;
+    }
+    return Reflect.apply(originalReadFileSync, fs, [file, ...args]) as unknown;
+  }) as typeof fs.readFileSync;
+  const client = cppClient(root, [`--watch-log=${watchLog}`]);
+  try {
+    await client.refresh();
+    const initialReads = sourceReads;
+    await client.refresh();
+    await client.refresh();
+    TestValidator.equals(
+      "unchanged C/C++ inputs reuse their stable digest instead of rereading source bytes",
+      sourceReads,
+      initialReads,
+    );
+
+    const beforeTouch = fs.statSync(source);
+    fs.utimesSync(
+      source,
+      beforeTouch.atime,
+      new Date(beforeTouch.mtimeMs + 1_000),
+    );
+    await client.refresh();
+    TestValidator.equals(
+      "metadata movement is rehashed once but does not become a content notification",
+      [sourceReads, readLines(watchLog).length],
+      [initialReads + 1, 1],
+    );
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const touched = fs.statSync(source);
+    fs.writeFileSync(source, "void called() {}\n");
+    fs.utimesSync(source, touched.atime, touched.mtime);
+    await client.refresh();
+    TestValidator.equals(
+      "same-size content movement cannot hide behind a restored modification time",
+      [
+        sourceReads,
+        readLines(watchLog)
+          .flatMap((row) => row.changes)
+          .filter((row) => String(row.uri).endsWith("/main.cpp"))
+          .map((row) => row.type),
+      ],
+      [initialReads + 2, [1, 2]],
+    );
+  } finally {
+    fs.readFileSync = originalReadFileSync;
     await client.close();
   }
 }

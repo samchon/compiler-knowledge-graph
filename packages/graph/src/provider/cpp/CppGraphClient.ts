@@ -84,7 +84,7 @@ export class CppGraphClient implements IBulkGraphSession {
   private readonly lifecycleAbort = new AbortController();
   private queue: Promise<void> = Promise.resolve();
   private initialized: Promise<void> | undefined;
-  private watchedInputs = new Map<string, string | null>();
+  private watchedInputs = new Map<string, IInputDigest>();
   private version = 0;
   private closed = false;
   private closing: Promise<void> | undefined;
@@ -190,7 +190,7 @@ export class CppGraphClient implements IBulkGraphSession {
     this.lsp.notify("initialized", {});
     const inputs = inputDigests(this.root);
     const changes = [...inputs]
-      .filter(([, digest]) => digest !== null)
+      .filter(([, input]) => input.digest !== null)
       .map(([file]) => ({ uri: pathToFileURL(file).href, type: 1 }));
     if (changes.length !== 0) {
       this.lsp.notify("workspace/didChangeWatchedFiles", { changes });
@@ -209,12 +209,16 @@ export class CppGraphClient implements IBulkGraphSession {
    * unchanged would be reporting on a checkout it no longer describes.
    */
   private notifyInputChanges(): boolean {
-    const current = inputDigests(this.root, this.current);
+    const current = inputDigests(
+      this.root,
+      this.current,
+      this.watchedInputs,
+    );
     const files = new Set([...this.watchedInputs.keys(), ...current.keys()]);
     const changes: Array<{ uri: string; type: 1 | 2 | 3 }> = [];
     for (const file of [...files].sort(compareText)) {
-      const before = this.watchedInputs.get(file);
-      const after = current.get(file);
+      const before = this.watchedInputs.get(file)?.digest;
+      const after = current.get(file)?.digest;
       if (before === after) continue;
       const type = before === undefined || before === null ? 1 : after === null || after === undefined ? 3 : 2;
       changes.push({ uri: pathToFileURL(file).href, type });
@@ -227,13 +231,24 @@ export class CppGraphClient implements IBulkGraphSession {
   }
 
   private commitSnapshotInputs(snapshot: IBulkGraphSession.ISnapshot): void {
-    const committed = inputDigests(this.root, snapshot);
+    const committed = inputDigests(
+      this.root,
+      snapshot,
+      this.watchedInputs,
+    );
     for (const [file, source] of snapshot.sources) {
       if (!path.isAbsolute(file)) continue;
-      committed.set(
-        file,
-        source.diskDigest === "" ? null : source.diskDigest,
-      );
+      const digest = source.diskDigest === "" ? null : source.diskDigest;
+      const scanned = committed.get(file);
+      committed.set(file, {
+        digest,
+        // A producer digest is a baseline for the next refresh only. Reuse the
+        // scan fingerprint when it proves those are the bytes on disk now; if
+        // the file moved after the frozen snapshot, force the next refresh to
+        // read it and compare against the producer's older identity.
+        fingerprint:
+          scanned?.digest === digest ? scanned.fingerprint : null,
+      });
     }
     this.watchedInputs = committed;
   }
@@ -635,6 +650,11 @@ interface ICompileCommand {
   file?: unknown;
 }
 
+interface IInputDigest {
+  digest: string | null;
+  fingerprint: string | null;
+}
+
 function compilationDatabaseFiles(root: string): string[] {
   for (const candidate of [
     path.join(root, "compile_commands.json"),
@@ -668,7 +688,8 @@ function compilationDatabaseFiles(root: string): string[] {
 function inputDigests(
   root: string,
   snapshot?: IBulkGraphSession.ISnapshot,
-): Map<string, string | null> {
+  previous: ReadonlyMap<string, IInputDigest> = new Map(),
+): Map<string, IInputDigest> {
   const files = new Set<string>([
     path.join(root, ".clangd"),
     path.join(root, "compile_flags.txt"),
@@ -682,16 +703,48 @@ function inputDigests(
   return new Map(
     [...files]
       .sort(compareText)
-      .map((file) => [file, fileDigest(file)] as const),
+      .map((file) => [file, fileDigest(file, previous.get(file))] as const),
   );
 }
 
-function fileDigest(file: string): string | null {
-  try {
-    return createHash("sha256").update(fs.readFileSync(file)).digest("hex");
-  } catch {
-    return null;
+function fileDigest(
+  file: string,
+  previous: IInputDigest | undefined,
+): IInputDigest {
+  // The no-op lifecycle is allowed to be a metadata walk, not a whole-corpus
+  // byte walk. ctime joins mtime and size because callers can restore mtime;
+  // inode and device keep a replacement from inheriting the old identity.
+  // A regular writer cannot restore ctime, on either Unix or NTFS.
+  for (let attempt = 0; attempt !== 3; ++attempt) {
+    try {
+      const before = fileFingerprint(file);
+      if (before === null) return { digest: null, fingerprint: null };
+      if (previous?.fingerprint === before) return previous;
+      const digest = createHash("sha256")
+        .update(fs.readFileSync(file))
+        .digest("hex");
+      const after = fileFingerprint(file);
+      if (before === after) return { digest, fingerprint: after };
+    } catch {
+      return { digest: null, fingerprint: null };
+    }
   }
+  // A file that keeps moving cannot establish a reusable identity. Publishing
+  // it as unknown makes an older producer baseline visibly move and ensures a
+  // later settled refresh reads the bytes again.
+  return { digest: null, fingerprint: null };
+}
+
+function fileFingerprint(file: string): string | null {
+  const stat = fs.statSync(file, { bigint: true });
+  if (!stat.isFile()) return null;
+  return [
+    stat.dev,
+    stat.ino,
+    stat.size,
+    stat.mtimeNs,
+    stat.ctimeNs,
+  ].join(":");
 }
 
 function serverRequest(method: string, params: unknown): unknown {

@@ -148,6 +148,7 @@ export const test_cpp_clang_snapshot_adapter_and_client_are_atomic = async () =>
   await assertClientInputShapes();
   await assertClientReusesUnchangedInputDigests();
   await assertClientWatchesExternalDependencies();
+  await assertClientCloseDoesNotReopenInputWatches();
   await assertClientReportsItsOwnSize();
   await assertClientReadsPublishedBodies(publishedFixtureRoot());
   assertDeltaThatLosesAnOwnerAsksForTheWhole(publishedFixtureRoot());
@@ -1466,7 +1467,37 @@ async function assertClientWatchesExternalDependencies(): Promise<void> {
       "the external dependency directory owns a native watch",
       externalWatch !== undefined,
     );
-    externalWatch?.emit("error", new Error("fixture watch failure"));
+
+    const retiredInclude = path.join(external, "include-retired");
+    const replacementInclude = path.join(external, "include-replacement");
+    fs.mkdirSync(replacementInclude);
+    fs.writeFileSync(
+      path.join(replacementInclude, "fixture.h"),
+      "void callee();\nvoid replaced_directory();\n",
+    );
+    externalWatch?.emit("change", "rename", "fixture.h");
+    fs.renameSync(include, retiredInclude);
+    fs.renameSync(replacementInclude, include);
+    const replaced = await client.refresh();
+    const replacementWatch = watches.get(include)?.watcher;
+    TestValidator.predicate(
+      "an atomically replaced dependency directory reattaches its native watch to the new path",
+      replaced.changed &&
+        replacementWatch !== undefined &&
+        replacementWatch !== externalWatch,
+    );
+    fs.writeFileSync(
+      header,
+      "void callee();\nvoid replaced_directory();\nvoid replacement_change();\n",
+    );
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    const replacementChanged = await client.refresh();
+    TestValidator.predicate(
+      "the reattached directory watch observes later dependency edits",
+      replacementChanged.changed,
+    );
+
+    replacementWatch.emit("error", new Error("fixture watch failure"));
     fs.writeFileSync(header, "void callee();\nvoid fallback_change();\n");
     const polled = await client.refresh();
     TestValidator.predicate(
@@ -1531,6 +1562,46 @@ async function assertClientWatchesExternalDependencies(): Promise<void> {
     fs.statSync = originalStatSync;
     await client.close();
   }
+}
+
+async function assertClientCloseDoesNotReopenInputWatches(): Promise<void> {
+  const root = GraphPaths.createTempDirectory("samchon-graph-cpp-close-watch-");
+  const source = path.join(root, "main.cpp");
+  fs.writeFileSync(source, "void caller() {}\n");
+  fs.writeFileSync(
+    path.join(root, "compile_commands.json"),
+    JSON.stringify([
+      {
+        directory: root,
+        file: source,
+        arguments: ["clang++", "-x", "c++", "-c", source],
+      },
+    ]),
+  );
+  const client = cppClient(root, []);
+  await client.refresh();
+  const state = client as unknown as {
+    dirtyInputs: Set<string>;
+    inputWatches: Map<string, { watcher?: fs.FSWatcher }>;
+  };
+  const retiredWatcher = [...state.inputWatches.values()].find(
+    (watch) => watch.watcher !== undefined,
+  )?.watcher;
+  const pending = client.refresh();
+  const rejection = rejected(
+    "closing a refresh prevents its deferred input event turn from reopening directory watches",
+    pending,
+    "session is closed",
+  );
+  await client.close();
+  await rejection;
+  retiredWatcher?.emit("change", "change", "main.cpp");
+  retiredWatcher?.emit("error", new Error("retired fixture watcher"));
+  TestValidator.equals(
+    "a closed C/C++ session neither reopens nor accepts late events into its input watch state",
+    [state.inputWatches.size, state.dirtyInputs.size],
+    [0, 0],
+  );
 }
 
 async function assertClientFailures(root: string): Promise<void> {

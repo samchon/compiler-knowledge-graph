@@ -223,6 +223,7 @@ export class CppGraphClient implements IBulkGraphSession {
     // and dependency trees stay bound by their directory events without
     // turning every no-op into a stat walk over tens of thousands of headers.
     await inputEventTurn();
+    if (this.closed) return false;
     const required = inputFiles(this.root);
     this.addInputWatches(required);
     const files = new Set(this.dirtyInputs);
@@ -246,6 +247,9 @@ export class CppGraphClient implements IBulkGraphSession {
       if (before === after) continue;
       const type = before === undefined || before === null ? 1 : after === null || after === undefined ? 3 : 2;
       changes.push({ uri: pathToFileURL(file).href, type });
+    }
+    for (const [directory, watch] of this.inputWatches) {
+      if (watch.watcher === undefined) this.openInputWatch(directory, watch);
     }
     if (changes.length !== 0) {
       this.lsp.notify("workspace/didChangeWatchedFiles", { changes });
@@ -331,13 +335,22 @@ export class CppGraphClient implements IBulkGraphSession {
 
   private openInputWatch(directory: string, watch: IInputWatch): void {
     try {
-      const watcher = fs.watch(directory, { persistent: false }, () => {
+      const watcher = fs.watch(directory, { persistent: false }, (event) => {
+        if (this.closed) return;
         for (const file of watch.files) this.dirtyInputs.add(file);
+        // A rename can be the watched directory itself being atomically
+        // replaced. Native watchers follow the old inode on Unix, so retire
+        // this handle and reopen the path after its files have been polled.
+        if (event === "rename" && watch.watcher === watcher) {
+          watcher.close();
+          watch.watcher = undefined;
+        }
       });
       watcher.on("error", () => {
+        if (this.closed) return;
         for (const file of watch.files) this.dirtyInputs.add(file);
         watcher.close();
-        watch.watcher = undefined;
+        if (watch.watcher === watcher) watch.watcher = undefined;
       });
       watch.watcher = watcher;
     } catch {

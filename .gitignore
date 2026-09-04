@@ -49,3 +49,4 @@ sidecars/go/go.exe
 sidecars/csharp/bin/
 sidecars/csharp/obj/
 sidecars/scala/**/target/
+sidecars/swift/.build/

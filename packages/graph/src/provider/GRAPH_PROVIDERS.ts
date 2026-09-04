@@ -9,6 +9,7 @@ import { rustGraphProvider } from "./rust/rustGraphProvider";
 import { scalaGraphProvider } from "./scala/scalaGraphProvider";
 import { standardScipProviders } from "./scip/standardScipProviders";
 import { standardSidecarProviders } from "./sidecar/standardSidecarProviders";
+import { swiftGraphProvider } from "./swift/swiftGraphProvider";
 import { ttscGraphProvider } from "./ttscgraph/ttscGraphProvider";
 
 /**
@@ -35,6 +36,7 @@ export const GRAPH_PROVIDERS: readonly IGraphProvider[] = [
   javaGraphProvider,
   kotlinGraphProvider,
   scalaGraphProvider,
+  swiftGraphProvider,
   // Clang, Java, Kotlin and C# SCIP entries are owned by strict routes as fallback
   // tiers, so the registry must not also list them as language owners.
   csharpGraphProvider,

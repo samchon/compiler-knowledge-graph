@@ -66,6 +66,12 @@ jobs:
         with:
           dotnet-version: 10.0.x
 
+      - name: Setup Swift
+        if: runner.os != 'Windows'
+        uses: swift-actions/setup-swift@v2
+        with:
+          swift-version: "6.0"
+
       - name: Configure pnpm
         run: |
           pnpm config set fetch-retries 5
@@ -106,6 +112,10 @@ jobs:
 
       - name: Build Scala sidecar
         run: mvn --batch-mode --file sidecars/scala/pom.xml verify
+
+      - name: Build Swift sidecar
+        if: runner.os != 'Windows'
+        run: swift build --package-path sidecars/swift --configuration release
 
       - name: Test
         run: pnpm test

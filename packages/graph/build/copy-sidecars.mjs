@@ -5,8 +5,8 @@ import { fileURLToPath } from "node:url";
 /**
  * Copy the sidecar sources this package ships into the package itself.
  *
- * The Go, C#, and Scala sidecars are source a user compiles into their native
- * producer; the Gradle Java source reads the opted-in Tooling API model; and
+ * The Go, C#, Scala, and Swift sidecars are source a user compiles into their
+ * native producer; the Gradle Java source reads the opted-in Tooling API model; and
  * the Lua exporter is a script the provider hands to lua-language-server. All
  * must exist in an installed package rather than only in this repository.
  *
@@ -71,6 +71,16 @@ const SIDECARS = {
     "server/src/main/scala/org/samchon/graph/scala/server/Main.scala",
     "server/src/main/scala/org/samchon/graph/scala/server/SemanticDbReader.scala",
     "server/src/main/scala/org/samchon/graph/scala/server/SnapshotProducer.scala",
+  ],
+  swift: [
+    "README.md",
+    "Package.resolved",
+    "Package.swift",
+    "Sources/SamchonSwiftGraph/GraphModel.swift",
+    "Sources/SamchonSwiftGraph/main.swift",
+    "Sources/SamchonSwiftGraph/SHA256.swift",
+    "Sources/SamchonSwiftGraph/SourceEnrichment.swift",
+    "Sources/SamchonSwiftGraph/SwiftGraphProducer.swift",
   ],
 };
 

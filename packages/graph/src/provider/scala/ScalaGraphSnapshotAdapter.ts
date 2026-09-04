@@ -20,6 +20,7 @@ export class ScalaGraphSnapshotAdapter extends CompilerGraphSnapshotAdapter {
       provider: SCALA_GRAPH_PROVIDER,
       producer: SCALA_GRAPH_PRODUCER,
       facts: SCALA_GRAPH_FACTS,
+      capabilities: ["bsp", "semanticdb", "typedPlugins", "zinc"],
       diagnosticCode: "scalac",
       shardKeyPrefix: "scala",
       schemaVersion: IScalaGraphSnapshot.SCHEMA_VERSION,

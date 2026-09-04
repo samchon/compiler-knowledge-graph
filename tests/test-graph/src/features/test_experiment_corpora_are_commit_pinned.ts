@@ -77,13 +77,14 @@ export const test_experiment_corpora_are_commit_pinned = async () => {
   const javaSetup = region(setup, 'case "java"', 'case "csharp"');
   const csharpSetup = region(setup, 'case "csharp"', 'case "kotlin"');
   const kotlinSetup = region(setup, 'case "kotlin"', 'case "swift"');
+  const swiftSetup = region(setup, 'case "swift"', 'case "scala"');
   const scalaSetup = region(setup, 'case "scala"', 'case "zig"');
   const rustSetup = region(setup, 'case "rust"', 'case "cpp"');
   const cppSetup = region(setup, 'case "cpp"', 'case "java"');
   TestValidator.equals(
     "every registered strict-provider language has a lifecycle row",
     [...catalog.matchAll(/strictProvider:\s*"[^"]+"/g)].length,
-    14,
+    15,
   );
   TestValidator.predicate(
     "Rust builds and records the exact native HIR producer declared by the catalog",
@@ -610,6 +611,33 @@ export const test_experiment_corpora_are_commit_pinned = async () => {
       scalaSetup.includes("SAMCHON_GRAPH_SCALA_PLUGIN_VERSION: version"),
   );
   TestValidator.predicate(
+    "Swift builds the pinned IndexStoreDB sidecar and measures native SwiftPM",
+    swift.includes(
+      'repository: "https://github.com/apple/swift-argument-parser.git"',
+    ) &&
+      swift.includes("2f77f2fccb6e84fecff338c37b199e33e7dfd119") &&
+      swift.includes(
+        '"swift build --enable-index-store --build-tests -Xswiftc -index-include-locals"',
+      ) &&
+      swift.includes('strictProvider: "swift-indexstore"') &&
+      swift.includes('strictAuthority: "compiler"') &&
+      swift.includes('strictTool: "samchon-swift-graph"') &&
+      swift.includes('createdSymbol: "samchonGraphExperiment"') &&
+      swift.includes('to: "mapEmpty"') &&
+      swift.includes("noopP95MaxMs: 250") &&
+      swift.includes("editP95MaxMs: 20_000") &&
+      swiftSetup.includes('path.join(repositoryRoot, "sidecars", "swift")') &&
+      swiftSetup.includes('"--configuration",') &&
+      swiftSetup.includes('"release",') &&
+      swiftSetup.includes('path.join(sidecarBin, "samchon-swift-graph")') &&
+      swiftSetup.includes(
+        'recordProvisionedEnvironment("SAMCHON_GRAPH_SWIFT_GRAPH", producer)',
+      ) &&
+      swiftSetup.includes(
+        "indexstore-db-f4d7f08f6a078050d86aed10a06bf1fc871a8ded",
+      ),
+  );
+  TestValidator.predicate(
     "Java pins both producers, verifies their breadth and proves agreement",
     java.includes('kind: "shell"') &&
       java.includes('command: "mvn -q test-compile"') &&
@@ -928,15 +956,14 @@ export const test_experiment_corpora_are_commit_pinned = async () => {
       lifecycle.includes("!reproduced && limitation === undefined") &&
       lifecycle.includes('name: "regeneration"'),
   );
-  // Sixteen product languages, fourteen strict rows. The other two are
-  // decisions with evidence behind them, not lanes nobody reached, and a
+  // Sixteen product languages, fifteen strict rows. The remaining one is a
+  // decision with evidence behind it, not a lane nobody reached, and a
   // bounded generic row that passes on node counts cannot tell a reader which
   // it is. So the absence of a strict provider is itself a declaration.
   TestValidator.predicate(
     "every language without a strict provider states what blocks one",
-    [swift, zig].every((row) =>
-      declares(row, "feasibilityBlocked"),
-    ) &&
+    declares(zig, "feasibilityBlocked") &&
+      !declares(swift, "feasibilityBlocked") &&
       runner.includes('typeof experiment.feasibilityBlocked !== "string"') &&
       runner.includes("feasibilityBlocked: experiment.feasibilityBlocked"),
   );

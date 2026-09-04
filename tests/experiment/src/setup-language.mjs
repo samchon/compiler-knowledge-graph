@@ -986,7 +986,7 @@ switch (experiment.language) {
     await installScipJavaKotlinSnapshot(gradle);
     await installScip();
     break;
-  case "swift":
+  case "swift": {
     // sourcekit-lsp ships with the toolchain installed by the workflow's Setup
     // Swift step. It has no `--version` flag (that exits 64), so just confirm it
     // resolves on PATH.
@@ -997,7 +997,36 @@ switch (experiment.language) {
       source: "swift toolchain installed by the workflow",
       digest: "unpinned",
     });
+    const sidecar = path.join(repositoryRoot, "sidecars", "swift");
+    run("swift", [
+      "build",
+      "--package-path",
+      sidecar,
+      "--configuration",
+      "release",
+    ]);
+    const sidecarBin = String(
+      run(
+        "swift",
+        ["build", "--package-path", sidecar, "--show-bin-path", "--configuration", "release"],
+        { stdio: "pipe" },
+      ).stdout,
+    ).trim();
+    const producer = path.join(sidecarBin, "samchon-swift-graph");
+    const swift = String(run("which", ["swift"], { stdio: "pipe" }).stdout).trim();
+    run(producer, ["--version"]);
+    process.env.SAMCHON_GRAPH_SWIFT_GRAPH = producer;
+    process.env.SAMCHON_GRAPH_SWIFT_TOOLCHAIN = swift;
+    recordProvisionedEnvironment("SAMCHON_GRAPH_SWIFT_GRAPH", producer);
+    recordProvisionedEnvironment("SAMCHON_GRAPH_SWIFT_TOOLCHAIN", swift);
+    record({
+      tool: "samchon-swift-graph",
+      version: "0.1.0",
+      source: "sidecars/swift",
+      digest: "built-from-workspace-source:indexstore-db-f4d7f08f6a078050d86aed10a06bf1fc871a8ded",
+    });
     break;
+  }
   case "scala": {
     apt(["openjdk-21-jdk", "maven"]);
     const javaHome = "/usr/lib/jvm/java-21-openjdk-amd64";

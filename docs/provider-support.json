@@ -257,11 +257,43 @@
       "fallback": "`metals`, then `@samchon/graph-sitter`; current `scip-java` is never presented as Scala-capable.",
       "experimentLanguages": ["scala"],
       "experimentTool": "samchon-scala-graph",
-      "experimentCapabilities": ["coverage", "diagnostics", "diskDigests", "incremental", "semanticdb", "sourceDigests", "universe", "unresolved", "zinc"],
+      "experimentCapabilities": ["coverage", "diagnostics", "diskDigests", "incremental", "sourceDigests", "universe", "unresolved", "bsp", "semanticdb", "typedPlugins", "zinc"],
       "benchmarks": [],
       "benchmarkPending": "The new strict provider has no cell in the immutable pre-provider benchmark artifact; its native BSP and strict measurements are collected by the issue #77 acceptance experiment before publication.",
       "upstream": "https://build-server-protocol.github.io/docs/specification",
       "childIssues": ["https://github.com/samchon/compiler-knowledge-graph/issues/77"]
+    },
+    {
+      "provider": "swift-indexstore",
+      "languages": ["swift"],
+      "status": "registered",
+      "authority": "compiler",
+      "facts": ["contains", "exports", "imports", "calls", "accesses", "instantiates", "type_ref", "extends", "implements", "overrides", "dispatches", "decorates", "tests", "references"],
+      "commands": ["samchon-swift-graph", "swift"],
+      "environmentOverrides": ["SAMCHON_GRAPH_SWIFT_GRAPH", "SAMCHON_GRAPH_SWIFT_TOOLCHAIN"],
+      "install": "Build the shipped SwiftPM sidecar with Swift 6.0, expose `samchon-swift-graph` on PATH, or point `SAMCHON_GRAPH_SWIFT_GRAPH` at the binary. The package pins IndexStoreDB to the matching Swift 6.0 release commit.",
+      "installSources": [
+        {"label": "shipped Swift graph source", "url": "https://github.com/samchon/compiler-knowledge-graph/tree/master/sidecars/swift"},
+        {"label": "pinned IndexStoreDB commit", "url": "https://github.com/swiftlang/indexstore-db/commit/f4d7f08f6a078050d86aed10a06bf1fc871a8ded"},
+        {"label": "IndexStoreDB explicit output units", "url": "https://github.com/swiftlang/indexstore-db/blob/f4d7f08f6a078050d86aed10a06bf1fc871a8ded/Sources/IndexStoreDB/IndexStoreDB.swift"}
+      ],
+      "resolution": "Absolute `SAMCHON_GRAPH_SWIFT_GRAPH`, then project-local or PATH `samchon-swift-graph`; selection requires Package.swift, macOS or Linux, a matching libIndexStore, project support and the resident sidecar protocol.",
+      "requirements": "A SwiftPM package, Swift 6.0-compatible toolchain and its libIndexStore on macOS or Linux.",
+      "platforms": ["linux", "macos"],
+      "mode": "resident sidecar process; native SwiftPM incremental builds; explicit-output-unit IndexStoreDB generations",
+      "nativeAnalysis": "The package's ordinary `swift build --enable-index-store --build-tests -Xswiftc -index-include-locals` produces compiler records; the sidecar takes the exact source and object paths from SwiftPM's current build description, opens a fresh explicit-output-unit IndexStoreDB view and reads compiler USRs, roles and relations.",
+      "exportMerge": "The consumer verifies the exact sorted output-unit paths and digests, module/triple/configuration universe, one-pass source enrichment, source digests, coverage and unresolved boundaries before atomic publication.",
+      "reuseResident": "Exact no-op requests reuse the validated in-memory snapshot. Changed requests reuse SwiftPM build products but reconstruct the frozen IndexStoreDB view; this does not claim SourceKit-LSP cache or scheduler ownership.",
+      "limitations": "This is the standalone SwiftPM fallback, not the preferred in-process SourceKit-LSP hook. Xcode projects and Windows decline; dynamic dispatch remains unresolved, and `renders` is unsupported.",
+      "decline": "A missing Package.swift, sidecar, matching Swift/libIndexStore toolchain, explicit output unit, supported platform, successful build or valid frozen generation retains the prior graph and declines the strict route.",
+      "fallback": "`sourcekit-lsp`, then `@samchon/graph-sitter`.",
+      "experimentLanguages": ["swift"],
+      "experimentTool": "samchon-swift-graph",
+      "experimentCapabilities": ["coverage", "diagnostics", "diskDigests", "incremental", "sourceDigests", "universe", "unresolved", "explicitOutputUnits", "indexStoreDB", "sourceEnrichment", "swiftpm"],
+      "benchmarks": [],
+      "benchmarkPending": "The new standalone provider has no cell in the immutable pre-provider benchmark artifact; issue #78's SwiftPM lifecycle compares its cold generation with the same native build.",
+      "upstream": "https://github.com/swiftlang/indexstore-db",
+      "childIssues": ["https://github.com/samchon/compiler-knowledge-graph/issues/78"]
     },
     {
       "provider": "roslyn-workspace",
@@ -416,12 +448,6 @@
     }
   ],
   "ordinaryOnly": [
-    {
-      "language": "swift",
-      "server": "sourcekit-lsp",
-      "issue": "https://github.com/samchon/compiler-knowledge-graph/issues/78",
-      "reason": "No packaged IndexStoreDB/SourceKit-LSP snapshot producer is registered."
-    },
     {
       "language": "zig",
       "server": "zls",

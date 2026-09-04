@@ -19,18 +19,9 @@ import { IGraphProvider } from "../IGraphProvider";
  * analysis engine, so the producer became a script inside the server rather than
  * a program beside it, in `provider/lua`.
  *
- * The last two leave by being withdrawn, because for each the honest answer is
- * not a program yet.
- *
- * **swift.** The channel is settled: `swift build` emits an index store during
- * an ordinary debug build, and its records carry `RelChild`, so an occurrence
- * arrives already naming the declaration that encloses it — the one thing lua's
- * exporter could not answer. But the store's on-disk format is toolchain
- * internal, versioned `v5` with no third-party stability claim, and described
- * conceptually rather than as a binary specification. Reading it means linking
- * IndexStoreDB, so the producer must be a compiled Swift program. That is
- * well-defined work nobody has started, and swift is not in the benchmark
- * corpus, so nothing here can yet be measured either.
+ * The last entry leaves by being withdrawn, because its honest answer is not a
+ * program yet. Swift now has its compiled IndexStoreDB route in
+ * `provider/swift`; this placeholder list no longer owns it.
  *
  * **zig.** There is a channel, and it is stranger. ZLS has no batch mode, but
  * `zig build-obj -femit-docs` emits `sources.tar` beside a `main.wasm` that is

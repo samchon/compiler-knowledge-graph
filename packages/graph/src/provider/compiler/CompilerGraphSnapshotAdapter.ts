@@ -249,6 +249,8 @@ export namespace CompilerGraphSnapshotAdapter {
     provider: string;
     producer: string;
     facts: readonly GraphEdgeKind[];
+    /** Language-specific producer guarantees already validated by this adapter. */
+    capabilities?: readonly string[];
     diagnosticCode: string;
     shardKeyPrefix: string;
     schemaVersion: number;
@@ -326,7 +328,7 @@ function helloOf(
     languages: [contract.language],
     authority: "compiler",
     supportedFacts: [...contract.facts],
-    capabilities: [...CAPABILITIES],
+    capabilities: [...CAPABILITIES, ...(contract.capabilities ?? [])],
   };
 }
 

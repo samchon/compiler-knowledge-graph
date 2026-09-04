@@ -21,5 +21,6 @@ export * from "./rust";
 export * from "./scala";
 export * from "./scip";
 export * from "./sidecar";
+export * from "./swift";
 export * from "./selectGraphProviders";
 export * from "./semanticIdentity";

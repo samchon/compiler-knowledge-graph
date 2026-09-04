@@ -6,7 +6,7 @@ private let arguments = Array(CommandLine.arguments.dropFirst())
 
 do {
   if arguments.contains("--version") {
-    print("samchon-swift-graph 0.1.0 indexstore-db f4d7f08f6a078050d86aed10a06bf1fc871a8ded")
+    print("samchon-swift-graph 0.1.0 indexstore-db 54212fce1aecb199070808bdb265e7f17e396015")
   } else if arguments.first == "supports" {
     let root = try cwd(arguments)
     guard SwiftGraphProducer.supports(root: root) else { exit(1) }

@@ -142,7 +142,7 @@ function target(root, source, bytes, unit, triple) {
     packageResolutionDigest: coordinate("resolution"),
     pluginsDigest: coordinate("plugins"),
     generatedSourcesDigest: coordinate("generated"),
-    indexStoreDBCommit: "f4d7f08f6a078050d86aed10a06bf1fc871a8ded",
+    indexStoreDBCommit: "54212fce1aecb199070808bdb265e7f17e396015",
     outputUnits: [{ path: unit, digest: sha256(fs.readFileSync(path.join(root, unit))) }],
     coverage,
     shards: [{

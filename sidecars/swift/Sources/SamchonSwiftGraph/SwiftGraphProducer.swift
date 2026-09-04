@@ -1,7 +1,7 @@
 import Foundation
 import IndexStoreDB
 
-private let indexStoreDBCommit = "f4d7f08f6a078050d86aed10a06bf1fc871a8ded"
+private let indexStoreDBCommit = "54212fce1aecb199070808bdb265e7f17e396015"
 private let factFamilies = [
   "contains", "exports", "imports", "calls", "accesses", "instantiates",
   "type_ref", "extends", "implements", "overrides", "dispatches", "decorates",

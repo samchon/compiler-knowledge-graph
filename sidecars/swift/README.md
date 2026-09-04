@@ -8,10 +8,12 @@ takes only the current build description's source and object paths, opens the
 completed store with IndexStoreDB's explicit-output-unit mode, and commits one
 atomic graph artifact.
 
-IndexStoreDB is pinned to commit
-`f4d7f08f6a078050d86aed10a06bf1fc871a8ded`, the Swift 6.0 release commit. The
-binary must run with a matching Swift toolchain and `libIndexStore`. macOS and
-Linux are supported; Windows declines the strict route.
+IndexStoreDB is pinned to the Swift 6.1 release commit
+`54212fce1aecb199070808bdb265e7f17e396015`. That release retains Swift 6.0 source
+compatibility and fixes the 64-bit canonical-role declaration for Clang 19 and
+newer. The binary must run with a compatible Swift toolchain and
+`libIndexStore`. macOS and Linux are supported; Windows declines the strict
+route.
 
 Build and expose the executable on `PATH`, or set
 `SAMCHON_GRAPH_SWIFT_GRAPH` to its absolute path:

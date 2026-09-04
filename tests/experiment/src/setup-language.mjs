@@ -1033,7 +1033,7 @@ switch (experiment.language) {
       tool: "samchon-swift-graph",
       version: "0.1.0",
       source: "sidecars/swift",
-      digest: "built-from-workspace-source:indexstore-db-f4d7f08f6a078050d86aed10a06bf1fc871a8ded",
+      digest: "built-from-workspace-source:indexstore-db-54212fce1aecb199070808bdb265e7f17e396015",
     });
     break;
   }

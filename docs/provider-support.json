@@ -271,11 +271,11 @@
       "facts": ["contains", "exports", "imports", "calls", "accesses", "instantiates", "type_ref", "extends", "implements", "overrides", "dispatches", "decorates", "tests", "references"],
       "commands": ["samchon-swift-graph", "swift"],
       "environmentOverrides": ["SAMCHON_GRAPH_SWIFT_GRAPH", "SAMCHON_GRAPH_SWIFT_TOOLCHAIN"],
-      "install": "Build the shipped SwiftPM sidecar with Swift 6.0, expose `samchon-swift-graph` on PATH, or point `SAMCHON_GRAPH_SWIFT_GRAPH` at the binary. The package pins IndexStoreDB to the matching Swift 6.0 release commit.",
+      "install": "Build the shipped SwiftPM sidecar with Swift 6.0 or newer, expose `samchon-swift-graph` on PATH, or point `SAMCHON_GRAPH_SWIFT_GRAPH` at the binary. The package pins the Swift 6.1 IndexStoreDB release commit that remains source-compatible with Swift 6.0 and fixes Clang 19's 64-bit role declaration.",
       "installSources": [
         {"label": "shipped Swift graph source", "url": "https://github.com/samchon/compiler-knowledge-graph/tree/master/sidecars/swift"},
-        {"label": "pinned IndexStoreDB commit", "url": "https://github.com/swiftlang/indexstore-db/commit/f4d7f08f6a078050d86aed10a06bf1fc871a8ded"},
-        {"label": "IndexStoreDB explicit output units", "url": "https://github.com/swiftlang/indexstore-db/blob/f4d7f08f6a078050d86aed10a06bf1fc871a8ded/Sources/IndexStoreDB/IndexStoreDB.swift"}
+        {"label": "pinned IndexStoreDB commit", "url": "https://github.com/swiftlang/indexstore-db/commit/54212fce1aecb199070808bdb265e7f17e396015"},
+        {"label": "IndexStoreDB explicit output units", "url": "https://github.com/swiftlang/indexstore-db/blob/54212fce1aecb199070808bdb265e7f17e396015/Sources/IndexStoreDB/IndexStoreDB.swift"}
       ],
       "resolution": "Absolute `SAMCHON_GRAPH_SWIFT_GRAPH`, then project-local or PATH `samchon-swift-graph`; selection requires Package.swift, macOS or Linux, a matching libIndexStore, project support and the resident sidecar protocol.",
       "requirements": "A SwiftPM package, Swift 6.0-compatible toolchain and its libIndexStore on macOS or Linux.",

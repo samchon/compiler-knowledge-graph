@@ -636,7 +636,7 @@ export const test_experiment_corpora_are_commit_pinned = async () => {
         'recordProvisionedEnvironment("SAMCHON_GRAPH_SWIFT_GRAPH", producer)',
       ) &&
       swiftSetup.includes(
-        "indexstore-db-f4d7f08f6a078050d86aed10a06bf1fc871a8ded",
+        "indexstore-db-54212fce1aecb199070808bdb265e7f17e396015",
       ),
   );
   TestValidator.predicate(

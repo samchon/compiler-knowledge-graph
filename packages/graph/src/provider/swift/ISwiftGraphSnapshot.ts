@@ -120,5 +120,5 @@ export namespace ISwiftGraphSnapshot {
   export const SCHEMA_VERSION = 1;
   export const PROTOCOL_VERSION = 1;
   export const INDEX_STORE_DB_COMMIT =
-    "f4d7f08f6a078050d86aed10a06bf1fc871a8ded";
+    "54212fce1aecb199070808bdb265e7f17e396015";
 }

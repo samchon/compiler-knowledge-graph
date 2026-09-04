@@ -333,7 +333,10 @@ export const runStrictLifecycle = async (experiment, pinnedRoot) => {
       );
     }
 
-    fs.writeFileSync(buildFile, `${buildText}\n`);
+    fs.writeFileSync(
+      buildFile,
+      `${buildText}${fixture.buildEditSuffix ?? "\n"}`,
+    );
     await load("build-config", CHANGED_MODES);
 
     const failedAt = performance.now();

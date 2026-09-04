@@ -548,6 +548,7 @@ export const test_experiment_corpora_are_commit_pinned = async () => {
       kotlin.includes("strictMinimums: true") &&
       kotlin.includes('nativeBaseline: "gradle compileKotlin"') &&
       kotlin.includes("kotlinBuildReportRoot:") &&
+      kotlin.includes("moduleName.set") &&
       kotlin.includes("minNodes: 1_000") &&
       kotlin.includes("minEdges: 1_000") &&
       kotlin.includes("noopP95MaxMs: 250") &&

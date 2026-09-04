@@ -558,6 +558,8 @@ export const LANGUAGE_EXPERIMENTS = [
         crossFile: true,
       },
       buildFile: "build.gradle.kts",
+      buildEditSuffix:
+        '\n\ntasks.withType<KotlinJvmCompile>().configureEach {\n    compilerOptions {\n        moduleName.set("samchonGraphExperiment")\n    }\n}\n',
       failureFile: "build.gradle.kts",
       failureSuffix: "\nnotAValidGradleBlock {\n",
       failurePolicy: "reject",

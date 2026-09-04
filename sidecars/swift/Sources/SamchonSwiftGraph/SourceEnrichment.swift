@@ -111,7 +111,8 @@ struct SourceEnrichment {
     }
     return rows.reversed().flatMap { row, text in
       let range = NSRange(text.startIndex..<text.endIndex, in: text)
-      return expression.matches(in: text, range: range).compactMap { match in
+      return expression.matches(in: text, range: range).compactMap {
+        match -> AttributeFact? in
         guard let nameRange = Range(match.range(at: 1), in: text) else { return nil }
         let name = String(text[nameRange])
         let column = text.utf8.distance(from: text.utf8.startIndex, to: nameRange.lowerBound.samePosition(in: text.utf8)!) + 1

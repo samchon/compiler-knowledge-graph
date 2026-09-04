@@ -17,6 +17,7 @@ import {
   scalaGraphProvider,
   standardScipProviders,
   standardSidecarProviders,
+  swiftGraphProvider,
 } from "@samchon/graph";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -937,6 +938,10 @@ function assertFixtureRegistryCoverage(): void {
     kotlinGraphProvider,
     scalaGraphProvider,
     csharpGraphProvider,
+    // Swift's explicit-output-unit corpus is exercised by the dedicated
+    // IndexStoreDB contract suite because its snapshot cannot be represented
+    // by the generic sidecar fixture protocol used below.
+    swiftGraphProvider,
     // SCIP entries a strict route owns as its fallback tier are exercised by
     // the loop above, but the registry does not list them as
     // owners, so the ledger must not either.

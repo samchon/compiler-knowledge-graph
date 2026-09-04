@@ -67,7 +67,7 @@ jobs:
           dotnet-version: 10.0.x
 
       - name: Setup Swift
-        if: runner.os != 'Windows'
+        if: runner.os == 'Linux'
         uses: swift-actions/setup-swift@v2
         with:
           swift-version: "6.0"
@@ -117,10 +117,15 @@ jobs:
         if: runner.os != 'Windows'
         shell: bash
         run: |
-          SWIFT_ROOT="$(dirname "$(dirname "$(command -v swift)")")"
-          swift build --package-path sidecars/swift --configuration release \
-            -Xcxx "-I${SWIFT_ROOT}/lib/swift" \
-            -Xcxx "-I${SWIFT_ROOT}/lib/swift/Block"
+          SWIFT_CXX_FLAGS=()
+          if [[ "$RUNNER_OS" == "Linux" ]]; then
+            SWIFT_ROOT="$(dirname "$(dirname "$(command -v swift)")")"
+            SWIFT_CXX_FLAGS+=(
+              -Xcxx "-I${SWIFT_ROOT}/lib/swift"
+              -Xcxx "-I${SWIFT_ROOT}/lib/swift/Block"
+            )
+          fi
+          swift build --package-path sidecars/swift --configuration release "${SWIFT_CXX_FLAGS[@]}"
 
       - name: Test
         run: pnpm test

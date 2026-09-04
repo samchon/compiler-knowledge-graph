@@ -507,7 +507,7 @@ async function assertSelection(): Promise<void> {
   TestValidator.equals(
     "only languages without a truthful strict producer remain unowned",
     publicLanguages.filter((language) => !owners.has(language)),
-    ["swift", "zig"],
+    ["zig"],
   );
   TestValidator.equals(
     "C and C++ share one compilation-universe provider",

@@ -3,13 +3,10 @@ import {
   CLANG_PRODUCER_REPOSITORY,
 } from "./clang-producer.mjs";
 
-// `minEdges` gates the relationship edges an experiment must produce. It is set
-// to 1 for languages whose reference edges are empirically confirmed against a
-// real server (see the LSP experiment CI matrix) so a regression back to the
-// "symbols but no edges" failure is caught. Languages still awaiting a first
-// real-server measurement keep 0; the runner always records the observed count,
-// so the CI artifact reports the true number and the gate can be tightened once
-// a language is confirmed.
+// `minNodes` and `minEdges` gate the graph a pinned experiment must produce.
+// Rows use measured lower bounds only where the fixture has established them;
+// the result artifact always records the observed counts so a gate can be
+// tightened without guessing.
 export const LANGUAGE_EXPERIMENTS = [
   {
     language: "typescript",
@@ -513,47 +510,65 @@ export const LANGUAGE_EXPERIMENTS = [
   },
   {
     language: "kotlin",
-    // The producer's exact Kotlin 2.3.20 fixture keeps ten clean lifecycle
-    // builds bounded and exercises the same compiler minor as Koin. Language
-    // setup builds the producer from this same commit and supplies one verified
-    // Gradle distribution because the fixture intentionally carries no wrapper.
-    repository: "https://github.com/scip-code/scip-java.git",
-    commit: "e940c1889767a81347387067a375320dc6f5d83e",
-    projectRoot:
-      "scip-java/src/test/resources/fixtures/gradle/kotlin2",
-    strictProvider: "scip-kotlinc",
-    strictAuthority: "semantic-index",
-    strictTool: "scip-java",
-    requiredCapabilities: ["universe", "diskDigests"],
-    semanticEdges: ["references"],
-    crossFileEdge: "references",
-    // This source snapshot and its setup manifest pin the plugin build to Kotlin
-    // 2.3.20. scip-java still does not publish the compiler revision selected by
-    // the indexed build itself, so the empty runtime field remains explicit.
-    compilerLimitation:
-      "scip-java e940c1889767a81347387067a375320dc6f5d83e is built with Kotlin 2.3.20 but does not expose the compiler revision selected by the indexed Gradle build, so runtime compiler provenance cannot name it without guessing",
+    // This immutable fork keeps Koin's JVM performance module independent of
+    // the repository-wide multiplatform build while retaining its 400-module,
+    // roughly 1,600-class graph. The producer is pinned independently because
+    // the experiment must prove the exact compiler plugin that wrote its facts.
+    repository: "https://github.com/samchon/graph-benchmark-koin.git",
+    commit: "cca45c63d1088888f445304e13f9fbc310f62078",
+    projectRoot: "examples/jvm-perfs",
+    producerRepository: "https://github.com/samchon/scip-java.git",
+    producerCommit: "22ec4bd89062ed2f7040ef14d14c05db8776b816",
+    producerTree: "0725d4d2f05564ff22491ca629eda3609dfbdb17",
+    strictProvider: "kotlinc-graph",
+    strictAuthority: "compiler",
+    strictTool: "scip-kotlinc-k2-graph",
+    requiredCapabilities: [
+      "coverage",
+      "diagnostics",
+      "diskDigests",
+      "incremental",
+      "sourceDigests",
+      "universe",
+      "unresolved",
+    ],
+    semanticEdges: ["calls"],
+    crossFileEdge: "calls",
     lifecycle: {
-      sourceFile: "src/main/kotlin/foo/Example.kt",
+      sourceFile:
+        "src/main/kotlin/org/koin/benchmark/GraphLifecycle.kt",
       editSuffix: "\n// samchon-graph lifecycle edit\n",
-      createFile: "src/main/kotlin/foo/SamchonGraphExperiment.kt",
+      createFile:
+        "src/main/kotlin/org/koin/benchmark/SamchonGraphExperiment.kt",
       renamedFile:
-        "src/main/kotlin/foo/SamchonGraphExperimentRenamed.kt",
+        "src/main/kotlin/org/koin/benchmark/SamchonGraphExperimentRenamed.kt",
       createText:
-        "package foo\n\nfun samchonGraphExperiment(): Example = Example\n",
+        "package org.koin.benchmark\n\ninternal fun samchonGraphExperiment() = perfModule400()\n",
       createdSymbol: "samchonGraphExperiment",
       createdEdge: {
-        kind: "references",
+        kind: "calls",
         from: "samchonGraphExperiment",
-        to: "Example",
+        to: "perfModule400",
         crossFile: true,
       },
-      buildFile: "build.gradle",
-      failureFile: "build.gradle",
-      failureSuffix: "\n}\n",
+      buildFile: "build.gradle.kts",
+      failureFile: "build.gradle.kts",
+      failureSuffix: "\nnotAValidGradleBlock {\n",
       failurePolicy: "reject",
+      performance: {
+        noopSamples: 5,
+        editSamples: 3,
+        noopP95MaxMs: 250,
+        editP95MaxMs: 2000,
+        editFind: "graphLifecycleMarker(): Int = 1",
+        editReplacements: [
+          "graphLifecycleMarker(): Int = 2",
+          "graphLifecycleMarker(): Int = 3",
+        ],
+      },
     },
-    minNodes: 1,
-    minEdges: 0,
+    minNodes: 1_000,
+    minEdges: 1_000,
   },
   {
     language: "swift",

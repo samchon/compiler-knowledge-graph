@@ -640,6 +640,10 @@ export function createResidentGraphSource(
           refresh.changed ||
           current.generations.get(language) !== refresh.generation,
       );
+      const entirelyBulk = entirelyBulkOwned(
+        options.languages,
+        current.sessions,
+      );
       if (
         bulkChanged &&
         commitFactEquivalentBulkRefresh(current, prefetched, signal)
@@ -649,7 +653,7 @@ export function createResidentGraphSource(
       }
       if (
         !bulkChanged &&
-        entirelyBulkOwned(options.languages, current.sessions)
+        entirelyBulk
       ) {
         // An explicitly selected, wholly compiler-owned project has one
         // authority for source membership and freshness: its resident
@@ -683,31 +687,41 @@ export function createResidentGraphSource(
       // project does not use is another candidate to probe, and a
       // half-installed toolchain fails intermittently for the same reason it is
       // not serving.
-      phaseStarted = performance.now();
-      const liveRows = providerTopology.reestablish(
-        providerTopology.available(
-          root,
-          selected.presentLanguages,
-          options,
-          process.env,
-          dependencies.providers ?? [],
-          new Set(
-            [...current.providers.values()].map((provider) => provider.name),
+      // A live bulk session already owns its compiler process and publishes
+      // producer/toolchain identity with each generation. Re-running command
+      // discovery and help/version probes after that same session reports a
+      // changed generation cannot alter which process produced it; it only
+      // adds process-launch latency before merging the candidate. Mixed and
+      // generic topologies still need the fresh availability comparison.
+      if (!entirelyBulk) {
+        phaseStarted = performance.now();
+        const liveRows = providerTopology.reestablish(
+          providerTopology.available(
+            root,
+            selected.presentLanguages,
+            options,
+            process.env,
+            dependencies.providers ?? [],
+            new Set(
+              [...current.providers.values()].map(
+                (provider) => provider.name,
+              ),
+            ),
           ),
-        ),
-        current.providerTopologyRows,
-      );
-      traceResident("topology", phaseStarted);
-      const liveTopology = providerTopology.serialize(liveRows);
-      if (liveTopology !== current.providerTopology) {
-        await replaceLanguages(current, signal);
-        return;
+          current.providerTopologyRows,
+        );
+        traceResident("topology", phaseStarted);
+        const liveTopology = providerTopology.serialize(liveRows);
+        if (liveTopology !== current.providerTopology) {
+          await replaceLanguages(current, signal);
+          return;
+        }
+        // A stable private tool identity can move while its public version row
+        // remains equal. Keep the fresh evidence even when serialized topology
+        // did not move, or the next transient failure would be matched against
+        // a tool path the provider no longer uses.
+        current.providerTopologyRows = liveRows;
       }
-      // A stable private tool identity can move while its public version row
-      // remains equal. Keep the fresh evidence even when serialized topology
-      // did not move, or the next transient failure would be matched against a
-      // tool path the provider no longer uses.
-      current.providerTopologyRows = liveRows;
       if (!sameStringArray(current.buildInputs, liveBuildInputs)) {
         await replaceLanguages(current, signal);
         return;

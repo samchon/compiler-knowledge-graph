@@ -210,11 +210,16 @@ export class BatchGraphSession implements IBulkGraphSession {
       }
       let producerFailure: Error | undefined;
       try {
-        await this.run(
-          this.options.command,
-          this.options.indexArgs(artifact),
-          signal,
-        );
+        const produce = this.options.produce;
+        if (produce !== undefined) {
+          await produce({ artifact, signal });
+        } else {
+          await this.run(
+            this.options.command,
+            this.options.indexArgs(artifact),
+            signal,
+          );
+        }
       } catch (error) {
         // `run` crosses the only unknown-rejection boundary through `enqueue`,
         // which normalizes it before this promise can reject.
@@ -568,13 +573,25 @@ function relocateArtifact(produced: string, artifact: string): void {
 }
 
 export namespace BatchGraphSession {
-  export interface IOptions {
+  export type IOptions = ICommonOptions &
+    (
+      | {
+          indexArgs: (artifact: string) => string[];
+          produce?: undefined;
+        }
+      | {
+          indexArgs?: undefined;
+          /** Resident producer that writes the isolated artifact directly. */
+          produce: (props: IProduceProps) => Promise<void>;
+        }
+    );
+
+  interface ICommonOptions {
     root: string;
     languages: readonly GraphLanguage[];
     provider: string;
     command: IGraphProvider.ICommand;
     artifactName: string;
-    indexArgs: (artifact: string) => string[];
 
     /**
      * Existing directory that owns this session's unique generation children.
@@ -618,6 +635,11 @@ export namespace BatchGraphSession {
       command: IGraphProvider.ICommand,
       args: readonly string[],
     ) => Promise<string>;
+  }
+
+  export interface IProduceProps {
+    artifact: string;
+    signal: AbortSignal | undefined;
   }
 }
 

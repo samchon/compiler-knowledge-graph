@@ -11,6 +11,7 @@ import {
   cppGraphProvider,
   javaGraphProvider,
   goGraphProvider,
+  kotlinGraphProvider,
   luaGraphProvider,
   rustGraphProvider,
   standardScipProviders,
@@ -932,14 +933,16 @@ function assertFixtureRegistryCoverage(): void {
     rustGraphProvider,
     cppGraphProvider,
     javaGraphProvider,
+    kotlinGraphProvider,
     csharpGraphProvider,
-    // The two SCIP entries a strict route owns as its fallback tier. They are
-    // exercised by the loop above, but the registry does not list them as
+    // SCIP entries a strict route owns as its fallback tier are exercised by
+    // the loop above, but the registry does not list them as
     // owners, so the ledger must not either.
     ...standardScipProviders.filter(
       (provider) =>
         provider.name !== "scip-clang" &&
         provider.name !== "scip-java" &&
+        provider.name !== "scip-kotlinc" &&
         provider.name !== "scip-dotnet",
     ),
     ...standardSidecarProviders,

@@ -319,23 +319,10 @@ const installScipRuby = () =>
       "a068c7c3b2042b9eac563ce77ce35dcaca666b418530b1db9f932a3dbc7175dd",
   });
 
-// Indexes through the real compiler: it drives Gradle or Maven with the
-// SemanticDB plugin injected, so the JVM lanes pay a build rather than skipping
-// one. That is the trade — wall clock for facts the compiler itself produced —
-// and it has to be measured rather than assumed. Kotlin support is upstream's
-// own "less mature" than Java's, and Maven cannot index Kotlin at all; koin is
-// Gradle, so it is on the supported path.
-// scip-java v0.13.1 predates Kotlin 2.3's CompilerPluginRegistrar.pluginId
-// contract, so it cannot index current Koin. Compiler plugins are also coupled
-// to the compiler minor that loads them: #973's merged 2.4.0 tree builds but
-// fails inside Koin's 2.3.20 compiler with NoClassDefFoundError. Pin the exact
-// upstream #973 commit that completed the 2.3.20 port, before its next commit
-// moved the plugin and fixture to 2.4.0. The source tree, compiler minor and
-// fixture revision are then one reviewable generation instead of a local patch.
-const SCIP_JAVA_KOTLIN_COMMIT =
-  "e940c1889767a81347387067a375320dc6f5d83e";
-const SCIP_JAVA_KOTLIN_TREE =
-  "f76ccc736fda0692c007dd7f9f1b9cbde44ca075";
+// The Kotlin graph producer is a K2 compiler plugin injected into ordinary
+// Kotlin/JVM Gradle compile tasks. Its compiler minor must match the project,
+// so the experiment pins the exact fork revision and verifies both its
+// artifact option and resident Tooling API protocol before indexing Koin.
 const SCIP_JAVA_KOTLIN_VERSION = "2.3.20";
 
 /**
@@ -389,13 +376,50 @@ const installScipJavaSource = async (gradle, pin) => {
   return link;
 };
 
-const installScipJavaKotlinSnapshot = (gradle) =>
-  installScipJavaSource(gradle, {
-    repository: "scip-code/scip-java",
-    commit: SCIP_JAVA_KOTLIN_COMMIT,
-    tree: SCIP_JAVA_KOTLIN_TREE,
-    version: `${SCIP_JAVA_KOTLIN_COMMIT}+kotlin-${SCIP_JAVA_KOTLIN_VERSION}`,
+const installScipJavaKotlinSnapshot = async (gradle) => {
+  if (
+    typeof experiment.producerRepository !== "string" ||
+    typeof experiment.producerCommit !== "string" ||
+    typeof experiment.producerTree !== "string"
+  ) {
+    throw new Error(
+      "kotlin: the compiler graph setup requires an exact producer repository, commit, and tree",
+    );
+  }
+  const repository = experiment.producerRepository
+    .replace(/^https:\/\/github\.com\//u, "")
+    .replace(/\.git$/u, "");
+  const link = await installScipJavaSource(gradle, {
+    repository,
+    commit: experiment.producerCommit,
+    tree: experiment.producerTree,
+    version: `${experiment.producerCommit}+kotlin-${SCIP_JAVA_KOTLIN_VERSION}`,
   });
+  const indexHelp = String(
+    run(link, ["index", "--help"], { stdio: "pipe" }).stdout,
+  );
+  const serverHelp = String(
+    run(link, ["kotlin-graph-server", "--help"], {
+      stdio: "pipe",
+    }).stdout,
+  );
+  if (!indexHelp.includes("--kotlin-graph-output")) {
+    throw new Error(
+      `kotlin: the installed scip-java does not publish --kotlin-graph-output:\n${indexHelp}`,
+    );
+  }
+  if (
+    !serverHelp.includes(
+      "Serve compiler-owned Kotlin graph generations over NDJSON.",
+    )
+  ) {
+    throw new Error(
+      `kotlin: the installed scip-java does not publish the resident graph protocol:\n${serverHelp}`,
+    );
+  }
+  process.env.SAMCHON_GRAPH_KOTLINC_GRAPH = link;
+  recordProvisionedEnvironment("SAMCHON_GRAPH_KOTLINC_GRAPH", link);
+};
 
 /**
  * The javac graph producer, built from the exact fork revision the consumer
@@ -944,12 +968,10 @@ switch (experiment.language) {
   case "kotlin":
     await installKotlinLanguageServer();
     const gradle = await installGradle();
-    // scip-java covers Kotlin through semanticdb-kotlinc, and it needs a JDK to
-    // run the Gradle build it indexes through. koin is the worst lane measured
-    // at 1349 s, almost all of it kotlin-language-server's Gradle sync before it
-    // answers `initialize` at all. The strict path does not skip that build; it
-    // performs one. Whether that is faster, slower, or merely truer is the thing
-    // to find out.
+    // The strict lane launches one persistent Gradle Tooling connection and
+    // drives the project's ordinary Kotlin/JVM compile task. KGP therefore
+    // retains its daemon, configuration, classpath and incremental caches
+    // across lifecycle requests while the compiler plugin owns every fact.
     apt(["openjdk-21-jdk"]);
     const javaHome = "/usr/lib/jvm/java-21-openjdk-amd64";
     process.env.JAVA_HOME = javaHome;

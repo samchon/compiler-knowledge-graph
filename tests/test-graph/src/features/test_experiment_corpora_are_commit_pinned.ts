@@ -506,7 +506,7 @@ export const test_experiment_corpora_are_commit_pinned = async () => {
   }
   TestValidator.predicate(
     "the remaining SCIP providers use isolated upstream lifecycle projects",
-    [kotlin, ruby, php, dart].every(
+    [ruby, php, dart].every(
       (row) =>
         row.includes("projectRoot:") &&
         row.includes('strictAuthority: "semantic-index"') &&
@@ -517,8 +517,8 @@ export const test_experiment_corpora_are_commit_pinned = async () => {
       helpers.includes("fs.cpSync(source, root"),
   );
   TestValidator.predicate(
-    "an unavailable compiler identity requires an explicit row limitation",
-    kotlin.includes("compilerLimitation:") &&
+    "compiler identity and an explicit limitation remain mutually exclusive",
+    !kotlin.includes("compilerLimitation:") &&
       runner.includes("experiment.compilerLimitation.trim()") &&
       runner.includes('typeof provenance.producer.compiler === "string"') &&
       runner.includes("provenance.producer.compiler.trim()") &&
@@ -536,16 +536,22 @@ export const test_experiment_corpora_are_commit_pinned = async () => {
       setup.includes("await installGradle()"),
   );
   TestValidator.predicate(
-    "Kotlin uses one tree-pinned 2.3.20 producer and fixture generation",
-    kotlin.includes("e940c1889767a81347387067a375320dc6f5d83e") &&
-      kotlin.includes("built with Kotlin 2.3.20") &&
-      setup.includes("const SCIP_JAVA_KOTLIN_COMMIT") &&
-      setup.includes('"e940c1889767a81347387067a375320dc6f5d83e"') &&
-      setup.includes("const SCIP_JAVA_KOTLIN_TREE") &&
-      setup.includes('"f76ccc736fda0692c007dd7f9f1b9cbde44ca075"') &&
+    "Kotlin pins a Koin-scale fixture and its resident K2 producer independently",
+    kotlin.includes("cca45c63d1088888f445304e13f9fbc310f62078") &&
+      kotlin.includes("22ec4bd89062ed2f7040ef14d14c05db8776b816") &&
+      kotlin.includes("0725d4d2f05564ff22491ca629eda3609dfbdb17") &&
+      kotlin.includes('strictProvider: "kotlinc-graph"') &&
+      kotlin.includes('strictAuthority: "compiler"') &&
+      kotlin.includes('strictTool: "scip-kotlinc-k2-graph"') &&
+      kotlin.includes("minNodes: 1_000") &&
+      kotlin.includes("minEdges: 1_000") &&
+      kotlin.includes("noopP95MaxMs: 250") &&
+      kotlin.includes("editP95MaxMs: 2000") &&
+      !setup.includes("const SCIP_JAVA_KOTLIN_COMMIT") &&
+      !setup.includes("const SCIP_JAVA_KOTLIN_TREE") &&
       setup.includes('const SCIP_JAVA_KOTLIN_VERSION = "2.3.20"') &&
       setup.includes(
-        "`${SCIP_JAVA_KOTLIN_COMMIT}+kotlin-${SCIP_JAVA_KOTLIN_VERSION}`",
+        "`${experiment.producerCommit}+kotlin-${SCIP_JAVA_KOTLIN_VERSION}`",
       ) &&
       setup.includes('":scip-java:installDist"') &&
       // Two rows build the same launcher from two revisions, so the builder is
@@ -558,6 +564,11 @@ export const test_experiment_corpora_are_commit_pinned = async () => {
       !setup.includes("installScipJava = ") &&
       kotlinSetup.includes("await installScipJavaKotlinSnapshot(gradle)") &&
       setup.includes("const installScipJavaSource = async (gradle, pin)") &&
+      setup.includes('run(link, ["index", "--help"]') &&
+      setup.includes('run(link, ["kotlin-graph-server", "--help"]') &&
+      setup.includes(
+        'recordProvisionedEnvironment("SAMCHON_GRAPH_KOTLINC_GRAPH", link)',
+      ) &&
       setup.includes('run(link, ["--version"])'),
   );
   TestValidator.predicate(
@@ -642,7 +653,7 @@ export const test_experiment_corpora_are_commit_pinned = async () => {
     "isolated lifecycle edges can prove a pinned corpus relationship claim",
     [
       [java, "instantiates"],
-      [kotlin, "references"],
+      [kotlin, "calls"],
     ].every(
       ([row, kind]) =>
         row!.includes(`crossFileEdge: "${kind}"`) &&

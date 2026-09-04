@@ -3,6 +3,7 @@ import { csharpGraphProvider } from "./csharp/csharpGraphProvider";
 import { cppGraphProvider } from "./cpp/cppGraphProvider";
 import { goGraphProvider } from "./go/goGraphProvider";
 import { javaGraphProvider } from "./java/javaGraphProvider";
+import { kotlinGraphProvider } from "./kotlin/kotlinGraphProvider";
 import { luaGraphProvider } from "./lua/luaGraphProvider";
 import { rustGraphProvider } from "./rust/rustGraphProvider";
 import { standardScipProviders } from "./scip/standardScipProviders";
@@ -31,11 +32,9 @@ export const GRAPH_PROVIDERS: readonly IGraphProvider[] = [
   rustGraphProvider,
   cppGraphProvider,
   javaGraphProvider,
-  // Clang, Java and C# SCIP entries are owned by strict routes as fallback
+  kotlinGraphProvider,
+  // Clang, Java, Kotlin and C# SCIP entries are owned by strict routes as fallback
   // tiers, so the registry must not also list them as language owners.
-  ...standardScipProviders.filter(
-    (provider) => provider.name === "scip-kotlinc",
-  ),
   csharpGraphProvider,
   ...standardScipProviders.filter(
     (provider) =>

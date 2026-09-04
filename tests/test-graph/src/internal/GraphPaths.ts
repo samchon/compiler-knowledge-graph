@@ -71,6 +71,7 @@ export const GraphPaths = {
   fakePub: path.join(repositoryRoot, "tests", "test-graph", "src", "internal", "fake-pub.cjs"),
   fakeScipIndexer: path.join(repositoryRoot, "tests", "test-graph", "src", "internal", "fake-scip-indexer.cjs"),
   fakeScipJava: path.join(repositoryRoot, "tests", "test-graph", "src", "internal", "fake-scip-java.cjs"),
+  fakeKotlinGraph: path.join(repositoryRoot, "tests", "test-graph", "src", "internal", "fake-kotlin-graph.cjs"),
   fakeScipDecoder: path.join(repositoryRoot, "tests", "test-graph", "src", "internal", "fake-scip-decoder.cjs"),
   fakeStandardProvider: path.join(repositoryRoot, "tests", "test-graph", "src", "internal", "fake-standard-provider.cjs"),
   fakeToolchain: path.join(repositoryRoot, "tests", "test-graph", "src", "internal", "fake-toolchain.cjs"),

@@ -1,11 +1,15 @@
 import { IGraphProvider } from "./IGraphProvider";
+import { csharpGraphProvider } from "./csharp/csharpGraphProvider";
 import { cppGraphProvider } from "./cpp/cppGraphProvider";
 import { goGraphProvider } from "./go/goGraphProvider";
 import { javaGraphProvider } from "./java/javaGraphProvider";
+import { kotlinGraphProvider } from "./kotlin/kotlinGraphProvider";
 import { luaGraphProvider } from "./lua/luaGraphProvider";
 import { rustGraphProvider } from "./rust/rustGraphProvider";
+import { scalaGraphProvider } from "./scala/scalaGraphProvider";
 import { standardScipProviders } from "./scip/standardScipProviders";
 import { standardSidecarProviders } from "./sidecar/standardSidecarProviders";
+import { swiftGraphProvider } from "./swift/swiftGraphProvider";
 import { ttscGraphProvider } from "./ttscgraph/ttscGraphProvider";
 
 /**
@@ -30,11 +34,18 @@ export const GRAPH_PROVIDERS: readonly IGraphProvider[] = [
   rustGraphProvider,
   cppGraphProvider,
   javaGraphProvider,
-  // Both entries are owned by a strict route as its fallback tier, so the
-  // registry must not also list them as owners: one language cannot have two.
+  kotlinGraphProvider,
+  scalaGraphProvider,
+  swiftGraphProvider,
+  // Clang, Java, Kotlin and C# SCIP entries are owned by strict routes as fallback
+  // tiers, so the registry must not also list them as language owners.
+  csharpGraphProvider,
   ...standardScipProviders.filter(
     (provider) =>
-      provider.name !== "scip-clang" && provider.name !== "scip-java",
+      provider.name !== "scip-clang" &&
+      provider.name !== "scip-java" &&
+      provider.name !== "scip-kotlinc" &&
+      provider.name !== "scip-dotnet",
   ),
   ...standardSidecarProviders,
 ];

@@ -4,6 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { GraphPaths } from "../internal/GraphPaths";
+import { waitForProcessId } from "../internal/waitForProcessId";
 
 /** A resident close reaches generic LSP work that has not published a session. */
 export const test_resident_close_interrupts_stalled_generic_lsp_build =
@@ -44,8 +45,7 @@ const exercise = async (phase: string, serverArgs: string[]): Promise<void> => {
       lspReadyQuietMs: 10,
     });
     const loading = resident.load();
-    await waitForFile(pidFile);
-    pid = Number(fs.readFileSync(pidFile, "utf8"));
+    pid = await waitForProcessId(pidFile);
     await waitForFile(phase === "readiness" ? progressFile : hangFile);
 
     const settled = await settleWithin(

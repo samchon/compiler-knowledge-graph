@@ -21,6 +21,7 @@ import { IJavaGraphSnapshot } from "./IJavaGraphSnapshot";
 import { JAVA_GRAPH_FACTS } from "./JAVA_GRAPH_FACTS";
 import { JAVA_GRAPH_PRODUCER } from "./JAVA_GRAPH_PRODUCER";
 import { JAVA_GRAPH_PROVIDER } from "./JAVA_GRAPH_PROVIDER";
+import { javaDeclarationSymbol } from "./javaDeclarationSymbol";
 
 const SHA256 = /^[0-9a-f]{64}$/u;
 const NODE_KINDS = new Set<GraphNodeKind>([
@@ -689,6 +690,13 @@ function adaptNode(
     node.qualifiedName === "" ? undefined : declaredName(node.qualifiedName);
   const qualifiedName = qualified;
   const display = qualifiedName ?? name;
+  const symbol = javaDeclarationSymbol({
+    kind: node.kind as GraphNodeKind,
+    name,
+    ...(qualifiedName === undefined ? {} : { qualifiedName }),
+    ...(node.signature === "" ? {} : { signature: node.signature }),
+    displayName: node.name,
+  });
   // The parameter list the producer displays is not lost, only moved. A
   // producer-supplied signature is the better statement of it and wins; where
   // there is none, the display it came from becomes the signature so a reader
@@ -704,9 +712,9 @@ function adaptNode(
       {
         version: 2,
         language: "java",
-        symbol: node.symbol,
+        symbol,
         role: node.kind as GraphNodeKind,
-        native: { key: node.symbol, stability: "semantic" },
+        native: { key: symbol, stability: "semantic" },
         scope: { target: target.name },
         stability: "persistent",
       },

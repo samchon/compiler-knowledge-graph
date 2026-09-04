@@ -59,6 +59,8 @@ import {
   TOOL_SAMCHON,
   TOOL_SAMCHON_FALLBACK,
   TOOL_SERENA,
+  graphResultFromLog,
+  indexRoute,
   strictIntentOfTool,
   timedOutIndexCell,
 } from "./index-time-cell.mjs";
@@ -256,6 +258,7 @@ for (const project of selected) {
           if (typeof error?.timedOutMs !== "number") throw error;
           cell = timedOutIndexCell({
             project,
+            language: spec.language,
             tool,
             timedOutMs: error.timedOutMs,
             // The process was killed before it could write its provenance line,
@@ -263,7 +266,7 @@ for (const project of selected) {
             // say what was being attempted, because that is announced before
             // the first candidate runs, and "timed out running scip-ruby" is a
             // finding where "timed out" alone is a mystery.
-            servedBy: servedBy(error.logStem ?? ""),
+            servedBy: graphResult(error.logStem ?? "").servedBy,
           });
         }
         assertPinnedCheckout(spec, cellRepoDir);
@@ -413,12 +416,15 @@ function runIndexCell({ project, spec, repoDir, tool, env }) {
     // served" — and so does a strict cell whose provider failed. One was asked
     // for and the other is a defect, and a table that cannot tell them apart
     // reports every fallback measurement as a broken provider.
+    const observed = graphResult(logStem);
     return {
       project,
+      language: spec.language,
       tool,
       buildMs: ms,
       strict,
-      servedBy: servedBy(logStem),
+      servedBy: observed.servedBy,
+      route: indexRoute(spec.language, tool, observed.summary),
     };
   }
   if (tool === TOOL_CODEGRAPH) {
@@ -814,6 +820,19 @@ function assertIncomingReportScope(incoming) {
         `incoming index-time result cell ${cell.project}/${cell.tool} does not match its strict-provider intent`,
       );
     }
+    if (cell.language !== PROJECTS[cell.project]?.language) {
+      throw new TypeError(
+        `incoming index-time result cell ${cell.project}/${cell.tool} does not match its project's language`,
+      );
+    }
+    if (
+      expectedStrict !== undefined &&
+      cell.route?.schemaVersion !== 1
+    ) {
+      throw new TypeError(
+        `incoming index-time result cell ${cell.project}/${cell.tool} omits its structured route evidence`,
+      );
+    }
   }
 }
 
@@ -1010,29 +1029,13 @@ function runChecked(
  * reported as unknown rather than guessed at, because "no strict provider
  * served" and "this dump predates the line" are different facts.
  */
-function servedBy(logStem) {
-  const served = "@samchon/graph: indexer=";
-  // What it set out to run, written before the first candidate starts. A build
-  // that finishes says what produced it; a build that is killed says nothing at
-  // all, and the killed ones are the expensive ones. Reading the intent turns a
-  // timed-out cell from "unknown" into "was running scip-ruby when the hour
-  // ran out", which is the difference between a mystery and a finding.
-  const attempting = "@samchon/graph: indexing with ";
+function graphResult(logStem) {
   try {
-    const lines = fs
-      .readFileSync(`${logStem}.err.log`, "utf8")
-      .split(/\r?\n/);
-    const outcome = lines.find((line) => line.startsWith(served));
-    if (outcome !== undefined) return outcome.slice(served.length).trim();
-    const intent = lines.find((line) => line.startsWith(attempting));
-    // Marked as an attempt rather than presented as a result: it says what was
-    // selected, not what published, and those differ exactly when a provider
-    // was chosen and then failed.
-    return intent === undefined
-      ? "unknown"
-      : `attempted ${intent.slice(attempting.length).trim()}`;
+    return graphResultFromLog(
+      fs.readFileSync(`${logStem}.err.log`, "utf8"),
+    );
   } catch {
-    return "unknown";
+    return graphResultFromLog("");
   }
 }
 

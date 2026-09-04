@@ -6,7 +6,7 @@
       "repo": "excalidraw",
       "family": "dedicated",
       "file": "excalidraw.md",
-      "fixtureCommit": "e576ee0ecbdec2b3de3b7378f2cc08038026531b",
+      "fixtureCommit": "b4a1909669c3fe5cbcd9837fbd30c4b35d27c10e",
       "language": "typescript",
       "questionSha256": "e4f3b02a5d3a1e86a9136d90a4b8bd9c73774733f9f1c021faee61b3ea6e83b5"
     },
@@ -15,7 +15,7 @@
       "repo": "excalidraw",
       "family": "common",
       "file": "common.md",
-      "fixtureCommit": "e576ee0ecbdec2b3de3b7378f2cc08038026531b",
+      "fixtureCommit": "b4a1909669c3fe5cbcd9837fbd30c4b35d27c10e",
       "language": "typescript",
       "questionSha256": "efe22b2b8f0d37d2e74fc2391ba689b5c455e16a1f261fd821f209bd7ad20517"
     },

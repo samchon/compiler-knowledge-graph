@@ -7,9 +7,11 @@
   "scripts": {
     "list": "node src/list-languages.mjs",
     "setup": "node src/setup-language.mjs",
-    "start": "node src/run-language.mjs"
+    "start": "node src/run-language.mjs",
+    "topology": "pnpm --filter @samchon/graph build && node src/run-topology-orientation.mjs"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.26.0",
     "@samchon/graph": "workspace:*"
   },
   "devDependencies": {

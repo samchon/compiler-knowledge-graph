@@ -2,6 +2,7 @@ import packageJson from "../package.json";
 import { buildGraphDump } from "./indexer/buildGraphDump";
 import { startServer } from "./mcp/startServer";
 import { parseGraphArgs } from "./parseGraphArgs";
+import { routeSummary } from "./routeSummary";
 import { ISamchonGraphDump } from "./structures";
 import { runView } from "./view";
 
@@ -112,7 +113,10 @@ function dumpSummary(dump: ISamchonGraphDump): string {
   const by =
     served.length === 0 ? "no strict provider served" : served.join(" ");
   /* c8 ignore stop */
-  const lines = [`@samchon/graph: indexer=${dump.indexer} ${by}`];
+  const lines = [
+    `@samchon/graph: indexer=${dump.indexer} ${by}`,
+    `@samchon/graph: route=${routeSummary(dump)}`,
+  ];
   /* c8 ignore start -- the field is optional in the dump contract and always
    * present in practice, so the empty-fallback arm guards a shape no producer
    * in this repository emits. */

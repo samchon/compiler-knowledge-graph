@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { ISamchonRepositoryContextDump } from "../structures";
+import { isSubPath } from "../utils/isSubPath";
 import { IRepositoryContextProvider } from "./IRepositoryContextProvider";
 import { createRepositoryContextSession } from "./createRepositoryContextSession";
 import { parseGradleRepositoryContextModel } from "./parseGradleRepositoryContextModel";
@@ -172,7 +173,7 @@ function collectGradleRepositoryContext(
         ecosystem: ECOSYSTEM,
         coordinate,
         configuration: source.kind,
-        external: !isInside(props.root, source.directory),
+        external: !isSubPath(props.root, source.directory),
         root: repositoryContextFile(props.root, source.directory),
         evidence,
       });
@@ -392,11 +393,6 @@ function dedupeEdges(
       compareRepositoryText(left.from, right.from) ||
       compareRepositoryText(left.to, right.to),
   );
-}
-
-function isInside(root: string, file: string): boolean {
-  const relative = path.relative(root, file);
-  return relative !== ".." && !relative.startsWith(`..${path.sep}`);
 }
 
 function throwIfAborted(signal: AbortSignal | undefined): void {

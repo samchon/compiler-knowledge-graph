@@ -146,6 +146,9 @@ export const test_cpp_clang_snapshot_adapter_and_client_are_atomic = async () =>
   await assertProvider(root);
   await assertClientLifecycle(root);
   await assertClientInputShapes();
+  await assertClientReusesUnchangedInputDigests();
+  await assertClientWatchesExternalDependencies();
+  await assertClientCloseDoesNotReopenInputWatches();
   await assertClientReportsItsOwnSize();
   await assertClientReadsPublishedBodies(publishedFixtureRoot());
   assertDeltaThatLosesAnOwnerAsksForTheWhole(publishedFixtureRoot());
@@ -239,14 +242,24 @@ async function assertProvider(root: string): Promise<void> {
   } finally {
     await session.close();
   }
-  // Asked to pass the server's log through, the provider also asks the server
-  // to write one. A producer that stops answering explains itself there and
-  // nowhere else, and a run that waited twenty minutes for one had nothing
-  // but its own request lines to show.
+  // Asked to pass the server's log through, the provider asks for bounded info
+  // diagnostics. Verbose transport logging mirrors every successful graph
+  // response into stderr, duplicating the largest payload in the protocol.
+  const loggedCommand = nodeShim(root, "info-log-clangd", COMMIT, [
+    "--require-info-log",
+  ]);
+  const logged = cppGraphProvider.resolve(root, {
+    ...process.env,
+    [override]: loggedCommand,
+  });
+  TestValidator.predicate(
+    "the C/C++ provider resolves its diagnostic logging fixture",
+    logged !== undefined,
+  );
   process.env.SAMCHON_GRAPH_LSP_SERVER_LOG = "1";
   const cppOnly = cppGraphProvider.open({
     root,
-    command: resolved!,
+    command: logged!,
     languages: ["cpp"],
     options: {},
   });
@@ -805,6 +818,7 @@ async function assertClientLifecycle(root: string): Promise<void> {
       [edited.changed, edited.mode, edited.generation],
       [deleted.changed, deleted.mode, deleted.generation],
       client.generation,
+      client.current === deleted.snapshot,
       edited.snapshot.nodes.some((node) => node.name === "editedCaller"),
       // A refresh opens with the one request that carries no cursor, and that
       // is where it declares the generation it already holds. Continuations
@@ -822,6 +836,7 @@ async function assertClientLifecycle(root: string): Promise<void> {
       [true, "incremental", 2],
       [true, "reload", 3],
       3,
+      true,
       true,
       // Five openers for four refreshes. Deleting a compile command moves the
       // universe, which re-adapts every surviving shard -- and the adapter
@@ -1301,14 +1316,500 @@ async function assertClientInputShapes(): Promise<void> {
   }
 }
 
+async function assertClientReusesUnchangedInputDigests(): Promise<void> {
+  const root = fixtureRoot();
+  const source = path.join(root, "main.cpp");
+  const watchLog = path.join(root, "digest-watches.ndjson");
+  fs.mkdirSync(path.join(root, ".clangd"));
+  const originalReadFileSync = fs.readFileSync;
+  const originalStatSync = fs.statSync;
+  let sourceReads = 0;
+  let moveSourceAfterReads = false;
+  let sourceMovements = 0;
+  fs.readFileSync = ((file: fs.PathOrFileDescriptor, ...args: unknown[]) => {
+    const result = Reflect.apply(originalReadFileSync, fs, [
+      file,
+      ...args,
+    ]) as unknown;
+    if (typeof file === "string" && path.resolve(file) === source) {
+      ++sourceReads;
+      if (moveSourceAfterReads) {
+        const touched = originalStatSync(source);
+        fs.utimesSync(
+          source,
+          touched.atime,
+          new Date(touched.mtimeMs + 1_000),
+        );
+        ++sourceMovements;
+      }
+    }
+    return result;
+  }) as typeof fs.readFileSync;
+  const client = cppClient(root, [`--watch-log=${watchLog}`]);
+  try {
+    await client.refresh();
+    const initialReads = sourceReads;
+    await client.refresh();
+    await client.refresh();
+    TestValidator.equals(
+      "unchanged C/C++ inputs reuse their stable digest instead of rereading source bytes",
+      sourceReads,
+      initialReads,
+    );
+
+    const beforeTouch = fs.statSync(source);
+    fs.utimesSync(
+      source,
+      beforeTouch.atime,
+      new Date(beforeTouch.mtimeMs + 1_000),
+    );
+    await client.refresh();
+    TestValidator.equals(
+      "metadata movement is rehashed once but does not become a content notification",
+      [sourceReads, readLines(watchLog).length],
+      [initialReads + 1, 1],
+    );
+
+    const beforeMovement = originalStatSync(source);
+    fs.utimesSync(
+      source,
+      beforeMovement.atime,
+      new Date(beforeMovement.mtimeMs + 1_000),
+    );
+    moveSourceAfterReads = true;
+    await client.refresh();
+    moveSourceAfterReads = false;
+    TestValidator.equals(
+      "an input moving throughout every stable-read attempt is published as unknown",
+      [sourceReads, sourceMovements],
+      [initialReads + 7, 6],
+    );
+    await client.refresh();
+    TestValidator.equals(
+      "a settled input recovers from the unknown digest without reusing it",
+      sourceReads,
+      initialReads + 8,
+    );
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const touched = fs.statSync(source);
+    fs.writeFileSync(source, "void called() {}\n");
+    fs.utimesSync(source, touched.atime, touched.mtime);
+    await client.refresh();
+    TestValidator.equals(
+      "same-size content movement cannot hide behind a restored modification time",
+      [
+        sourceReads,
+        readLines(watchLog)
+          .flatMap((row) => row.changes)
+          .filter((row) => String(row.uri).endsWith("/main.cpp"))
+          .map((row) => row.type),
+      ],
+      [initialReads + 9, [1, 3, 2]],
+    );
+  } finally {
+    fs.readFileSync = originalReadFileSync;
+    await client.close();
+  }
+}
+
+async function assertClientWatchesExternalDependencies(): Promise<void> {
+  const root = GraphPaths.createTempDirectory("samchon-graph-cpp-watch-root-");
+  const external = GraphPaths.createTempDirectory(
+    "samchon-graph-cpp-watch-external-",
+  );
+  const include = path.join(external, "include");
+  const source = path.join(external, "main.cpp");
+  const header = path.join(include, "fixture.h");
+  fs.mkdirSync(include);
+  fs.writeFileSync(source, '#include "include/fixture.h"\nvoid caller() {}\n');
+  fs.writeFileSync(header, "void callee();\n");
+  fs.writeFileSync(
+    path.join(root, "compile_commands.json"),
+    JSON.stringify([
+      {
+        directory: external,
+        file: source,
+        arguments: ["clang++", "-x", "c++", "-c", source],
+      },
+    ]),
+  );
+  const watchLog = path.join(root, "external-watches.ndjson");
+  const originalStatSync = fs.statSync;
+  const originalWatch = fs.watch;
+  let headerStats = 0;
+  let directoryStats = 0;
+  let suppressIncludeEvents = false;
+  fs.statSync = ((file: fs.PathLike, ...args: unknown[]) => {
+    if (typeof file === "string") {
+      const resolved = path.resolve(file);
+      if (resolved === header) ++headerStats;
+      else if (resolved === include) ++directoryStats;
+    }
+    return Reflect.apply(originalStatSync, fs, [file, ...args]) as fs.Stats;
+  }) as typeof fs.statSync;
+  fs.watch = ((...args: unknown[]): fs.FSWatcher => {
+    const callbackIndex = args.length - 1;
+    const callback = args[callbackIndex];
+    if (
+      path.resolve(String(args[0])) !== include ||
+      typeof callback !== "function"
+    ) {
+      return Reflect.apply(
+        originalWatch as (...values: unknown[]) => fs.FSWatcher,
+        fs,
+        args,
+      );
+    }
+    const forwarded = [...args];
+    forwarded[callbackIndex] = (...values: unknown[]): void => {
+      if (!suppressIncludeEvents) Reflect.apply(callback, undefined, values);
+    };
+    return Reflect.apply(
+      originalWatch as (...values: unknown[]) => fs.FSWatcher,
+      fs,
+      forwarded,
+    );
+  }) as typeof fs.watch;
+  const client = cppClient(root, [`--watch-log=${watchLog}`]);
+  try {
+    await client.refresh();
+    const initialHeaderStats = headerStats;
+    const initialDirectoryStats = directoryStats;
+    await client.refresh();
+    TestValidator.equals(
+      "unchanged external dependencies avoid corpus-wide file and directory stats",
+      [headerStats, directoryStats > initialDirectoryStats],
+      [initialHeaderStats, false],
+    );
+
+    fs.writeFileSync(header, "void callee();\nvoid external_change();\n");
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    const changed = await client.refresh();
+    TestValidator.predicate(
+      "an external dependency event rehashes and republishes its affected generation",
+      changed.changed &&
+        headerStats > initialHeaderStats &&
+        readLines(watchLog)
+          .flatMap((row) => row.changes)
+          .some(
+            (row) =>
+              String(row.uri) === pathToFileURL(header).href && row.type === 2,
+          ),
+    );
+
+    const watches = (
+      client as unknown as {
+        inputWatches: Map<string, { watcher?: fs.FSWatcher }>;
+      }
+    ).inputWatches;
+    const parentWatches = (
+      client as unknown as {
+        inputParentWatches: Map<string, { watcher?: fs.FSWatcher }>;
+      }
+    ).inputParentWatches;
+    const watchTransitions = client as unknown as {
+      releaseInputParentWatch(directory: string): void;
+      retireInputWatch(directory: string): void;
+    };
+    const watchCount = watches.size;
+    watchTransitions.releaseInputParentWatch(root);
+    watchTransitions.releaseInputParentWatch(
+      path.join(external, "missing", "child"),
+    );
+    watchTransitions.retireInputWatch(path.join(external, "missing"));
+    TestValidator.equals(
+      "stale and project-local parent-watch transitions are harmless",
+      watches.size,
+      watchCount,
+    );
+    const externalWatch = watches.get(include)?.watcher;
+    const externalParentWatch = parentWatches.get(external)?.watcher;
+    TestValidator.predicate(
+      "the external dependency directory owns child and parent-entry watches",
+      externalWatch !== undefined &&
+        externalParentWatch !== undefined,
+    );
+    externalParentWatch!.emit("change", "change", "include");
+    externalParentWatch!.emit("change", "rename", "unrelated");
+    externalParentWatch!.emit("change", "rename", null);
+    await client.refresh();
+
+    const retiredInclude = path.join(external, "include-retired");
+    const replacementInclude = path.join(external, "include-replacement");
+    fs.mkdirSync(replacementInclude);
+    fs.writeFileSync(
+      path.join(replacementInclude, "fixture.h"),
+      "void callee();\nvoid replaced_directory();\n",
+    );
+    // Suppress the child inode's callback on every host. The parent directory
+    // entry must retire and replace it without a corpus-wide identity poll.
+    suppressIncludeEvents = true;
+    fs.renameSync(include, retiredInclude);
+    fs.renameSync(replacementInclude, include);
+    const replaced = await client.refresh();
+    suppressIncludeEvents = false;
+    const replacementWatch = watches.get(include)?.watcher;
+    TestValidator.predicate(
+      "an atomically replaced dependency directory reattaches through its platform change signal",
+      replaced.changed &&
+        replacementWatch !== undefined &&
+        replacementWatch !== externalWatch,
+    );
+    fs.writeFileSync(
+      header,
+      "void callee();\nvoid replaced_directory();\nvoid replacement_change();\n",
+    );
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    const replacementChanged = await client.refresh();
+    TestValidator.predicate(
+      "the reattached directory watch observes later dependency edits",
+      replacementChanged.changed,
+    );
+
+    const failedParentWatch = parentWatches.get(external)?.watcher;
+    TestValidator.predicate(
+      "the replacement directory retains an active parent-entry watch",
+      failedParentWatch !== undefined,
+    );
+    failedParentWatch!.emit("error", new Error("fixture parent watch failure"));
+    failedParentWatch!.emit("change", "rename", "include");
+    failedParentWatch!.emit("error", new Error("retired parent watch"));
+    const parentFailureStats = directoryStats;
+    const parentGuardedWatch = fs.watch;
+    fs.watch = ((...args: unknown[]): fs.FSWatcher => {
+      if (path.resolve(String(args[0])) === external) {
+        throw new Error("fixture parent watch unavailable");
+      }
+      return Reflect.apply(
+        parentGuardedWatch as (...values: unknown[]) => fs.FSWatcher,
+        fs,
+        args,
+      );
+    }) as typeof fs.watch;
+    await client.refresh();
+    const degradedRetired = path.join(external, "include-degraded-retired");
+    const degradedReplacement = path.join(external, "include-degraded-next");
+    fs.mkdirSync(degradedReplacement);
+    fs.writeFileSync(
+      path.join(degradedReplacement, "fixture.h"),
+      "void callee();\nvoid degraded_parent_change();\n",
+    );
+    suppressIncludeEvents = true;
+    fs.renameSync(include, degradedRetired);
+    fs.renameSync(degradedReplacement, include);
+    const degraded = await client.refresh();
+    suppressIncludeEvents = false;
+    fs.watch = parentGuardedWatch;
+    TestValidator.predicate(
+      "an unavailable parent watch falls back to one directory identity and republishes its replacement",
+      degraded.changed &&
+        directoryStats > parentFailureStats &&
+        headerStats > initialHeaderStats,
+    );
+
+    // A delayed native event from the earlier directory replacement may have
+    // retired and replaced the handle while the edit above was committed.
+    // Fail the handle that is active now so every platform exercises the
+    // intended error-to-fallback transition.
+    const activeReplacementWatch = watches.get(include)?.watcher;
+    TestValidator.predicate(
+      "the replacement directory retains an active watch after its edit",
+      activeReplacementWatch !== undefined,
+    );
+    activeReplacementWatch!.emit(
+      "error",
+      new Error("fixture watch replacement"),
+    );
+    const reattachReplacement = path.join(external, "include-reattach");
+    const reattachRetired = path.join(external, "include-replaced-again");
+    fs.mkdirSync(reattachReplacement);
+    fs.writeFileSync(
+      path.join(reattachReplacement, "fixture.h"),
+      "void callee();\nvoid replaced_directory();\nvoid reattach_change();\n",
+    );
+    let reattachMoves = 0;
+    fs.watch = ((...args: unknown[]): fs.FSWatcher => {
+      const watcher = Reflect.apply(
+        originalWatch as (...values: unknown[]) => fs.FSWatcher,
+        fs,
+        args,
+      );
+      if (
+        path.resolve(String(args[0])) === include &&
+        reattachMoves === 0
+      ) {
+        ++reattachMoves;
+        fs.renameSync(include, reattachRetired);
+        fs.renameSync(reattachReplacement, include);
+      }
+      return watcher;
+    }) as typeof fs.watch;
+    const reattached = await client.refresh();
+    fs.watch = originalWatch;
+    const reattachedWatch = watches.get(include)?.watcher;
+    TestValidator.predicate(
+      "a failed directory watch reattaches before its fallback digest closes the change window",
+      reattachMoves === 1 &&
+        reattached.changed &&
+        reattachedWatch !== undefined,
+    );
+
+    reattachedWatch?.emit("error", new Error("fixture watch failure"));
+    fs.writeFileSync(header, "void callee();\nvoid fallback_change();\n");
+    const polled = await client.refresh();
+    TestValidator.predicate(
+      "a failed external directory watch falls back to input polling",
+      polled.changed,
+    );
+
+    const relocated = GraphPaths.createTempDirectory(
+      "samchon-graph-cpp-watch-relocated-",
+    );
+    const relocatedInclude = path.join(relocated, "include");
+    const relocatedSource = path.join(relocated, "main.cpp");
+    fs.mkdirSync(relocatedInclude);
+    fs.writeFileSync(
+      relocatedSource,
+      '#include "include/fixture.h"\nvoid relocated_caller() {}\n',
+    );
+    fs.writeFileSync(
+      path.join(relocatedInclude, "fixture.h"),
+      "void relocated_callee();\n",
+    );
+    fs.writeFileSync(
+      path.join(root, "compile_commands.json"),
+      JSON.stringify([
+        {
+          directory: relocated,
+          file: relocatedSource,
+          arguments: ["clang++", "-x", "c++", "-c", relocatedSource],
+        },
+      ]),
+    );
+    const relocatedSnapshot = await client.refresh();
+    const relocatedSourceWatch = watches.get(relocated)?.watcher;
+    const relocatedHeaderWatch = watches.get(relocatedInclude)?.watcher;
+    TestValidator.predicate(
+      "a compilation database that discovers a new external directory attaches its watch before publication",
+      relocatedSnapshot.changed &&
+        relocatedSourceWatch !== undefined &&
+        relocatedHeaderWatch !== undefined,
+    );
+
+    const localInclude = path.join(root, "include");
+    const localSource = path.join(root, "main.cpp");
+    fs.mkdirSync(localInclude);
+    fs.writeFileSync(localSource, "void caller() {}\n");
+    fs.writeFileSync(path.join(localInclude, "fixture.h"), "void callee();\n");
+    fs.writeFileSync(
+      path.join(root, "compile_commands.json"),
+      JSON.stringify([
+        {
+          directory: root,
+          file: localSource,
+          arguments: ["clang++", "-x", "c++", "-c", localSource],
+        },
+      ]),
+    );
+    await client.refresh();
+    TestValidator.predicate(
+      "dependency directories removed from the compilation universe release their watches",
+      !watches.has(external) &&
+        !watches.has(include) &&
+        !watches.has(relocated) &&
+        !watches.has(relocatedInclude),
+    );
+    relocatedSourceWatch?.emit("change", "change", "main.cpp");
+    relocatedHeaderWatch?.emit("error", new Error("retired directory watch"));
+    const dirtyInputs = (
+      client as unknown as { dirtyInputs: Set<string> }
+    ).dirtyInputs;
+    TestValidator.predicate(
+      "late events from retired directory watches cannot reintroduce stale inputs",
+      !dirtyInputs.has(relocatedSource) &&
+        !dirtyInputs.has(path.join(relocatedInclude, "fixture.h")),
+    );
+    fs.writeFileSync(
+      path.join(root, "compile_commands.json"),
+      JSON.stringify([
+        {
+          directory: external,
+          file: source,
+          arguments: ["clang++", "-x", "c++", "-c", source],
+        },
+      ]),
+    );
+    await client.refresh();
+    TestValidator.predicate(
+      "shutdown retains an active external parent watch to close",
+      [...parentWatches.values()].some((watch) => watch.watcher !== undefined),
+    );
+  } finally {
+    fs.watch = originalWatch;
+    fs.statSync = originalStatSync;
+    await client.close();
+  }
+}
+
+async function assertClientCloseDoesNotReopenInputWatches(): Promise<void> {
+  const root = GraphPaths.createTempDirectory("samchon-graph-cpp-close-watch-");
+  const source = path.join(root, "main.cpp");
+  fs.writeFileSync(source, "void caller() {}\n");
+  fs.writeFileSync(
+    path.join(root, "compile_commands.json"),
+    JSON.stringify([
+      {
+        directory: root,
+        file: source,
+        arguments: ["clang++", "-x", "c++", "-c", source],
+      },
+    ]),
+  );
+  const client = cppClient(root, []);
+  await client.refresh();
+  const state = client as unknown as {
+    dirtyInputs: Set<string>;
+    inputWatches: Map<string, { watcher?: fs.FSWatcher }>;
+  };
+  const retiredWatcher = [...state.inputWatches.values()].find(
+    (watch) => watch.watcher !== undefined,
+  )?.watcher;
+  const pending = client.refresh();
+  const rejection = rejected(
+    "closing a refresh prevents its deferred input event turn from reopening directory watches",
+    pending,
+    "session is closed",
+  );
+  await client.close();
+  await rejection;
+  retiredWatcher?.emit("change", "change", "main.cpp");
+  retiredWatcher?.emit("error", new Error("retired fixture watcher"));
+  TestValidator.equals(
+    "a closed C/C++ session neither reopens nor accepts late events into its input watch state",
+    [state.inputWatches.size, state.dirtyInputs.size],
+    [0, 0],
+  );
+}
+
 async function assertClientFailures(root: string): Promise<void> {
   const retry = cppClient(root, ["--retry=1", "--content-modified=1"]);
   TestValidator.equals(
-    "retryable Clang readiness and movement errors are polled to success",
-    (await retry.refresh()).changed,
+    "an undefined deadline keeps retrying Clang after the former private ceiling",
+    (await beyondLegacyReadyDeadline(() => retry.refresh())).changed,
     true,
   );
   await retry.close();
+
+  const boundedRetry = cppClient(root, ["--retry=1"], {
+    readyTimeoutMs: 10_000,
+  });
+  TestValidator.equals(
+    "a bounded readiness wait clamps its backoff and can still recover",
+    (await boundedRetry.refresh()).changed,
+    true,
+  );
+  await boundedRetry.close();
 
   const movementRoot = fixtureRoot();
   const movementWatchLog = path.join(movementRoot, "movement-watches.ndjson");
@@ -1451,13 +1952,30 @@ async function assertClientFailures(root: string): Promise<void> {
     }
   ).initialize(new AbortController().signal);
   const delayAbort = new AbortController();
-  const delayed = delaying.refresh({ signal: delayAbort.signal });
-  setTimeout(() => delayAbort.abort("delay cancellation"), 20).unref?.();
-  await rejected(
-    "retry delay remains cancellable",
-    delayed,
-    "cancel",
-  );
+  const originalSetTimeout = globalThis.setTimeout;
+  let enterDelay!: () => void;
+  const enteredDelay = new Promise<void>((resolve) => {
+    enterDelay = resolve;
+  });
+  globalThis.setTimeout = ((
+    callback: (...args: unknown[]) => void,
+    milliseconds?: number,
+    ...args: unknown[]
+  ) => {
+    const timer = originalSetTimeout(callback, milliseconds, ...args);
+    // The request timeout is 5,000 ms; 50 ms is the client's first retry
+    // backoff. Resolve only once that timer has actually been installed.
+    if (milliseconds === 50) enterDelay();
+    return timer;
+  }) as typeof setTimeout;
+  try {
+    const delayed = delaying.refresh({ signal: delayAbort.signal });
+    await enteredDelay;
+    delayAbort.abort("delay cancellation");
+    await rejected("retry delay remains cancellable", delayed, "cancel");
+  } finally {
+    globalThis.setTimeout = originalSetTimeout;
+  }
   await delaying.close();
 
   const queued = cppClient(root, ["--hang"]);
@@ -1552,7 +2070,9 @@ function cppClient(
     producerCommit: COMMIT,
     initializationOptions: options.initializationOptions,
     requestTimeoutMs: 5_000,
-    readyTimeoutMs: options.readyTimeoutMs ?? 10_000,
+    ...(options.readyTimeoutMs === undefined
+      ? {}
+      : { readyTimeoutMs: options.readyTimeoutMs }),
     ...(options.pieceBudgetBytes === undefined
       ? {}
       : { pieceBudgetBytes: options.pieceBudgetBytes }),
@@ -1564,6 +2084,7 @@ function nodeShim(
   root: string,
   name: string,
   commit: string,
+  args: readonly string[] = [],
 ): string {
   const directory = path.join(root, "shims");
   fs.mkdirSync(directory, { recursive: true });
@@ -1575,6 +2096,7 @@ function nodeShim(
     `"${process.execPath}"`,
     `"${GraphPaths.fakeCppGraphServer}"`,
     `--commit=${commit}`,
+    ...args.map((argument) => JSON.stringify(argument)),
   ].join(" ");
   fs.writeFileSync(
     file,
@@ -1584,6 +2106,27 @@ function nodeShim(
   );
   if (process.platform !== "win32") fs.chmodSync(file, 0o755);
   return file;
+}
+
+async function beyondLegacyReadyDeadline<T>(operation: () => Promise<T>) {
+  const original = Object.getOwnPropertyDescriptor(performance, "now");
+  let first = true;
+  Object.defineProperty(performance, "now", {
+    configurable: true,
+    value: () => {
+      if (first) {
+        first = false;
+        return 0;
+      }
+      return 300_001;
+    },
+  });
+  try {
+    return await operation();
+  } finally {
+    if (original === undefined) delete (performance as { now?: unknown }).now;
+    else Object.defineProperty(performance, "now", original);
+  }
 }
 
 function readLines(file: string): Array<Record<string, any>> {

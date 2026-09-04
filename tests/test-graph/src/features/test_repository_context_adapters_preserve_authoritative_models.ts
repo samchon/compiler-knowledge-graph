@@ -6,12 +6,16 @@ import {
   cmakeRepositoryContextProvider,
   gradleRepositoryContextProvider,
   pnpmRepositoryContextProvider,
+  resolveCargoCommand,
 } from "@samchon/graph";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 
 import { GraphPaths } from "../internal/GraphPaths";
 import { parseGradleRepositoryContextModel } from "../../../../packages/graph/src/repository/parseGradleRepositoryContextModel";
+import { isSubPath } from "../../../../packages/graph/src/utils/isSubPath";
 
 /**
  * Each adapter reads a different owning tool, and the tempting failure is the
@@ -37,6 +41,45 @@ export const test_repository_context_adapters_preserve_authoritative_models =
       const cargo = cargoFixture(root);
       const gradle = gradleFixture(root);
       const cmake = cmakeFixture(root);
+      assertTopologyPhaseTrace();
+
+      const providerSources = [
+        "cargoRepositoryContextProvider.ts",
+        "gradleRepositoryContextProvider.ts",
+        "cmakeRepositoryContextProvider.ts",
+      ].map((file) =>
+        fs.readFileSync(
+          path.join(
+            GraphPaths.repositoryRoot,
+            "packages",
+            "graph",
+            "src",
+            "repository",
+            file,
+          ),
+          "utf8",
+        ),
+      );
+      TestValidator.predicate(
+        "Cargo, Gradle and CMake share the canonical containment rule",
+        providerSources.every(
+          (source) =>
+            source.includes('import { isSubPath } from "../utils/isSubPath"') &&
+            !source.includes("function isInside"),
+        ),
+      );
+      if (process.platform === "win32") {
+        const drive = path.parse(root).root.toUpperCase();
+        const otherDrive = drive.startsWith("C:") ? "D:\\" : "C:\\";
+        TestValidator.equals(
+          "canonical containment rejects Windows cross-drive paths and accepts case-only root spelling",
+          [
+            isSubPath(root, path.join(otherDrive, "foreign", "file")),
+            isSubPath(root.toUpperCase(), path.join(root, "inside")),
+          ],
+          [false, true],
+        );
+      }
 
       TestValidator.equals(
         "repository-context adapters detect only their owning manifests",
@@ -342,6 +385,50 @@ export const test_repository_context_adapters_preserve_authoritative_models =
           (node) => node.kind === "entrypoint" && node.name.startsWith("exports"),
         ),
       );
+      const pnpmBoundary = pnpmBoundaryFixture(root);
+      TestValidator.equals(
+        "pnpm publishes only canonical package directories as roots and marks escaping entrypoints external",
+        {
+          roots: pnpmBoundary.shards[0]!.nodes
+            .filter(
+              (node) =>
+                node.kind === "source-root" ||
+                node.kind === "generated-root",
+            )
+            .map((node) => [node.kind, node.root, node.external])
+            .sort((left, right) =>
+              String(left[1]) < String(right[1]) ? -1 : 1,
+            ),
+          entrypoints: pnpmBoundary.shards[0]!.nodes
+            .filter((node) => node.kind === "entrypoint")
+            .map((node) => [node.file, node.external]),
+        },
+        {
+          roots: [
+            ["generated-root", "pkg/dist", false],
+            ["source-root", "pkg/src", false],
+          ],
+          entrypoints: [["../outside-entry.js", true]],
+        },
+      );
+      for (const [field, value] of [
+        ["files", "src"],
+        ["scripts", "build"],
+        ["bin", ["cli.js"]],
+        ["exports", 1],
+        ["main", 1],
+      ] as const) {
+        TestValidator.error(
+          `pnpm rejects a malformed ${field} field with its manifest identity`,
+          () => pnpmMalformedManifestFixture(root, field, value),
+        );
+      }
+      TestValidator.error("pnpm names an invalid JSON manifest", () =>
+        pnpmInvalidManifestFixture(root, "{"),
+      );
+      TestValidator.error("pnpm rejects a non-object manifest root", () =>
+        pnpmInvalidManifestFixture(root, "[]"),
+      );
       TestValidator.equals(
         "pnpm falls back to package.json evidence when no workspace manifest is present",
         pnpmNoWorkspaceFixture(root).shards[0]!.nodes[0]!.evidence?.file,
@@ -404,12 +491,46 @@ export const test_repository_context_adapters_preserve_authoritative_models =
       exerciseGradleModelParser(root);
 
       const toolDirectory = path.join(root, "tools");
+      const missingToolEnv = {
+        ...process.env,
+        PATH: "",
+        SAMCHON_GRAPH_CARGO: undefined,
+      };
+      TestValidator.error("Cargo refuses an absent native executable", () =>
+        cargoRepositoryContextProvider.collect({
+          root: path.join(root, "cargo"),
+          env: missingToolEnv,
+        }),
+      );
+      TestValidator.equals(
+        "Cargo reports an absent version probe when model collection is injected",
+        cargoRepositoryContextProvider.collect(
+          { root: path.join(root, "cargo"), env: missingToolEnv },
+          () => cargoModel(root),
+        ).toolVersion,
+        "",
+      );
       installFakeRepositoryTool(toolDirectory, "pnpm");
       installFakeRepositoryTool(toolDirectory, "cargo");
       const toolEnv = {
         ...process.env,
         PATH: `${toolDirectory}${path.delimiter}${process.env.PATH ?? ""}`,
+        SAMCHON_GRAPH_CARGO: path.join(
+          toolDirectory,
+          process.platform === "win32" ? "cargo.cmd" : "cargo",
+        ),
       };
+      const tracedSession = pnpmRepositoryContextProvider.open({
+        root,
+        env: {
+          ...toolEnv,
+          FIXTURE_TOOL_MODEL: JSON.stringify(pnpmModel(root)),
+          SAMCHON_GRAPH_TOPOLOGY_TRACE: "1",
+        },
+      });
+      await tracedSession.refresh();
+      await tracedSession.close();
+      assertNativeCargoResolution(root);
       TestValidator.predicate(
         "the pnpm process boundary accepts a valid resolved workspace model",
         pnpmRepositoryContextProvider.collect({
@@ -460,7 +581,19 @@ export const test_repository_context_adapters_preserve_authoritative_models =
       for (const [provider, invalidModels] of [
         [
           pnpmRepositoryContextProvider,
-          [JSON.stringify([{ path: "" }])],
+          [
+            JSON.stringify([1]),
+            JSON.stringify([{ path: "" }]),
+            JSON.stringify([{ path: root, name: 1 }]),
+            JSON.stringify([{ path: root, private: "invalid" }]),
+            JSON.stringify([{ path: root, dependencies: "invalid" }]),
+            JSON.stringify([
+              {
+                path: root,
+                dependencies: { invalid: { path: 1 } },
+              },
+            ]),
+          ],
         ],
         [
           cargoRepositoryContextProvider,
@@ -515,6 +648,8 @@ export const test_repository_context_adapters_preserve_authoritative_models =
           "",
         );
       }
+
+      await exerciseNestedWorkspaceDiscovery(root, toolEnv);
 
       exerciseCmakeRefusals(root);
 
@@ -613,6 +748,7 @@ function pnpmModel(root: string) {
     {
       name: "@fixture/app",
       path: path.join(root, "apps", "app"),
+      private: true,
       dependencies: {
         "@fixture/lib": { path: path.join(root, "packages", "lib") },
       },
@@ -630,7 +766,7 @@ function pnpmEdgeFixture(root: string) {
     bin: "cli.js",
     exports: {
       ".": {
-        import: "esm.js",
+        import: ["esm.js", null],
         ignored: null,
       },
       "./feature": "feature.js",
@@ -649,6 +785,66 @@ function pnpmEdgeFixture(root: string) {
       },
       { name: "fallback-name", path: second },
     ],
+  );
+}
+
+function pnpmBoundaryFixture(root: string) {
+  const workspace = path.join(root, "pnpm-boundary");
+  const pkg = path.join(workspace, "pkg");
+  write(path.join(workspace, "pnpm-workspace.yaml"), "packages:\n  - pkg\n");
+  writeJson(path.join(workspace, "package.json"), {
+    name: "boundary-workspace",
+    private: true,
+  });
+  write(path.join(root, "outside-entry.js"), "export {};\n");
+  write(path.join(workspace, "outside-root", "index.ts"), "export {};\n");
+  write(path.join(pkg, "README.md"), "fixture\n");
+  write(path.join(pkg, "lint.config.ts"), "export {};\n");
+  write(path.join(pkg, "src", "index.ts"), "export {};\n");
+  writeJson(path.join(pkg, "package.json"), {
+    name: "boundary-package",
+    files: [
+      "README.md",
+      "lint.config.ts",
+      "src",
+      "dist",
+      "../outside-root",
+      "C:drive-relative-root",
+    ],
+    main: path.join(root, "outside-entry.js"),
+  });
+  return pnpmRepositoryContextProvider.collect(
+    { root: workspace, env: process.env },
+    () => [{ name: "boundary-package", path: pkg }],
+  );
+}
+
+function pnpmMalformedManifestFixture(
+  root: string,
+  field: "files" | "scripts" | "bin" | "exports" | "main",
+  value: unknown,
+): void {
+  const workspace = path.join(root, `pnpm-malformed-${field}`);
+  const pkg = path.join(workspace, "pkg");
+  write(path.join(workspace, "pnpm-workspace.yaml"), "packages:\n  - pkg\n");
+  writeJson(path.join(pkg, "package.json"), {
+    name: `malformed-${field}`,
+    [field]: value,
+  });
+  pnpmRepositoryContextProvider.collect(
+    { root: workspace, env: process.env },
+    () => [{ name: `malformed-${field}`, path: pkg }],
+  );
+}
+
+function pnpmInvalidManifestFixture(root: string, content: string): void {
+  const workspace = path.join(root, `pnpm-invalid-${content.length}`);
+  const pkg = path.join(workspace, "pkg");
+  write(path.join(workspace, "pnpm-workspace.yaml"), "packages:\n  - pkg\n");
+  write(path.join(pkg, "package.json"), content);
+  pnpmRepositoryContextProvider.collect(
+    { root: workspace, env: process.env },
+    () => [{ name: "invalid", path: pkg }],
   );
 }
 
@@ -1453,6 +1649,223 @@ function cmakeScenario(
   return reply;
 }
 
+async function exerciseNestedWorkspaceDiscovery(
+  root: string,
+  toolEnv: NodeJS.ProcessEnv,
+): Promise<void> {
+  await exerciseNestedPnpmDiscovery(root, toolEnv);
+  await exerciseNestedCargoDiscovery(root, toolEnv);
+}
+
+async function exerciseNestedPnpmDiscovery(
+  root: string,
+  toolEnv: NodeJS.ProcessEnv,
+): Promise<void> {
+  const workspace = path.join(root, "nested-pnpm");
+  const first = path.join(workspace, "groups", "a", "one");
+  const created = path.join(workspace, "groups", "b", "two");
+  const renamed = path.join(workspace, "groups", "c", "two");
+  write(
+    path.join(workspace, "pnpm-workspace.yaml"),
+    "packages:\n  - groups/*/*\n",
+  );
+  write(path.join(workspace, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n");
+  writeJson(path.join(first, "package.json"), { name: "one" });
+  const env = {
+    ...toolEnv,
+    FIXTURE_TOOL_MODEL: JSON.stringify([{ name: "one", path: first }]),
+  };
+  const session = pnpmRepositoryContextProvider.open({
+    root: workspace,
+    env,
+  });
+  const initial = await session.refresh();
+  const unchanged = await session.refresh();
+  writeJson(path.join(created, "package.json"), { name: "two" });
+  env.FIXTURE_TOOL_MODEL = JSON.stringify([
+    { name: "one", path: first },
+    { name: "two", path: created },
+  ]);
+  const afterCreate = await session.refresh();
+  fs.renameSync(path.dirname(created), path.dirname(renamed));
+  env.FIXTURE_TOOL_MODEL = JSON.stringify([
+    { name: "one", path: first },
+    { name: "two", path: renamed },
+  ]);
+  const afterRename = await session.refresh();
+  fs.rmSync(path.dirname(renamed), { recursive: true, force: true });
+  env.FIXTURE_TOOL_MODEL = JSON.stringify([{ name: "one", path: first }]);
+  const afterDelete = await session.refresh();
+  write(path.join(workspace, "pnpm-lock.yaml"), "lockfileVersion: '9.1'\n");
+  env.FIXTURE_TOOL_MODE = "failed";
+  await TestValidator.error("a failed nested pnpm refresh rejects", () =>
+    session.refresh(),
+  );
+  const retained = session.current;
+  delete env.FIXTURE_TOOL_MODE;
+  const recovered = await session.refresh();
+  TestValidator.equals(
+    "pnpm observes deep member create, rename, delete, no-op, failure and recovery",
+    [
+      initial.generation,
+      unchanged.changed,
+      afterCreate.generation,
+      packageNames(afterCreate.snapshot),
+      afterRename.generation,
+      packageNames(afterRename.snapshot),
+      afterDelete.generation,
+      packageNames(afterDelete.snapshot),
+      retained?.generation.sequence,
+      recovered.generation,
+    ],
+    [
+      1,
+      false,
+      2,
+      ["one", "two"],
+      3,
+      ["one", "two"],
+      4,
+      ["one"],
+      4,
+      5,
+    ],
+  );
+  await session.close();
+}
+
+async function exerciseNestedCargoDiscovery(
+  root: string,
+  toolEnv: NodeJS.ProcessEnv,
+): Promise<void> {
+  const workspace = path.join(root, "nested-cargo");
+  const first = path.join(workspace, "groups", "a", "one");
+  const created = path.join(workspace, "groups", "b", "two");
+  const renamed = path.join(workspace, "groups", "c", "two");
+  write(
+    path.join(workspace, "Cargo.toml"),
+    "[workspace]\nmembers=['groups/*/*']\nresolver='2'\n",
+  );
+  write(path.join(workspace, "Cargo.lock"), "");
+  writeCargoMember(first, "one");
+  const env = {
+    ...toolEnv,
+    FIXTURE_TOOL_MODEL: JSON.stringify(
+      nestedCargoModel(workspace, [["one", first]]),
+    ),
+  };
+  const session = cargoRepositoryContextProvider.open({
+    root: workspace,
+    env,
+  });
+  const initial = await session.refresh();
+  const unchanged = await session.refresh();
+  writeCargoMember(created, "two");
+  env.FIXTURE_TOOL_MODEL = JSON.stringify(
+    nestedCargoModel(workspace, [
+      ["one", first],
+      ["two", created],
+    ]),
+  );
+  const afterCreate = await session.refresh();
+  fs.renameSync(path.dirname(created), path.dirname(renamed));
+  env.FIXTURE_TOOL_MODEL = JSON.stringify(
+    nestedCargoModel(workspace, [
+      ["one", first],
+      ["two", renamed],
+    ]),
+  );
+  const afterRename = await session.refresh();
+  fs.rmSync(path.dirname(renamed), { recursive: true, force: true });
+  env.FIXTURE_TOOL_MODEL = JSON.stringify(
+    nestedCargoModel(workspace, [["one", first]]),
+  );
+  const afterDelete = await session.refresh();
+  write(path.join(workspace, "Cargo.lock"), "# moved\n");
+  env.FIXTURE_TOOL_MODE = "failed";
+  await TestValidator.error("a failed nested Cargo refresh rejects", () =>
+    session.refresh(),
+  );
+  const retained = session.current;
+  delete env.FIXTURE_TOOL_MODE;
+  const recovered = await session.refresh();
+  TestValidator.equals(
+    "Cargo observes deep member create, rename, delete, no-op, failure and recovery",
+    [
+      initial.generation,
+      unchanged.changed,
+      afterCreate.generation,
+      packageNames(afterCreate.snapshot),
+      afterRename.generation,
+      packageNames(afterRename.snapshot),
+      afterDelete.generation,
+      packageNames(afterDelete.snapshot),
+      retained?.generation.sequence,
+      recovered.generation,
+    ],
+    [
+      1,
+      false,
+      2,
+      ["one", "two"],
+      3,
+      ["one", "two"],
+      4,
+      ["one"],
+      4,
+      5,
+    ],
+  );
+  await session.close();
+}
+
+function writeCargoMember(directory: string, name: string): void {
+  write(
+    path.join(directory, "Cargo.toml"),
+    `[package]\nname='${name}'\nversion='1.0.0'\n`,
+  );
+  write(path.join(directory, "src", "lib.rs"), "pub fn fixture() {}\n");
+}
+
+function nestedCargoModel(
+  workspace: string,
+  members: ReadonlyArray<readonly [string, string]>,
+) {
+  return {
+    workspace_root: workspace,
+    workspace_members: members.map(([name]) => `${name} 1`),
+    packages: members.map(([name, directory]) => ({
+      id: `${name} 1`,
+      name,
+      version: "1.0.0",
+      manifest_path: path.join(directory, "Cargo.toml"),
+      targets: [
+        {
+          name,
+          kind: ["lib"],
+          crate_types: ["lib"],
+          src_path: path.join(directory, "src", "lib.rs"),
+        },
+      ],
+    })),
+    resolve: {
+      nodes: members.map(([name]) => ({
+        id: `${name} 1`,
+        dependencies: [],
+      })),
+    },
+  };
+}
+
+function packageNames(snapshot: {
+  nodes: readonly { kind: string; name: string; external: boolean }[];
+}): string[] {
+  return snapshot.nodes
+    .filter((node) => node.kind === "package" && !node.external)
+    .map((node) => node.name)
+    .sort();
+}
+
 function installFakeRepositoryTool(directory: string, name: string): void {
   fs.mkdirSync(directory, { recursive: true });
   const source = [
@@ -1475,6 +1888,76 @@ function installFakeRepositoryTool(directory: string, name: string): void {
     write(executable, source);
     fs.chmodSync(executable, 0o755);
   }
+}
+
+function assertNativeCargoResolution(root: string): void {
+  const workspace = path.join(root, "cargo-native-resolution");
+  const privateBin = path.join(workspace, ".samchon-graph", "bin");
+  fs.mkdirSync(privateBin, { recursive: true });
+  const executable = path.join(
+    privateBin,
+    process.platform === "win32" ? "cargo.exe" : "cargo",
+  );
+  if (process.platform === "win32") fs.copyFileSync(process.execPath, executable);
+  else {
+    write(executable, "#!/bin/sh\nexit 0\n");
+    fs.chmodSync(executable, 0o755);
+  }
+  const resolved = resolveCargoCommand(
+    workspace,
+    { ...process.env, PATH: "" },
+    ["--version"],
+  );
+  TestValidator.predicate(
+    "Cargo repository context resolves the platform-native executable without inventing cargo.cmd",
+    resolved !== undefined &&
+      path.resolve(resolved.command) === path.resolve(executable) &&
+      resolved.args.includes("--version") &&
+      !resolved.command.toLowerCase().endsWith("cargo.cmd"),
+  );
+}
+
+function assertTopologyPhaseTrace(): void {
+  const module = pathToFileURL(
+    path.join(
+      GraphPaths.repositoryRoot,
+      "packages",
+      "graph",
+      "lib",
+      "repository",
+      "topologyPhaseTrace.js",
+    ),
+  ).href;
+  const traced = spawnSync(
+    process.execPath,
+    [
+      "--input-type=module",
+      "-e",
+      `import { topologyPhaseTrace } from ${JSON.stringify(module)}; topologyPhaseTrace("fixture", "join", performance.now() - 5, { nodes: 2 });`,
+    ],
+    {
+      encoding: "utf8",
+      env: process.env,
+      windowsHide: true,
+    },
+  );
+  const prefix = "@samchon/graph: topology-phase=";
+  const line = traced.stderr
+    .split(/\r?\n/)
+    .find((entry) => entry.startsWith(prefix));
+  const row = JSON.parse(line?.slice(prefix.length) ?? "null") as Record<
+    string,
+    unknown
+  > | null;
+  TestValidator.equals(
+    "topology phase traces are opt-in structured diagnostics",
+    [traced.status, row?.schemaVersion, row?.provider, row?.phase, row?.nodes],
+    [0, 1, "fixture", "join", 2],
+  );
+  TestValidator.predicate(
+    "topology phase traces report a nonnegative duration",
+    typeof row?.durationMs === "number" && row.durationMs >= 0,
+  );
 }
 
 function write(file: string, content: string): void {

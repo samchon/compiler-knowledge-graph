@@ -210,11 +210,16 @@ export class BatchGraphSession implements IBulkGraphSession {
       }
       let producerFailure: Error | undefined;
       try {
-        await this.run(
-          this.options.command,
-          this.options.indexArgs(artifact),
-          signal,
-        );
+        const produce = this.options.produce;
+        if (produce !== undefined) {
+          await produce({ artifact, signal });
+        } else {
+          await this.run(
+            this.options.command,
+            this.options.indexArgs(artifact),
+            signal,
+          );
+        }
       } catch (error) {
         // `run` crosses the only unknown-rejection boundary through `enqueue`,
         // which normalizes it before this promise can reject.
@@ -427,16 +432,12 @@ export class BatchGraphSession implements IBulkGraphSession {
             abortedProcessError(
               this.options.provider,
               command.command,
-              // Bounded before it is labelled, not after. A producer killed
-              // after an hour is the one most likely to have filled the whole
-              // 64 KiB stderr buffer with progress, and the last of that says
-              // where it had got to — but slicing the finished sentence would
-              // cut off the `(no stderr; last of stdout)` attribution whenever
-              // the fallback text is long, leaving a reader unable to tell a
-              // diagnosis from a scraped stdout tail. The exit-code path keeps
-              // its full text: a producer that chose to stop usually said why
-              // once, and this one did not choose to stop at all.
-              failureDetail(boundedTail(stderr), stdout),
+              // Keep the same bounded, attributed tails used for an ordinary
+              // non-zero exit. A producer killed after an hour is especially
+              // likely to have filled the capture buffers with progress, but
+              // the final lines still say where it got to. Bounding before
+              // labelling also keeps the stream attribution intact.
+              failureDetail(stderr, stdout),
             ),
           );
           return;
@@ -572,13 +573,25 @@ function relocateArtifact(produced: string, artifact: string): void {
 }
 
 export namespace BatchGraphSession {
-  export interface IOptions {
+  export type IOptions = ICommonOptions &
+    (
+      | {
+          indexArgs: (artifact: string) => string[];
+          produce?: undefined;
+        }
+      | {
+          indexArgs?: undefined;
+          /** Resident producer that writes the isolated artifact directly. */
+          produce: (props: IProduceProps) => Promise<void>;
+        }
+    );
+
+  interface ICommonOptions {
     root: string;
     languages: readonly GraphLanguage[];
     provider: string;
     command: IGraphProvider.ICommand;
     artifactName: string;
-    indexArgs: (artifact: string) => string[];
 
     /**
      * Existing directory that owns this session's unique generation children.
@@ -622,6 +635,11 @@ export namespace BatchGraphSession {
       command: IGraphProvider.ICommand,
       args: readonly string[],
     ) => Promise<string>;
+  }
+
+  export interface IProduceProps {
+    artifact: string;
+    signal: AbortSignal | undefined;
   }
 }
 
@@ -710,34 +728,42 @@ function combineSignals(
 /**
  * What the tool said about its own failure, wherever it said it.
  *
- * stderr first, because that is where a well-behaved tool puts diagnostics. But
- * a build wrapper is not one tool — `scip-java` runs the project's real Gradle
- * or Maven build, and Gradle reports failures on stdout. The benchmark's java
- * lane failed with `exited with code 1` and nothing else for exactly that
- * reason: the whole explanation had been captured and then dropped because it
- * arrived on the wrong stream.
+ * A build wrapper is not one tool. The JVM can announce `JAVA_TOOL_OPTIONS` on
+ * stderr while Maven prints the actual failure on stdout, so preferring either
+ * non-empty stream drops evidence the other one alone owns. Keep both tails
+ * attributed when both spoke.
  *
  * The tail rather than the head, since a build prints its failure last. Bounded
  * because stdout is the artifact channel for some providers, and an index is not
  * something to paste into an error message.
  */
 function failureDetail(stderr: string, stdout: string): string {
-  const detail = stderr.trim();
-  if (detail !== "") return `: ${detail}`;
-  const fallback = stdout.trim();
-  if (fallback === "") return "";
-  const tail = fallback.slice(-FAILURE_DETAIL_LIMIT);
-  return `: (no stderr; last of stdout) ${
-    tail.length < fallback.length ? `…${tail}` : tail
-  }`;
+  const error = stderr.trim();
+  const output = stdout.trim();
+  if (error === "" && output === "") return "";
+  if (error === "") {
+    return `: (no stderr; last of stdout) ${boundedTail(output)}`;
+  }
+  if (output === "") return `: ${boundedTail(error)}`;
+  const stderrLimit = Math.floor(FAILURE_DETAIL_LIMIT / 2);
+  return (
+    `: stderr tail: ${boundedTail(error, stderrLimit)}` +
+    `; stdout tail: ${boundedTail(
+      output,
+      FAILURE_DETAIL_LIMIT - stderrLimit,
+    )}`
+  );
 }
 
 /** Enough for a build tool's failure summary, short of an artifact. */
 const FAILURE_DETAIL_LIMIT = 2000;
 
 /** The end of a producer's output, which is where its last progress is. */
-function boundedTail(text: string): string {
+function boundedTail(
+  text: string,
+  limit: number = FAILURE_DETAIL_LIMIT,
+): string {
   const trimmed = text.trim();
-  if (trimmed.length <= FAILURE_DETAIL_LIMIT) return trimmed;
-  return `…${trimmed.slice(-FAILURE_DETAIL_LIMIT)}`;
+  if (trimmed.length <= limit) return trimmed;
+  return `…${trimmed.slice(-limit)}`;
 }

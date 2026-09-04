@@ -1,10 +1,12 @@
-// `minEdges` gates the relationship edges an experiment must produce. It is set
-// to 1 for languages whose reference edges are empirically confirmed against a
-// real server (see the LSP experiment CI matrix) so a regression back to the
-// "symbols but no edges" failure is caught. Languages still awaiting a first
-// real-server measurement keep 0; the runner always records the observed count,
-// so the CI artifact reports the true number and the gate can be tightened once
-// a language is confirmed.
+import {
+  CLANG_PRODUCER_COMMIT,
+  CLANG_PRODUCER_REPOSITORY,
+} from "./clang-producer.mjs";
+
+// `minNodes` and `minEdges` gate the graph a pinned experiment must produce.
+// Rows use measured lower bounds only where the fixture has established them;
+// the result artifact always records the observed counts so a gate can be
+// tightened without guessing.
 export const LANGUAGE_EXPERIMENTS = [
   {
     language: "typescript",
@@ -81,7 +83,8 @@ export const LANGUAGE_EXPERIMENTS = [
     strictAuthority: "analyzer",
     strictTool: "samchon-rust-analyzer",
     producerRepository: "https://github.com/samchon/rust-analyzer.git",
-    producerCommit: "2850ecba80311bebd4cdaa9fedc5321533b5b1e7",
+    producerCommit: "378f220482c298775910f0fc46e8fda1bc516ecc",
+    nativeBaseline: "samchon-rust-analyzer prime-caches .",
     requiredCapabilities: [
       "coverage",
       "diagnostics",
@@ -109,7 +112,7 @@ export const LANGUAGE_EXPERIMENTS = [
     ],
     crossFileEdge: "references",
     lifecycle: {
-      sourceFile: "src/lib.rs",
+      sourceFile: "src/server.rs",
       editSuffix: "\n// samchon-graph lifecycle edit\n",
       createFile: "examples/samchon_graph_experiment.rs",
       renamedFile: "examples/samchon_graph_experiment_renamed.rs",
@@ -128,24 +131,37 @@ export const LANGUAGE_EXPERIMENTS = [
       failureFile: "Cargo.toml",
       failureSuffix: "\n[malformed",
       failurePolicy: "reject",
+      performance: {
+        noopSamples: 20,
+        editSamples: 20,
+        noopP95MaxMs: 250,
+        editP95MaxMs: 2_000,
+        editFind: "broadcast::channel(1)",
+        editReplacements: ["broadcast::channel(2)", "broadcast::channel(3)"],
+      },
     },
   },
   {
     language: "cpp",
-    repository: "https://github.com/fmtlib/fmt.git",
-    commit: "bcaa44d05579c75a83571821faee7acf6a9a0d55",
+    repository: "https://github.com/samchon/graph-benchmark-leveldb.git",
+    commit: "7ee830d02b623e8ffe0b95d59a74db1e58da04c5",
     // Uncapped: the native snapshot publishes a whole-compilation-database
     // generation and refuses a file cap.
     //
     // The compilation database enumerates every native clangd graph view and
     // is what a CMake project has to be configured to produce; preparation
     // itself compiles nothing.
-    prepare: "cmake -S . -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
+    prepare:
+      "cmake -S . -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DLEVELDB_BUILD_TESTS=OFF -DLEVELDB_BUILD_BENCHMARKS=OFF",
     strictProvider: "clangd-snapshot",
     strictAuthority: "compiler",
     strictTool: "samchon-clangd",
-    producerRepository: "https://github.com/samchon/llvm-project.git",
-    producerCommit: "e33d8f51552a523b5696691738f1ef95f8e3a730",
+    producerRepository: CLANG_PRODUCER_REPOSITORY,
+    producerCommit: CLANG_PRODUCER_COMMIT,
+    nativeBaseline: {
+      kind: "clang-background-index",
+      command: "samchon-clangd",
+    },
     // A whole-compilation-database producer is not ready when it starts; it
     // is ready when clangd has background-indexed every translation unit the
     // database registers. The 180-second default expired on libuv with 62 of
@@ -200,16 +216,34 @@ export const LANGUAGE_EXPERIMENTS = [
       "references",
     ],
     crossFileEdge: "references",
+    representativeEdges: [
+      {
+        kind: "calls",
+        from: "leveldb::DBImpl::Get",
+        to: "leveldb::MemTable::Get",
+      },
+      {
+        kind: "accesses",
+        from: "leveldb::DBImpl::Get",
+        to: "leveldb::DBImpl::mutex_",
+      },
+      {
+        kind: "type_ref",
+        from: "leveldb::DBImpl::Get",
+        to: "leveldb::Slice",
+      },
+      { kind: "extends", from: "leveldb::DBImpl", to: "leveldb::DB" },
+    ],
     semanticLimitation:
       "The native Clang lane retains exact TU/configuration facts, while calls, instantiation, exports, implements and dispatch stay explicitly partial and C/C++ have no decorates, renders or tests family.",
     // Background jobs may finish in any order, but the native shard set,
     // manifest and generation digest are canonical and publish only after all
     // registered configurations agree on one complete source state.
     lifecycle: {
-      sourceFile: "src/format.cc",
+      sourceFile: "db/db_impl.cc",
       editSuffix: "\n// samchon-graph lifecycle edit\n",
-      createFile: "samchon_graph_experiment.cc",
-      renamedFile: "samchon_graph_experiment_renamed.cc",
+      createFile: "db/samchon_graph_experiment.cc",
+      renamedFile: "db/samchon_graph_experiment_renamed.cc",
       createText:
         "int samchonGraphExperiment(void) { return 0; }\n",
       createdSymbol: "samchonGraphExperiment",
@@ -223,26 +257,34 @@ export const LANGUAGE_EXPERIMENTS = [
       // A malformed compilation database invalidates the native universe, so
       // the strict resident rejects publication until it is repaired.
       failurePolicy: "reject",
+      noopPerformance: {
+        samples: 20,
+        p95MaxMs: 250,
+      },
     },
     minNodes: 1,
     minEdges: 1,
   },
   {
     language: "c",
-    repository: "https://github.com/libuv/libuv.git",
-    commit: "9d51562c10be60bc1126a3d71803b1038f4fbb7e",
+    repository: "https://github.com/samchon/graph-benchmark-redis.git",
+    commit: "6bf6224c3dad518329ddc893ef9c5d58dcbabdeb",
     // Uncapped: the native snapshot publishes a whole-compilation-database
     // generation and refuses a file cap.
     //
     // The compilation database enumerates every native clangd graph view and
     // is what a CMake project has to be configured to produce; preparation
     // itself compiles nothing.
-    prepare: "cmake -S . -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
+    prepare: "bear -- make -j2",
     strictProvider: "clangd-snapshot",
     strictAuthority: "compiler",
     strictTool: "samchon-clangd",
-    producerRepository: "https://github.com/samchon/llvm-project.git",
-    producerCommit: "e33d8f51552a523b5696691738f1ef95f8e3a730",
+    producerRepository: CLANG_PRODUCER_REPOSITORY,
+    producerCommit: CLANG_PRODUCER_COMMIT,
+    nativeBaseline: {
+      kind: "clang-background-index",
+      command: "samchon-clangd",
+    },
     // A whole-compilation-database producer is not ready when it starts; it
     // is ready when clangd has background-indexed every translation unit the
     // database registers. The 180-second default expired on libuv with 62 of
@@ -297,26 +339,36 @@ export const LANGUAGE_EXPERIMENTS = [
       "references",
     ],
     crossFileEdge: "references",
+    representativeEdges: [
+      { kind: "calls", from: "processCommand", to: "lookupCommand" },
+      { kind: "calls", from: "processCommand", to: "call" },
+      { kind: "accesses", from: "processCommand", to: "server" },
+      { kind: "type_ref", from: "processCommand", to: "client" },
+    ],
     semanticLimitation:
       "The native Clang lane retains exact TU/configuration facts, while calls, instantiation, exports, implements and dispatch stay explicitly partial and C/C++ have no decorates, renders or tests family.",
     // C and C++ share the same atomic, canonical generation boundary.
     lifecycle: {
-      sourceFile: "src/uv-common.c",
+      sourceFile: "src/server.c",
       editSuffix: "\n// samchon-graph lifecycle edit\n",
-      createFile: "samchon_graph_experiment.c",
-      renamedFile: "samchon_graph_experiment_renamed.c",
+      createFile: "src/samchon_graph_experiment.c",
+      renamedFile: "src/samchon_graph_experiment_renamed.c",
       createText:
         "int samchonGraphExperiment(void) { return 0; }\n",
       createdSymbol: "samchonGraphExperiment",
       // The database itself, because that is what this producer reads. Breaking
       // CMakeLists would leave an already-generated database untouched and test
       // nothing.
-      buildFile: "build/compile_commands.json",
-      compilationDatabase: "build/compile_commands.json",
-      failureFile: "build/compile_commands.json",
+      buildFile: "compile_commands.json",
+      compilationDatabase: "compile_commands.json",
+      failureFile: "compile_commands.json",
       failureSuffix: "\n[ not json",
       // The C and C++ slices share the same strict rejection boundary.
       failurePolicy: "reject",
+      noopPerformance: {
+        samples: 20,
+        p95MaxMs: 250,
+      },
     },
     minNodes: 1,
     minEdges: 1,
@@ -327,14 +379,24 @@ export const LANGUAGE_EXPERIMENTS = [
     // Use scip-java's own pinned Maven fixture for that contract; Gson remains
     // the separate large-corpus timing proof.
     repository: "https://github.com/samchon/scip-java.git",
-    commit: "32eca214a413d1b8a375c481f666ff8a4ec96773",
+    commit: "fefb1bfb2e3fac90cd90f64fc07cc57fb533b49a",
     projectRoot: "scip-java/src/test/resources/fixtures/maven/basic",
     // The producer and the corpus are one checkout on purpose. The fixture is
     // the producer's own Maven project, so a pin that named a different
     // revision for each would measure a plugin against a build it was never
     // tested with.
     producerRepository: "https://github.com/samchon/scip-java.git",
-    producerCommit: "32eca214a413d1b8a375c481f666ff8a4ec96773",
+    producerCommit: "fefb1bfb2e3fac90cd90f64fc07cc57fb533b49a",
+    producerTree: "8cb3dd9b84fbbbb8dba22827b9d8e7dd21c3f46e",
+    jdtProducerRepository: "https://github.com/samchon/eclipse.jdt.ls.git",
+    jdtProducerCommit: "0d55a6c13d14e0d0466eeb021920349b3d0c6d35",
+    jdtProducerTree: "18937e87ae9b42098100b398fde8cfb87f4c9b7c",
+    nativeBaseline: {
+      kind: "shell",
+      command: "mvn -q test-compile",
+      warmup: true,
+      clean: ["target"],
+    },
     strictProvider: "javac-graph",
     strictAuthority: "compiler",
     // The launcher and the producer are two names. `scip-java` is the command
@@ -357,15 +419,6 @@ export const LANGUAGE_EXPERIMENTS = [
     // counts that transition rather than pre-editing the pinned baseline.
     semanticEdges: ["contains", "instantiates"],
     crossFileEdge: "instantiates",
-    // The producer cannot yet reproduce its own generation, and the exemption
-    // names the exact reason rather than accepting an unexplained difference.
-    // Restoring the original sources returns identical facts — five nodes and
-    // eight edges both times — and a different build universe, because the
-    // universe is digested from the raw javac invocation and that invocation
-    // names the temporary directory the launcher unpacked its compiler plugin
-    // into, which is new on every run. Filed at samchon/scip-java#1.
-    regenerationLimitation:
-      "scip-java 32eca214a413d1b8a375c481f666ff8a4ec96773 digests its build universe from the raw javac invocation, which names the per-run temporary directory its embedded plugin jar is unpacked into, so an unchanged checkout reproduces identical facts under a different universe",
     lifecycle: {
       sourceFile: "src/main/java/com/Example.java",
       editSuffix: "\n// samchon-graph lifecycle edit\n",
@@ -391,120 +444,263 @@ export const LANGUAGE_EXPERIMENTS = [
       failureFile: "pom.xml",
       failureSuffix: "\n<not-closed",
       failurePolicy: "reject",
+      // On a reproduction failure, expose the exact normalized compiler input
+      // that moved rather than only the public target-universe digest.
+      regenerationEvidenceRoot: "target/scip-targetroot",
     },
     minNodes: 1,
     minEdges: 0,
   },
   {
-    // serilog has a root .sln, which csharp-ls needs to load a project context;
-    // the dotnet/samples monorepo has none and yields zero symbols.
+    // Serilog exercises a real multi-project solution while staying small
+    // enough for repeated immutable Roslyn Solution generations.
     language: "csharp",
     repository: "https://github.com/serilog/serilog.git",
     commit: "07d39cfb2928076ecd902a61d295f90d74fe1fa5",
-    // Uncapped, because scip-dotnet refuses a cap: a SCIP indexer publishes a
-    // whole-workspace artifact and has no bounded mode, so a capped row is a row
-    // it declines to serve.
-    strictProvider: "scip-dotnet",
-    strictAuthority: "semantic-index",
-    strictTool: "scip-dotnet",
-    requiredCapabilities: ["universe", "diskDigests"],
-    // Declarations, but no edge family. scip-dotnet 0.2.14 writes occurrence
-    // ranges without enclosing_range, SymbolInformation without
-    // enclosing_symbol, and no type-definition relationship. The common
-    // adapter can therefore publish compiler-resolved declarations but cannot
-    // ground a reference origin or either of its other common SCIP families.
-    semanticEdges: [],
-    semanticLimitation:
-      "scip-dotnet 0.2.14 emits no occurrence enclosing_range, SymbolInformation.enclosing_symbol, or type-definition relationship, so its semantic declarations carry no provable graph edge family",
+    strictProvider: "roslyn-workspace",
+    strictAuthority: "compiler",
+    strictTool: "samchon-roslyn",
+    timeoutMs: 300_000,
+    requiredCapabilities: [
+      "universe",
+      "diskDigests",
+      "incremental",
+      "immutableSolution",
+      "sourceGeneratedDocuments",
+    ],
+    semanticEdges: ["accesses"],
+    crossFileEdge: "accesses",
+    nativeBaseline: "samchon-roslyn --measure-load .",
     lifecycle: {
-      sourceFile: "src/Serilog/Log.cs",
+      sourceFile: "src/Serilog/Events/ScalarValue.cs",
       editSuffix: "\n// samchon-graph lifecycle edit\n",
       createFile: "src/Serilog/SamchonGraphExperiment.cs",
       renamedFile: "src/Serilog/SamchonGraphExperimentRenamed.cs",
       createText:
-        "namespace Serilog;\n\ninternal static class SamchonGraphExperiment\n{\n    internal static string Run() => \"strict-lifecycle\";\n}\n",
+        "namespace Serilog;\n\ninternal static class SamchonGraphExperiment\n{\n    internal static ILogger Run() => Log.Logger;\n}\n",
       createdSymbol: "SamchonGraphExperiment",
+      createdEdge: {
+        kind: "accesses",
+        from: "Run",
+        to: "Logger",
+        crossFile: true,
+      },
       buildFile: "src/Serilog/Serilog.csproj",
       failureFile: "src/Serilog/Serilog.csproj",
       failureSuffix: "\n<NotClosed>",
-      // scip-dotnet 0.2.14 writes the index before it reads and logs
-      // MSBuildWorkspace failures, then returns zero. The malformed project is
-      // therefore not a fail-closed boundary for this producer.
-      failurePolicy: "published",
-      failureLimitation:
-        "scip-dotnet 0.2.14 logs MSBuildWorkspace failures only after writing the index and exits successfully, so a malformed C# project file publishes a degraded generation instead of rejecting it",
+      failurePolicy: "reject",
+      performance: {
+        noopSamples: 5,
+        editSamples: 3,
+        noopP95MaxMs: 250,
+        editP95MaxMs: 2000,
+        editFind: "if (Value == null) return 0;",
+        editReplacements: [
+          "if (Value == null) return 1;",
+          "if (Value == null) return 2;",
+        ],
+      },
     },
-    minNodes: 1,
-    minEdges: 0,
-    // The upstream solution's perf/AOT entries make csharp-ls return no symbols.
-    // Keep the product and main test projects so experiments retain both the
-    // runtime graph and its test anchors without loading those broken entries.
+    // Select and restore exactly the product and test projects before the
+    // resident service starts; refreshes themselves never invoke restore.
+    // NuGet's live advisory feed is not part of this commit-pinned compiler
+    // fixture, and Serilog promotes its changing audit warnings to errors.
     prepare:
-      "dotnet new sln -n Serilog --format sln --force && dotnet sln Serilog.sln add src/Serilog/Serilog.csproj test/Serilog.Tests/Serilog.Tests.csproj",
+      "dotnet new sln -n Serilog --format sln --force && dotnet sln Serilog.sln add src/Serilog/Serilog.csproj test/Serilog.Tests/Serilog.Tests.csproj && dotnet restore Serilog.sln -p:NuGetAudit=false",
   },
   {
     language: "kotlin",
-    // The producer's exact Kotlin 2.3.20 fixture keeps ten clean lifecycle
-    // builds bounded and exercises the same compiler minor as Koin. Language
-    // setup builds the producer from this same commit and supplies one verified
-    // Gradle distribution because the fixture intentionally carries no wrapper.
-    repository: "https://github.com/scip-code/scip-java.git",
-    commit: "e940c1889767a81347387067a375320dc6f5d83e",
-    projectRoot:
-      "scip-java/src/test/resources/fixtures/gradle/kotlin2",
-    strictProvider: "scip-kotlinc",
-    strictAuthority: "semantic-index",
-    strictTool: "scip-java",
-    requiredCapabilities: ["universe", "diskDigests"],
-    semanticEdges: ["references"],
-    crossFileEdge: "references",
-    // This source snapshot and its setup manifest pin the plugin build to Kotlin
-    // 2.3.20. scip-java still does not publish the compiler revision selected by
-    // the indexed build itself, so the empty runtime field remains explicit.
-    compilerLimitation:
-      "scip-java e940c1889767a81347387067a375320dc6f5d83e is built with Kotlin 2.3.20 but does not expose the compiler revision selected by the indexed Gradle build, so runtime compiler provenance cannot name it without guessing",
+    // This immutable fork keeps Koin's JVM performance module independent of
+    // the repository-wide multiplatform build while retaining its 400-module,
+    // roughly 1,600-class graph. The producer is pinned independently because
+    // the experiment must prove the exact compiler plugin that wrote its facts.
+    repository: "https://github.com/samchon/graph-benchmark-koin.git",
+    commit: "cca45c63d1088888f445304e13f9fbc310f62078",
+    projectRoot: "examples/jvm-perfs",
+    producerRepository: "https://github.com/samchon/scip-java.git",
+    producerCommit: "3a1565d0647d89a28880fa40ecbef0966a1a328c",
+    producerTree: "3b5c24126b0670c9c9bd9369df71fcd112b34b67",
+    // The isolated copy has no build outputs. Compile the same Kotlin/JVM
+    // target once without the injected graph plugin so the cold strict row
+    // reports exporter overhead against Kotlin's own ordinary build rather
+    // than against the historical scip-java or language-server lanes.
+    nativeBaseline: "gradle compileKotlin",
+    strictProvider: "kotlinc-graph",
+    strictAuthority: "compiler",
+    strictTool: "scip-kotlinc-k2-graph",
+    strictMinimums: true,
+    requiredCapabilities: [
+      "coverage",
+      "diagnostics",
+      "diskDigests",
+      "incremental",
+      "sourceDigests",
+      "universe",
+      "unresolved",
+    ],
+    semanticEdges: ["calls"],
+    crossFileEdge: "calls",
     lifecycle: {
-      sourceFile: "src/main/kotlin/foo/Example.kt",
+      sourceFile:
+        "src/main/kotlin/org/koin/benchmark/GraphLifecycle.kt",
       editSuffix: "\n// samchon-graph lifecycle edit\n",
-      createFile: "src/main/kotlin/foo/SamchonGraphExperiment.kt",
+      createFile:
+        "src/main/kotlin/org/koin/benchmark/SamchonGraphExperiment.kt",
       renamedFile:
-        "src/main/kotlin/foo/SamchonGraphExperimentRenamed.kt",
+        "src/main/kotlin/org/koin/benchmark/SamchonGraphExperimentRenamed.kt",
       createText:
-        "package foo\n\nfun samchonGraphExperiment(): Example = Example\n",
+        "package org.koin.benchmark\n\ninternal fun samchonGraphExperiment() = perfModule400()\n",
       createdSymbol: "samchonGraphExperiment",
       createdEdge: {
-        kind: "references",
+        kind: "calls",
         from: "samchonGraphExperiment",
-        to: "Example",
+        to: "perfModule400",
         crossFile: true,
       },
-      buildFile: "build.gradle",
-      failureFile: "build.gradle",
-      failureSuffix: "\n}\n",
+      buildFile: "build.gradle.kts",
+      buildEditSuffix:
+        '\n\ntasks.withType<KotlinJvmCompile>().configureEach {\n    compilerOptions {\n        moduleName.set("samchonGraphExperiment")\n    }\n}\n',
+      failureFile: "build.gradle.kts",
+      failureSuffix: "\nnotAValidGradleBlock {\n",
       failurePolicy: "reject",
+      kotlinBuildReportRoot:
+        "build/scip-targetroot/META-INF/kotlin-build-reports",
+      performance: {
+        noopSamples: 5,
+        editSamples: 3,
+        noopP95MaxMs: 250,
+        editP95MaxMs: 2000,
+        editFind: "graphLifecycleMarker(): Int = 1",
+        editReplacements: [
+          "graphLifecycleMarker(): Int = 2",
+          "graphLifecycleMarker(): Int = 3",
+        ],
+      },
     },
-    minNodes: 1,
-    minEdges: 0,
+    minNodes: 1_000,
+    minEdges: 1_000,
   },
   {
     language: "swift",
     repository: "https://github.com/apple/swift-argument-parser.git",
     commit: "2f77f2fccb6e84fecff338c37b199e33e7dfd119",
+    nativeBaseline:
+      "swift build --enable-index-store --build-tests -Xswiftc -index-include-locals",
+    strictProvider: "swift-indexstore",
+    strictAuthority: "compiler",
+    strictTool: "samchon-swift-graph",
+    strictMinimums: true,
+    requiredCapabilities: [
+      "coverage",
+      "diagnostics",
+      "diskDigests",
+      "incremental",
+      "sourceDigests",
+      "universe",
+      "unresolved",
+      "explicitOutputUnits",
+      "indexStoreDB",
+      "sourceEnrichment",
+      "swiftpm",
+    ],
+    semanticEdges: ["calls", "references"],
+    crossFileEdge: "calls",
+    lifecycle: {
+      sourceFile: "Sources/ArgumentParser/Utilities/CollectionExtensions.swift",
+      editSuffix: "\n// samchon-graph lifecycle edit\n",
+      createFile: "Sources/ArgumentParser/Utilities/SamchonGraphExperiment.swift",
+      renamedFile:
+        "Sources/ArgumentParser/Utilities/SamchonGraphExperimentRenamed.swift",
+      createText:
+        "func samchonGraphExperiment(_ values: [Int]) -> [Int] {\n  values.mapEmpty { [1] }\n}\n",
+      createdSymbol: "samchonGraphExperiment",
+      createdEdge: {
+        kind: "calls",
+        from: "samchonGraphExperiment",
+        to: "mapEmpty",
+        crossFile: true,
+      },
+      buildFile: "Package.swift",
+      buildEditSuffix: "\n// samchon-graph build-universe edit\n",
+      failureFile: "Package.swift",
+      failureSuffix: "\nthis is not valid Swift package syntax\n",
+      failurePolicy: "reject",
+      performance: {
+        noopSamples: 5,
+        editSamples: 3,
+        noopP95MaxMs: 250,
+        editP95MaxMs: 20_000,
+        editFind: "isEmpty ? replacement() : self",
+        editReplacements: [
+          "isEmpty ? replacement() : self /* graph edit 1 */",
+          "isEmpty ? replacement() : self /* graph edit 2 */",
+        ],
+      },
+    },
     maxFiles: 120,
-    minNodes: 1,
-    minEdges: 1,
-    feasibilityBlocked:
-      "swift build emits an index store during an ordinary debug build and its records carry RelChild, but the on-disk format is toolchain-internal, versioned v5, with no third-party stability claim and no binary specification; reading it requires a compiled Swift program linking IndexStoreDB, which does not exist yet",
+    minNodes: 100,
+    minEdges: 100,
   },
   {
     language: "scala",
-    repository: "https://github.com/scala/scala3-example-project.git",
-    commit: "a327177a2bc8ef9c499726d038e56694d6f7cddb",
-    maxFiles: 120,
-    minNodes: 1,
-    minEdges: 1,
-    feasibilityBlocked:
-      "scip-java is a Java and Kotlin indexer by its own README, supported-language table, and source tree, so registering it for Scala made an installed scip-java displace the real Scala language server with a producer that cannot index the language; a SemanticDB or TASTy channel through BSP is unwritten work",
+    repository: "https://github.com/samchon/graph-benchmark-scala.git",
+    commit: "b11f22758c902bffa29513c9fcda07863a2ad996",
+    prepare: "sbt bspConfig",
+    nativeBaseline:
+      "env -u SAMCHON_GRAPH_SCALA2_PLUGIN -u SAMCHON_GRAPH_SCALA3_PLUGIN -u SAMCHON_GRAPH_SCALA_PLUGIN_VERSION sbt compile",
+    strictProvider: "scalac-graph",
+    strictAuthority: "compiler",
+    strictTool: "samchon-scala-graph",
+    strictMinimums: true,
+    requiredCapabilities: [
+      "coverage",
+      "diagnostics",
+      "diskDigests",
+      "incremental",
+      "sourceDigests",
+      "universe",
+      "unresolved",
+      "bsp",
+      "semanticdb",
+      "typedPlugins",
+      "zinc",
+    ],
+    semanticEdges: ["calls"],
+    crossFileEdge: "calls",
+    lifecycle: {
+      sourceFile: "scala3/src/main/scala/demo/Api.scala",
+      editSuffix: "\n// samchon-graph lifecycle edit\n",
+      createFile: "scala3/src/main/scala/demo/SamchonGraphExperiment.scala",
+      renamedFile:
+        "scala3/src/main/scala/demo/SamchonGraphExperimentRenamed.scala",
+      createText:
+        'package demo\n\nobject SamchonGraphExperiment:\n  def samchonGraphExperiment(): String = Helper.render("graph")\n',
+      createdSymbol: "samchonGraphExperiment",
+      createdEdge: {
+        kind: "calls",
+        from: "samchonGraphExperiment",
+        to: "render",
+        crossFile: true,
+      },
+      buildFile: "build.sbt",
+      buildEditSuffix: '\nThisBuild / scalacOptions += "-deprecation"\n',
+      failureFile: "build.sbt",
+      failureSuffix: "\nthis is not valid sbt syntax {\n",
+      failurePolicy: "reject",
+      performance: {
+        noopSamples: 5,
+        editSamples: 3,
+        noopP95MaxMs: 500,
+        editP95MaxMs: 15_000,
+        editFind: "graphLifecycleMarker(): Int = 1",
+        editReplacements: [
+          "graphLifecycleMarker(): Int = 2",
+          "graphLifecycleMarker(): Int = 3",
+        ],
+      },
+    },
+    minNodes: 30,
+    minEdges: 150,
   },
   {
     language: "zig",

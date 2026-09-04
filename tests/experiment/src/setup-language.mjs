@@ -7,6 +7,11 @@ import path from "node:path";
 
 import { findExperiment } from "./catalog.mjs";
 import {
+  CLANG_PRODUCER_BUILD_PACKAGES,
+  installClangGraphProducer,
+} from "./clang-producer.mjs";
+import { verifyGitTree } from "./git-tree.mjs";
+import {
   appendGithubPath,
   ensureDir,
   parseArgs,
@@ -19,6 +24,7 @@ import {
   resetToolManifest,
   workRoot,
 } from "./process.mjs";
+import { verifyRustGraphProducer } from "./rust-producer.mjs";
 
 const args = parseArgs(process.argv.slice(2));
 const experiment = findExperiment(args.language);
@@ -313,21 +319,10 @@ const installScipRuby = () =>
       "a068c7c3b2042b9eac563ce77ce35dcaca666b418530b1db9f932a3dbc7175dd",
   });
 
-// Indexes through the real compiler: it drives Gradle or Maven with the
-// SemanticDB plugin injected, so the JVM lanes pay a build rather than skipping
-// one. That is the trade — wall clock for facts the compiler itself produced —
-// and it has to be measured rather than assumed. Kotlin support is upstream's
-// own "less mature" than Java's, and Maven cannot index Kotlin at all; koin is
-// Gradle, so it is on the supported path.
-// scip-java v0.13.1 predates Kotlin 2.3's CompilerPluginRegistrar.pluginId
-// contract, so it cannot index current Koin. Compiler plugins are also coupled
-// to the compiler minor that loads them: #973's merged 2.4.0 tree builds but
-// fails inside Koin's 2.3.20 compiler with NoClassDefFoundError. Pin the exact
-// upstream #973 commit that completed the 2.3.20 port, before its next commit
-// moved the plugin and fixture to 2.4.0. The source archive, compiler minor and
-// fixture revision are then one reviewable generation instead of a local patch.
-const SCIP_JAVA_KOTLIN_COMMIT =
-  "e940c1889767a81347387067a375320dc6f5d83e";
+// The Kotlin graph producer is a K2 compiler plugin injected into ordinary
+// Kotlin/JVM Gradle compile tasks. Its compiler minor must match the project,
+// so the experiment pins the exact fork revision and verifies both its
+// artifact option and resident Tooling API protocol before indexing Koin.
 const SCIP_JAVA_KOTLIN_VERSION = "2.3.20";
 
 /**
@@ -336,21 +331,24 @@ const SCIP_JAVA_KOTLIN_VERSION = "2.3.20";
  * Two rows need this and they need different revisions: Kotlin needs the
  * upstream commit that completed the 2.3.20 plugin port, and Java needs the
  * fork whose `index` command writes a graph artifact at all. The revision, its
- * archive digest and the version string a run records are therefore arguments
- * rather than constants — one builder, two pins, and no local patch on either.
+ * Git tree and the version string a run records are therefore arguments rather
+ * than constants. GitHub may repackage a generated source archive without
+ * changing its contents, so the immutable extracted tree is the security and
+ * reproducibility boundary: one builder, two pins, and no local patch on either.
  */
 const installScipJavaSource = async (gradle, pin) => {
   const url = `https://codeload.github.com/${pin.repository}/tar.gz/${pin.commit}`;
   const archive = path.join(toolsRoot, `scip-java-${pin.commit}.tar.gz`);
   const source = path.join(toolsRoot, `scip-java-${pin.commit}`);
   await downloadFile(url, archive);
-  verifySha256(archive, pin.digest);
   fs.rmSync(source, { force: true, recursive: true });
   ensureDir(source);
   run(
     "tar",
     ["-xzf", archive, "--strip-components=1", "-C", source],
   );
+  verifyGitTree(source, pin.tree);
+  if (pin.verify !== undefined) pin.verify({ gradle, source });
   run(gradle, ["--no-daemon", ":scip-java:installDist"], { cwd: source });
   const launcher = path.join(
     source,
@@ -373,19 +371,55 @@ const installScipJavaSource = async (gradle, pin) => {
     tool: "scip-java",
     version: pin.version,
     source: url,
-    digest: `sha256:${pin.digest}`,
+    digest: `git-tree:${pin.tree}`,
   });
   return link;
 };
 
-const installScipJavaKotlinSnapshot = (gradle) =>
-  installScipJavaSource(gradle, {
-    repository: "scip-code/scip-java",
-    commit: SCIP_JAVA_KOTLIN_COMMIT,
-    version: `${SCIP_JAVA_KOTLIN_COMMIT}+kotlin-${SCIP_JAVA_KOTLIN_VERSION}`,
-    digest:
-      "985eb03ef165864dbae3db4453d4566e699f78761bace3e4614bf67d38ce76cf",
+const installScipJavaKotlinSnapshot = async (gradle) => {
+  if (
+    typeof experiment.producerRepository !== "string" ||
+    typeof experiment.producerCommit !== "string" ||
+    typeof experiment.producerTree !== "string"
+  ) {
+    throw new Error(
+      "kotlin: the compiler graph setup requires an exact producer repository, commit, and tree",
+    );
+  }
+  const repository = experiment.producerRepository
+    .replace(/^https:\/\/github\.com\//u, "")
+    .replace(/\.git$/u, "");
+  const link = await installScipJavaSource(gradle, {
+    repository,
+    commit: experiment.producerCommit,
+    tree: experiment.producerTree,
+    version: `${experiment.producerCommit}+kotlin-${SCIP_JAVA_KOTLIN_VERSION}`,
   });
+  const indexHelp = String(
+    run(link, ["index", "--help"], { stdio: "pipe" }).stdout,
+  );
+  const serverHelp = String(
+    run(link, ["kotlin-graph-server", "--help"], {
+      stdio: "pipe",
+    }).stdout,
+  );
+  if (!indexHelp.includes("--kotlin-graph-output")) {
+    throw new Error(
+      `kotlin: the installed scip-java does not publish --kotlin-graph-output:\n${indexHelp}`,
+    );
+  }
+  if (
+    !serverHelp.includes(
+      "Serve compiler-owned Kotlin graph generations over NDJSON.",
+    )
+  ) {
+    throw new Error(
+      `kotlin: the installed scip-java does not publish the resident graph protocol:\n${serverHelp}`,
+    );
+  }
+  process.env.SAMCHON_GRAPH_KOTLINC_GRAPH = link;
+  recordProvisionedEnvironment("SAMCHON_GRAPH_KOTLINC_GRAPH", link);
+};
 
 /**
  * The javac graph producer, built from the exact fork revision the consumer
@@ -401,10 +435,11 @@ const installScipJavaKotlinSnapshot = (gradle) =>
 const installJavacGraphProducer = async (gradle) => {
   if (
     typeof experiment.producerRepository !== "string" ||
-    typeof experiment.producerCommit !== "string"
+    typeof experiment.producerCommit !== "string" ||
+    typeof experiment.producerTree !== "string"
   ) {
     throw new Error(
-      "java: the javac graph setup requires an exact producer repository and commit",
+      "java: the javac graph setup requires an exact producer repository, commit, and tree",
     );
   }
   const repository = experiment.producerRepository
@@ -413,9 +448,53 @@ const installJavacGraphProducer = async (gradle) => {
   const link = await installScipJavaSource(gradle, {
     repository,
     commit: experiment.producerCommit,
+    tree: experiment.producerTree,
     version: experiment.producerCommit,
-    digest:
-      "3ef45fedc5ad60ca6af0200a9b3fe7e978eadc8df63dda0a9dcba677f50b1417",
+    verify: ({ gradle: verifiedGradle, source }) => {
+      run(
+        verifiedGradle,
+        [
+          ":scip-javac:test",
+          "--tests",
+          "org.scip_code.scip_java.javac.JavaGraphShardTest",
+          "--no-daemon",
+          "--no-configuration-cache",
+        ],
+        { cwd: source },
+      );
+      run(
+        verifiedGradle,
+        [
+          ":scip-gradle-plugin:test",
+          "--tests",
+          "org.scip_code.scip_java.gradle.GraphGenerationStoreTest",
+          "--no-daemon",
+          "--no-configuration-cache",
+        ],
+        { cwd: source },
+      );
+      run(
+        verifiedGradle,
+        [
+          ":scip-java:test",
+          "--tests",
+          "tests.GradleGraphLifecycleTest",
+          "--tests",
+          "tests.MavenGraphLifecycleTest",
+          "--tests",
+          "tests.MavenGraphPluginTest",
+          "--tests",
+          "tests.GraphAggregateRunnerTest",
+          "--tests",
+          "tests.GradleBuildToolTest",
+          "--no-daemon",
+          "--no-configuration-cache",
+          "-Pkotlin.compiler.execution.strategy=in-process",
+          "-Pkotlin.incremental=false",
+        ],
+        { cwd: source },
+      );
+    },
   });
   const help = String(
     run(link, ["index", "--help"], { stdio: "pipe" }).stdout,
@@ -426,6 +505,83 @@ const installJavacGraphProducer = async (gradle) => {
 ${help}`,
     );
   }
+  process.env.SAMCHON_GRAPH_JAVAC_GRAPH = link;
+  recordProvisionedEnvironment("SAMCHON_GRAPH_JAVAC_GRAPH", link);
+};
+
+/** Build and install the exact JDT workspace graph producer revision. */
+const installJdtGraphProducer = async () => {
+  for (const field of [
+    "jdtProducerRepository",
+    "jdtProducerCommit",
+    "jdtProducerTree",
+  ]) {
+    if (typeof experiment[field] !== "string" || experiment[field] === "") {
+      throw new Error(`java: the JDT graph setup requires an exact ${field}`);
+    }
+  }
+  const repository = experiment.jdtProducerRepository
+    .replace(/^https:\/\/github\.com\//u, "")
+    .replace(/\.git$/u, "");
+  const url = `https://codeload.github.com/${repository}/tar.gz/${experiment.jdtProducerCommit}`;
+  const archive = path.join(
+    toolsRoot,
+    `eclipse-jdt-ls-${experiment.jdtProducerCommit}.tar.gz`,
+  );
+  const source = path.join(
+    toolsRoot,
+    `eclipse-jdt-ls-${experiment.jdtProducerCommit}`,
+  );
+  await downloadFile(url, archive);
+  fs.rmSync(source, { force: true, recursive: true });
+  ensureDir(source);
+  run("tar", ["-xzf", archive, "--strip-components=1", "-C", source]);
+  verifyGitTree(source, experiment.jdtProducerTree);
+  const maven = path.join(source, "mvnw");
+  if (!fs.statSync(maven, { throwIfNoEntry: false })?.isFile()) {
+    throw new Error(`java: the pinned JDT Maven wrapper is missing at ${maven}`);
+  }
+  fs.chmodSync(maven, 0o755);
+  run(maven, ["clean", "install", "-U", "-DskipTests=true"], {
+    cwd: source,
+  });
+  run(
+    maven,
+    [
+      "verify",
+      "-pl",
+      "org.eclipse.jdt.ls.tests",
+      "-am",
+      "-Dtest=GraphSnapshotCommandTest,UnresolvedTypesQuickFixTest#testTypeInSealedTypeDeclaration,FileEventHandlerTest,CleanUpsTest",
+    ],
+    { cwd: source },
+  );
+  const launcher = path.join(
+    source,
+    "org.eclipse.jdt.ls.product",
+    "target",
+    "repository",
+    "bin",
+    "jdtls",
+  );
+  if (!fs.statSync(launcher, { throwIfNoEntry: false })?.isFile()) {
+    throw new Error(`java: the pinned JDT launcher is missing at ${launcher}`);
+  }
+  fs.chmodSync(launcher, 0o755);
+  const dedicated = path.join(binRoot, "samchon-jdtls");
+  const generic = path.join(binRoot, "jdtls");
+  for (const link of [dedicated, generic]) {
+    fs.rmSync(link, { force: true });
+    fs.symlinkSync(launcher, link);
+  }
+  process.env.SAMCHON_GRAPH_JDT_WORKSPACE = dedicated;
+  recordProvisionedEnvironment("SAMCHON_GRAPH_JDT_WORKSPACE", dedicated);
+  record({
+    tool: "eclipse-jdtls-graph-snapshot",
+    version: experiment.jdtProducerCommit,
+    source: url,
+    digest: `git-tree:${experiment.jdtProducerTree}`,
+  });
 };
 
 // Needs a compilation database, which is why the provider carries
@@ -439,249 +595,6 @@ const installScipClang = () =>
     digest:
       "06fd18c576f979a726c651594644ec4a35db4f471f2160b3f72eb89fa6001784",
   });
-
-/**
- * Accept an already-installed pinned producer, or report that there is none.
- *
- * Deliberately total: any missing file, any unreadable resource tree, any
- * version string that does not name the pinned commit, and any error at all
- * means "build it". Reuse is an optimisation, so it may only ever be taken
- * when the evidence for it is complete.
- */
-const installedClangGraphProducer = () => {
-  try {
-    const installed = path.join(binRoot, "samchon-clangd");
-    const alias = path.join(binRoot, "clangd");
-    if (
-      !fs.statSync(installed, { throwIfNoEntry: false })?.isFile() ||
-      !fs.statSync(alias, { throwIfNoEntry: false })?.isFile()
-    ) {
-      return false;
-    }
-    const resources = path.join(toolsRoot, "lib", "clang");
-    const versions = fs
-      .readdirSync(resources, { withFileTypes: true })
-      .filter(
-        (entry) =>
-          entry.isDirectory() &&
-          fs
-            .statSync(path.join(resources, entry.name, "include", "stddef.h"), {
-              throwIfNoEntry: false,
-            })
-            ?.isFile(),
-      );
-    if (versions.length !== 1) return false;
-    for (const binary of [installed, alias]) {
-      const reported = run(binary, ["--version"], { stdio: "pipe" });
-      if (!String(reported.stdout).includes(experiment.producerCommit)) {
-        return false;
-      }
-    }
-  } catch {
-    return false;
-  }
-  record({
-    tool: "samchon-clangd",
-    version: experiment.producerCommit,
-    source: `${experiment.producerRepository}@${experiment.producerCommit}`,
-    digest: `git:${experiment.producerCommit}`,
-  });
-  record({
-    tool: "clangd",
-    version: experiment.producerCommit,
-    source: "alias of samchon-clangd",
-    digest: `git:${experiment.producerCommit}`,
-  });
-  return true;
-};
-
-const installClangGraphProducer = () => {
-  if (
-    typeof experiment.producerRepository !== "string" ||
-    typeof experiment.producerCommit !== "string"
-  ) {
-    throw new Error(
-      `${experiment.language}: native Clang setup requires an exact producer repository and commit`,
-    );
-  }
-  // The producer is a pinned commit, so its binary is a pure function of that
-  // commit and this toolchain. Rebuilding it on every push was the actual
-  // waste: roughly two CPU-hours per workflow to reproduce bytes that cannot
-  // have changed. A restored install is therefore reused rather than rebuilt —
-  // but only after it says, itself, that it is the pinned producer. A cache is
-  // untrusted input, and the same `--version` check the fresh build has to
-  // pass is what admits a restored one, so a stale or foreign artifact fails
-  // closed here instead of quietly indexing a corpus with the wrong compiler.
-  if (installedClangGraphProducer()) return;
-  const source = path.join(toolsRoot, "samchon-clangd-source");
-  const build = path.join(source, "build");
-  fs.rmSync(source, { force: true, recursive: true });
-  ensureDir(source);
-  run("git", ["init", "--quiet"], { cwd: source });
-  run("git", ["remote", "add", "origin", experiment.producerRepository], {
-    cwd: source,
-  });
-  run(
-    "git",
-    ["fetch", "--depth=1", "origin", experiment.producerCommit],
-    { cwd: source },
-  );
-  run("git", ["checkout", "--detach", "FETCH_HEAD"], { cwd: source });
-  const revision = String(
-    run("git", ["rev-parse", "HEAD"], {
-      cwd: source,
-      stdio: "pipe",
-    }).stdout,
-  ).trim();
-  if (revision !== experiment.producerCommit) {
-    throw new Error(
-      `${experiment.language}: checked out native Clang ${revision}, expected ${experiment.producerCommit}`,
-    );
-  }
-  run("cmake", [
-    "-S",
-    path.join(source, "llvm"),
-    "-B",
-    build,
-    "-G",
-    "Ninja",
-    "-DCMAKE_BUILD_TYPE=Release",
-    "-DCMAKE_C_COMPILER=clang",
-    "-DCMAKE_CXX_COMPILER=clang++",
-    "-DLLVM_ENABLE_PROJECTS=clang;clang-tools-extra",
-    "-DLLVM_TARGETS_TO_BUILD=Native",
-    "-DLLVM_ENABLE_ASSERTIONS=ON",
-    "-DLLVM_INCLUDE_TESTS=OFF",
-    "-DCLANG_INCLUDE_TESTS=OFF",
-    "-DLLVM_INCLUDE_BENCHMARKS=OFF",
-    "-DLLVM_INCLUDE_EXAMPLES=OFF",
-    `-DLLVM_FORCE_VC_REVISION=${experiment.producerCommit}`,
-    `-DLLVM_FORCE_VC_REPOSITORY=${experiment.producerRepository}`,
-  ]);
-  // Build with the machine, not with a number. Note what that is and is not
-  // claiming, because two earlier versions of this comment claimed more.
-  //
-  // Every recorded build of this producer, all at the advertised job count
-  // except the first: 2,431 of 3,125 steps in 85 minutes and killed unfinished
-  // at a fixed `2`; 2,431 steps in 81.2 minutes; a complete build in 56.1; a
-  // complete build in 107. The last two are the same commit and the same job
-  // count, in one workflow, on two runners. Hosted-runner performance varies
-  // by roughly a factor of two, which swamps the difference this line makes
-  // and leaves no clean two-against-four comparison in the data at all.
-  //
-  // So the reason for sizing by the machine is the principle, not a measured
-  // speedup: a constant that leaves half a runner idle is wrong wherever it
-  // runs, and the effect size here is unmeasured. An earlier comment reported
-  // "roughly half" and another "barely five percent"; both read a difference
-  // out of numbers that could not support one.
-  //
-  // Also bounded by installed memory, which is a machine-class bound and not
-  // an out-of-memory guard — worth being exact about, because the two are easy
-  // to confuse and only the first is what this computes. It reads total rather
-  // than free memory, so it says "this machine should not run more than N
-  // concurrent compiles", not "this machine has room right now". It bounds
-  // compile concurrency only; the `clangd` link is a single build edge that
-  // runs whatever this number is, and LLVM's own controls for that
-  // (`LLVM_PARALLEL_LINK_JOBS` and friends) are deliberately not set here
-  // because the runs that reached the link reached it without trouble, so
-  // there is nothing yet to size them against. Two GiB per compile
-  // job is this repository's figure, chosen as a conventional one; it is not
-  // quoted from LLVM.
-  //
-  // Logged because it is otherwise invisible. Ninja does not print its job
-  // count and `run` does not echo argv, so a machine whose memory quietly
-  // halves the count would look exactly like a slow build, which is the
-  // confusion that cost this lane two CI runs already.
-  const jobs = Math.max(
-    1,
-    Math.min(
-      os.availableParallelism(),
-      Math.floor(os.totalmem() / (2 * 1024 * 1024 * 1024)),
-    ),
-  );
-  console.log(
-    `${experiment.language}: building the pinned Clang producer with ${String(jobs)} jobs ` +
-      `(cores ${String(os.availableParallelism())}, ` +
-      `memory ${String(Math.round(os.totalmem() / (1024 * 1024 * 1024)))} GiB)`,
-  );
-  run("cmake", [
-    "--build",
-    build,
-    "--parallel",
-    String(jobs),
-    "--target",
-    "clangd",
-  ]);
-  const binary = path.join(build, "bin", "clangd");
-  const version = String(
-    run(binary, ["--version"], { stdio: "pipe" }).stdout,
-  );
-  if (!version.includes(experiment.producerCommit)) {
-    throw new Error(
-      `${experiment.language}: native Clang version omits ${experiment.producerCommit}:\n${version}`,
-    );
-  }
-  const builtResources = path.join(build, "lib", "clang");
-  const resourceVersions = fs
-    .readdirSync(builtResources, { withFileTypes: true })
-    .filter(
-      (entry) =>
-        entry.isDirectory() &&
-        fs.statSync(
-          path.join(builtResources, entry.name, "include"),
-          { throwIfNoEntry: false },
-        )?.isDirectory(),
-    )
-    .map((entry) => entry.name);
-  if (resourceVersions.length !== 1) {
-    throw new Error(
-      `${experiment.language}: native Clang produced ${resourceVersions.length} resource-header trees`,
-    );
-  }
-  const installedResources = path.join(toolsRoot, "lib", "clang");
-  fs.rmSync(installedResources, { force: true, recursive: true });
-  ensureDir(path.dirname(installedResources));
-  fs.cpSync(builtResources, installedResources, { recursive: true });
-  const installedStddef = path.join(
-    installedResources,
-    resourceVersions[0],
-    "include",
-    "stddef.h",
-  );
-  if (!fs.statSync(installedStddef, { throwIfNoEntry: false })?.isFile()) {
-    throw new Error(
-      `${experiment.language}: native Clang resource headers were not installed at ${installedStddef}`,
-    );
-  }
-  for (const command of ["samchon-clangd", "clangd"]) {
-    const link = path.join(binRoot, command);
-    fs.rmSync(link, { force: true });
-    fs.linkSync(binary, link);
-  }
-  const installedVersion = String(
-    run(path.join(binRoot, "samchon-clangd"), ["--version"], {
-      stdio: "pipe",
-    }).stdout,
-  );
-  if (!installedVersion.includes(experiment.producerCommit)) {
-    throw new Error(
-      `${experiment.language}: installed native Clang omits ${experiment.producerCommit}:\n${installedVersion}`,
-    );
-  }
-  record({
-    tool: "samchon-clangd",
-    version: experiment.producerCommit,
-    source: `${experiment.producerRepository}@${experiment.producerCommit}`,
-    digest: `git:${experiment.producerCommit}`,
-  });
-  record({
-    tool: "clangd",
-    version: experiment.producerCommit,
-    source: "alias of samchon-clangd",
-    digest: `git:${experiment.producerCommit}`,
-  });
-  fs.rmSync(source, { force: true, recursive: true });
-};
 
 // The published tarball is a webpack bundle whose only runtime `require`s are
 // Node built-ins, so extracting the integrity-verified archive installs exactly
@@ -887,11 +800,14 @@ switch (experiment.language) {
         `rust producer checkout is ${producerHead}, not ${experiment.producerCommit}`,
       );
     }
-    run(
-      path.join(cargoBin, process.platform === "win32" ? "cargo.exe" : "cargo"),
-      ["build", "--locked", "--release", "-p", "rust-analyzer"],
-      { cwd: producerRoot },
+    const cargo = path.join(
+      cargoBin,
+      process.platform === "win32" ? "cargo.exe" : "cargo",
     );
+    verifyRustGraphProducer({ cargo, producerRoot, run });
+    run(cargo, ["build", "--locked", "--release", "-p", "rust-analyzer"], {
+      cwd: producerRoot,
+    });
     const producerBinary = path.join(
       producerRoot,
       "target",
@@ -938,8 +854,21 @@ switch (experiment.language) {
     // pinned corpora are CMake and emit one themselves, so nothing here uses it
     // today; it stays because the database is what makes this route selectable
     // at all, and a Makefile corpus would otherwise be unable to produce one.
-    apt(["clang", "cmake", "ninja-build", "bear"]);
-    installClangGraphProducer();
+    const allowClangProducerBuild =
+      process.env.SAMCHON_GRAPH_CLANG_PRODUCER_ALLOW_BUILD !== "0";
+    apt([
+      ...(allowClangProducerBuild ? CLANG_PRODUCER_BUILD_PACKAGES : []),
+      "bear",
+    ]);
+    installClangGraphProducer({
+      language: experiment.language,
+      toolsRoot,
+      binRoot,
+      producerRepository: experiment.producerRepository,
+      producerCommit: experiment.producerCommit,
+      record,
+      allowBuild: allowClangProducerBuild,
+    });
     record({
       tool: "bear",
       version: "unpinned",
@@ -950,10 +879,9 @@ switch (experiment.language) {
     await installScip();
     break;
   case "java": {
-    // jdtls is not an apt package and requires Java 21+; install the JDK and the
-    // Eclipse JDT.LS snapshot tarball, then put its bin on PATH. The launcher is
-    // a Python script that locates its plugins relative to its own path, so it
-    // must run from the extracted tree rather than a symlink.
+    // Both compiler-owned lanes are built from exact source archives. JDT.LS
+    // needs Java 21+ and its launcher is a Python script that locates plugins
+    // relative to the built product repository.
     apt(["openjdk-21-jdk", "python3"]);
     // jdtls crashes on the runner's default JDK; point it at Java 21.
     const javaHome = "/usr/lib/jvm/java-21-openjdk-amd64";
@@ -963,23 +891,6 @@ switch (experiment.language) {
       fs.appendFileSync(process.env.GITHUB_ENV, `JAVA_HOME=${javaHome}${os.EOL}`);
     }
     appendGithubPath(path.join(javaHome, "bin"));
-    const target = path.join(toolsRoot, "jdtls");
-    const archive = path.join(toolsRoot, "jdtls.tar.gz");
-    await downloadFile(
-      "https://download.eclipse.org/jdtls/snapshots/jdt-language-server-latest.tar.gz",
-      archive,
-    );
-    fs.rmSync(target, { force: true, recursive: true });
-    ensureDir(target);
-    run("tar", ["-xzf", archive, "-C", target]);
-    appendGithubPath(path.join(target, "bin"));
-    record({
-      tool: "jdtls",
-      version: "unpinned",
-      source:
-        "https://download.eclipse.org/jdtls/snapshots/jdt-language-server-latest.tar.gz",
-      digest: "unpinned",
-    });
     // One launcher, built from the pinned fork. It serves both the strict
     // javac route and the SCIP lane behind it, so installing the released
     // binary first only downloaded a `scip-java` the source build then
@@ -987,6 +898,7 @@ switch (experiment.language) {
     // though a run had used it.
     await installScip();
     await installJavacGraphProducer(await installGradle());
+    await installJdtGraphProducer();
     break;
   }
   case "csharp": {
@@ -1013,9 +925,36 @@ switch (experiment.language) {
       source: "dotnet tool install --global csharp-ls",
       digest: "unpinned",
     });
-    // The strict C# producer, built on Roslyn like csharp-ls but reading the
-    // solution once instead of answering a request per symbol. Installed as a
-    // global dotnet tool, so the SDK above is its only prerequisite.
+    const producerRoot = path.join(toolsRoot, "samchon-roslyn");
+    fs.rmSync(producerRoot, { force: true, recursive: true });
+    run(dotnet, [
+      "publish",
+      path.join(repositoryRoot, "sidecars", "csharp", "Samchon.Graph.CSharp.csproj"),
+      "--configuration",
+      "Release",
+      "--output",
+      producerRoot,
+      "--no-self-contained",
+      "-p:RestoreLockedMode=true",
+    ]);
+    const producer = path.join(producerRoot, "samchon-roslyn");
+    fs.chmodSync(producer, 0o755);
+    const producerLink = path.join(binRoot, "samchon-roslyn");
+    fs.rmSync(producerLink, { force: true });
+    fs.symlinkSync(producer, producerLink);
+    process.env.SAMCHON_GRAPH_ROSLYN_WORKSPACE = producerLink;
+    recordProvisionedEnvironment(
+      "SAMCHON_GRAPH_ROSLYN_WORKSPACE",
+      producerLink,
+    );
+    record({
+      tool: "samchon-roslyn",
+      version: "workspace",
+      source: "sidecars/csharp",
+      digest: "built-from-locked-source",
+    });
+    // Keep scip-dotnet installed only for the registered optional navigation
+    // fallback; the Roslyn workspace service above owns strict C# facts.
     shell(`"${dotnet}" tool install --global scip-dotnet || "${dotnet}" tool update --global scip-dotnet`);
     record({
       tool: "scip-dotnet",
@@ -1029,12 +968,10 @@ switch (experiment.language) {
   case "kotlin":
     await installKotlinLanguageServer();
     const gradle = await installGradle();
-    // scip-java covers Kotlin through semanticdb-kotlinc, and it needs a JDK to
-    // run the Gradle build it indexes through. koin is the worst lane measured
-    // at 1349 s, almost all of it kotlin-language-server's Gradle sync before it
-    // answers `initialize` at all. The strict path does not skip that build; it
-    // performs one. Whether that is faster, slower, or merely truer is the thing
-    // to find out.
+    // The strict lane launches one persistent Gradle Tooling connection and
+    // drives the project's ordinary Kotlin/JVM compile task. KGP therefore
+    // retains its daemon, configuration, classpath and incremental caches
+    // across lifecycle requests while the compiler plugin owns every fact.
     apt(["openjdk-21-jdk"]);
     const javaHome = "/usr/lib/jvm/java-21-openjdk-amd64";
     process.env.JAVA_HOME = javaHome;
@@ -1049,7 +986,7 @@ switch (experiment.language) {
     await installScipJavaKotlinSnapshot(gradle);
     await installScip();
     break;
-  case "swift":
+  case "swift": {
     // sourcekit-lsp ships with the toolchain installed by the workflow's Setup
     // Swift step. It has no `--version` flag (that exits 64), so just confirm it
     // resolves on PATH.
@@ -1060,21 +997,160 @@ switch (experiment.language) {
       source: "swift toolchain installed by the workflow",
       digest: "unpinned",
     });
-    break;
-  case "scala":
-    apt(["openjdk-17-jdk", "gzip"]);
-    await downloadFile("https://github.com/coursier/coursier/releases/latest/download/cs-x86_64-pc-linux.gz", path.join(toolsRoot, "cs.gz"));
-    shell(`gzip -dc "${path.join(toolsRoot, "cs.gz")}" > "${path.join(binRoot, "cs")}"`);
-    shell(`chmod +x "${path.join(binRoot, "cs")}"`);
-    run(path.join(binRoot, "cs"), ["install", "metals"]);
-    appendGithubPath(path.join(os.homedir(), ".local", "share", "coursier", "bin"));
+    const sidecar = path.join(repositoryRoot, "sidecars", "swift");
+    const swift = String(run("which", ["swift"], { stdio: "pipe" }).stdout).trim();
+    const swiftRoot = path.dirname(path.dirname(swift));
+    const swiftBuildArguments = [
+      "build",
+      "--package-path",
+      sidecar,
+      "--configuration",
+      "release",
+      ...(process.platform === "linux"
+        ? [
+            "-Xcxx",
+            `-I${path.join(swiftRoot, "lib", "swift")}`,
+            "-Xcxx",
+            `-I${path.join(swiftRoot, "lib", "swift", "Block")}`,
+          ]
+        : []),
+    ];
+    run("swift", swiftBuildArguments);
+    const sidecarBin = String(
+      run(
+        "swift",
+        ["build", "--package-path", sidecar, "--show-bin-path", "--configuration", "release"],
+        { stdio: "pipe" },
+      ).stdout,
+    ).trim();
+    const producer = path.join(sidecarBin, "samchon-swift-graph");
+    run(producer, ["--version"]);
+    process.env.SAMCHON_GRAPH_SWIFT_GRAPH = producer;
+    process.env.SAMCHON_GRAPH_SWIFT_TOOLCHAIN = swift;
+    recordProvisionedEnvironment("SAMCHON_GRAPH_SWIFT_GRAPH", producer);
+    recordProvisionedEnvironment("SAMCHON_GRAPH_SWIFT_TOOLCHAIN", swift);
     record({
-      tool: "metals",
+      tool: "samchon-swift-graph",
+      version: "0.1.0",
+      source: "sidecars/swift",
+      digest: "built-from-workspace-source:indexstore-db-54212fce1aecb199070808bdb265e7f17e396015",
+    });
+    break;
+  }
+  case "scala": {
+    apt(["openjdk-21-jdk", "maven"]);
+    const javaHome = "/usr/lib/jvm/java-21-openjdk-amd64";
+    const java = path.join(javaHome, "bin", "java");
+    process.env.JAVA_HOME = javaHome;
+    recordProvisionedEnvironment("JAVA_HOME", javaHome);
+    if (process.env.GITHUB_ENV !== undefined) {
+      fs.appendFileSync(
+        process.env.GITHUB_ENV,
+        `JAVA_HOME=${javaHome}${os.EOL}`,
+      );
+    }
+    appendGithubPath(path.join(javaHome, "bin"));
+
+    run("mvn", [
+      "--batch-mode",
+      "--file",
+      path.join(repositoryRoot, "sidecars", "scala", "pom.xml"),
+      "verify",
+    ]);
+    const sidecarRoot = path.join(repositoryRoot, "sidecars", "scala");
+    const version = "0.1.0-SNAPSHOT";
+    const scala2Plugin = path.join(
+      sidecarRoot,
+      "scala2-plugin",
+      "target",
+      `scala-graph-plugin_2.13.18-${version}.jar`,
+    );
+    const scala3Plugin = path.join(
+      sidecarRoot,
+      "scala3-plugin",
+      "target",
+      `scala-graph-plugin_3.9.0-${version}.jar`,
+    );
+    const server = path.join(
+      sidecarRoot,
+      "server",
+      "target",
+      `samchon-scala-graph-${version}.jar`,
+    );
+    for (const artifact of [scala2Plugin, scala3Plugin, server]) {
+      if (!fs.statSync(artifact, { throwIfNoEntry: false })?.isFile()) {
+        throw new Error(`Scala graph build omitted ${artifact}`);
+      }
+    }
+    const producer = path.join(binRoot, "samchon-scala-graph");
+    fs.writeFileSync(
+      producer,
+      `#!/bin/sh\nexec '${java}' -jar '${server}' "$@"\n`,
+    );
+    fs.chmodSync(producer, 0o755);
+    run(producer, ["--version"]);
+    const serverHelp = String(
+      run(producer, ["graph-server", "--help"], { stdio: "pipe" }).stdout,
+    );
+    if (
+      !serverHelp.includes(
+        "Serve BSP-driven Scala compiler graph generations over NDJSON.",
+      )
+    ) {
+      throw new Error(
+        `scala: the built producer does not publish the resident graph protocol:\n${serverHelp}`,
+      );
+    }
+
+    const sbtVersion = "1.11.7";
+    const sbtJar = path.join(toolsRoot, `sbt-launch-${sbtVersion}.jar`);
+    const sbtUrl = `https://repo.maven.apache.org/maven2/org/scala-sbt/sbt-launch/${sbtVersion}/sbt-launch-${sbtVersion}.jar`;
+    await downloadFile(sbtUrl, sbtJar);
+    verifySha256(
+      sbtJar,
+      "f92a2095ac75008764fe3b2b793ffe624c4fbef5bfd9b0022e4bc2daf668c651",
+    );
+    const sbt = path.join(binRoot, "sbt");
+    fs.writeFileSync(sbt, `#!/bin/sh\nexec '${java}' -jar '${sbtJar}' "$@"\n`);
+    fs.chmodSync(sbt, 0o755);
+
+    for (const [name, value] of Object.entries({
+      SAMCHON_GRAPH_SCALA_GRAPH: producer,
+      SAMCHON_GRAPH_SCALA2_PLUGIN: scala2Plugin,
+      SAMCHON_GRAPH_SCALA3_PLUGIN: scala3Plugin,
+      SAMCHON_GRAPH_SCALA_PLUGIN_VERSION: version,
+      SAMCHON_GRAPH_JAVA_TOOLCHAIN: java,
+    })) {
+      process.env[name] = value;
+      recordProvisionedEnvironment(name, value);
+    }
+    record({
+      tool: "samchon-scala-graph",
+      version,
+      source: "sidecars/scala",
+      digest: "built-from-workspace-source",
+    });
+    record({
+      tool: "scalac-graph plugins",
+      version: "Scala 2.13.18; Scala 3.9.0",
+      source: "sidecars/scala",
+      digest: "built-from-workspace-source",
+    });
+    record({
+      tool: "sbt",
+      version: sbtVersion,
+      source: sbtUrl,
+      digest:
+        "sha256:f92a2095ac75008764fe3b2b793ffe624c4fbef5bfd9b0022e4bc2daf668c651",
+    });
+    record({
+      tool: "maven",
       version: "unpinned",
-      source: "coursier install metals",
+      source: "apt maven",
       digest: "unpinned",
     });
     break;
+  }
   case "zig":
     await installZls();
     break;

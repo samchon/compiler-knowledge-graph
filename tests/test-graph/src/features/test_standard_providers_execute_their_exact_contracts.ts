@@ -7,13 +7,17 @@ import {
   type IGraphProvider,
   RUST_GRAPH_PRODUCER_COMMIT,
   CPP_CLANG_PRODUCER_COMMIT,
+  csharpGraphProvider,
   cppGraphProvider,
   javaGraphProvider,
   goGraphProvider,
+  kotlinGraphProvider,
   luaGraphProvider,
   rustGraphProvider,
+  scalaGraphProvider,
   standardScipProviders,
   standardSidecarProviders,
+  swiftGraphProvider,
 } from "@samchon/graph";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -931,12 +935,22 @@ function assertFixtureRegistryCoverage(): void {
     rustGraphProvider,
     cppGraphProvider,
     javaGraphProvider,
-    // The two SCIP entries a strict route owns as its fallback tier. They are
-    // exercised by the loop above, but the registry does not list them as
+    kotlinGraphProvider,
+    scalaGraphProvider,
+    csharpGraphProvider,
+    // Swift's explicit-output-unit corpus is exercised by the dedicated
+    // IndexStoreDB contract suite because its snapshot cannot be represented
+    // by the generic sidecar fixture protocol used below.
+    swiftGraphProvider,
+    // SCIP entries a strict route owns as its fallback tier are exercised by
+    // the loop above, but the registry does not list them as
     // owners, so the ledger must not either.
     ...standardScipProviders.filter(
       (provider) =>
-        provider.name !== "scip-clang" && provider.name !== "scip-java",
+        provider.name !== "scip-clang" &&
+        provider.name !== "scip-java" &&
+        provider.name !== "scip-kotlinc" &&
+        provider.name !== "scip-dotnet",
     ),
     ...standardSidecarProviders,
   ]
@@ -1248,6 +1262,12 @@ async function assertRemainingRegisteredFixtures(root: string): Promise<void> {
     ],
   };
   await assertRegisteredFixture(cppGraphProvider, cppCommand, root, "calls");
+
+  const csharpCommand: IGraphProvider.ICommand = {
+    command: process.execPath,
+    args: [GraphPaths.fakeCsharpGraphServer, "--conformance"],
+  };
+  await assertRegisteredFixture(csharpGraphProvider, csharpCommand, root);
 
   // Lua's producer is the language server itself, driven through its `--doc`
   // export with our exporter injected, so the fixture stands in for the server

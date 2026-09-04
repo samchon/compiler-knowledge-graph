@@ -152,7 +152,6 @@ async function assertSelection(): Promise<void> {
       GRAPH_PROVIDERS.filter((provider) =>
         [
           "scip-java",
-          "scip-dotnet",
           "scip-python",
           "scip-ruby",
           "scip-dart",
@@ -162,7 +161,6 @@ async function assertSelection(): Promise<void> {
     ),
     {
       "scip-java": ["contains", "references"],
-      "scip-dotnet": [],
       "scip-python": ["references"],
       "scip-ruby": [],
       "scip-dart": [],
@@ -509,25 +507,23 @@ async function assertSelection(): Promise<void> {
   TestValidator.equals(
     "only languages without a truthful strict producer remain unowned",
     publicLanguages.filter((language) => !owners.has(language)),
-    ["swift", "scala", "zig"],
+    ["zig"],
   );
   TestValidator.equals(
     "C and C++ share one compilation-universe provider",
     owners.get("c"),
     owners.get("cpp"),
   );
-  // One launcher, two compiler plugins, two owners. They used to be one
-  // registry entry claiming both languages, which stopped being viable the
-  // moment a Java-only producer existed: a fallback owns the same atomic
-  // languages as the route it backs, so a strict Java route could only take
-  // the SCIP entry as its fallback by taking Kotlin's ownership with it.
+  // One JVM, three compiler integrations, three owners. Each preferred
+  // compiler route owns only its language and carries its ordinary route as
+  // fallback.
   TestValidator.equals(
-    "Java and Kotlin own their producers independently, and Scala neither",
+    "Java, Kotlin, and Scala own their producers independently",
     [owners.get("java"), owners.get("kotlin"), owners.get("scala")],
     [
       ["javac-graph"],
-      ["scip-kotlinc"],
-      undefined,
+      ["kotlinc-graph"],
+      ["scalac-graph"],
     ],
   );
 }

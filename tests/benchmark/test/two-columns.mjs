@@ -6,6 +6,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { PROJECTS } from "../graph/corpus.mjs";
+import { indexRoute } from "../graph/index-time-cell.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, "../../..");
@@ -125,6 +126,7 @@ export function assertStrictComparisonArithmetic() {
   };
   const cell = (project, tool, extra) => ({
     project,
+    language: PROJECTS[project].language,
     tool,
     host,
     measurementId: "fixture-measurement",
@@ -138,7 +140,8 @@ export function assertStrictComparisonArithmetic() {
   const staticProject = "gson";
   const absentStaticProject = "lualine";
   const differentRunProject = "tokio";
-  const differentHostProject = "redis";
+  const differentHostProject = "leveldb";
+  const redisFallbackProject = "redis";
   const unknownProvenanceProject = "serilog";
   const hybridProject = "slim";
   const projects = [
@@ -149,6 +152,7 @@ export function assertStrictComparisonArithmetic() {
     absentStaticProject,
     differentRunProject,
     differentHostProject,
+    redisFallbackProject,
     unknownProvenanceProject,
     hybridProject,
   ];
@@ -167,7 +171,7 @@ export function assertStrictComparisonArithmetic() {
         // Served, both finished: a ratio.
         cell(servedProject, "samchon-graph", {
           buildMs: 10_000,
-          servedBy: "lsp scip-fake(go)",
+          servedBy: "lsp ttscgraph(typescript)",
         }),
         cell(servedProject, "samchon-graph-fallback", {
           buildMs: 250_000,
@@ -187,7 +191,7 @@ export function assertStrictComparisonArithmetic() {
         // dividing by it would understate the very gap it is meant to show.
         cell(timeoutProject, "samchon-graph", {
           buildMs: 5_000,
-          servedBy: "lsp scip-fake(c)",
+          servedBy: "lsp samchon-graph-go(go)",
         }),
         cell(timeoutProject, "samchon-graph-fallback", {
           buildMs: null,
@@ -199,11 +203,21 @@ export function assertStrictComparisonArithmetic() {
         // savings because the cells performed materially different work.
         cell(staticProject, "samchon-graph", {
           buildMs: 30_000,
-          servedBy: "lsp scip-fake(java)",
+          servedBy: "lsp scip-java(java)",
+          route: indexRoute(
+            "java",
+            "samchon-graph",
+            routeSummary("java", "scip-java", "scip-java", "0.10.6"),
+          ),
         }),
         cell(staticProject, "samchon-graph-fallback", {
           buildMs: 3_000,
           servedBy: "static no strict provider served",
+          route: indexRoute("java", "samchon-graph-fallback", {
+            schemaVersion: 1,
+            indexer: "static",
+            provenance: [],
+          }),
         }),
         // A provider failure does not make a static strict-off cell the same
         // lane as the strict cell's completed LSP fallback.
@@ -220,7 +234,7 @@ export function assertStrictComparisonArithmetic() {
         // match.
         cell(differentRunProject, "samchon-graph", {
           buildMs: 10_000,
-          servedBy: "lsp scip-fake(rust)",
+          servedBy: "lsp samchon-rust-analyzer-hir(rust)",
         }),
         cell(differentRunProject, "samchon-graph-fallback", {
           buildMs: 50_000,
@@ -229,12 +243,33 @@ export function assertStrictComparisonArithmetic() {
         }),
         cell(differentHostProject, "samchon-graph", {
           buildMs: 20_000,
-          servedBy: "lsp scip-fake(c)",
+          servedBy: "lsp clangd-snapshot(cpp)",
         }),
         cell(differentHostProject, "samchon-graph-fallback", {
           buildMs: 60_000,
           servedBy: "lsp no strict provider served",
           host: { ...host, cpu: "another fixture" },
+        }),
+        // Redis completed through scip-clang while clangd-snapshot was the
+        // registry owner. Both clocks remain evidence, but never form a
+        // primary-provider ratio.
+        cell(redisFallbackProject, "samchon-graph", {
+          buildMs: 20_000,
+          servedBy: "lsp scip-clang(c)",
+          route: indexRoute(
+            "c",
+            "samchon-graph",
+            routeSummary("c", "scip-clang", "scip-clang", "0.3.3"),
+          ),
+        }),
+        cell(redisFallbackProject, "samchon-graph-fallback", {
+          buildMs: 60_000,
+          servedBy: "lsp no strict provider served",
+          route: indexRoute("c", "samchon-graph-fallback", {
+            schemaVersion: 1,
+            indexer: "lsp",
+            provenance: [],
+          }),
         }),
         // A completed process without the provenance line proves neither that a
         // strict provider served nor that its output is semantic. Missing
@@ -253,7 +288,7 @@ export function assertStrictComparisonArithmetic() {
         // wholly semantic index whose duration can headline a speedup.
         cell(hybridProject, "samchon-graph", {
           buildMs: 12_000,
-          servedBy: "hybrid scip-fake(php)",
+          servedBy: "hybrid scip-php(php)",
         }),
         cell(hybridProject, "samchon-graph-fallback", {
           buildMs: 48_000,
@@ -293,14 +328,14 @@ export function assertStrictComparisonArithmetic() {
   assert.match(
     out,
     new RegExp(
-      `${absentProject}[^\\n]*both cells measured the same lane`,
+      `${absentProject}[^\\n]*expected scip-python did not serve`,
     ),
     "a project whose provider never served must not report a ratio",
   );
   assert.match(
     out,
     new RegExp(
-      `${absentStaticProject}[^\\n]*at least one cell produced no semantic index`,
+      `${absentStaticProject}[^\\n]*expected samchon-graph-lua did not serve`,
     ),
     "a provider failure must not make a static strict-off result the same lane",
   );
@@ -317,9 +352,9 @@ export function assertStrictComparisonArithmetic() {
   assert.match(
     out,
     new RegExp(
-      `${staticProject}[^\\n]*no semantic index; times are not comparable`,
+      `${staticProject}[^\\n]*expected javac-graph did not serve`,
     ),
-    "a static strict-off cell must be reported as non-comparable",
+    "Gson's scip-java fallback must be reported as a primary-route failure",
   );
   assert.doesNotMatch(
     out,
@@ -353,7 +388,7 @@ export function assertStrictComparisonArithmetic() {
   assert.match(
     out,
     new RegExp(
-      `${unknownProvenanceProject}[^\\n]*at least one cell produced no semantic index`,
+      `${unknownProvenanceProject}[^\\n]*expected roslyn-workspace did not serve`,
     ),
     "a completed cell without strict-provider provenance must be non-comparable",
   );
@@ -372,6 +407,30 @@ export function assertStrictComparisonArithmetic() {
     new RegExp(`${hybridProject}[^\\n]*x$`, "m"),
     "a hybrid strict cell must not report a semantic savings ratio",
   );
+  assert.match(
+    out,
+    new RegExp(
+      `${redisFallbackProject}[^\\n]*expected clangd-snapshot did not serve`,
+    ),
+    "Redis's scip-clang result must be a primary-route failure",
+  );
+  assert.doesNotMatch(
+    out,
+    new RegExp(`${redisFallbackProject}[^\\n]*x$`, "m"),
+    "Redis's fallback result must never receive a strict-provider ratio",
+  );
+  for (const [project, provider] of [
+    ["gson", "javac-graph"],
+    ["redis", "clangd-snapshot"],
+  ]) {
+    assert.match(
+      out,
+      new RegExp(
+        `::warning title=index-time ${project} primary route::expected ${provider}; observed fallback`,
+      ),
+      `${project}'s publishable fallback must emit its own workflow warning`,
+    );
+  }
 
   const jsonRan = cp.spawnSync(
     process.execPath,
@@ -403,4 +462,24 @@ export function assertStrictComparisonArithmetic() {
     3,
     "the JSON summary names how many comparable measurement groups it contains",
   );
+}
+
+function routeSummary(language, provider, tool, version) {
+  return {
+    schemaVersion: 1,
+    indexer: "lsp",
+    provenance: [
+      {
+        provider,
+        languages: [language],
+        authority: "semantic-index",
+        producer: {
+          tool,
+          version,
+          schemaVersion: 6,
+          protocolVersion: 1,
+        },
+      },
+    ],
+  };
 }

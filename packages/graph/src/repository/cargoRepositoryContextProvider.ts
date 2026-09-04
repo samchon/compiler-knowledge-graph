@@ -3,10 +3,12 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { ISamchonRepositoryContextDump } from "../structures";
-import { spawnableCommand } from "../utils/spawnableCommand";
+import { isSubPath } from "../utils/isSubPath";
 import { IRepositoryContextProvider } from "./IRepositoryContextProvider";
 import { createRepositoryContextSession } from "./createRepositoryContextSession";
 import { repositoryContextFacts } from "./repositoryContextFacts";
+import { resolveCargoCommand } from "./resolveCargoCommand";
+import { workspaceDiscoveryDirectories } from "./workspaceDiscoveryDirectories";
 
 const {
   compareRepositoryText,
@@ -207,10 +209,12 @@ function collectCargoRepositoryContext(
     files: [...files].sort(compareRepositoryText),
     sources: uniqueRepositorySources([
       ...sources,
-      ...metadata.packages
-        .filter((pkg) => members.has(pkg.id))
-        .map((pkg) => path.dirname(path.dirname(pkg.manifest_path)))
-        .map((directory) => repositoryContextSource(props.root, directory)),
+      ...workspaceDiscoveryDirectories(
+        metadata.workspace_root,
+        metadata.packages
+          .filter((pkg) => members.has(pkg.id))
+          .map((pkg) => path.dirname(pkg.manifest_path)),
+      ).map((directory) => repositoryContextSource(props.root, directory)),
       ...["Cargo.lock", "rust-toolchain", "rust-toolchain.toml"]
         .map((file) => path.join(props.root, file))
         .filter((file) => fs.existsSync(file))
@@ -276,7 +280,7 @@ function appendCargoTargets(
         ecosystem: ECOSYSTEM,
         coordinate: targetCoordinate,
         configuration,
-        external: !isInside(root, target.src_path),
+        external: !isSubPath(root, target.src_path),
         file,
         evidence,
       },
@@ -288,7 +292,7 @@ function appendCargoTargets(
         ecosystem: ECOSYSTEM,
         coordinate: targetCoordinate,
         configuration,
-        external: !isInside(root, target.src_path),
+        external: !isSubPath(root, target.src_path),
         file,
         evidence,
       },
@@ -347,7 +351,7 @@ function appendCargoTargets(
         ecosystem: ECOSYSTEM,
         coordinate: targetCoordinate,
         configuration,
-        external: !isInside(root, target.src_path),
+        external: !isSubPath(root, target.src_path),
         file,
         evidence,
       });
@@ -384,13 +388,16 @@ function executeCargoMetadata(
   root: string,
   env: NodeJS.ProcessEnv,
 ): ICargoMetadata {
-  /* c8 ignore next -- each coverage host has exactly one native shim suffix. */
-  const command = process.platform === "win32" ? "cargo.cmd" : "cargo";
-  const invocation = spawnableCommand(
-    command,
-    ["metadata", "--format-version", "1", "--locked", "--offline"],
+  const invocation = resolveCargoCommand(
+    root,
     env,
+    ["metadata", "--format-version", "1", "--locked", "--offline"],
   );
+  if (invocation === undefined) {
+    throw new Error(
+      "cargo metadata failed without changing the project: cargo was not found",
+    );
+  }
   const result = spawnSync(invocation.command, invocation.args, {
     cwd: root,
     env,
@@ -420,9 +427,8 @@ function executeCargoMetadata(
 }
 
 function cargoVersion(root: string, env: NodeJS.ProcessEnv): string {
-  /* c8 ignore next -- each coverage host has exactly one native shim suffix. */
-  const command = process.platform === "win32" ? "cargo.cmd" : "cargo";
-  const invocation = spawnableCommand(command, ["--version"], env);
+  const invocation = resolveCargoCommand(root, env, ["--version"]);
+  if (invocation === undefined) return "";
   const result = spawnSync(invocation.command, invocation.args, {
     cwd: root,
     env,
@@ -446,11 +452,6 @@ function dedupeEdges(
       compareRepositoryText(left.from, right.from) ||
       compareRepositoryText(left.to, right.to),
   );
-}
-
-function isInside(root: string, file: string): boolean {
-  const relative = path.relative(root, file);
-  return relative !== ".." && !relative.startsWith(`..${path.sep}`);
 }
 
 function throwIfAborted(signal: AbortSignal | undefined): void {

@@ -6,6 +6,7 @@ import { pathToFileURL } from "node:url";
 import { Worker } from "node:worker_threads";
 
 import { GraphPaths } from "../internal/GraphPaths";
+import { waitForProcessId } from "../internal/waitForProcessId";
 
 interface ILspClient {
   request<T>(
@@ -798,8 +799,7 @@ const assertExitedLeaderDoesNotLeakItsProcessGroup = async (
   let pid: number | undefined;
   try {
     await client.request("initialize", {});
-    await waitForFile(pidFile);
-    pid = Number(fs.readFileSync(pidFile, "utf8"));
+    pid = await waitForProcessId(pidFile);
     await settleWithin(client.close(), 5_000, () => terminate(pid!));
     TestValidator.equals(
       "close waits for a process group after its cooperative leader exits",
@@ -904,8 +904,7 @@ const assertStubbornProcessTreeIsOwned = async (
   let pid: number | undefined;
   try {
     await client.request("initialize", {});
-    await waitForFile(pidFile);
-    pid = Number(fs.readFileSync(pidFile, "utf8"));
+    pid = await waitForProcessId(pidFile);
     await settleWithin(client.close(), 5_000, () => terminate(pid!));
     TestValidator.equals(
       "close returns only after a signal-resistant LSP child exits",

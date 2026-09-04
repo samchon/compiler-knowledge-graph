@@ -32,6 +32,7 @@ const MAINTAINED: Record<string, number> = {
   cache: 6,
   checkout: 7,
   "setup-go": 7,
+  "setup-java": 6,
   "setup-node": 7,
   "upload-artifact": 7,
   "download-artifact": 8,
@@ -144,104 +145,131 @@ export const test_workflows_use_current_core_action_runtimes = () => {
     path.join(directory, "experiment.yml"),
     "utf8",
   );
-  // One boundary declaration for the whole matrix, and the exception set
-  // written into it rather than left to a reader.
-  //
-  // This originally refused any per-language exception, and the reason it gave
-  // was a cause: the lane that wanted more than ninety minutes wanted it
-  // because its provider had been serialized, so raising the budget preserved
-  // that cause instead of bounding it. The serialization was real and was
-  // removed, and ninety still does not fit — the same build completed in 56
-  // minutes on one runner and 107 on another in one workflow, with setup and a
-  // real-corpus lifecycle run around it. C and C++ build a compiler from
-  // source and the other fourteen rows install a released producer, so the
-  // difference is a property of those two rows and not a defect inside them.
-  //
-  // Asserted as the exact expression. That is the same shape of assertion as
-  // the single number it replaces, not a tighter one — what changed is the
-  // policy, not the grip. The grip is what matters here: the ninety-minute
-  // bound still governs every other row, and a third language cannot reach the
-  // wider one, nor a fourth number appear, without editing this line and
-  // answering for it.
-  //
-  // Scoped to the matrix job, not to the file. Counting `timeout-minutes:`
-  // lines across the whole workflow passes just as well when the only one has
-  // been moved up into the classification job — leaving all sixteen real-tool
-  // lanes on GitHub's six-hour default, which is the unbounded state this
-  // assertion exists to prevent.
-  const experimentJob = experiment.slice(experiment.indexOf("\n  experiment:"));
+  // Compiler construction and corpus execution now have separate owners and
+  // separate clocks. The predecessor retains the measured 150-minute cold-build
+  // budget; every matrix row returns to the original 90-minute lifecycle bound.
+  const producerStart = experiment.indexOf("\n  clang_producer:");
+  const experimentStart = experiment.indexOf("\n  experiment:");
+  const producerJob = experiment.slice(producerStart, experimentStart);
+  const experimentJob = experiment.slice(experimentStart);
+  const producerTimeouts = producerJob
+    .split("\n")
+    .filter((line) => line.trim().startsWith("timeout-minutes:"))
+    .map((line) => line.trim());
   const experimentTimeouts = experimentJob
     .split("\n")
     .filter((line) => line.trim().startsWith("timeout-minutes:"))
     .map((line) => line.trim());
   TestValidator.equals(
-    "one bound governs the matrix and only the compiler-building rows widen it",
-    experimentTimeouts,
-    [
-      "timeout-minutes: ${{ (matrix.language == 'c' || matrix.language == 'cpp') && 150 || 90 }}",
-    ],
-  );
-  // The wider bound is only defensible while an ordinary push does not reach
-  // it, and that depends entirely on the restore below. Pinned per step rather
-  // than as loose substrings over the job: four independent `includes` calls
-  // are satisfied by four unrelated steps, which would let the key, the path
-  // and the condition drift apart while the assertion stayed green.
-  //
-  // The key is pinned by its exact file list because that list is the whole
-  // claim. `catalog.mjs` is where the commit is actually read from, so leaving
-  // it out would bind the cache to the producer only by convention; the key
-  // would then survive a bump, the restored binary would fail its version
-  // check, the build would run in full, and — having hit an exact key — never
-  // re-save. Permanent silent full-cost rebuilding, with the widened bound as
-  // the normal path.
-  const steps = experimentSteps(experimentJob);
-  const restore = steps.find((step) =>
-    step.body.includes("uses: actions/cache/restore@v6"),
-  );
-  const save = steps.find((step) =>
-    step.body.includes("uses: actions/cache/save@v6"),
+    "the Clang owner alone receives the cold-build budget",
+    producerTimeouts,
+    ["timeout-minutes: 150"],
   );
   TestValidator.equals(
-    "the producer is restored and saved around the build, on the same key",
+    "one lifecycle bound governs every experiment consumer",
+    experimentTimeouts,
+    ["timeout-minutes: 90"],
+  );
+  const producerSteps = experimentSteps(producerJob);
+  const consumerSteps = experimentSteps(experimentJob);
+  const producerRestore = producerSteps.find((step) =>
+    step.body.includes("uses: actions/cache/restore@v6"),
+  );
+  const producerSave = producerSteps.find((step) =>
+    step.body.includes("uses: actions/cache/save@v6"),
+  );
+  const producerUpload = producerSteps.find((step) =>
+    step.body.includes("uses: actions/upload-artifact@v7"),
+  );
+  const producerPack = producerSteps.find(
+    (step) => step.name === "Pack the verified Clang producer",
+  );
+  const consumerDownload = consumerSteps.find((step) =>
+    step.body.includes("uses: actions/download-artifact@v8"),
+  );
+  const consumerUnpack = consumerSteps.find(
+    (step) => step.name === "Unpack the verified Clang producer",
+  );
+  const install = consumerSteps.find(
+    (step) => step.name === "Install language server",
+  );
+  const narrowKey =
+    "key: clang-producer-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('packages/graph/src/provider/cpp/CPP_CLANG_PRODUCER_COMMIT.ts', 'tests/experiment/src/clang-producer.mjs') }}";
+  TestValidator.equals(
+    "one predecessor builds and saves the exact Clang generation before consumers",
     [
-      restore?.body.includes("id: clang_producer"),
-      restore?.body.includes("path: tests/experiment/.work/tools"),
-      restore?.body.includes(
-        "key: clang-producer-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('packages/graph/src/provider/cpp/CPP_CLANG_PRODUCER_COMMIT.ts', 'tests/experiment/src/catalog.mjs', 'tests/experiment/src/setup-language.mjs') }}",
-      ),
-      save?.body.includes("path: tests/experiment/.work/tools"),
-      save?.body.includes(
+      producerRestore?.body.includes("id: clang_producer"),
+      producerRestore?.body.includes(narrowKey),
+      producerSave?.body.includes(
         "key: ${{ steps.clang_producer.outputs.cache-primary-key }}",
       ),
-      save?.body.includes("steps.clang_producer.outputs.cache-hit != 'true'"),
-      [restore, save].every((step) =>
-        step?.body.includes("(matrix.language == 'c' || matrix.language == 'cpp')"),
+      producerSave?.body.includes("continue-on-error: true"),
+      producerUpload?.body.includes("name: pinned-clang-producer"),
+      producerUpload?.body.includes("path: pinned-clang-producer.tar"),
+      producerPack?.body.includes(
+        "tar -C tests/experiment/.work/tools -cf pinned-clang-producer.tar .",
       ),
-      // Order is the whole safety argument. Saving before the build writes an
-      // empty tree under the exact primary key, which then restores as a hit
-      // forever, fails `setup`'s version check, rebuilds, and never re-saves —
-      // the same terminal state as saving under a key the restore cannot hit.
-      // Saving after the corpus run instead loses a correct build to an
-      // unrelated assertion.
-      //
-      // Relative, not absolute. The argument is about what comes before what,
-      // so pinning positions would make an unrelated step inserted anywhere
-      // above fail an assertion that has nothing to say about it.
       isStrictlyOrdered(
-        [restore, "Install language server", save, "Run LSP experiment"].map(
-          (entry) =>
-            typeof entry === "string"
-              ? steps.findIndex((step) => step.name === entry)
-              : (entry?.index ?? -1),
+        [
+          "Restore the pinned Clang producer",
+          "Provision the pinned Clang producer",
+          "Save the pinned Clang producer",
+          "Pack the verified Clang producer",
+          "Upload the verified Clang producer",
+        ].map((name) =>
+          producerSteps.findIndex((step) => step.name === name),
         ),
       ),
+      experimentJob.includes("needs: [latest_update, clang_producer]"),
+      consumerDownload?.body.includes("name: pinned-clang-producer"),
+      consumerDownload?.body.includes(
+        "path: tests/experiment/.work/clang-producer-artifact",
+      ),
+      consumerUnpack?.body.includes(
+        "tar -C tests/experiment/.work/tools -xf tests/experiment/.work/clang-producer-artifact/pinned-clang-producer.tar",
+      ),
+      install?.body.includes(
+        'SAMCHON_GRAPH_CLANG_PRODUCER_ALLOW_BUILD: "0"',
+      ),
+      occurrences(experiment, "Save the pinned Clang producer") === 1,
     ],
-    [true, true, true, true, true, true, true, true],
+    [
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+    ],
   );
   TestValidator.predicate(
     "the Rust experiment launches the exact binary provisioned by setup",
     experimentJob.includes(
       "SAMCHON_GRAPH_RUST_ANALYZER_HIR: ${{ github.workspace }}/tests/experiment/.work/tools/bin/samchon-rust-analyzer",
+    ),
+  );
+  const testWorkflow = fs.readFileSync(
+    path.join(directory, "test.yml"),
+    "utf8",
+  );
+  const experimentSetup = fs.readFileSync(
+    path.join(GraphPaths.repositoryRoot, "tests", "experiment", "src", "setup-language.mjs"),
+    "utf8",
+  );
+  TestValidator.predicate(
+    "Roslyn builds enforce the lock file through the MSBuild property",
+    [testWorkflow, experimentSetup].every(
+      (source) =>
+        source.includes("-p:RestoreLockedMode=true") &&
+        !source.includes("--locked-mode"),
     ),
   );
   const indexTime = fs.readFileSync(
@@ -322,12 +350,12 @@ function isStrictlyOrdered(positions: readonly number[]): boolean {
 }
 
 /**
- * The matrix job's steps, in order, with their comments removed.
+ * One workflow job's steps, in order, with their comments removed.
  *
  * Two properties this file needs and cannot get from a substring search over
- * the whole job. Order, because the cache save has to happen after the step
- * that builds and before the step that can fail for unrelated reasons, and a
- * job-wide `indexOf` cannot tell those apart from a save at the top. And
+ * the whole job. Order, because the producer cache save has to happen after
+ * the step that builds, and a job-wide `indexOf` cannot tell those apart from
+ * a save at the top. And
  * comment removal, because this workflow explains itself at length: every
  * string these assertions look for also appears in prose a few lines above the
  * step that implements it, so an `includes` over raw text is satisfied by the

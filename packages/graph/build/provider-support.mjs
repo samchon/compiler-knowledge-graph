@@ -313,9 +313,14 @@ function validateManifest(
     }
 
     invariant(
-      Array.isArray(documented.benchmarks) &&
-        documented.benchmarks.length > 0,
-      `${documented.provider} must name benchmark evidence`,
+      Array.isArray(documented.benchmarks),
+      `${documented.provider} benchmark evidence must be a list`,
+    );
+    invariant(
+      documented.benchmarks.length > 0 ||
+        (typeof documented.benchmarkPending === "string" &&
+          documented.benchmarkPending.trim() !== ""),
+      `${documented.provider} must name benchmark evidence or its pending boundary`,
     );
     if (documented.benchmarkProvider !== undefined) {
       invariant(

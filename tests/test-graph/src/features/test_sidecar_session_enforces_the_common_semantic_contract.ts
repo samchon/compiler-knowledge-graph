@@ -2,6 +2,7 @@ import { TestValidator } from "@nestia/e2e";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 
 import {
   ISidecarSnapshot,
@@ -67,6 +68,18 @@ export const test_sidecar_session_enforces_the_common_semantic_contract =
       TestValidator.equals("a rebuild advances one generation", rebuilt.generation, 3);
       await session.close();
       await session.close();
+
+      write(payload, {
+        ...snapshotOf(root, source),
+        projectRoot: singleSlashFileUri(root),
+      });
+      const singleSlash = sessionOf(root, payload);
+      TestValidator.equals(
+        "a sidecar accepts the single-slash file URI for its exact project root",
+        (await singleSlash.refresh()).snapshot.nodes.map((node) => node.name),
+        ["main"],
+      );
+      await singleSlash.close();
 
       await rejected(root, payload, "an oversized artifact is refused", {
         maxArtifactBytes: 1,
@@ -374,6 +387,10 @@ function sessionOf(
 }
 
 let configuration = "GOOS=linux";
+
+function singleSlashFileUri(file: string): string {
+  return pathToFileURL(file).href.replace(/^file:\/\/\//u, "file:/");
+}
 
 function snapshotOf(root: string, source: string): ISidecarSnapshot {
   return {

@@ -53,6 +53,25 @@ jobs:
           go-version: 1.26.5
           cache-dependency-path: sidecars/go/go.sum
 
+      - name: Setup Java
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+          cache-dependency-path: "sidecars/scala/**/pom.xml"
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Setup Swift
+        if: runner.os == 'Linux'
+        uses: swift-actions/setup-swift@v2
+        with:
+          swift-version: "6.0"
+
       - name: Configure pnpm
         run: |
           pnpm config set fetch-retries 5
@@ -87,6 +106,26 @@ jobs:
       - name: Test Go sidecar
         working-directory: sidecars/go
         run: go test ./...
+
+      - name: Build Roslyn sidecar
+        run: dotnet build sidecars/csharp/Samchon.Graph.CSharp.csproj --configuration Release -p:RestoreLockedMode=true
+
+      - name: Build Scala sidecar
+        run: mvn --batch-mode --file sidecars/scala/pom.xml verify
+
+      - name: Build Swift sidecar
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          SWIFT_CXX_FLAGS=()
+          if [[ "$RUNNER_OS" == "Linux" ]]; then
+            SWIFT_ROOT="$(dirname "$(dirname "$(command -v swift)")")"
+            SWIFT_CXX_FLAGS+=(
+              -Xcxx "-I${SWIFT_ROOT}/lib/swift"
+              -Xcxx "-I${SWIFT_ROOT}/lib/swift/Block"
+            )
+          fi
+          swift build --package-path sidecars/swift --configuration release "${SWIFT_CXX_FLAGS[@]}"
 
       - name: Test
         run: pnpm test

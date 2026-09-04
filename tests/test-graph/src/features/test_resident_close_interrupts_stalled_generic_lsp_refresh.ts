@@ -4,6 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { GraphPaths } from "../internal/GraphPaths";
+import { waitForProcessId } from "../internal/waitForProcessId";
 
 /** A resident close cancels every phase of an established LSP refresh. */
 export const test_resident_close_interrupts_stalled_generic_lsp_refresh =
@@ -40,8 +41,7 @@ const exercise = async (phase: string, serverArgs: string[]): Promise<void> => {
   });
   try {
     await resident.load();
-    await waitForFile(pidFile);
-    pid = Number(fs.readFileSync(pidFile, "utf8"));
+    pid = await waitForProcessId(pidFile);
     fs.writeFileSync(source, "answer = 2\n");
 
     const refreshing = resident.load();

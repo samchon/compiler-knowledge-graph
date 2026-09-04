@@ -3,8 +3,11 @@ import { execFileSync, spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
+import type { ISamchonGraphDump } from "@samchon/graph";
+import { routeSummary } from "../../../../packages/graph/src/routeSummary";
 import { GraphFixtures } from "../internal/GraphFixtures";
 import { GraphPaths } from "../internal/GraphPaths";
+import { waitForProcessId } from "../internal/waitForProcessId";
 
 export const test_cli_dump_prints_graph_json = async () => {
   const root = GraphFixtures.createOrderFixture();
@@ -19,11 +22,67 @@ export const test_cli_dump_prints_graph_json = async () => {
   const dump = JSON.parse(output);
   TestValidator.equals("CLI dump indexer", dump.indexer, "static");
   TestValidator.predicate("CLI dump has nodes", dump.nodes.length > 0);
+  assertStructuredRouteProvenance(dump);
 
   assertTheDumpSaysWhatProducedIt(root);
   assertPrefixedWarningsRemainSingle();
   await assertTimedOutDumpRetiresItsLanguageServer();
 };
+
+function assertStructuredRouteProvenance(dump: Record<string, unknown>): void {
+  const digest = "a".repeat(64);
+  const enriched = {
+    ...dump,
+    provenance: [
+      {
+        provider: "fixture-provider",
+        languages: ["typescript"],
+        authority: "compiler",
+        facts: ["calls"],
+        capabilities: ["fixture"],
+        producer: {
+          tool: "fixture-compiler",
+          version: "1.2.3",
+          compiler: "TypeScript 6",
+          schemaVersion: 2,
+          protocolVersion: 1,
+        },
+        universe: digest,
+        manifest: digest,
+        content: digest,
+      },
+    ],
+  } as unknown as ISamchonGraphDump;
+  const route = JSON.parse(routeSummary(enriched));
+  TestValidator.equals(
+    "the route record keeps compact serving provenance",
+    route.provenance,
+    [
+      {
+        provider: "fixture-provider",
+        languages: ["typescript"],
+        authority: "compiler",
+        producer: {
+          tool: "fixture-compiler",
+          version: "1.2.3",
+          schemaVersion: 2,
+          protocolVersion: 1,
+        },
+      },
+    ],
+  );
+  enriched.provenance![0]!.producer.version = "x".repeat(17_000);
+  TestValidator.equals(
+    "an oversized route record drops unbounded evidence explicitly",
+    JSON.parse(routeSummary(enriched)),
+    {
+      schemaVersion: 1,
+      indexer: dump.indexer,
+      provenance: [],
+      truncated: true,
+    },
+  );
+}
 
 /**
  * A dump says which path produced it, and why the better ones did not.
@@ -67,6 +126,26 @@ function assertTheDumpSaysWhatProducedIt(root: string): void {
   TestValidator.predicate(
     "the dump names the indexer that answered",
     summary.some((line) => line.includes("indexer=")),
+  );
+  const routeLine = summary.find((line) =>
+    line.startsWith("@samchon/graph: route="),
+  );
+  const route = JSON.parse(
+    routeLine?.slice("@samchon/graph: route=".length) ?? "null",
+  ) as {
+    schemaVersion?: number;
+    indexer?: string;
+    provenance?: unknown[];
+  } | null;
+  TestValidator.equals(
+    "the discarded payload keeps a bounded machine-readable route record",
+    [
+      route?.schemaVersion,
+      route?.indexer,
+      route?.provenance?.length,
+      (routeLine?.length ?? Number.POSITIVE_INFINITY) < 17_000,
+    ],
+    [1, "static", 0, true],
   );
   TestValidator.predicate(
     "and reports the reasons nothing better served",
@@ -181,8 +260,7 @@ async function assertTimedOutDumpRetiresItsLanguageServer(): Promise<void> {
     stderr += chunk;
   });
   try {
-    await waitForFile(pidFile, 5_000);
-    serverPid = Number(fs.readFileSync(pidFile, "utf8"));
+    serverPid = await waitForProcessId(pidFile);
     child.kill("SIGTERM");
     const code = await waitForExit(child, 5_000);
     TestValidator.equals(
@@ -218,16 +296,6 @@ async function assertTimedOutDumpRetiresItsLanguageServer(): Promise<void> {
     }
   }
   /* c8 ignore stop */
-}
-
-async function waitForFile(file: string, timeoutMs: number): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (!fs.existsSync(file)) {
-    if (Date.now() >= deadline) {
-      throw new Error(`Timed out waiting for ${file}`);
-    }
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  }
 }
 
 function waitForExit(

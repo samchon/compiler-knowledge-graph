@@ -433,6 +433,159 @@ export const test_graph_snapshot_protocol_commits_atomic_shard_generations =
       "universe movement disguised as a byte-identical shard upsert",
     );
 
+    const factStore = new GraphSnapshotProtocol.Store(process.cwd());
+    let factValidations = 0;
+    const validateFacts = () => {
+      factValidations += 1;
+    };
+    const factInitial = factStore.apply(transaction("fact-generation-1"), {
+      warnings: ["stable warning"],
+      validate: validateFacts,
+      reuseValidatedFacts: true,
+    });
+    const factDelta = transaction("fact-generation-2", {
+      baseGeneration: "fact-generation-1",
+      baseSequence: 1,
+      sourceDigest: "d",
+    });
+    await rejectedWithoutMovement(
+      factStore,
+      mutate(factDelta, (frames) => {
+        commit(frames).factDigest = digest("f");
+      }),
+      "a fact-equivalent delta with a false fact proof",
+      undefined,
+      "commit fact digest mismatch",
+    );
+    await rejectedWithoutMovement(
+      factStore,
+      mutate(factDelta, (frames) => {
+        (frames[1] as GraphSnapshotProtocol.IBegin).manifest = digest("f");
+      }),
+      "a fact-equivalent delta with a false input manifest",
+      undefined,
+      "input manifest digest mismatch",
+    );
+    const factEdited = factStore.apply(factDelta, {
+      warnings: ["stable warning"],
+      validate: validateFacts,
+      reuseValidatedFacts: true,
+    });
+    TestValidator.predicate(
+      "a source-only delta advances its protocol and manifest while reusing validated graph facts",
+      factEdited !== factInitial &&
+        factEdited.nodes === factInitial.nodes &&
+        factEdited.edges === factInitial.edges &&
+        factEdited.coverage === factInitial.coverage &&
+        factEdited.unresolved === factInitial.unresolved &&
+        factEdited.protocol?.generation === "fact-generation-2" &&
+        factEdited.sources.get(path.resolve("src/main.ts"))?.diskDigest ===
+          digest("d") &&
+        factValidations === 1,
+    );
+
+    const expandedSourceDelta = transaction("fact-generation-3", {
+      baseGeneration: "fact-generation-2",
+      baseSequence: 2,
+      sourceDigest: "e",
+    });
+    const expandedSource = upsert(expandedSourceDelta, "source");
+    expandedSource.shard.sources.push({
+      file: path.resolve("tsconfig.json"),
+      checkerDigest: digest("e"),
+      diskDigest: digest("e"),
+    });
+    expandedSource.digest = GraphSnapshotProtocol.shardDigest(
+      expandedSource.shard,
+    );
+    const expandedBegin = expandedSourceDelta[1] as GraphSnapshotProtocol.IBegin;
+    expandedBegin.manifest = GraphSnapshotProtocol.manifestDigest(
+      expandedSource.shard.sources,
+    );
+    const expandedCommit = commit(expandedSourceDelta);
+    expandedCommit.shards = factEdited.protocol!.shards.map((entry) =>
+      entry.key === expandedSource.shard.key
+        ? { key: entry.key, digest: expandedSource.digest }
+        : { ...entry },
+    );
+    expandedCommit.factDigest = factEdited.protocol!.factDigest;
+    const expanded = factStore.apply(expandedSourceDelta, {
+      warnings: ["stable warning"],
+      validate: validateFacts,
+      reuseValidatedFacts: true,
+    });
+    TestValidator.predicate(
+      "source membership movement takes the ordinary validation path",
+      factValidations === 2 &&
+        expanded.nodes !== factEdited.nodes &&
+        expanded.sources.has(path.resolve("tsconfig.json")),
+    );
+
+    const warningDelta = transaction("fact-generation-4", {
+      baseGeneration: "fact-generation-3",
+      baseSequence: 3,
+      sourceDigest: "f",
+    });
+    const warningEdited = factStore.apply(warningDelta, {
+      warnings: ["moved warning"],
+      validate: validateFacts,
+      reuseValidatedFacts: true,
+    });
+    TestValidator.predicate(
+      "warning movement takes the ordinary validation path",
+      factValidations === 3 && warningEdited.nodes !== expanded.nodes,
+    );
+    factStore.apply(
+      transaction("fact-generation-5", {
+        baseGeneration: "fact-generation-4",
+        baseSequence: 4,
+        nodeName: "changed fact",
+        sourceDigest: "a",
+      }),
+      {
+        warnings: ["moved warning"],
+        validate: validateFacts,
+        reuseValidatedFacts: true,
+      },
+    );
+    TestValidator.equals(
+      "fact movement takes the ordinary validation path",
+      factValidations,
+      4,
+    );
+
+    const conflictStore = new GraphSnapshotProtocol.Store(process.cwd());
+    const conflictInitial = transaction("conflict-generation-1");
+    coverageShard(conflictInitial).shard.sources.push({
+      file: path.resolve("src/main.ts"),
+      checkerDigest: digest("c"),
+      diskDigest: digest("c"),
+    });
+    refreshDigests(conflictInitial);
+    conflictStore.apply(conflictInitial, { reuseValidatedFacts: true });
+    const conflictingDelta = transaction("conflict-generation-2", {
+      baseGeneration: "conflict-generation-1",
+      baseSequence: 1,
+      sourceDigest: "d",
+    });
+    const conflictingSource = upsert(conflictingDelta, "source");
+    commit(conflictingDelta).shards = conflictStore.current!.protocol!.shards.map(
+      (entry) =>
+        entry.key === "source"
+          ? { key: entry.key, digest: conflictingSource.digest }
+          : { ...entry },
+    );
+    commit(conflictingDelta).factDigest =
+      conflictStore.current!.protocol!.factDigest;
+    TestValidator.predicate(
+      "fact-equivalent shards may not disagree about the bytes of one source",
+      errorMessage(() =>
+        conflictStore.apply(conflictingDelta, {
+          reuseValidatedFacts: true,
+        }),
+      ).includes("shards disagree about source"),
+    );
+
     const boundedGenerationStore = new GraphSnapshotProtocol.Store(process.cwd());
     boundedGenerationStore.apply(transaction("bounded-generation-1"));
     boundedGenerationStore.apply(
@@ -1526,12 +1679,31 @@ async function rejectedWithoutMovement(
   frames: readonly GraphSnapshotProtocol.Frame[],
   label: string,
   signal?: AbortSignal,
+  expected?: string,
 ): Promise<void> {
   const before = store.current;
-  await TestValidator.error(`${label} rejects`, () =>
-    store.apply(frames, { signal }),
+  const message = errorMessage(() =>
+    store.apply(frames, {
+      signal,
+      ...(expected === undefined
+        ? {}
+        : { reuseValidatedFacts: true, warnings: ["stable warning"] }),
+    }),
+  );
+  TestValidator.predicate(
+    `${label} rejects`,
+    message.length !== 0 && (expected === undefined || message.includes(expected)),
   );
   TestValidator.predicate(`${label} retains the prior generation`, store.current === before);
+}
+
+function errorMessage(task: () => unknown): string {
+  try {
+    task();
+    return "";
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
+  }
 }
 
 function record(value: object): Record<string, unknown> {

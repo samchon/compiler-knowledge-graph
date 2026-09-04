@@ -1,7 +1,7 @@
 import { fileURLToPath } from "node:url";
 
 export function fileFromUri(uri: string): string {
-  if (!uri.startsWith("file://")) return uri;
+  if (uri.slice(0, 6).toLowerCase() !== "file:/") return uri;
   // An LSP owns the URI encoder on responses. Pyright percent-encodes reserved
   // path characters such as the drive colon and `@`, while other servers leave
   // some of them literal. `decodeURI` deliberately preserves reserved escapes,

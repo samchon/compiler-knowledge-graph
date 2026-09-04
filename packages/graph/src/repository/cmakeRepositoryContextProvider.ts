@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { ISamchonRepositoryContextDump } from "../structures";
+import { isSubPath } from "../utils/isSubPath";
 import { IRepositoryContextProvider } from "./IRepositoryContextProvider";
 import { createRepositoryContextSession } from "./createRepositoryContextSession";
 import { repositoryContextFacts } from "./repositoryContextFacts";
@@ -375,7 +376,7 @@ function cmakeConfigurationShard(
         ecosystem: ECOSYSTEM,
         coordinate,
         configuration: target,
-        external: !isInside(root, artifactPath),
+        external: !isSubPath(root, artifactPath),
         evidence,
       });
       edges.push(
@@ -476,7 +477,7 @@ function appendCmakeSources(
       ecosystem: ECOSYSTEM,
       coordinate,
       configuration,
-      external: !isInside(root, directory),
+      external: !isSubPath(root, directory),
       evidence: repositoryContextEvidence(
         root,
         path.join(detail.paths.source, "CMakeLists.txt"),
@@ -623,11 +624,6 @@ function dedupeEdges(
       compareRepositoryText(left.from, right.from) ||
       compareRepositoryText(left.to, right.to),
   );
-}
-
-function isInside(root: string, file: string): boolean {
-  const relative = path.relative(root, file);
-  return relative !== ".." && !relative.startsWith(`..${path.sep}`);
 }
 
 function throwIfAborted(signal: AbortSignal | undefined): void {

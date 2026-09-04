@@ -65,7 +65,10 @@ if (process.env.SAMCHON_GRAPH_FAKE_LSP_CWD_FILE) {
   fs.writeFileSync(process.env.SAMCHON_GRAPH_FAKE_LSP_CWD_FILE, process.cwd());
 }
 if (process.env.SAMCHON_GRAPH_FAKE_LSP_PID_FILE) {
-  fs.writeFileSync(process.env.SAMCHON_GRAPH_FAKE_LSP_PID_FILE, String(process.pid));
+  fs.writeFileSync(
+    process.env.SAMCHON_GRAPH_FAKE_LSP_PID_FILE,
+    `${process.pid}\n`,
+  );
 }
 // Delay only the FIRST textDocument/references response by this many ms, then
 // answer the rest immediately — models a server that builds its reference index
@@ -221,7 +224,7 @@ if (stubbornDescendantPidFile !== undefined) {
       stdio: "ignore",
     },
   );
-  fs.writeFileSync(stubbornDescendantPidFile, String(descendant.pid));
+  fs.writeFileSync(stubbornDescendantPidFile, `${descendant.pid}\n`);
   descendant.unref();
 }
 if (options.ignoreTermination && process.platform !== "win32") {

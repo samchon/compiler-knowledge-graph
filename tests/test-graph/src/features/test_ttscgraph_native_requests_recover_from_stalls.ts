@@ -5,6 +5,7 @@ import path from "node:path";
 
 import { TtscGraphClient } from "../../../../packages/graph/src/provider/ttscgraph/TtscGraphClient";
 import { GraphPaths } from "../internal/GraphPaths";
+import { waitForProcessId } from "../internal/waitForProcessId";
 
 /** A stalled request owns one child generation, never the resident queue. */
 export const test_ttscgraph_native_requests_recover_from_stalls = async () => {
@@ -304,7 +305,7 @@ const assertRetiredChildIsClosed = async (): Promise<void> => {
   const childSource = [
     'const fs = require("node:fs");',
     'const readline = require("node:readline");',
-    `fs.writeFileSync(${JSON.stringify(started)}, String(process.pid));`,
+    `fs.writeFileSync(${JSON.stringify(started)}, process.pid + "\\n");`,
     "readline.createInterface({ input: process.stdin }).once(\"line\", () =>",
     `  fs.writeFileSync(${JSON.stringify(requested)}, "request\\n"));`,
     "process.on(\"SIGTERM\", () =>",
@@ -323,7 +324,7 @@ const assertRetiredChildIsClosed = async (): Promise<void> => {
       "-e",
       [
         'const fs = require("node:fs");',
-        `fs.writeFileSync(${JSON.stringify(unrelatedStarted)}, String(process.pid));`,
+        `fs.writeFileSync(${JSON.stringify(unrelatedStarted)}, process.pid + "\\n");`,
         "setInterval(() => undefined, 1_000);",
       ].join("\n"),
     ],
@@ -334,7 +335,7 @@ const assertRetiredChildIsClosed = async (): Promise<void> => {
     const controller = new AbortController();
     const stalled = client.refresh({ signal: controller.signal });
     await waitForFile(requested);
-    const pid = Number(fs.readFileSync(started, "utf8"));
+    const pid = await waitForProcessId(started);
     controller.abort("retire stubborn generation");
     await rejectionOf(stalled);
     await waitForFile(terminated);

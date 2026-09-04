@@ -2,9 +2,20 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { createResidentGraphSource } from "@samchon/graph";
+import { LspClient } from "../../../packages/graph/lib/lsp/LspClient.js";
 
+import { measureClangBackgroundIndex } from "./clang-background-baseline.mjs";
 import { compilationDatabaseLifecycle } from "./compilation-database-lifecycle.mjs";
+import {
+  measureLifecycleNoopPerformance,
+  measureLifecyclePerformance,
+} from "./lifecycle-performance.mjs";
+import { captureKotlinBuildReport } from "./kotlin-build-report.mjs";
 import { isolateCorpus, shell } from "./process.mjs";
+import {
+  captureGenerationEvidence,
+  firstEvidenceDifference,
+} from "./regeneration-evidence.mjs";
 
 /** Measure one strict provider without ever editing the pinned corpus clone. */
 export const runStrictLifecycle = async (experiment, pinnedRoot) => {
@@ -35,6 +46,76 @@ export const runStrictLifecycle = async (experiment, pinnedRoot) => {
   const buildText = fs.readFileSync(buildFile, "utf8");
   const failureText = fs.readFileSync(failureFile, "utf8");
   const rows = [];
+  if (experiment.nativeBaseline !== undefined) {
+    const baselineRoot = isolateCorpus(
+      experiment,
+      pinnedRoot,
+      "native-baseline",
+    );
+    if (experiment.prepare !== undefined) {
+      shell(experiment.prepare, { cwd: baselineRoot });
+    }
+    let nativeElapsedMs;
+    if (typeof experiment.nativeBaseline === "string") {
+      const started = performance.now();
+      shell(experiment.nativeBaseline, { cwd: baselineRoot });
+      nativeElapsedMs = Math.round(performance.now() - started);
+    } else if (experiment.nativeBaseline.kind === "clang-background-index") {
+      nativeElapsedMs = await measureClangBackgroundIndex({
+        command: experiment.nativeBaseline.command,
+        compilationDatabase: path.join(
+          baselineRoot,
+          fixture.compilationDatabase,
+        ),
+        cwd: baselineRoot,
+        language: experiment.language,
+        sourceFile: path.join(baselineRoot, fixture.sourceFile),
+        timeoutMs: experiment.readyTimeoutMs ?? 180_000,
+        createClient: (command, commandArgs) =>
+          new LspClient(
+            command,
+            commandArgs,
+            experiment.readyTimeoutMs ?? 180_000,
+            baselineRoot,
+          ),
+      });
+    } else if (experiment.nativeBaseline.kind === "shell") {
+      if (experiment.nativeBaseline.warmup === true) {
+        shell(experiment.nativeBaseline.command, { cwd: baselineRoot });
+      }
+      for (const relative of experiment.nativeBaseline.clean ?? []) {
+        const target = path.resolve(baselineRoot, relative);
+        if (
+          target === baselineRoot ||
+          !target.startsWith(`${baselineRoot}${path.sep}`)
+        ) {
+          throw new Error(
+            `${experiment.language}: native baseline cleanup escapes its corpus`,
+          );
+        }
+        fs.rmSync(target, { force: true, recursive: true });
+      }
+      const started = performance.now();
+      shell(experiment.nativeBaseline.command, { cwd: baselineRoot });
+      nativeElapsedMs = Math.round(performance.now() - started);
+    } else {
+      throw new Error(
+        `${experiment.language}: unknown native baseline ${String(experiment.nativeBaseline.kind)}`,
+      );
+    }
+    rows.push({
+      name: "native-baseline",
+      status: "passed",
+      command:
+        typeof experiment.nativeBaseline === "string"
+          ? experiment.nativeBaseline
+          : experiment.nativeBaseline.kind === "clang-background-index"
+            ? `${experiment.nativeBaseline.command} --background-index`
+            : experiment.nativeBaseline.command,
+      project: baselineRoot,
+      elapsedMs: nativeElapsedMs,
+    });
+  }
   const resident = createResidentGraphSource({
     cwd: lifecycleRoot,
     mode: "lsp",
@@ -77,6 +158,14 @@ export const runStrictLifecycle = async (experiment, pinnedRoot) => {
       nodeCount: next.nodes.length,
       edgeCount: next.edges.length,
       diagnosticCount: next.diagnostics?.length ?? 0,
+      ...(fixture.kotlinBuildReportRoot === undefined || mode === "unchanged"
+        ? {}
+        : {
+            kotlinBuildReport: captureKotlinBuildReport(
+              lifecycleRoot,
+              fixture.kotlinBuildReportRoot,
+            ),
+          }),
     };
     if (name === "unchanged" && identity !== previousIdentity) {
       throw new Error(
@@ -102,11 +191,86 @@ export const runStrictLifecycle = async (experiment, pinnedRoot) => {
 
   try {
     const cold = await load("cold", ["initial"]);
+    const coldRegenerationEvidence =
+      fixture.regenerationEvidenceRoot === undefined
+        ? undefined
+        : captureGenerationEvidence(
+            lifecycleRoot,
+            fixture.regenerationEvidenceRoot,
+          );
     const unchanged = await load("unchanged", ["unchanged"]);
     if (cold !== unchanged) {
       throw new Error(
         `${experiment.language}: unchanged resident load replaced dump identity`,
       );
+    }
+
+    if (fixture.noopPerformance !== undefined) {
+      rows.push(
+        await measureLifecycleNoopPerformance({
+          language: experiment.language,
+          ...fixture.noopPerformance,
+          currentDump: dump,
+          currentIdentity: previousIdentity,
+          load: async () => {
+            const started = performance.now();
+            const next = await resident.load();
+            const provenance = strictProvenance(next, experiment);
+            return {
+              dump: next,
+              mode: resident.modes().get(experiment.strictProvider),
+              identity: [
+                provenance.manifest,
+                provenance.content,
+                provenance.universe,
+              ].join(":"),
+              elapsedMs: Math.round(performance.now() - started),
+            };
+          },
+        }),
+      );
+    }
+
+    if (fixture.performance !== undefined) {
+      const measured = await measureLifecyclePerformance({
+        language: experiment.language,
+        ...fixture.performance,
+        sourceText,
+        currentDump: dump,
+        currentIdentity: previousIdentity,
+        describeDifference: firstGenerationDifference,
+        changedModes: CHANGED_MODES,
+        writeSource: (text) => fs.writeFileSync(sourceFile, text),
+        ...(fixture.kotlinBuildReportRoot === undefined
+          ? {}
+          : {
+              captureEditEvidence: () =>
+                captureKotlinBuildReport(
+                  lifecycleRoot,
+                  fixture.kotlinBuildReportRoot,
+                ),
+            }),
+        load: async () => {
+          const started = performance.now();
+          const next = await resident.load();
+          const provenance = strictProvenance(next, experiment);
+          return {
+            dump: next,
+            mode: resident.modes().get(experiment.strictProvider),
+            identity: [
+              provenance.manifest,
+              provenance.content,
+              provenance.universe,
+            ].join(":"),
+            elapsedMs: Math.round(performance.now() - started),
+          };
+        },
+      });
+      dump = measured.dump;
+      previousIdentity = measured.identity;
+      previousProvenance = strictProvenance(dump, experiment);
+      previousDiagnostics = dump.diagnostics?.length ?? 0;
+      rows.push(measured.row);
     }
 
     fs.writeFileSync(sourceFile, sourceText + fixture.editSuffix);
@@ -169,7 +333,10 @@ export const runStrictLifecycle = async (experiment, pinnedRoot) => {
       );
     }
 
-    fs.writeFileSync(buildFile, `${buildText}\n`);
+    fs.writeFileSync(
+      buildFile,
+      `${buildText}${fixture.buildEditSuffix ?? "\n"}`,
+    );
     await load("build-config", CHANGED_MODES);
 
     const failedAt = performance.now();
@@ -485,6 +652,13 @@ export const runStrictLifecycle = async (experiment, pinnedRoot) => {
     }
     const coldProvenance = strictProvenance(cold, experiment);
     const retryProvenance = strictProvenance(retried, experiment);
+    const retryRegenerationEvidence =
+      fixture.regenerationEvidenceRoot === undefined
+        ? undefined
+        : captureGenerationEvidence(
+            lifecycleRoot,
+            fixture.regenerationEvidenceRoot,
+          );
     // Restoring the sources restores the generation, or the row says why not.
     //
     // This was written as two claims, on the theory that a source manifest is a
@@ -507,13 +681,17 @@ export const runStrictLifecycle = async (experiment, pinnedRoot) => {
     const limitation = experiment.regenerationLimitation;
     if (!reproduced && limitation === undefined) {
       const difference = firstGenerationDifference(cold, retried);
+      const producerDifference = firstEvidenceDifference(
+        coldRegenerationEvidence,
+        retryRegenerationEvidence,
+      );
       throw new Error(
         `${experiment.language}: restoring the original sources did not reproduce the generation ` +
           `(manifest ${reproducedManifest ? "unchanged" : "moved"}, ` +
           `facts ${reproducedContent ? "unchanged" : "moved"}; ` +
           `cold ${String(cold.nodes.length)} nodes/${String(cold.edges.length)} edges, ` +
           `retry ${String(retried.nodes.length)} nodes/${String(retried.edges.length)} edges; ` +
-          `first difference: ${difference})`,
+          `first difference: ${difference}; producer evidence: ${producerDifference})`,
       );
     }
     rows.push({

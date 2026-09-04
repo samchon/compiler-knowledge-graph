@@ -6,6 +6,10 @@ import { buildGraphDump } from "@samchon/graph";
 
 import { findExperiment } from "./catalog.mjs";
 import {
+  summarizeCoverage,
+  summarizeUnresolved,
+} from "./evidence-summary.mjs";
+import {
   activateProvisionedTools,
   assertPinnedCorpus,
   cloneRepository,
@@ -17,6 +21,8 @@ import {
   toolManifest,
 } from "./process.mjs";
 import { runStrictLifecycle } from "./strict-lifecycle.mjs";
+import { hasRepresentativeEdge } from "./representative-edges.mjs";
+import { runJavaProducerAgreement } from "./java-producer-agreement.mjs";
 
 activateProvisionedTools();
 
@@ -160,11 +166,16 @@ if (dump.indexer === "static") {
 if (dump.languages.includes(experiment.language) === false) {
   throw new Error(`${experiment.language}: dump languages did not include ${experiment.language}`);
 }
-if (!strict && dump.nodes.length < experiment.minNodes) {
+const enforceMinimums = !strict || experiment.strictMinimums === true;
+if (
+  enforceMinimums &&
+  experiment.minNodes !== undefined &&
+  dump.nodes.length < experiment.minNodes
+) {
   throw new Error(`${experiment.language}: expected at least ${experiment.minNodes} nodes, got ${dump.nodes.length}`);
 }
 const minEdges = experiment.minEdges ?? 0;
-if (!strict && dump.edges.length < minEdges) {
+if (enforceMinimums && dump.edges.length < minEdges) {
   throw new Error(`${experiment.language}: expected at least ${minEdges} relationship edges, got ${dump.edges.length}`);
 }
 const provenance = strict ? declaredProvenance : undefined;
@@ -223,6 +234,13 @@ const edgeKindCounts = Object.fromEntries(
       dump.edges.filter((edge) => edge.kind === kind).length,
     ]),
 );
+for (const claim of strict ? experiment.representativeEdges ?? [] : []) {
+  if (!hasRepresentativeEdge(dump, claim)) {
+    throw new Error(
+      `${experiment.language}: representative ${claim.from} -[${claim.kind}]-> ${claim.to} edge was not proved`,
+    );
+  }
+}
 // A small pinned build fixture can truthfully exercise a relationship only in
 // the isolated create/rename transition. `runStrictLifecycle` has already
 // required this exact edge in both generations; count that evidence instead of
@@ -297,6 +315,11 @@ if (warnings.some((warning) => /LSP indexing failed|LSP returned no symbols|serv
   throw new Error(`${experiment.language}: LSP warning failed experiment: ${warnings.join("; ")}`);
 }
 
+const producerAgreement =
+  experiment.language === "java"
+    ? await runJavaProducerAgreement(experiment, cwd)
+    : undefined;
+
 // Read after the whole run rather than before it: what has to be proved is that
 // nothing this run did — preparation, indexing, or lifecycle editing — reached
 // the clone whose commit the result publishes.
@@ -319,7 +342,10 @@ const result = {
   diagnosticCount: dump.diagnostics?.length ?? 0,
   strictProvider: experiment.strictProvider,
   provenance,
+  coverageSummary: summarizeCoverage(dump, provenance?.provider),
+  unresolvedSummary: summarizeUnresolved(dump, provenance?.provider),
   edgeKindCounts,
+  representativeEdges: experiment.representativeEdges,
   semanticLimitation: experiment.semanticLimitation,
   compilerLimitation: experiment.compilerLimitation,
   regenerationLimitation: experiment.regenerationLimitation,
@@ -328,6 +354,7 @@ const result = {
   crossFileCalls,
   crossFileRelationships,
   lifecycle: lifecycle?.rows,
+  producerAgreement,
   warnings,
   sampleNodes: dump.nodes.slice(0, 20).map((node) => ({
     id: node.id,

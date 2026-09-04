@@ -36,17 +36,19 @@ export const test_mcp_topology_fences_file_joins_by_code_generation =
         topologyDump(fixture.dump.project),
       );
       const application = new SamchonGraphApplication(graph, () => topology);
-      const compatible = await application.inspect_code_graph({
-        question: "show repository packages and their source files",
-        draft: { reason: "repository orientation", type: "topology" },
-        review: "topology is the typed repository plane",
-        request: {
-          type: "topology",
-          query: "source",
-          relations: ["joins-file"],
-          limit: 10,
-        },
-      });
+      const compatible = await tracedTopology(() =>
+        application.inspect_code_graph({
+          question: "show repository packages and their source files",
+          draft: { reason: "repository orientation", type: "topology" },
+          review: "topology is the typed repository plane",
+          request: {
+            type: "topology",
+            query: "source",
+            relations: ["joins-file"],
+            limit: 10,
+          },
+        }),
+      );
       TestValidator.equals(
         "a stable code generation admits only joins to indexed code files",
         [
@@ -311,6 +313,17 @@ export const test_mcp_topology_fences_file_joins_by_code_generation =
       fs.rmSync(fixture.root, { recursive: true, force: true });
     }
   };
+
+async function tracedTopology<T>(closure: () => Promise<T>): Promise<T> {
+  const previous = process.env.SAMCHON_GRAPH_TOPOLOGY_TRACE;
+  process.env.SAMCHON_GRAPH_TOPOLOGY_TRACE = "1";
+  try {
+    return await closure();
+  } finally {
+    if (previous === undefined) delete process.env.SAMCHON_GRAPH_TOPOLOGY_TRACE;
+    else process.env.SAMCHON_GRAPH_TOPOLOGY_TRACE = previous;
+  }
+}
 
 function topologyDump(project: string): ISamchonRepositoryContextDump {
   const workspace = repositoryContextId("fixture", "workspace", ".");

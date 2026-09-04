@@ -23,6 +23,17 @@ export interface IBulkGraphSession {
   readonly kind: "bulk";
 
   /**
+   * Whether this live session owns the selected producer command until close.
+   *
+   * Most batch sessions launch their recorded command anew and therefore need
+   * the coordinator to re-check provider topology after a changed generation.
+   * A genuinely resident producer can instead bind its executable and publish
+   * exact producer/compiler identity on every generation; command discovery
+   * beside that process is neither its authority nor a reason to replace it.
+   */
+  readonly ownsProviderTopology?: boolean;
+
+  /**
    * Every language this session publishes as one atomic slice. Never empty.
    *
    * A list rather than a single language because one compilation universe can

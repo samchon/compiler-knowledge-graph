@@ -115,7 +115,12 @@ jobs:
 
       - name: Build Swift sidecar
         if: runner.os != 'Windows'
-        run: swift build --package-path sidecars/swift --configuration release
+        shell: bash
+        run: |
+          SWIFT_ROOT="$(dirname "$(dirname "$(command -v swift)")")"
+          swift build --package-path sidecars/swift --configuration release \
+            -Xcxx "-I${SWIFT_ROOT}/lib/swift" \
+            -Xcxx "-I${SWIFT_ROOT}/lib/swift/Block"
 
       - name: Test
         run: pnpm test

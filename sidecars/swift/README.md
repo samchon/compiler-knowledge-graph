@@ -20,6 +20,16 @@ Build and expose the executable on `PATH`, or set
 swift build --package-path sidecars/swift -c release
 ```
 
+On Linux, IndexStoreDB's C++ targets also need the Swift toolchain's dispatch
+headers, as documented upstream:
+
+```bash
+SWIFT_ROOT="$(dirname "$(dirname "$(command -v swift)")")"
+swift build --package-path sidecars/swift -c release \
+  -Xcxx "-I${SWIFT_ROOT}/lib/swift" \
+  -Xcxx "-I${SWIFT_ROOT}/lib/swift/Block"
+```
+
 The sidecar keeps its process resident, but it does not claim ownership of
 SourceKit-LSP's scheduler or caches. Each changed generation is a completed
 SwiftPM build followed by a frozen IndexStoreDB query. The ordinary

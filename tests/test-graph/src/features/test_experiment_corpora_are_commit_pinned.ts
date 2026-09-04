@@ -629,6 +629,8 @@ export const test_experiment_corpora_are_commit_pinned = async () => {
       swiftSetup.includes('path.join(repositoryRoot, "sidecars", "swift")') &&
       swiftSetup.includes('"--configuration",') &&
       swiftSetup.includes('"release",') &&
+      swiftSetup.includes('process.platform === "linux"') &&
+      swiftSetup.includes('path.join(swiftRoot, "lib", "swift", "Block")') &&
       swiftSetup.includes('path.join(sidecarBin, "samchon-swift-graph")') &&
       swiftSetup.includes(
         'recordProvisionedEnvironment("SAMCHON_GRAPH_SWIFT_GRAPH", producer)',

@@ -998,13 +998,24 @@ switch (experiment.language) {
       digest: "unpinned",
     });
     const sidecar = path.join(repositoryRoot, "sidecars", "swift");
-    run("swift", [
+    const swift = String(run("which", ["swift"], { stdio: "pipe" }).stdout).trim();
+    const swiftRoot = path.dirname(path.dirname(swift));
+    const swiftBuildArguments = [
       "build",
       "--package-path",
       sidecar,
       "--configuration",
       "release",
-    ]);
+      ...(process.platform === "linux"
+        ? [
+            "-Xcxx",
+            `-I${path.join(swiftRoot, "lib", "swift")}`,
+            "-Xcxx",
+            `-I${path.join(swiftRoot, "lib", "swift", "Block")}`,
+          ]
+        : []),
+    ];
+    run("swift", swiftBuildArguments);
     const sidecarBin = String(
       run(
         "swift",
@@ -1013,7 +1024,6 @@ switch (experiment.language) {
       ).stdout,
     ).trim();
     const producer = path.join(sidecarBin, "samchon-swift-graph");
-    const swift = String(run("which", ["swift"], { stdio: "pipe" }).stdout).trim();
     run(producer, ["--version"]);
     process.env.SAMCHON_GRAPH_SWIFT_GRAPH = producer;
     process.env.SAMCHON_GRAPH_SWIFT_TOOLCHAIN = swift;

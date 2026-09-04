@@ -85,6 +85,11 @@ export const test_kotlinc_graph_publishes_atomic_target_generations =
       },
     });
     try {
+      TestValidator.equals(
+        "the resident producer owns its selected command until close",
+        session.ownsProviderTopology,
+        true,
+      );
       const cold = await session.refresh();
       TestValidator.equals(
         "the first published generation is generation one",

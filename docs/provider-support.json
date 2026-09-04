@@ -206,9 +206,9 @@
       "facts": ["contains", "exports", "imports", "calls", "accesses", "instantiates", "type_ref", "extends", "implements", "overrides", "dispatches", "decorates", "tests", "references"],
       "commands": ["scip-java", "java"],
       "environmentOverrides": ["SAMCHON_GRAPH_KOTLINC_GRAPH", "SAMCHON_GRAPH_JAVA_TOOLCHAIN"],
-      "install": "Build the pinned Kotlin 2.3.20 graph producer at `22ec4bd89062ed2f7040ef14d14c05db8776b816` with JDK 21. The indexed project supplies its Gradle wrapper when present; otherwise the resident producer uses pinned Gradle 9.4.1.",
+      "install": "Build the pinned Kotlin 2.3.20 graph producer at `3a1565d0647d89a28880fa40ecbef0966a1a328c` with JDK 21. The indexed project supplies its Gradle wrapper when present; otherwise the resident producer uses pinned Gradle 9.4.1.",
       "installSources": [
-        {"label": "pinned Kotlin graph producer", "url": "https://github.com/samchon/scip-java/commit/22ec4bd89062ed2f7040ef14d14c05db8776b816"},
+        {"label": "pinned Kotlin graph producer", "url": "https://github.com/samchon/scip-java/commit/3a1565d0647d89a28880fa40ecbef0966a1a328c"},
         {"label": "Kotlin graph producer pull request", "url": "https://github.com/scip-code/scip-java/pull/1006"},
         {"label": "Kotlin Gradle compiler options", "url": "https://kotlinlang.org/docs/gradle-compiler-options.html"}
       ],

@@ -9,6 +9,7 @@ export const test_strict_lifecycle_performance_sampling_is_atomic = async () => 
   let current = { generation: "initial" };
   let identity = "initial";
   let edited = false;
+  let evidence = 0;
   const writes: string[] = [];
   const load = async () => {
     if (text === original) {
@@ -55,6 +56,7 @@ export const test_strict_lifecycle_performance_sampling_is_atomic = async () => 
       text = next;
       writes.push(next);
     },
+    captureEditEvidence: () => ({ sample: ++evidence }),
     load,
   });
   TestValidator.equals(
@@ -80,6 +82,12 @@ export const test_strict_lifecycle_performance_sampling_is_atomic = async () => 
       editP95Ms: 20,
       noopP95MaxMs: 250,
       editP95MaxMs: 2_000,
+      editEvidence: [
+        { sample: 1 },
+        { sample: 2 },
+        { sample: 3 },
+        { sample: 4 },
+      ],
     },
   );
   TestValidator.equals(

@@ -633,9 +633,11 @@ if (flag("unclaimed-family")) {
 // carrying it would put the same node in one generation twice.
 if (flag("duplicate-symbol")) {
   const owner = artifact.targets[0];
-  owner.shards[owner.shards.length - 1].nodes.push(
-    structuredClone(exampleShard(owner.name).nodes[0]),
-  );
+  const destination = owner.shards[owner.shards.length - 1];
+  const duplicate = structuredClone(exampleShard(owner.name).nodes[0]);
+  duplicate.file = destination.source;
+  duplicate.evidence.file = destination.source;
+  destination.nodes.push(duplicate);
 }
 if (flag("foreign-shard-target")) {
   artifact.targets[0].shards[0].target = ":elsewhere|jvm|main";

@@ -21,6 +21,7 @@ export async function measureLifecyclePerformance(props) {
   }
 
   const edits = [];
+  const editEvidence = [];
   for (let index = 0; index < props.editSamples; index++) {
     props.writeSource(
       props.sourceText.replace(
@@ -41,6 +42,8 @@ export async function measureLifecyclePerformance(props) {
     }
     currentDump = sample.dump;
     currentIdentity = sample.identity;
+    const evidence = props.captureEditEvidence?.();
+    if (evidence !== undefined) editEvidence.push(evidence);
   }
 
   props.writeSource(props.sourceText);
@@ -83,6 +86,7 @@ export async function measureLifecyclePerformance(props) {
       editP95Ms,
       noopP95MaxMs: props.noopP95MaxMs,
       editP95MaxMs: props.editP95MaxMs,
+      ...(editEvidence.length === 0 ? {} : { editEvidence }),
     },
   };
 }

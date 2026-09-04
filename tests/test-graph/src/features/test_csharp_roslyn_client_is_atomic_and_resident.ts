@@ -411,10 +411,14 @@ function readRequests(file: string): Array<{
   method?: string;
   params?: { arguments?: Array<{ knownGeneration?: string | null }> };
 }> {
-  return fs
-    .readFileSync(file, "utf8")
-    .trim()
-    .split(/\r?\n/u)
+  const text = fs.readFileSync(file, "utf8");
+  const lines = text.split(/\r?\n/u);
+  // The fake server appends one JSON line per request. Windows can expose the
+  // appended bytes before the terminating newline reaches a concurrent
+  // reader, so only parse records whose write is observably complete.
+  if (!text.endsWith("\n")) lines.pop();
+  return lines
+    .filter((line) => line !== "")
     .map((line) => JSON.parse(line));
 }
 

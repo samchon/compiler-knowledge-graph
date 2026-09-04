@@ -644,6 +644,14 @@ export function createResidentGraphSource(
         options.languages,
         current.sessions,
       );
+      const topologyOwned =
+        entirelyBulk &&
+        [...new Set(current.sessions.values())].every(
+          (session) =>
+            "kind" in session &&
+            session.kind === "bulk" &&
+            session.ownsProviderTopology === true,
+        );
       if (
         bulkChanged &&
         commitFactEquivalentBulkRefresh(current, prefetched, signal)
@@ -693,7 +701,7 @@ export function createResidentGraphSource(
       // changed generation cannot alter which process produced it; it only
       // adds process-launch latency before merging the candidate. Mixed and
       // generic topologies still need the fresh availability comparison.
-      if (!entirelyBulk) {
+      if (!topologyOwned) {
         phaseStarted = performance.now();
         const liveRows = providerTopology.reestablish(
           providerTopology.available(

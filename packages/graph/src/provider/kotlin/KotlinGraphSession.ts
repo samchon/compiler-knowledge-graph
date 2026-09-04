@@ -27,6 +27,7 @@ const DEFAULT_MAX_ARTIFACT_BYTES = 256 * 1024 * 1024;
  */
 export class KotlinGraphSession implements IBulkGraphSession {
   public readonly kind = "bulk" as const;
+  public readonly ownsProviderTopology = true;
   public readonly languages: readonly GraphLanguage[];
   public readonly root: string;
 

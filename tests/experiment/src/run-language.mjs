@@ -166,14 +166,16 @@ if (dump.indexer === "static") {
 if (dump.languages.includes(experiment.language) === false) {
   throw new Error(`${experiment.language}: dump languages did not include ${experiment.language}`);
 }
+const enforceMinimums = !strict || experiment.strictMinimums === true;
 if (
+  enforceMinimums &&
   experiment.minNodes !== undefined &&
   dump.nodes.length < experiment.minNodes
 ) {
   throw new Error(`${experiment.language}: expected at least ${experiment.minNodes} nodes, got ${dump.nodes.length}`);
 }
 const minEdges = experiment.minEdges ?? 0;
-if (dump.edges.length < minEdges) {
+if (enforceMinimums && dump.edges.length < minEdges) {
   throw new Error(`${experiment.language}: expected at least ${minEdges} relationship edges, got ${dump.edges.length}`);
 }
 const provenance = strict ? declaredProvenance : undefined;

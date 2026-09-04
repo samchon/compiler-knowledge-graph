@@ -10,6 +10,7 @@ import {
   measureLifecycleNoopPerformance,
   measureLifecyclePerformance,
 } from "./lifecycle-performance.mjs";
+import { captureKotlinBuildReport } from "./kotlin-build-report.mjs";
 import { isolateCorpus, shell } from "./process.mjs";
 import {
   captureGenerationEvidence,
@@ -157,6 +158,14 @@ export const runStrictLifecycle = async (experiment, pinnedRoot) => {
       nodeCount: next.nodes.length,
       edgeCount: next.edges.length,
       diagnosticCount: next.diagnostics?.length ?? 0,
+      ...(fixture.kotlinBuildReportRoot === undefined || mode === "unchanged"
+        ? {}
+        : {
+            kotlinBuildReport: captureKotlinBuildReport(
+              lifecycleRoot,
+              fixture.kotlinBuildReportRoot,
+            ),
+          }),
     };
     if (name === "unchanged" && identity !== previousIdentity) {
       throw new Error(
@@ -232,6 +241,15 @@ export const runStrictLifecycle = async (experiment, pinnedRoot) => {
         describeDifference: firstGenerationDifference,
         changedModes: CHANGED_MODES,
         writeSource: (text) => fs.writeFileSync(sourceFile, text),
+        ...(fixture.kotlinBuildReportRoot === undefined
+          ? {}
+          : {
+              captureEditEvidence: () =>
+                captureKotlinBuildReport(
+                  lifecycleRoot,
+                  fixture.kotlinBuildReportRoot,
+                ),
+            }),
         load: async () => {
           const started = performance.now();
           const next = await resident.load();

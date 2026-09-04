@@ -15,6 +15,7 @@ import {
 } from "../../../experiment/src/lifecycle-performance.mjs";
 import { findExperiment } from "../../../experiment/src/catalog.mjs";
 import { verifyGitTree } from "../../../experiment/src/git-tree.mjs";
+import { captureKotlinBuildReport } from "../../../experiment/src/kotlin-build-report.mjs";
 import {
   RUST_GRAPH_PRODUCER_SLOW_TEST,
   RUST_GRAPH_PRODUCER_UNIT_TEST,
@@ -29,6 +30,7 @@ import { GraphPaths } from "../internal/GraphPaths";
 /** Real-language experiments always check out one reviewable corpus revision. */
 export const test_experiment_corpora_are_commit_pinned = async () => {
   verifyGitTreeFixture();
+  verifyKotlinBuildReportFixture();
   const catalog = experimentSource("catalog.mjs");
   const helpers = experimentSource("process.mjs");
   const lifecycle = experimentSource("strict-lifecycle.mjs");
@@ -538,11 +540,14 @@ export const test_experiment_corpora_are_commit_pinned = async () => {
   TestValidator.predicate(
     "Kotlin pins a Koin-scale fixture and its resident K2 producer independently",
     kotlin.includes("cca45c63d1088888f445304e13f9fbc310f62078") &&
-      kotlin.includes("22ec4bd89062ed2f7040ef14d14c05db8776b816") &&
-      kotlin.includes("0725d4d2f05564ff22491ca629eda3609dfbdb17") &&
+      kotlin.includes("3a1565d0647d89a28880fa40ecbef0966a1a328c") &&
+      kotlin.includes("3b5c24126b0670c9c9bd9369df71fcd112b34b67") &&
       kotlin.includes('strictProvider: "kotlinc-graph"') &&
       kotlin.includes('strictAuthority: "compiler"') &&
       kotlin.includes('strictTool: "scip-kotlinc-k2-graph"') &&
+      kotlin.includes("strictMinimums: true") &&
+      kotlin.includes('nativeBaseline: "gradle compileKotlin"') &&
+      kotlin.includes("kotlinBuildReportRoot:") &&
       kotlin.includes("minNodes: 1_000") &&
       kotlin.includes("minEdges: 1_000") &&
       kotlin.includes("noopP95MaxMs: 250") &&
@@ -570,6 +575,11 @@ export const test_experiment_corpora_are_commit_pinned = async () => {
         'recordProvisionedEnvironment("SAMCHON_GRAPH_KOTLINC_GRAPH", link)',
       ) &&
       setup.includes('run(link, ["--version"])'),
+  );
+  TestValidator.predicate(
+    "Kotlin lifecycle rows publish compiler invalidation evidence",
+    lifecycle.includes("captureKotlinBuildReport(") &&
+      lifecycle.includes("kotlinBuildReport:"),
   );
   TestValidator.predicate(
     "Java pins both producers, verifies their breadth and proves agreement",
@@ -1134,6 +1144,91 @@ function verifyGitTreeFixture(): void {
   } finally {
     fs.rmSync(source, { force: true, recursive: true });
   }
+}
+
+/** Exercise latest-report selection and path-free invalidation evidence. */
+function verifyKotlinBuildReportFixture(): void {
+  const root = GraphPaths.createTempDirectory(
+    "samchon-graph-kotlin-build-report-",
+  );
+  const reports = path.join(root, "reports");
+  fs.mkdirSync(reports);
+  const older = path.join(reports, "older.json");
+  const latest = path.join(reports, "latest.json");
+  fs.writeFileSync(older, JSON.stringify({ buildOperationRecord: [] }));
+  fs.writeFileSync(
+    latest,
+    JSON.stringify({
+      buildOperationRecord: [
+        {
+          path: ":compileKotlin",
+          didWork: true,
+          totalTimeMs: 12,
+          changedFiles: {
+            modifiedFiles: [
+              path.join(root, "src", "Main.kt"),
+              path.resolve(root, "..", "Secret.kt"),
+            ],
+            removedFiles: [path.join(root, "src", "Old.kt")],
+          },
+          buildMetrics: {
+            buildAttributes: {
+              myAttributes: {
+                CLASSPATH_SNAPSHOT_NOT_FOUND: 1,
+                UNUSED: 0,
+              },
+            },
+          },
+          icLogLines: [
+            "Non-incremental compilation will be performed: CLASSPATH_SNAPSHOT_NOT_FOUND",
+            "Classpath changes info passed from Gradle task: ToBeComputedByIncrementalCompiler",
+            "Finished executing kotlin compiler using DAEMON strategy",
+          ],
+        },
+        {
+          path: ":compileTestKotlin",
+          didWork: true,
+          icLogLines: ["Incremental compilation completed"],
+        },
+      ],
+    }),
+  );
+  fs.utimesSync(older, new Date(1), new Date(1));
+  fs.utimesSync(latest, new Date(2), new Date(2));
+
+  TestValidator.equals(
+    "Kotlin build reports retain exact compiler invalidation decisions",
+    captureKotlinBuildReport(root, "reports"),
+    {
+      tasks: [
+        {
+          task: ":compileKotlin",
+          didWork: true,
+          elapsedMs: 12,
+          incremental: false,
+          invalidation:
+            "Non-incremental compilation will be performed: CLASSPATH_SNAPSHOT_NOT_FOUND",
+          classpath:
+            "Classpath changes info passed from Gradle task: ToBeComputedByIncrementalCompiler",
+          changedFiles: {
+            modified: ["<outside-project>", "src/Main.kt"],
+            removed: ["src/Old.kt"],
+          },
+          buildAttributes: ["CLASSPATH_SNAPSHOT_NOT_FOUND"],
+          daemon: true,
+        },
+        {
+          task: ":compileTestKotlin",
+          didWork: true,
+          incremental: true,
+          daemon: false,
+        },
+      ],
+    },
+  );
+  TestValidator.error("a Kotlin report root cannot escape its project", () =>
+    captureKotlinBuildReport(root, "../outside"),
+  );
 }
 
 /**

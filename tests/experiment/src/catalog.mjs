@@ -518,11 +518,17 @@ export const LANGUAGE_EXPERIMENTS = [
     commit: "cca45c63d1088888f445304e13f9fbc310f62078",
     projectRoot: "examples/jvm-perfs",
     producerRepository: "https://github.com/samchon/scip-java.git",
-    producerCommit: "22ec4bd89062ed2f7040ef14d14c05db8776b816",
-    producerTree: "0725d4d2f05564ff22491ca629eda3609dfbdb17",
+    producerCommit: "3a1565d0647d89a28880fa40ecbef0966a1a328c",
+    producerTree: "3b5c24126b0670c9c9bd9369df71fcd112b34b67",
+    // The isolated copy has no build outputs. Compile the same Kotlin/JVM
+    // target once without the injected graph plugin so the cold strict row
+    // reports exporter overhead against Kotlin's own ordinary build rather
+    // than against the historical scip-java or language-server lanes.
+    nativeBaseline: "gradle compileKotlin",
     strictProvider: "kotlinc-graph",
     strictAuthority: "compiler",
     strictTool: "scip-kotlinc-k2-graph",
+    strictMinimums: true,
     requiredCapabilities: [
       "coverage",
       "diagnostics",
@@ -555,6 +561,8 @@ export const LANGUAGE_EXPERIMENTS = [
       failureFile: "build.gradle.kts",
       failureSuffix: "\nnotAValidGradleBlock {\n",
       failurePolicy: "reject",
+      kotlinBuildReportRoot:
+        "build/scip-targetroot/META-INF/kotlin-build-reports",
       performance: {
         noopSamples: 5,
         editSamples: 3,

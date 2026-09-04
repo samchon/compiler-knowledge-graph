@@ -231,6 +231,39 @@
       "childIssues": ["https://github.com/samchon/compiler-knowledge-graph/issues/76"]
     },
     {
+      "provider": "scalac-graph",
+      "languages": ["scala"],
+      "status": "registered",
+      "authority": "compiler",
+      "facts": ["contains", "exports", "imports", "calls", "accesses", "instantiates", "type_ref", "extends", "implements", "overrides", "dispatches", "decorates", "references"],
+      "commands": ["samchon-scala-graph", "java"],
+      "environmentOverrides": ["SAMCHON_GRAPH_SCALA_GRAPH", "SAMCHON_GRAPH_JAVA_TOOLCHAIN"],
+      "install": "Build the shipped BSP producer with `mvn --batch-mode --file sidecars/scala/pom.xml verify`, expose its server jar as `samchon-scala-graph`, and configure the matching Scala 2 or Scala 3 typed plugin together with SemanticDB in each indexed target.",
+      "installSources": [
+        {"label": "shipped Scala graph source", "url": "https://github.com/samchon/compiler-knowledge-graph/tree/master/sidecars/scala"},
+        {"label": "pinned Scala 2/3 BSP fixture", "url": "https://github.com/samchon/graph-benchmark-scala"},
+        {"label": "Build Server Protocol", "url": "https://build-server-protocol.github.io/docs/specification"},
+        {"label": "SemanticDB specification", "url": "https://scalameta.org/docs/semanticdb/specification.html"}
+      ],
+      "resolution": "Absolute `SAMCHON_GRAPH_SCALA_GRAPH`, then project-local or PATH `samchon-scala-graph`; selection also requires a usable `.bsp/*.json` connection and the resident `graph-server` capability.",
+      "requirements": "BSP targets whose scalac options load the matching Scala 2/3 typed plugin and emit SemanticDB in the same Zinc-controlled compile.",
+      "platforms": ["linux", "macos", "windows"],
+      "mode": "resident BSP connection; per-target SemanticDB and typed-plugin shards; atomic Zinc incremental replacement",
+      "nativeAnalysis": "The repository's BSP server asks Zinc to compile; separate Scala 2 and Scala 3 post-typer plugins emit resolved roles during that same compile while SemanticDB supplies declaration and diagnostic cross-checks.",
+      "exportMerge": "The consumer verifies BSP target universes, compiler/plugin pairing, SemanticDB URI, md5 and build target, complete coverage, source digests and target manifests before one atomic publication.",
+      "reuseResident": "Exact no-op requests reuse the validated snapshot. Changed inputs use the same BSP server and Zinc analysis, replace emitted shards and carry validated unchanged shards forward without `clean`.",
+      "limitations": "Targets without both the matching typed plugin and SemanticDB decline. `renders` and `tests` need framework-specific enrichers and are unsupported; Metals and static extraction remain the ordinary fallbacks.",
+      "decline": "A missing BSP connection, producer, Java runtime, compatible compiler/plugin pair or SemanticDB output, or a malformed/stale target generation declines without replacing the prior graph.",
+      "fallback": "`metals`, then `@samchon/graph-sitter`; current `scip-java` is never presented as Scala-capable.",
+      "experimentLanguages": ["scala"],
+      "experimentTool": "samchon-scala-graph",
+      "experimentCapabilities": ["coverage", "diagnostics", "diskDigests", "incremental", "semanticdb", "sourceDigests", "universe", "unresolved", "zinc"],
+      "benchmarks": [],
+      "benchmarkPending": "The new strict provider has no cell in the immutable pre-provider benchmark artifact; its native BSP and strict measurements are collected by the issue #77 acceptance experiment before publication.",
+      "upstream": "https://build-server-protocol.github.io/docs/specification",
+      "childIssues": ["https://github.com/samchon/compiler-knowledge-graph/issues/77"]
+    },
+    {
       "provider": "roslyn-workspace",
       "languages": ["csharp"],
       "status": "registered",
@@ -383,12 +416,6 @@
     }
   ],
   "ordinaryOnly": [
-    {
-      "language": "scala",
-      "server": "metals",
-      "issue": "https://github.com/samchon/compiler-knowledge-graph/issues/77",
-      "reason": "No registered strict provider; scip-java no longer supports Scala."
-    },
     {
       "language": "swift",
       "server": "sourcekit-lsp",

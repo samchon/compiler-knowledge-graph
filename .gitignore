@@ -48,3 +48,4 @@ sidecars/go/go
 sidecars/go/go.exe
 sidecars/csharp/bin/
 sidecars/csharp/obj/
+sidecars/scala/**/target/

@@ -14,6 +14,7 @@ import {
   kotlinGraphProvider,
   luaGraphProvider,
   rustGraphProvider,
+  scalaGraphProvider,
   standardScipProviders,
   standardSidecarProviders,
 } from "@samchon/graph";
@@ -934,6 +935,7 @@ function assertFixtureRegistryCoverage(): void {
     cppGraphProvider,
     javaGraphProvider,
     kotlinGraphProvider,
+    scalaGraphProvider,
     csharpGraphProvider,
     // SCIP entries a strict route owns as its fallback tier are exercised by
     // the loop above, but the registry does not list them as

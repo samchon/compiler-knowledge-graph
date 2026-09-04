@@ -507,22 +507,23 @@ async function assertSelection(): Promise<void> {
   TestValidator.equals(
     "only languages without a truthful strict producer remain unowned",
     publicLanguages.filter((language) => !owners.has(language)),
-    ["swift", "scala", "zig"],
+    ["swift", "zig"],
   );
   TestValidator.equals(
     "C and C++ share one compilation-universe provider",
     owners.get("c"),
     owners.get("cpp"),
   );
-  // One launcher, two compiler plugins, two owners. Each preferred compiler
-  // route owns only its language and carries the older SCIP route as fallback.
+  // One JVM, three compiler integrations, three owners. Each preferred
+  // compiler route owns only its language and carries its ordinary route as
+  // fallback.
   TestValidator.equals(
-    "Java and Kotlin own their producers independently, and Scala neither",
+    "Java, Kotlin, and Scala own their producers independently",
     [owners.get("java"), owners.get("kotlin"), owners.get("scala")],
     [
       ["javac-graph"],
       ["kotlinc-graph"],
-      undefined,
+      ["scalac-graph"],
     ],
   );
 }

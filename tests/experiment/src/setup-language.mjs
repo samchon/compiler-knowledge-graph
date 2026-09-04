@@ -998,20 +998,120 @@ switch (experiment.language) {
       digest: "unpinned",
     });
     break;
-  case "scala":
-    apt(["openjdk-17-jdk", "gzip"]);
-    await downloadFile("https://github.com/coursier/coursier/releases/latest/download/cs-x86_64-pc-linux.gz", path.join(toolsRoot, "cs.gz"));
-    shell(`gzip -dc "${path.join(toolsRoot, "cs.gz")}" > "${path.join(binRoot, "cs")}"`);
-    shell(`chmod +x "${path.join(binRoot, "cs")}"`);
-    run(path.join(binRoot, "cs"), ["install", "metals"]);
-    appendGithubPath(path.join(os.homedir(), ".local", "share", "coursier", "bin"));
+  case "scala": {
+    apt(["openjdk-21-jdk", "maven"]);
+    const javaHome = "/usr/lib/jvm/java-21-openjdk-amd64";
+    const java = path.join(javaHome, "bin", "java");
+    process.env.JAVA_HOME = javaHome;
+    recordProvisionedEnvironment("JAVA_HOME", javaHome);
+    if (process.env.GITHUB_ENV !== undefined) {
+      fs.appendFileSync(
+        process.env.GITHUB_ENV,
+        `JAVA_HOME=${javaHome}${os.EOL}`,
+      );
+    }
+    appendGithubPath(path.join(javaHome, "bin"));
+
+    run("mvn", [
+      "--batch-mode",
+      "--file",
+      path.join(repositoryRoot, "sidecars", "scala", "pom.xml"),
+      "verify",
+    ]);
+    const sidecarRoot = path.join(repositoryRoot, "sidecars", "scala");
+    const version = "0.1.0-SNAPSHOT";
+    const scala2Plugin = path.join(
+      sidecarRoot,
+      "scala2-plugin",
+      "target",
+      `scala-graph-plugin_2.13.18-${version}.jar`,
+    );
+    const scala3Plugin = path.join(
+      sidecarRoot,
+      "scala3-plugin",
+      "target",
+      `scala-graph-plugin_3.9.0-${version}.jar`,
+    );
+    const server = path.join(
+      sidecarRoot,
+      "server",
+      "target",
+      `samchon-scala-graph-${version}.jar`,
+    );
+    for (const artifact of [scala2Plugin, scala3Plugin, server]) {
+      if (!fs.statSync(artifact, { throwIfNoEntry: false })?.isFile()) {
+        throw new Error(`Scala graph build omitted ${artifact}`);
+      }
+    }
+    const producer = path.join(binRoot, "samchon-scala-graph");
+    fs.writeFileSync(
+      producer,
+      `#!/bin/sh\nexec '${java}' -jar '${server}' "$@"\n`,
+    );
+    fs.chmodSync(producer, 0o755);
+    run(producer, ["--version"]);
+    const serverHelp = String(
+      run(producer, ["graph-server", "--help"], { stdio: "pipe" }).stdout,
+    );
+    if (
+      !serverHelp.includes(
+        "Serve BSP-driven Scala compiler graph generations over NDJSON.",
+      )
+    ) {
+      throw new Error(
+        `scala: the built producer does not publish the resident graph protocol:\n${serverHelp}`,
+      );
+    }
+
+    const sbtVersion = "1.11.7";
+    const sbtJar = path.join(toolsRoot, `sbt-launch-${sbtVersion}.jar`);
+    const sbtUrl = `https://repo.maven.apache.org/maven2/org/scala-sbt/sbt-launch/${sbtVersion}/sbt-launch-${sbtVersion}.jar`;
+    await downloadFile(sbtUrl, sbtJar);
+    verifySha256(
+      sbtJar,
+      "f92a2095ac75008764fe3b2b793ffe624c4fbef5bfd9b0022e4bc2daf668c651",
+    );
+    const sbt = path.join(binRoot, "sbt");
+    fs.writeFileSync(sbt, `#!/bin/sh\nexec '${java}' -jar '${sbtJar}' "$@"\n`);
+    fs.chmodSync(sbt, 0o755);
+
+    for (const [name, value] of Object.entries({
+      SAMCHON_GRAPH_SCALA_GRAPH: producer,
+      SAMCHON_GRAPH_SCALA2_PLUGIN: scala2Plugin,
+      SAMCHON_GRAPH_SCALA3_PLUGIN: scala3Plugin,
+      SAMCHON_GRAPH_SCALA_PLUGIN_VERSION: version,
+      SAMCHON_GRAPH_JAVA_TOOLCHAIN: java,
+    })) {
+      process.env[name] = value;
+      recordProvisionedEnvironment(name, value);
+    }
     record({
-      tool: "metals",
+      tool: "samchon-scala-graph",
+      version,
+      source: "sidecars/scala",
+      digest: "built-from-workspace-source",
+    });
+    record({
+      tool: "scalac-graph plugins",
+      version: "Scala 2.13.18; Scala 3.9.0",
+      source: "sidecars/scala",
+      digest: "built-from-workspace-source",
+    });
+    record({
+      tool: "sbt",
+      version: sbtVersion,
+      source: sbtUrl,
+      digest:
+        "sha256:f92a2095ac75008764fe3b2b793ffe624c4fbef5bfd9b0022e4bc2daf668c651",
+    });
+    record({
+      tool: "maven",
       version: "unpinned",
-      source: "coursier install metals",
+      source: "apt maven",
       digest: "unpinned",
     });
     break;
+  }
   case "zig":
     await installZls();
     break;

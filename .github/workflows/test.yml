@@ -53,6 +53,14 @@ jobs:
           go-version: 1.26.5
           cache-dependency-path: sidecars/go/go.sum
 
+      - name: Setup Java
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+          cache-dependency-path: "sidecars/scala/**/pom.xml"
+
       - name: Setup .NET
         uses: actions/setup-dotnet@v5
         with:
@@ -95,6 +103,9 @@ jobs:
 
       - name: Build Roslyn sidecar
         run: dotnet build sidecars/csharp/Samchon.Graph.CSharp.csproj --configuration Release -p:RestoreLockedMode=true
+
+      - name: Build Scala sidecar
+        run: mvn --batch-mode --file sidecars/scala/pom.xml verify
 
       - name: Test
         run: pnpm test

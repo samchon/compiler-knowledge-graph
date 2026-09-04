@@ -18,6 +18,7 @@ export * from "./lua";
 export * from "./providerInputFiles";
 export * from "./resolveProviderCommand";
 export * from "./rust";
+export * from "./scala";
 export * from "./scip";
 export * from "./sidecar";
 export * from "./selectGraphProviders";

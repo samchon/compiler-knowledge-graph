@@ -32,6 +32,7 @@ const MAINTAINED: Record<string, number> = {
   cache: 6,
   checkout: 7,
   "setup-go": 7,
+  "setup-java": 6,
   "setup-node": 7,
   "upload-artifact": 7,
   "download-artifact": 8,

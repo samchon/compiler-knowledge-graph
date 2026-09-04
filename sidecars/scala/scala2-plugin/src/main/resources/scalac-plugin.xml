@@ -1,0 +1,4 @@
+<plugin>
+  <name>samchon-graph</name>
+  <classname>org.samchon.graph.scala2.Scala2GraphPlugin</classname>
+</plugin>

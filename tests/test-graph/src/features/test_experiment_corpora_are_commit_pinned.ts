@@ -77,12 +77,13 @@ export const test_experiment_corpora_are_commit_pinned = async () => {
   const javaSetup = region(setup, 'case "java"', 'case "csharp"');
   const csharpSetup = region(setup, 'case "csharp"', 'case "kotlin"');
   const kotlinSetup = region(setup, 'case "kotlin"', 'case "swift"');
+  const scalaSetup = region(setup, 'case "scala"', 'case "zig"');
   const rustSetup = region(setup, 'case "rust"', 'case "cpp"');
   const cppSetup = region(setup, 'case "cpp"', 'case "java"');
   TestValidator.equals(
     "every registered strict-provider language has a lifecycle row",
     [...catalog.matchAll(/strictProvider:\s*"[^"]+"/g)].length,
-    13,
+    14,
   );
   TestValidator.predicate(
     "Rust builds and records the exact native HIR producer declared by the catalog",
@@ -583,6 +584,32 @@ export const test_experiment_corpora_are_commit_pinned = async () => {
       lifecycle.includes("kotlinBuildReport:"),
   );
   TestValidator.predicate(
+    "Scala pins both compiler lines and builds its BSP producer from shipped source",
+    scala.includes(
+      'repository: "https://github.com/samchon/graph-benchmark-scala.git"',
+    ) &&
+      scala.includes("b11f22758c902bffa29513c9fcda07863a2ad996") &&
+      scala.includes('strictProvider: "scalac-graph"') &&
+      scala.includes('strictAuthority: "compiler"') &&
+      scala.includes('strictTool: "samchon-scala-graph"') &&
+      scala.includes('prepare: "sbt bspConfig"') &&
+      scala.includes("env -u SAMCHON_GRAPH_SCALA2_PLUGIN") &&
+      scala.includes("noopP95MaxMs: 500") &&
+      scala.includes("editP95MaxMs: 15_000") &&
+      scala.includes("minNodes: 30") &&
+      scala.includes("minEdges: 150") &&
+      scalaSetup.includes('apt(["openjdk-21-jdk", "maven"])') &&
+      scalaSetup.includes('path.join(repositoryRoot, "sidecars", "scala", "pom.xml")') &&
+      scalaSetup.includes('`scala-graph-plugin_2.13.18-${version}.jar`') &&
+      scalaSetup.includes('`scala-graph-plugin_3.9.0-${version}.jar`') &&
+      scalaSetup.includes('path.join(binRoot, "samchon-scala-graph")') &&
+      scalaSetup.includes("f92a2095ac75008764fe3b2b793ffe624c4fbef5bfd9b0022e4bc2daf668c651") &&
+      scalaSetup.includes("SAMCHON_GRAPH_SCALA_GRAPH: producer") &&
+      scalaSetup.includes("SAMCHON_GRAPH_SCALA2_PLUGIN: scala2Plugin") &&
+      scalaSetup.includes("SAMCHON_GRAPH_SCALA3_PLUGIN: scala3Plugin") &&
+      scalaSetup.includes("SAMCHON_GRAPH_SCALA_PLUGIN_VERSION: version"),
+  );
+  TestValidator.predicate(
     "Java pins both producers, verifies their breadth and proves agreement",
     java.includes('kind: "shell"') &&
       java.includes('command: "mvn -q test-compile"') &&
@@ -901,13 +928,13 @@ export const test_experiment_corpora_are_commit_pinned = async () => {
       lifecycle.includes("!reproduced && limitation === undefined") &&
       lifecycle.includes('name: "regeneration"'),
   );
-  // Sixteen product languages, thirteen strict rows. The other three are
+  // Sixteen product languages, fourteen strict rows. The other two are
   // decisions with evidence behind them, not lanes nobody reached, and a
   // bounded generic row that passes on node counts cannot tell a reader which
   // it is. So the absence of a strict provider is itself a declaration.
   TestValidator.predicate(
     "every language without a strict provider states what blocks one",
-    [swift, scala, zig].every((row) =>
+    [swift, zig].every((row) =>
       declares(row, "feasibilityBlocked"),
     ) &&
       runner.includes('typeof experiment.feasibilityBlocked !== "string"') &&

@@ -171,6 +171,20 @@ async function assertRetryAndCancellation(root: string): Promise<void> {
   );
   await retried.close();
 
+  const boundedRetry = directClient(
+    root,
+    ["--content-modified=1"],
+    () => undefined,
+    undefined,
+    { readyTimeoutMs: 1_000 },
+  );
+  TestValidator.equals(
+    "a bounded retry can settle before its deadline",
+    (await boundedRetry.refresh()).mode,
+    "initial",
+  );
+  await boundedRetry.close();
+
   const bounded = directClient(root, ["--content-modified=20"], () => undefined, undefined, {
     readyTimeoutMs: 1,
   });
